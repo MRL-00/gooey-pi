@@ -5,12 +5,14 @@ import {
   Command,
   FolderGit2,
   Gauge,
+  ImageIcon,
   Plus,
   ShieldCheck,
+  X,
   Zap,
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, SkillRecord } from '@/types/api'
+import type { PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptImage, SkillRecord } from '@/types/api'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
 interface ComposerProps {
@@ -26,11 +28,12 @@ interface ComposerProps {
   fast: boolean
   fastSupported: boolean
   fastAvailable: boolean
+  imageInputSupported: boolean
   skills: SkillRecord[]
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
-  onSend(prompt: string): Promise<void> | void
+  onSend(prompt: string, images: PromptImage[]): Promise<void> | void
   onStop(): Promise<void> | void
 }
 
@@ -45,26 +48,126 @@ const reasoningLabels: Record<PrimeThinkingLevel, string> = {
   off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Standard', high: 'High', xhigh: 'Extra high', max: 'Max',
 }
 
-export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
+const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const MAX_IMAGE_COUNT = 8
+const MAX_IMAGE_SOURCE_BYTES = 1_350_000
+const MAX_IMAGE_PROMPT_BYTES = 2 * 1024 * 1024
+
+interface ComposerImage extends PromptImage {
+  id: string
+  name: string
+  size: number
+}
+
+function base64FromBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  return window.btoa(binary)
+}
+
+export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
+  const [images, setImages] = useState<ComposerImage[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
+  const [processingImages, setProcessingImages] = useState(false)
   const menuId = useId()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submittingRef = useRef(false)
+  const pendingImagesRef = useRef(0)
+  const imagesRef = useRef<ComposerImage[]>([])
+  const mountedRef = useRef(true)
   const enabledSkills = skills.filter((skill) => skill.enabled).slice(0, 6)
 
   useEffect(() => {
     setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : value.endsWith('@') ? 'skill' : null)
   }, [value])
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
   const submit = async () => {
-    const prompt = value.trim()
-    if (!prompt || busy || submitting || loading || disabled || submittingRef.current) return
+    const currentImages = imagesRef.current
+    const prompt = value.trim() || (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
+    if ((!value.trim() && currentImages.length === 0) || busy || submitting || loading || disabled || submittingRef.current) return
+    if (pendingImagesRef.current > 0) {
+      setAttachmentError('Wait for the pasted image to finish processing before sending.')
+      return
+    }
+    if (currentImages.length > 0 && !imageInputSupported) {
+      setAttachmentError('This model does not accept images. Remove the attachment or choose a vision model.')
+      return
+    }
+    const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
+    const frame = `${JSON.stringify({ type: 'follow_up', message: prompt, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
+    if (new TextEncoder().encode(frame).byteLength > MAX_IMAGE_PROMPT_BYTES) {
+      setAttachmentError('This message and its images are too large to send. Shorten the message or remove an image.')
+      return
+    }
     submittingRef.current = true
+    const submittedValue = value
+    const submittedComposerImages = currentImages
     setValue('')
+    imagesRef.current = []
+    setImages([])
+    setAttachmentError('')
     setMenu(null)
-    try { await onSend(prompt) } finally { submittingRef.current = false }
+    try {
+      await onSend(prompt, submittedImages)
+    } catch {
+      if (mountedRef.current) {
+        setValue((current) => current || submittedValue)
+        if (imagesRef.current.length === 0) {
+          imagesRef.current = submittedComposerImages
+          setImages(submittedComposerImages)
+        }
+        setAttachmentError('Message was not sent. Your draft and images were restored.')
+      }
+    } finally { submittingRef.current = false }
+  }
+
+  const addPastedImages = async (files: File[]) => {
+    pendingImagesRef.current += 1
+    setProcessingImages(true)
+    try {
+      if (!imageInputSupported) {
+        setAttachmentError('This model does not accept images. Choose a vision model before pasting an image.')
+        return
+      }
+      const supported = files.filter((file) => supportedImageTypes.has(file.type.toLowerCase()))
+      if (supported.length !== files.length) {
+        setAttachmentError('Prime supports pasted PNG, JPEG, GIF, and WebP images.')
+        return
+      }
+      const added = await Promise.all(supported.map(async (file, index): Promise<ComposerImage> => ({
+        id: crypto.randomUUID(),
+        name: file.name || `Pasted image ${index + 1}`,
+        size: file.size,
+        type: 'image',
+        mimeType: file.type.toLowerCase(),
+        data: base64FromBuffer(await file.arrayBuffer()),
+      })))
+      if (!mountedRef.current) return
+      const current = imagesRef.current
+      if (current.length + added.length > MAX_IMAGE_COUNT) {
+        setAttachmentError(`You can attach up to ${MAX_IMAGE_COUNT} images.`)
+        return
+      }
+      const totalBytes = current.reduce((sum, image) => sum + image.size, 0) + added.reduce((sum, image) => sum + image.size, 0)
+      if (totalBytes > MAX_IMAGE_SOURCE_BYTES) {
+        setAttachmentError('These images are too large to send. Paste a smaller image (about 1.3 MB total).')
+        return
+      }
+      const next = [...current, ...added]
+      imagesRef.current = next
+      setImages(next)
+      setAttachmentError('')
+    } catch {
+      if (mountedRef.current) setAttachmentError('Prime could not read the pasted image.')
+    } finally {
+      pendingImagesRef.current -= 1
+      if (mountedRef.current && pendingImagesRef.current === 0) setProcessingImages(false)
+    }
   }
 
   const insert = (text: string) => {
@@ -103,6 +206,16 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
           aria-controls={menu ? menuId : undefined}
           aria-activedescendant={menu && suggestions.length ? `${menuId}-option-${activeSuggestion}` : undefined}
           onChange={(event) => setValue(event.target.value)}
+          onPaste={(event) => {
+            const files = [...event.clipboardData.items]
+              .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+              .flatMap((item) => { const file = item.getAsFile(); return file ? [file] : [] })
+            if (!files.length) return
+            const pastedText = event.clipboardData.getData('text/plain')
+            event.preventDefault()
+            if (pastedText) setValue((current) => `${current}${pastedText}`)
+            void addPastedImages(files)
+          }}
           onKeyDown={(event) => {
             if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
               event.preventDefault()
@@ -132,6 +245,12 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
             >{suggestion.icon}<span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span></button>)}
           </div>
         ) : null}
+        {images.length ? <div className="composer-attachments" aria-label="Image attachments">{images.map((image) => <div className="composer-attachment" key={image.id}>
+          <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
+          <span><ImageIcon size={12} />{image.name}</span>
+          <button type="button" aria-label={`Remove ${image.name}`} onClick={() => { const next = imagesRef.current.filter((item) => item.id !== image.id); imagesRef.current = next; setImages(next); setAttachmentError('') }}><X size={12} /></button>
+        </div>)}</div> : null}
+        {attachmentError ? <p className="composer-attachment-error" role="alert">{attachmentError}</p> : null}
         <div className="composer__footer">
           <div className="composer__controls">
             <IconButton label="Add skill" aria-expanded={menu === 'add'} aria-controls={menu === 'add' ? menuId : undefined} onClick={() => { setMenu((current) => current === 'add' ? null : 'add'); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Plus size={17} /></IconButton>
@@ -153,7 +272,7 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
             <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
           </div>
           <div className="composer__actions">
-            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={!value.trim() || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
+            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
           </div>
         </div>
       </div>

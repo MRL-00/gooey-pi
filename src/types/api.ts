@@ -81,6 +81,7 @@ export interface RuntimeInfo {
   thinkingLevel?: string
   availableThinkingLevels?: PrimeThinkingLevel[]
   fastModeSupported?: boolean
+  imageInputSupported?: boolean
   fastModeAvailable?: boolean
   serviceTier?: PrimeServiceTier
 }

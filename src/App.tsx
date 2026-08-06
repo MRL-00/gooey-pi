@@ -16,7 +16,7 @@ import { usePluginSkills } from '@/hooks/usePluginSkills'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useSidebarActions } from '@/hooks/useSidebarActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, McpConnectionInput, ProjectRecord, ScheduleRecord, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { GitStatus, McpConnectionInput, ProjectRecord, PromptImage, ScheduleRecord, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -221,16 +221,23 @@ export default function App() {
     } catch (error) { reportError(error) }
   }
 
-  const sendPrompt = async (prompt: string) => {
+  const sendPrompt = async (prompt: string, images: PromptImage[] = []) => {
     await submissionAdmissionRef.current.run(async () => {
       setSubmitting(true)
       const admitted = workspace.workspaceRef.current
       const generation = admitted.generation
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
+        if (images.length > 0 && provider.model !== 'auto' && !provider.selectedModel?.input.includes('image')) {
+          reportError('This model does not accept images. Remove the attachment or choose a vision model.')
+          return
+        }
         if (!workspace.prepareForPrompt(generation)) return
-        const userMessage: TranscriptMessage = { id: `user-${Date.now()}`, role: 'user', timestamp: Date.now(), parts: [{ type: 'text', text: prompt }] }
+        const sentAt = Date.now()
+        const sentAtIso = new Date(sentAt).toISOString()
+        const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
         workspace.setMessages((items) => [...items, userMessage])
+        if (admitted.sessionFile) setSessions((items) => items.map((session) => session.filePath === admitted.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
         if (!bridge) {
           const assistantId = `assistant-${Date.now()}`
           workspace.setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
@@ -252,12 +259,15 @@ export default function App() {
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
           const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
-          if (selected.sessionFile && selectedSession?.status === 'running'
+          if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
+            throw new Error('Image attachments cannot be queued while this session is active outside Prime Work. Wait for it to finish, then try again.')
+          }
+          if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
           try {
             activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
           } catch (startError) {
-            if (selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
+            if (images.length === 0 && selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
             throw startError
           }
           startedRuntime = true
@@ -270,7 +280,7 @@ export default function App() {
         workspace.attachRuntime(activeRuntime, generation)
         workspace.setRuntime({ ...activeRuntime, isStreaming: true })
         workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
-        await bridge.agent.command(activeRuntime.runtimeId, { type: activeRuntime.isStreaming ? 'follow_up' : 'prompt', message: prompt })
+        await bridge.agent.command(activeRuntime.runtimeId, { type: activeRuntime.isStreaming ? 'follow_up' : 'prompt', message: prompt, ...(images.length ? { images } : {}) })
       } catch (error) {
         if (workspace.workspaceRef.current.generation !== generation) return
         const failure = requestFailureMessage(error)
@@ -279,6 +289,7 @@ export default function App() {
           const finalized = items.flatMap((item) => item.streaming && item.role === 'assistant' && item.parts.length === 0 ? [] : [{ ...item, streaming: false }])
           return finalized.at(-1)?.role === 'system' ? finalized : [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
         })
+        throw error
       } finally { setSubmitting(false) }
     })
   }
@@ -368,8 +379,8 @@ export default function App() {
       <div className="workbench__content">{view === 'session' ? <div ref={layout.sessionWorkspaceRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.workspaceRowRef} className="workspace-row">
           <main className="conversation-pane">
-            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
-            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
+            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
+            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
           {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}

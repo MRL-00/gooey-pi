@@ -75,6 +75,9 @@ export class AgentRpcManager {
       if (!supported) throw new Error('Fast mode is not supported by the selected model')
       return { type: 'response', command: 'set_service_tier', success: true }
     }
+    if (Array.isArray(command.images) && command.images.length > 0 && runtime.snapshot().imageInputSupported === false) {
+      throw new Error('The active model does not accept images. Choose a vision model and try again.')
+    }
     const response = await runtime.command(command)
     if (command.type === 'set_model' || command.type === 'cycle_model') {
       const preference = runtime.serviceTierPreference()

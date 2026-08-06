@@ -59,24 +59,29 @@ const processExists = (pid: number): boolean => {
 }
 
 describe('agent RPC command frame bounds', () => {
-  it('accepts the exact image boundary that fits transport and rejects the next byte', async () => {
-    const base = {
+  it('accepts the largest canonical image that fits transport and rejects the next base64 block', async () => {
+    const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+    const imageData = (bytes: number) => Buffer.concat([signature, Buffer.alloc(Math.max(0, bytes - signature.length))]).toString('base64')
+    const command = (bytes: number) => ({
       type: 'prompt',
       message: 'describe this image',
-      images: [{ type: 'image', data: '', mimeType: 'image/png' }],
-    }
-    const maxImageChars = MAX_RPC_WRITE_FRAME_BYTES - rpcRequestFrameBytes(base)
-    const boundary = {
-      ...base,
-      images: [{ ...base.images[0], data: 'a'.repeat(maxImageChars) }],
-    }
-    const accepted = await validateRpcCommand(boundary, async (path) => path)
+      images: [{ type: 'image', data: imageData(bytes), mimeType: 'image/png' }],
+    })
+    const sample = command(signature.length)
+    const overhead = rpcRequestFrameBytes(sample) - sample.images[0].data.length
+    let decodedBytes = Math.floor((MAX_RPC_WRITE_FRAME_BYTES - overhead) / 4) * 3
+    while (rpcRequestFrameBytes(command(decodedBytes + 1)) <= MAX_RPC_WRITE_FRAME_BYTES) decodedBytes += 1
+    while (rpcRequestFrameBytes(command(decodedBytes)) > MAX_RPC_WRITE_FRAME_BYTES) decodedBytes -= 1
 
-    expect(rpcRequestFrameBytes(accepted)).toBe(MAX_RPC_WRITE_FRAME_BYTES)
-    await expect(validateRpcCommand({
-      ...boundary,
-      images: [{ ...boundary.images[0], data: `${boundary.images[0].data}a` }],
-    }, async (path) => path)).rejects.toThrow('too large for the RPC transport')
+    const accepted = await validateRpcCommand(command(decodedBytes), async (path) => path)
+    expect(rpcRequestFrameBytes(accepted)).toBeLessThanOrEqual(MAX_RPC_WRITE_FRAME_BYTES)
+    await expect(validateRpcCommand(command(decodedBytes + 1), async (path) => path)).rejects.toThrow('too large for the RPC transport')
+  })
+
+  it('rejects malformed base64 and image data that does not match its MIME type', async () => {
+    const command = (data: string, mimeType = 'image/png') => ({ type: 'prompt', message: 'inspect', images: [{ type: 'image', data, mimeType }] })
+    await expect(validateRpcCommand(command('not base64'), async (path) => path)).rejects.toThrow('canonical base64')
+    await expect(validateRpcCommand(command(Buffer.from('GIF89a').toString('base64')), async (path) => path)).rejects.toThrow('does not match')
   })
 })
 
@@ -120,6 +125,26 @@ describe('agent RPC responses', () => {
     expect(runtime.availableThinkingLevels).toContain('xhigh')
     expect(runtime.availableThinkingLevels).not.toContain('max')
   })
+  it('rejects images authoritatively when the active runtime model is text-only', async () => {
+    const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'session-1', isStreaming: false, model: { provider: 'fixture', id: 'text-model', name: 'Text model' } } }"
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)
+    const providers = {
+      capabilities: async () => ({
+        key: 'fixture/text-model', provider: 'fixture', id: 'text-model', name: 'Text model', reasoning: false,
+        input: ['text'], contextWindow: 1_000, maxTokens: 100, availableThinkingLevels: ['off'], fastModeSupported: false, available: true,
+      }),
+      requireAvailableModel: async () => { throw new Error('not used') },
+    } as unknown as PrimeProviderService
+    const manager = new AgentRpcManager(fake.executable, async (cwd) => cwd, async (path) => path, providers)
+    managers.push(manager)
+    const runtime = await manager.start({ cwd: fake.cwd })
+
+    expect(runtime.imageInputSupported).toBe(false)
+    await expect(manager.command(runtime.runtimeId, {
+      type: 'prompt', message: 'inspect', images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }],
+    })).rejects.toThrow('active model does not accept images')
+  })
+
   it('terminates a process group that keeps writing after an oversized frame', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-overflow-'))
     dirs.push(cwd)

@@ -10,6 +10,20 @@ const SIMPLE_COMMANDS = new Set([
 ])
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
+function validateImageData(data: string, mimeType: string): void {
+  if (data.length % 4 !== 0 || !/^[a-z\d+/]*={0,2}$/i.test(data)) throw new TypeError('Image data must be canonical base64')
+  const decoded = Buffer.from(data, 'base64')
+  if (!decoded.length || decoded.toString('base64') !== data) throw new TypeError('Image data must be canonical base64')
+  const matches = mimeType.toLowerCase() === 'image/png'
+    ? decoded.length >= 8 && decoded.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : mimeType.toLowerCase() === 'image/jpeg'
+      ? decoded.length >= 3 && decoded[0] === 0xff && decoded[1] === 0xd8 && decoded[2] === 0xff
+      : mimeType.toLowerCase() === 'image/gif'
+        ? decoded.length >= 6 && (decoded.subarray(0, 6).toString('ascii') === 'GIF87a' || decoded.subarray(0, 6).toString('ascii') === 'GIF89a')
+        : decoded.length >= 12 && decoded.subarray(0, 4).toString('ascii') === 'RIFF' && decoded.subarray(8, 12).toString('ascii') === 'WEBP'
+  if (!matches) throw new TypeError('Image data does not match its MIME type')
+}
+
 export function isThinkingLevel(value: string): boolean { return THINKING_LEVELS.has(value) }
 
 function validateImages(value: unknown): Array<{ type: 'image'; data: string; mimeType: string }> | undefined {
@@ -21,7 +35,9 @@ function validateImages(value: unknown): Array<{ type: 'image'; data: string; mi
     if (image.type !== 'image') throw new TypeError(`images[${index}].type must be image`)
     const mimeType = requireString(image.mimeType, `images[${index}].mimeType`, { min: 1, max: 100 })
     if (!/^image\/(png|jpeg|gif|webp)$/i.test(mimeType)) throw new TypeError('Unsupported image type')
-    return { type: 'image' as const, data: requireString(image.data, `images[${index}].data`, { min: 1, max: MAX_RPC_WRITE_FRAME_BYTES }), mimeType }
+    const data = requireString(image.data, `images[${index}].data`, { min: 1, max: MAX_RPC_WRITE_FRAME_BYTES })
+    validateImageData(data, mimeType)
+    return { type: 'image' as const, data, mimeType }
   })
 }
 
