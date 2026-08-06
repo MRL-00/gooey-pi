@@ -90,6 +90,13 @@ Every remediation worker must:
 
 These logs are the durable coordination record for compaction and handoff.
 
+### Orchestrator log
+
+- `b3be4c4` created the complete remediation tracker.
+- `6b975cf` added the durable worker logging protocol.
+- Preserved the pre-remediation working tree in `stash@{0}` and `/tmp/prime-pre-remediation.patch`.
+- Created isolated `fix/section-a` through `fix/section-f` worktrees and delegated all six sections. Integration will be reviewed and cherry-picked into `main` in dependency order, followed by conflict resolution and full validation.
+
 ### Section A log — release/CI
 
 - Pending.
