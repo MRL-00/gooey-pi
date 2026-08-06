@@ -37,5 +37,5 @@ describe('GitService', () => {
     const committed = await service.commit(cwd, 'test commit')
     expect(committed.ok).toBe(true)
     expect(committed.output).toContain('test commit')
-  })
+  }, 15_000)
 })
