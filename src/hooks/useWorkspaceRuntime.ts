@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   admitAgentEvent,
+  authoritativeTranscriptReadIsCurrent,
   eventsForWorkspace,
   isTranscriptTerminalEvent,
   needsTranscriptReconciliation,
@@ -157,10 +158,13 @@ export function useWorkspaceRuntime({
       if (transcriptLoadRef.current !== pendingLoad) return
       const current = workspaceRef.current
       if (current.generation !== pendingLoad.generation || current.sessionFile !== pendingLoad.sessionFile) return
-      const newerRuntimeOwnsWorkspace = pendingLoad.reconciliation
-        && runtimeIdRef.current !== null
-        && runtimeIdRef.current !== pendingLoad.runtimeId
-      if (newerRuntimeOwnsWorkspace) {
+      const readMarker = pendingLoad.runtimeId ? {
+        generation: pendingLoad.generation,
+        runtimeId: pendingLoad.runtimeId,
+        sessionFile: pendingLoad.sessionFile,
+      } : null
+      if (pendingLoad.reconciliation && readMarker
+        && !authoritativeTranscriptReadIsCurrent(readMarker, current, runtimeIdRef.current)) {
         setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
         return
       }

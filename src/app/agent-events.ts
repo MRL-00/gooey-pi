@@ -46,6 +46,17 @@ export function reconciliationMatches(
     && marker.sessionFile === sessionFile
 }
 
+
+export function authoritativeTranscriptReadIsCurrent(
+  marker: TranscriptReconciliationMarker,
+  current: { generation: number; sessionFile?: string },
+  currentRuntimeId: string | null,
+): boolean {
+  return marker.generation === current.generation
+    && marker.sessionFile === current.sessionFile
+    && (currentRuntimeId === null || currentRuntimeId === marker.runtimeId)
+}
+
 export function admitAgentEvent(
   generation: number,
   event: Record<string, unknown>,

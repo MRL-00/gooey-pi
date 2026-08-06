@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PendingAgentEvent } from '../../src/App'
+import type { PendingAgentEvent } from '../../src/app/agent-events'
 import { areSidebarPropsEqual, type SidebarProps } from '../../src/components/Sidebar'
 import {
   ACTIVITY_BATCH,
@@ -11,7 +11,7 @@ import { applyPrimeEvent, createPrimeEventBuffer } from '../../src/lib/events'
 import type { TranscriptMessage } from '../../src/types/api'
 
 Object.defineProperty(globalThis, 'self', { value: globalThis })
-const { admitAgentEvent, eventsForWorkspace } = await import('../../src/App')
+const { admitAgentEvent, eventsForWorkspace } = await import('../../src/app/agent-events')
 
 const transcript = (): TranscriptMessage[] => [{
   id: 'assistant-1',
