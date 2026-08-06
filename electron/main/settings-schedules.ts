@@ -83,23 +83,25 @@ export class ScheduleService {
       this.appendResponseJobs(response, runtimeId, jobs)
     } else {
       const runtimes = this.agents.list()
+      let runtimeFailure = false
       await Promise.all(runtimes.map(async (runtime) => {
         try {
           const response = await this.agents.command(runtime.runtimeId, { type: 'list_schedules', includeInactive: true })
           this.appendResponseJobs(response, runtime.runtimeId, jobs)
-        } catch { /* another runtime or CLI fallback may still return the jobs */ }
+        } catch { runtimeFailure = true }
       }))
-      if (!jobs.length && this.primeAgentPath) {
+
+      let fallbackComplete = false
+      if ((runtimes.length === 0 || runtimeFailure) && this.primeAgentPath) {
         const result = await runProcess(this.primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
-        if (result.code === 0) {
-          try {
-            const parsed: unknown = JSON.parse(result.stdout)
-            if (isRecord(parsed) && Array.isArray(parsed.jobs)) {
-              for (const raw of parsed.jobs) { const job = normalizeJob(raw); if (job) jobs.push(job) }
-            }
-          } catch { /* return empty on an incompatible CLI output */ }
-        }
+        if (result.code !== 0 || result.timedOut || result.outputExceeded) throw new Error('Prime Agent could not return a complete schedule catalog')
+        let parsed: unknown
+        try { parsed = JSON.parse(result.stdout) } catch { throw new Error('Prime Agent returned an incompatible schedule catalog') }
+        if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) throw new Error('Prime Agent returned an incompatible schedule catalog')
+        for (const raw of parsed.jobs) { const job = normalizeJob(raw); if (job) jobs.push(job) }
+        fallbackComplete = true
       }
+      if (runtimeFailure && !fallbackComplete) throw new Error('One or more runtimes could not return schedules; the catalog would be incomplete')
     }
     return [...new Map(jobs.map((job) => [job.id, job])).values()].sort((a, b) => (a.nextRun ?? '').localeCompare(b.nextRun ?? ''))
   }

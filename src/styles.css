@@ -386,6 +386,7 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 .changes-scopes { min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .changes-error { margin: 8px 10px 0; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--danger-soft); font-size: 12px; }
 .settings-error { margin: 12px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--danger-soft); font-size: 12px; }
+.page-inline-error { margin: 10px 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--danger-soft); font-size: 12px; }
 
 .segmented { height: 28px; display: inline-flex; align-items: center; padding: 2px; border-radius: 7px; background: var(--surface-hover); }
 .segmented button { height: 24px; padding: 0 8px; border-radius: 5px; color: var(--text-secondary); background: transparent; font-size: 11px; }

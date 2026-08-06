@@ -87,6 +87,7 @@ export default function App() {
   const [messages, setMessages] = useState<TranscriptMessage[]>(() => bridge ? [] : SAMPLE_TRANSCRIPT)
   const [skills, setSkills] = useState<SkillRecord[]>(() => bridge ? [] : SAMPLE_SKILLS)
   const [schedules, setSchedules] = useState<ScheduleRecord[]>(() => bridge ? [] : SAMPLE_SCHEDULES)
+  const [scheduleError, setScheduleError] = useState('')
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [meta, setMeta] = useState<AppMeta | null>(null)
   const [git, setGit] = useState<GitStatus>(() => bridge ? { isRepo: false, files: [] } : SAMPLE_GIT)
@@ -302,8 +303,9 @@ export default function App() {
       }
       if (settingsResult.status === 'fulfilled' && settingsMutationRef.current === startupSettingsRevision) { settingsRef.current = settingsResult.value; confirmedSettingsRef.current = settingsResult.value; setSettings(settingsResult.value); setSidebarOpen(settingsResult.value.sidebarOpen); setInspectorOpen(settingsResult.value.inspectorOpen); setTerminalOpen(settingsResult.value.terminalOpen); if (!inspectorTabTouchedRef.current) setInspectorTab(settingsResult.value.defaultInspectorTab) }
       if (skillsResult.status === 'fulfilled') setSkills(skillsResult.value)
-      if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value)
-      const failure = [metaResult, projectsResult, sessionsResult, settingsResult].find((result) => result.status === 'rejected')
+      if (schedulesResult.status === 'fulfilled') { setSchedules(schedulesResult.value); setScheduleError('') }
+      else setScheduleError(schedulesResult.reason instanceof Error ? schedulesResult.reason.message : String(schedulesResult.reason))
+      const failure = [metaResult, projectsResult, sessionsResult, settingsResult, skillsResult, schedulesResult, runtimesResult].find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') reportError(failure.reason)
       setInitialized(true)
     })
@@ -632,12 +634,15 @@ export default function App() {
     } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
   }
   const addSchedule = async (schedule: string, prompt: string) => {
-    if (!bridge || !runtime) return
-    try { await bridge.schedules.add(runtime.runtimeId, schedule, prompt); setSchedules(await bridge.schedules.list()) } catch (error) { reportError(error) }
+    if (!bridge || !runtime) throw new Error('Open a Prime session before creating a schedule.')
+    try { await bridge.schedules.add(runtime.runtimeId, schedule, prompt) } catch (error) { reportError(error); throw error }
+    try { setSchedules(await bridge.schedules.list()); setScheduleError('') } catch (error) { setScheduleError(error instanceof Error ? error.message : String(error)); reportError(error) }
   }
   const cancelSchedule = async (schedule: ScheduleRecord) => {
-    if (!bridge || !(schedule.runtimeId ?? runtime?.runtimeId)) { setSchedules((items) => items.map((item) => item.id === schedule.id ? { ...item, status: 'paused' } : item)); return }
-    try { await bridge.schedules.cancel(schedule.runtimeId ?? runtime!.runtimeId, schedule.id); setSchedules(await bridge.schedules.list()) } catch (error) { reportError(error) }
+    const runtimeId = schedule.runtimeId ?? runtime?.runtimeId
+    if (!bridge || !runtimeId) throw new Error('The runtime that owns this schedule is not available.')
+    try { await bridge.schedules.cancel(runtimeId, schedule.id) } catch (error) { reportError(error); throw error }
+    try { setSchedules(await bridge.schedules.list()); setScheduleError('') } catch (error) { setScheduleError(error instanceof Error ? error.message : String(error)); reportError(error) }
   }
 
   const selectInspectorTab = (tab: InspectorTab) => { inspectorTabTouchedRef.current = true; setInspectorTab(tab) }
@@ -665,7 +670,7 @@ export default function App() {
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
-    : view === 'scheduled' ? <ScheduledPage schedules={schedules} canCreate={Boolean(runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
+    : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
     : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
     : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
