@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PendingAgentEvent } from '../../src/app/agent-events'
 import { createRuntimeQueue } from '../../src/app/runtime-queue'
 import { createScopedRequestGuard } from '../../src/app/scoped-request'
-import { areSidebarPropsEqual, boundedSidebarSessions, indexSidebarSessions, type SidebarProps } from '../../src/components/Sidebar'
+import { areSidebarPropsEqual, boundedSidebarSessions, indexSidebarSessions, splitProjectSessions, type SidebarProps } from '../../src/components/Sidebar'
 import {
   ACTIVITY_BATCH,
   growActivityBatch,
@@ -123,6 +123,19 @@ describe('Sidebar memoization and scale bounds', () => {
     expect(oldCalls).toBe(0)
     expect(newCalls).toBe(1)
     expect(areSidebarPropsEqual({ ...previous, ...stable }, { ...previous, ...proxy.callbacks })).toBe(true)
+  })
+
+  it('partitions primary threads and clickable subagent sessions without changing their order', () => {
+    const sessions: SessionRecord[] = [
+      { id: 'thread-new', projectPath: '/project', filePath: '/sessions/thread-new.jsonl', title: 'Thread', createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z', status: 'idle', depth: 0 },
+      { id: 'agent-running', projectPath: '/project', filePath: '/sessions/agent-running.jsonl', title: 'Review agent', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', status: 'running', depth: 1 },
+      { id: 'agent-complete', projectPath: '/project', filePath: '/sessions/agent-complete.jsonl', title: 'Test agent', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'complete', depth: 2 },
+    ]
+
+    expect(splitProjectSessions(sessions)).toEqual({
+      threads: [sessions[0]],
+      agents: [sessions[1], sessions[2]],
+    })
   })
 
   it('indexes 5,000 sessions once and bounds rendered rows per project', () => {
