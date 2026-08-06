@@ -110,9 +110,10 @@ export interface GitStatus {
   ahead?: number
   behind?: number
   files: GitFileChange[]
+  truncated?: boolean
   error?: string
 }
-export interface GitDiff { path?: string; staged: boolean; text: string }
+export interface GitDiff { path?: string; staged: boolean; text: string; truncated: boolean; error?: string }
 
 export interface TerminalSpawnOptions { cwd: string; shell?: string; cols?: number; rows?: number }
 export interface TerminalDataEvent { terminalId: string; data: string }

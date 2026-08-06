@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { GitService } from '../../electron/main/git'
+import { GIT_DIFF_LINE_LIMIT, GIT_STATUS_ENTRY_LIMIT, GitService } from '../../electron/main/git'
+import { restrictedGitEnvironment } from '../../electron/main/process-utils'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -11,12 +12,16 @@ const git = (cwd: string, ...args: string[]) => {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stderr)
 }
+const repository = (prefix = 'prime-work-git-') => {
+  const cwd = mkdtempSync(join(tmpdir(), prefix)); dirs.push(cwd)
+  git(cwd, 'init', '-q'); git(cwd, 'config', 'user.name', 'Prime Work Test'); git(cwd, 'config', 'user.email', 'test@example.com')
+  writeFileSync(join(cwd, 'file.txt'), 'base\n'); git(cwd, 'add', 'file.txt'); git(cwd, 'commit', '-qm', 'base')
+  return cwd
+}
 
 describe('GitService', () => {
   it('reports, diffs, stages, unstages, restores, and commits through argv-only commands', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-')); dirs.push(cwd)
-    git(cwd, 'init', '-q'); git(cwd, 'config', 'user.name', 'Prime Work Test'); git(cwd, 'config', 'user.email', 'test@example.com')
-    writeFileSync(join(cwd, 'file.txt'), 'base\n'); git(cwd, 'add', 'file.txt'); git(cwd, 'commit', '-qm', 'base')
+    const cwd = repository()
     const service = new GitService(async () => cwd)
 
     writeFileSync(join(cwd, 'file.txt'), 'base\nchanged\n')
@@ -40,13 +45,118 @@ describe('GitService', () => {
   }, 15_000)
 
   it('identifies a detached HEAD as a repository branch label', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-detached-')); dirs.push(cwd)
-    git(cwd, 'init', '-q'); git(cwd, 'config', 'user.name', 'Prime Work Test'); git(cwd, 'config', 'user.email', 'test@example.com')
-    writeFileSync(join(cwd, 'file.txt'), 'base\n'); git(cwd, 'add', 'file.txt'); git(cwd, 'commit', '-qm', 'base'); git(cwd, 'checkout', '-q', '--detach')
+    const cwd = repository('prime-work-git-detached-')
+    git(cwd, 'checkout', '-q', '--detach')
     const service = new GitService(async () => cwd)
 
     expect(await service.branch(cwd)).toMatch(/^HEAD \([0-9a-f]+\)$/)
     expect((await service.status(cwd)).isRepo).toBe(true)
   })
 
+  it('represents a file with staged and unstaged edits in both scopes', async () => {
+    const cwd = repository('prime-work-git-scopes-')
+    const service = new GitService(async () => cwd)
+    writeFileSync(join(cwd, 'file.txt'), 'base\nstaged\n')
+    await service.stage(cwd, ['file.txt'])
+    writeFileSync(join(cwd, 'file.txt'), 'base\nstaged\nunstaged\n')
+
+    const changes = (await service.status(cwd)).files.filter((file) => file.path === 'file.txt')
+    expect(changes).toHaveLength(2)
+    expect(changes.find((file) => file.staged)?.additions).toBe(1)
+    expect(changes.find((file) => !file.staged)?.additions).toBe(1)
+  })
+
+  it('does not execute repository fsmonitor, external diff, hook, or filter programs and strips process secrets/config injection', async () => {
+    const cwd = repository('prime-work-git-hostile-')
+    const marker = join(cwd, 'helper-ran')
+    const helper = join(cwd, 'hostile-helper.sh')
+    const filter = join(cwd, 'hostile-filter.sh')
+    writeFileSync(helper, `#!/bin/sh
+printf '%s:%s\n' "$1" "$PRIME_WORK_TEST_TOKEN" >> ${JSON.stringify(marker)}
+exit 1
+`)
+    writeFileSync(filter, `#!/bin/sh
+printf 'filter:%s\n' "$PRIME_WORK_TEST_TOKEN" >> ${JSON.stringify(marker)}
+cat
+`)
+    chmodSync(helper, 0o755); chmodSync(filter, 0o755)
+    git(cwd, 'config', 'core.fsmonitor', helper)
+    git(cwd, 'config', 'diff.external', helper)
+    git(cwd, 'config', 'filter.hostile.clean', filter)
+    git(cwd, 'config', 'filter.hostile.smudge', filter)
+    git(cwd, 'config', 'filter.hostile.required', 'true')
+    writeFileSync(join(cwd, '.gitattributes'), '*.txt filter=hostile\n')
+    mkdirSync(join(cwd, '.git', 'hooks'), { recursive: true })
+    writeFileSync(join(cwd, '.git', 'hooks', 'pre-commit'), `#!/bin/sh
+printf 'hook:%s\n' "$PRIME_WORK_TEST_TOKEN" >> ${JSON.stringify(marker)}
+exit 1
+`)
+    chmodSync(join(cwd, '.git', 'hooks', 'pre-commit'), 0o755)
+    writeFileSync(join(cwd, 'file.txt'), 'base\nchanged\n')
+
+    const oldValues = {
+      token: process.env.PRIME_WORK_TEST_TOKEN,
+      count: process.env.GIT_CONFIG_COUNT,
+      key: process.env.GIT_CONFIG_KEY_0,
+      value: process.env.GIT_CONFIG_VALUE_0,
+    }
+    process.env.PRIME_WORK_TEST_TOKEN = 'top-secret-token'
+    process.env.GIT_CONFIG_COUNT = '1'
+    process.env.GIT_CONFIG_KEY_0 = 'core.fsmonitor'
+    process.env.GIT_CONFIG_VALUE_0 = helper
+    try {
+      const env = restrictedGitEnvironment()
+      expect(env.PRIME_WORK_TEST_TOKEN).toBeUndefined()
+      expect(env.GIT_CONFIG_COUNT).toBeUndefined()
+      expect(env.GIT_CONFIG_KEY_0).toBeUndefined()
+      expect(env.GIT_CONFIG_VALUE_0).toBeUndefined()
+
+      const service = new GitService(async () => cwd)
+      expect((await service.status(cwd)).isRepo).toBe(true)
+      expect((await service.diff(cwd, 'file.txt', false)).text).toContain('+changed')
+      expect(await service.stage(cwd, ['file.txt'])).toBe(true)
+      expect((await service.commit(cwd, 'hostile helpers disabled')).ok).toBe(true)
+      writeFileSync(join(cwd, 'file.txt'), 'dirty\n')
+      expect(await service.restore(cwd, ['file.txt'])).toBe(true)
+      expect(readFileSync(join(cwd, 'file.txt'), 'utf8')).toBe('base\nchanged\n')
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+      restore('PRIME_WORK_TEST_TOKEN', oldValues.token)
+      restore('GIT_CONFIG_COUNT', oldValues.count)
+      restore('GIT_CONFIG_KEY_0', oldValues.key)
+      restore('GIT_CONFIG_VALUE_0', oldValues.value)
+    }
+  }, 20_000)
+
+  it('surfaces mutation and commit failures instead of returning apparent success', async () => {
+    const cwd = repository('prime-work-git-failure-')
+    const service = new GitService(async () => cwd)
+    writeFileSync(join(cwd, 'file.txt'), 'changed\n')
+    writeFileSync(join(cwd, '.git', 'index.lock'), 'locked')
+    await expect(service.stage(cwd, ['file.txt'])).rejects.toThrow(/Git add failed.*index\.lock/i)
+    rmSync(join(cwd, '.git', 'index.lock'))
+    git(cwd, 'restore', '--', 'file.txt')
+
+    const commit = await service.commit(cwd, 'nothing to commit')
+    expect(commit.ok).toBe(false)
+    expect(commit.output).toMatch(/nothing to commit|no changes added/i)
+  })
+
+  it('caps status entries and diff lines with explicit truncation', async () => {
+    const cwd = repository('prime-work-git-caps-')
+    const service = new GitService(async () => cwd)
+    for (let index = 0; index < GIT_STATUS_ENTRY_LIMIT + 5; index += 1) writeFileSync(join(cwd, `untracked-${String(index).padStart(4, '0')}`), 'x')
+    const status = await service.status(cwd)
+    expect(status.files).toHaveLength(GIT_STATUS_ENTRY_LIMIT)
+    expect(status.truncated).toBe(true)
+
+    const large = Array.from({ length: GIT_DIFF_LINE_LIMIT + 20 }, (_, index) => `line-${index}`).join('\n') + '\n'
+    writeFileSync(join(cwd, 'file.txt'), large)
+    const diff = await service.diff(cwd, 'file.txt', false)
+    expect(diff.truncated).toBe(true)
+    expect(diff.error).toMatch(/lines.*truncated/i)
+    expect(diff.text).toContain('[Prime Work: diff truncated')
+    expect(diff.text.split('\n').length).toBeLessThanOrEqual(GIT_DIFF_LINE_LIMIT)
+  }, 30_000)
 })
