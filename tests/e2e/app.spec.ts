@@ -81,7 +81,7 @@ function createHermeticFixture(): { userData: string; home: string; project: str
       pinned: false, createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z',
       folderIdentities: { [canonicalProject]: identity(canonicalProject), [canonicalSecondary]: identity(canonicalSecondary) },
     }],
-    settings: { browserHome: 'about:blank' },
+    settings: { browserHome: 'about:blank', telemetry: true },
     archivedSessions: [],
     dismissedProjectPaths: [],
   }))
@@ -298,6 +298,17 @@ test.describe('Prime Work desktop smoke', () => {
     })
     expect(colors.note).toBe(colors.canvas)
     expect(colors.note).not.toContain('rgba')
+  })
+
+  test('disables a persisted diagnostics preference', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Privacy', exact: true }).click()
+    const diagnostics = page.getByRole('checkbox', { name: 'Share optional diagnostics' })
+    await expect(diagnostics).toBeChecked()
+    await diagnostics.focus()
+    await diagnostics.press('Space')
+    await expect(diagnostics).not.toBeChecked()
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).telemetry)).toBe(false)
   })
 
   test('applies dark appearance and restores system appearance', async () => {
