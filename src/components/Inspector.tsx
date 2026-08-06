@@ -11,6 +11,7 @@ interface InspectorProps {
   onTabChange(tab: InspectorTab): void
   onClose(): void
   project?: ProjectRecord
+  cwd?: string
   runtime?: RuntimeInfo | null
   messages: TranscriptMessage[]
   git: GitStatus
@@ -23,7 +24,7 @@ interface InspectorProps {
 
 const tabs: Array<{ id: InspectorTab; label: string }> = [{ id: 'summary', label: 'Summary' }, { id: 'changes', label: 'Changes' }, { id: 'browser', label: 'Browser' }, { id: 'files', label: 'Files' }]
 
-export function Inspector({ activeTab, onTabChange, onClose, project, runtime, messages, git, browserHome, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
+export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runtime, messages, git, browserHome, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
   const inspectorRef = useFocusTrap<HTMLElement>(overlay, onClose)
   const moveTab = (current: number, key: string) => {
     let next = current
@@ -44,7 +45,7 @@ export function Inspector({ activeTab, onTabChange, onClose, project, runtime, m
     </div>
     <div id={`inspector-panel-${activeTab}`} className="inspector__body" role="tabpanel" aria-labelledby={`inspector-tab-${activeTab}`} tabIndex={0}>
       {activeTab === 'summary' ? <SummaryPanel project={project} runtime={runtime} messages={messages} git={git}/> : null}
-      {activeTab === 'changes' ? <ChangesPanel project={project} git={git} onRefreshGit={onRefreshGit}/> : null}
+      {activeTab === 'changes' ? <ChangesPanel key={cwd ?? 'no-workspace'} cwd={cwd} git={git} onRefreshGit={onRefreshGit}/> : null}
       {activeTab === 'browser' ? <BrowserPanel home={browserHome} onOpenExternal={onOpenExternal}/> : null}
       {activeTab === 'files' ? <FilesPanel project={project} git={git} onReveal={onRevealPath}/> : null}
     </div>

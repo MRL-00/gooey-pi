@@ -2,7 +2,7 @@
 
 Date: 2026-08-06
 Branch: `fix/audit-final-closure`
-Base integration: `bb41cf7`
+Base integration: `1358408` plus `c911e77`
 
 ## Verdict
 
@@ -23,11 +23,11 @@ The only external prerequisite is access to an Apple Developer ID Application id
 
 - `npm run typecheck`: pass
 - `npm run check`: pass
-- `npm test`: 30 files / 171 tests pass
-- `npm run test:coverage`: pass; 73.26% statements, 59.30% branches, 82.11% functions, 80.40% lines
+- `npm test`: 35 files / 230 tests pass
+- `npm run test:coverage`: pass; 75.82% statements, 63.38% branches, 83.92% functions, 82.52% lines
 - `npm run build`: pass
-- `npm run release:bundle-size`: pass; main 184,354 B, preload 4,874 B, initial renderer 722,023 B, largest chunk 554,693 B, renderer JS/CSS total 1,766,107 B
-- `npm run test:e2e`: pass; 18/18 Electron tests
+- `npm run release:bundle-size`: pass; main 212,208 B, preload 5,051 B, initial renderer 730,897 B, largest chunk 554,693 B, renderer JS/CSS total 1,780,423 B
+- `npm run test:e2e`: pass; 23/23 Electron tests
 - `npm run package:mac:local-qa`: pass; DMG/ZIP/app produced and QA package verification passed
 - Public package clean-environment preflight: expected fail-closed without `RELEASE_SIGNING_TEAM_ID`
 - `npm audit --json`: zero known vulnerabilities

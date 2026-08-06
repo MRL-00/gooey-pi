@@ -1,22 +1,28 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ProjectService } from '../../electron/main/projects'
 import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
-import { SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
+import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
+import type { SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function setup(maxSessionFiles?: number, options?: SessionServiceOptions): { root: string; project: string; service: SessionService } {
+function setup(
+  maxSessionFiles?: number,
+  options?: SessionServiceOptions,
+): { root: string; project: string; service: SessionService; store: JsonStateStore } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
   const service = new SessionService(store, null, maxSessionFiles, options)
   Object.defineProperty(service, 'sessionRoot', { value: root })
-  return { root, project, service }
+  return { root, project, service, store }
 }
 
 function writeSession(path: string, project: string, id: string, timestamp = '2025-01-01T00:00:00.000Z'): void {
@@ -26,6 +32,45 @@ function writeSession(path: string, project: string, id: string, timestamp = '20
     '',
   ].join('\n'))
 }
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+  }
+}
+
+function metadata(filePath: string, projectPath: string, id: string): SessionMetadata {
+  return {
+    id,
+    filePath,
+    projectPath,
+    title: id,
+    createdAt: '2025-01-01T00:00:00.000Z',
+    updatedAt: '2025-01-01T00:00:00.000Z',
+    status: 'idle',
+    depth: 0,
+    pinned: false,
+    unread: false,
+  }
+}
+
+describe('session discovery work bounds', () => {
+  it('uses UUIDv7 timestamps for deterministic bounded pre-I/O admission', () => {
+    const names = [
+      '01800000-0000-7000-8000-000000000000.jsonl',
+      'legacy.jsonl',
+      '01900000-0002-7000-8000-000000000000.jsonl',
+      '01900000-0001-7000-8000-000000000000.jsonl',
+    ]
+    expect(boundedSessionDiscoveryNames(names, 2)).toEqual([
+      '01900000-0002-7000-8000-000000000000.jsonl',
+      '01900000-0001-7000-8000-000000000000.jsonl',
+    ])
+    expect(boundedSessionDiscoveryNames(names, 0)).toEqual([])
+  })
+})
 
 describe('SessionService catalog scaling', () => {
   it('coalesces concurrent lists and reuses metadata by canonical path, mtime, and size', async () => {
@@ -49,6 +94,31 @@ describe('SessionService catalog scaling', () => {
     writeSession(file, project, 'one-expanded', '2025-02-01T00:00:00.000Z')
     expect((await service.list())[0]?.id).toBe('one-expanded')
     expect(readMetadata).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns canonical ownership for sessions created through a project alias', async () => {
+    const { root, project, service, store } = setup()
+    const alias = join(project, '..', 'project-alias')
+    symlinkSync(project, alias, 'dir')
+    const file = join(root, 'aliased.jsonl')
+    writeSession(file, `${alias}/.`, 'aliased')
+
+    const records = await service.list(alias)
+
+    expect(records).toHaveLength(1)
+    expect(records[0].projectPath).toBe(realpathSync(project))
+    expect(await service.projectPaths()).toEqual([realpathSync(project)])
+
+    const info = lstatSync(project, { bigint: true })
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project,
+      pinned: false, createdAt: now, lastOpenedAt: now,
+      folderIdentities: { [project]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projects = new ProjectService(store, () => null)
+    projects.bindProviders({ sessions: () => service.list(), branch: async () => undefined })
+    expect(await projects.list()).toEqual([expect.objectContaining({ id: 'project', sessionCount: 1 })])
   })
 
   it('selects the newest files before parsing with a deterministic canonical-path tie break', async () => {
@@ -114,78 +184,176 @@ describe('SessionService catalog scaling', () => {
   })
 })
 
-describe('SessionService transcript bounds', () => {
-  it('authorizes each caller, coalesces in-flight reads per session, and returns deep clones', async () => {
-    let releaseRead: (() => void) | undefined
-    let markStarted: (() => void) | undefined
-    const started = new Promise<void>((resolveStarted) => { markStarted = resolveStarted })
-    const transcriptReader = vi.fn(async () => {
-      markStarted?.()
-      await new Promise<void>((resolveRead) => { releaseRead = resolveRead })
-      return [{ id: 'message', role: 'user' as const, parts: [{ type: 'text' as const, text: 'original' }] }]
-    })
-    const { root, project, service } = setup(undefined, { transcriptReader })
-    const file = join(root, 'coalesced.jsonl')
-    writeSession(file, project, 'coalesced')
-    const authorize = vi.spyOn(service, 'requireSessionPath').mockResolvedValue(file)
+describe('SessionMetadataCatalog live synchronization', () => {
+  it('canonicalizes daemon session paths and never regresses the JSONL update time', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-live-catalog-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'live.jsonl')
+    writeSession(file, project, 'live', '2025-02-01T00:00:00.000Z')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(file)}, isStreaming: true, modified: '2024-01-01T00:00:00.000Z' }] }))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
 
-    const firstRequest = service.read(file)
-    const secondRequest = service.read(file)
-    await started
-    expect(authorize).toHaveBeenCalledTimes(2)
-    releaseRead?.()
-    const [first, second] = await Promise.all([firstRequest, secondRequest])
-
-    expect(transcriptReader).toHaveBeenCalledTimes(1)
-    expect(first).not.toBe(second)
-    expect(first[0]).not.toBe(second[0])
-    expect(first[0]?.parts).not.toBe(second[0]?.parts)
-    const firstPart = first[0]?.parts[0]
-    if (firstPart?.type === 'text') firstPart.text = 'mutated'
-    expect(second[0]?.parts).toEqual([{ type: 'text', text: 'original' }])
+    const record = (await service.list())[0]
+    expect(record?.filePath).toBe(realpathSync(file))
+    expect(record?.status).toBe('running')
+    expect(record?.updatedAt).toBe('2025-02-01T00:00:00.000Z')
   })
 
-  it('admits only a bounded number of transcript scans across sessions', async () => {
+  it('does not let an in-flight pre-append scan satisfy a post-invalidation refresh', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-scan-race-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'race.jsonl')
+    writeSession(file, project, 'old')
+    const canonical = realpathSync(file)
+    const releases: Array<(value: SessionMetadata) => void> = []
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      null,
+      20,
+      async () => new Promise<SessionMetadata>((resolveMetadata) => releases.push(resolveMetadata)),
+    )
+
+    const stale = catalog.all()
+    await waitUntil(() => releases.length === 1)
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'new', message: { role: 'user', content: 'new' } })}\n`)
+    catalog.invalidateLiveCatalog()
+    const refreshed = catalog.all()
+    await waitUntil(() => releases.length === 2)
+    releases[1](metadata(canonical, project, 'new'))
+    await expect(refreshed).resolves.toMatchObject([{ id: 'new' }])
+    releases[0](metadata(canonical, project, 'old'))
+    await expect(stale).resolves.toMatchObject([{ id: 'old' }])
+    await expect(catalog.all()).resolves.toMatchObject([{ id: 'new' }])
+    expect(releases).toHaveLength(2)
+  })
+})
+
+
+describe('SessionService live changes', () => {
+  it('emits refreshes during continuous JSONL writes instead of waiting for the stream to stop', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'streaming.jsonl')
+    writeSession(file, project, 'streaming')
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+    let index = 0
+    const writes = setInterval(() => {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `stream-${index++}`, message: { role: 'user', content: 'stream' } })}
+`)
+    }, 25)
+
+    try {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 350))
+      expect(events.some((event) => event.filePath === realpathSync(file))).toBe(true)
+    } finally {
+      clearInterval(writes)
+      unsubscribe()
+    }
+  })
+
+  it('debounces canonical JSONL changes, rejects outside aliases, and stops after unsubscribe', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'watched.jsonl')
+    writeSession(file, project, 'watched')
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribeThrowing = service.onDidChange(() => { throw new Error('listener failure') })
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+
+    // Continuous writes above cover the real fs.watch path. Drive the private
+    // debounce admission directly here so parallel coverage load cannot drop the
+    // single kernel event that this deterministic coalescing assertion needs.
+    const watcherHarness = service as unknown as { queueSessionChange(filename: string): void }
+    watcherHarness.queueSessionChange('watched.jsonl')
+    watcherHarness.queueSessionChange('watched.jsonl')
+    await waitUntil(() => events.some((event) => event.filePath === realpathSync(file)), 4_000)
+    expect(events.filter((event) => event.filePath === realpathSync(file))).toHaveLength(1)
+
+    const outside = join(root, '..', 'outside.jsonl')
+    writeSession(outside, project, 'outside')
+    symlinkSync(outside, join(root, 'outside-alias.jsonl'))
+    watcherHarness.queueSessionChange('outside-alias.jsonl')
+    await waitUntil(() => events.some((event) => event.filePath === undefined), 4_000)
+    expect(events.some((event) => event.filePath === realpathSync(outside))).toBe(false)
+
+    unsubscribeThrowing()
+    unsubscribe()
+    const count = events.length
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'after-unsubscribe', message: { role: 'user', content: 'ignored' } })}\n`)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    expect(events).toHaveLength(count)
+  })
+})
+
+describe('SessionService transcript read admission', () => {
+  it('authorizes every caller, coalesces canonical reads, bounds global admission, and isolates results', async () => {
     let active = 0
-    let maximumActive = 0
-    let startedCount = 0
-    let markTwoStarted: (() => void) | undefined
-    let markThreeStarted: (() => void) | undefined
-    const twoStarted = new Promise<void>((resolveStarted) => { markTwoStarted = resolveStarted })
-    const threeStarted = new Promise<void>((resolveStarted) => { markThreeStarted = resolveStarted })
-    const releases: Array<() => void> = []
-    const transcriptReader = vi.fn(async () => {
+    let peak = 0
+    let releaseReads: (() => void) | undefined
+    const gate = new Promise<void>((resolveGate) => { releaseReads = resolveGate })
+    const transcriptReader = vi.fn(async (filePath: string) => {
       active += 1
-      maximumActive = Math.max(maximumActive, active)
-      await new Promise<void>((resolveRead) => {
-        releases.push(resolveRead)
-        startedCount += 1
-        if (startedCount === 2) markTwoStarted?.()
-        if (startedCount === 3) markThreeStarted?.()
-      })
+      peak = Math.max(peak, active)
+      await gate
       active -= 1
-      return []
+      return [{ id: filePath, role: 'user' as const, parts: [{ type: 'text' as const, text: 'original' }] }]
     })
     const { root, project, service } = setup(undefined, {
+      maxPendingTranscriptReads: 2,
       transcriptReader,
-      maxConcurrentTranscriptReads: 2,
     })
-    const files = ['one.jsonl', 'two.jsonl', 'three.jsonl'].map((name, index) => {
-      const file = join(root, name)
-      writeSession(file, project, `session-${index}`)
-      return file
-    })
+    const files = Array.from({ length: 5 }, (_, index) => join(root, `${index}.jsonl`))
+    for (const [index, file] of files.entries()) writeSession(file, project, String(index))
+    const alias = join(root, 'alias.jsonl')
+    symlinkSync(files[0], alias)
+    const authorize = vi.spyOn(service, 'requireSessionPath')
 
-    const requests = files.map((file) => service.read(file))
-    await twoStarted
-    expect(transcriptReader).toHaveBeenCalledTimes(2)
-    releases.shift()?.()
-    await threeStarted
-    expect(maximumActive).toBe(2)
-    for (const release of releases.splice(0)) release()
-    await expect(Promise.all(requests)).resolves.toEqual([[], [], []])
+    const first = service.read(files[0])
+    const duplicate = service.read(files[0])
+    const aliased = service.read(alias)
+    await vi.waitFor(() => {
+      expect(authorize).toHaveBeenCalledTimes(3)
+      expect(transcriptReader).toHaveBeenCalledTimes(1)
+    })
+    const second = service.read(files[1])
+    await vi.waitFor(() => expect(transcriptReader).toHaveBeenCalledTimes(2))
+    const third = service.read(files[2])
+    const fourth = service.read(files[3])
+    const admission = service as unknown as { transcriptReadQueue: Array<() => void> }
+    await vi.waitFor(() => expect(admission.transcriptReadQueue).toHaveLength(2))
+
+    // Attach the rejection assertion immediately: retaining an already-rejected
+    // overflow promise while waiting on the reader gate would leak an unhandled rejection.
+    const overflow = service.read(files[4])
+    await expect(overflow).rejects.toThrow('Too many transcript reads are pending')
+    expect(authorize).toHaveBeenCalledTimes(7)
+    expect(admission.transcriptReadQueue).toHaveLength(2)
+    expect(peak).toBe(2)
+
+    releaseReads?.()
+    const results = await Promise.all([first, duplicate, aliased, second, third, fourth])
+    expect(transcriptReader).toHaveBeenCalledTimes(4)
+    expect(peak).toBeLessThanOrEqual(2)
+    expect(results[0]).not.toBe(results[1])
+    expect(results[0][0]).not.toBe(results[1][0])
+    const firstPart = results[0][0]?.parts[0]
+    if (firstPart?.type === 'text') firstPart.text = 'mutated'
+    expect(results[1][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
+    expect(results[2][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
   })
+})
 
+describe('SessionService transcript bounds', () => {
   it('returns a bounded recent suffix of long conversations', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'long.jsonl')
@@ -328,6 +496,114 @@ describe('SessionService transcript bounds', () => {
 
 
 describe('SessionService orchestration', () => {
+  it('queues a follow-up through the active Prime Agent daemon instead of resuming its locked session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-active-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'active.jsonl')
+    writeSession(file, project, 'active')
+    const socketPath = join(dir, 'daemon.sock')
+    const followUps: Array<Record<string, unknown>> = []
+    const daemon = createServer((socket) => {
+      socket.write(`${JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] })}\n`)
+      let buffer = ''
+      socket.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        while (buffer.includes('\n')) {
+          const index = buffer.indexOf('\n')
+          const line = buffer.slice(0, index)
+          buffer = buffer.slice(index + 1)
+          const envelope = JSON.parse(line) as { id?: string; command?: Record<string, unknown> }
+          if (envelope.command?.type !== 'follow_up') continue
+          followUps.push(envelope)
+          socket.write(`${JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} })}\n`)
+        }
+      })
+    })
+    await new Promise<void>((resolveListen, rejectListen) => {
+      daemon.once('error', rejectListen)
+      daemon.listen(socketPath, resolveListen)
+    })
+
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args[0] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'active-worker', activeSessionId: 'active-worker', lifecycle: 'live', isSessionActive: true, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(socketPath)} }]))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    try {
+      await expect(service.followUp(file, 'queue this reply')).resolves.toBe(true)
+      expect(followUps).toHaveLength(1)
+      expect(followUps[0]).toMatchObject({
+        type: 'command',
+        protocol: { name: 'prime-agent.daemon', version: 7 },
+        command: { type: 'follow_up', activeSessionId: 'active-worker', message: 'queue this reply' },
+      })
+    } finally {
+      await new Promise<void>((resolveClose) => daemon.close(() => resolveClose()))
+    }
+  })
+
+  it('rejects a daemon endpoint that is not a same-user Unix socket', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-untrusted-daemon-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'active.jsonl')
+    writeSession(file, project, 'active')
+    const socketPath = join(dir, 'not-a-socket')
+    writeFileSync(socketPath, 'not a daemon')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args[0] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'active-worker', lifecycle: 'live', isSessionActive: true, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify([{ status: 'current', isDefault: true, socketPath: ${JSON.stringify(socketPath)} }]))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await expect(service.followUp(file, 'do not disclose this')).rejects.toThrow('untrusted daemon socket')
+  })
+
+  it('does not send a follow-up when the session is no longer active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-inactive-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'inactive.jsonl')
+    writeSession(file, project, 'inactive')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'inactive-worker', activeSessionId: 'inactive-worker', lifecycle: 'live', isSessionActive: false, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+process.exit(9)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
+  })
+
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'runtime.jsonl')

@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { StrictJsonlDecoder } from '../jsonl'
 import { errorMessage } from '../validation'
+import { MAX_RPC_WRITE_FRAME_BYTES } from './limits'
 
 /** Owns JSONL frame decoding and serialized, byte-bounded writes for one RPC child. */
 export class FramedRpcTransport {
@@ -34,7 +35,7 @@ export class FramedRpcTransport {
   enqueue(line: string): Promise<void> {
     if (!this.writable()) return Promise.reject(new Error('Runtime is not available'))
     const bytes = Buffer.byteLength(line)
-    if (bytes > 2 * 1024 * 1024) return Promise.reject(new Error('RPC write exceeded the per-message byte limit'))
+    if (bytes > MAX_RPC_WRITE_FRAME_BYTES) return Promise.reject(new Error('RPC write exceeded the per-message byte limit'))
     if (this.queuedWriteBytes + bytes > 32 * 1024 * 1024) return Promise.reject(new Error('RPC write queue byte budget exceeded'))
     this.queuedWriteBytes += bytes
     const operation = this.writeQueue.catch(() => undefined).then(() => new Promise<void>((resolveWrite, rejectWrite) => {

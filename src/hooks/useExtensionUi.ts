@@ -1,48 +1,63 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createRuntimeQueue } from '@/app/runtime-queue'
 import type { ExtensionUiResponse } from '@/components/ExtensionUiModal'
 import { parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
 import type { PrimeWorkApi, SessionRecord } from '@/types/api'
 
 interface UseExtensionUiOptions {
   bridge: PrimeWorkApi | null
-  activeRuntimeId: string | null
+  activeRuntimeId?: string
   runtimeSessionsRef: React.RefObject<Map<string, string>>
-  runtimeIdRef: React.RefObject<string | null>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
   reportError(error: unknown): void
 }
 
-interface PendingExtensionUi {
+export interface PendingExtensionUi {
   runtimeId: string
   request: ExtensionUiRequest
-  timer: number | null
+}
+
+export function pendingExtensionUiForRuntime(
+  pending: ReadonlyMap<string, PendingExtensionUi>,
+  runtimeId?: string,
+): PendingExtensionUi | null {
+  return runtimeId ? pending.get(runtimeId) ?? null : null
 }
 
 export function useExtensionUi({
   bridge,
   activeRuntimeId,
   runtimeSessionsRef,
-  runtimeIdRef,
   setSessions,
   reportError,
 }: UseExtensionUiOptions) {
-  const [extensionUi, setExtensionUi] = useState<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
-  const pendingByRuntimeRef = useRef(createRuntimeQueue<PendingExtensionUi>())
+  const [extensionUi, setExtensionUi] = useState<PendingExtensionUi | null>(null)
+  const extensionUiRef = useRef<PendingExtensionUi | null>(null)
+  const pendingByRuntimeRef = useRef<Map<string, PendingExtensionUi>>(new Map())
+  const timerByRuntimeRef = useRef<Map<string, number>>(new Map())
+  const activeRuntimeIdRef = useRef(activeRuntimeId)
+  activeRuntimeIdRef.current = activeRuntimeId
+
+  const showPendingForActiveRuntime = useCallback(() => {
+    const visible = pendingExtensionUiForRuntime(pendingByRuntimeRef.current, activeRuntimeIdRef.current)
+    extensionUiRef.current = visible
+    setExtensionUi(visible)
+  }, [])
 
   const clearExtensionUi = useCallback((runtimeId?: string) => {
-    const target = runtimeId ?? runtimeIdRef.current ?? undefined
-    if (!target) return
-    const pending = pendingByRuntimeRef.current.get(target)
-    if (!pending) return
-    if (pending.timer !== null) window.clearTimeout(pending.timer)
-    pendingByRuntimeRef.current.delete(target)
-    setExtensionUi((current) => current?.runtimeId === target ? null : current)
-  }, [runtimeIdRef])
+    const targetRuntimeId = runtimeId ?? extensionUiRef.current?.runtimeId
+    if (!targetRuntimeId) return
+    const timer = timerByRuntimeRef.current.get(targetRuntimeId)
+    if (timer !== undefined) window.clearTimeout(timer)
+    timerByRuntimeRef.current.delete(targetRuntimeId)
+    pendingByRuntimeRef.current.delete(targetRuntimeId)
+    if (extensionUiRef.current?.runtimeId === targetRuntimeId) {
+      extensionUiRef.current = null
+      setExtensionUi(null)
+    }
+  }, [])
 
   const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
-    const runtimeId = runtimeIdRef.current
-    const pending = runtimeId ? pendingByRuntimeRef.current.get(runtimeId) : undefined
+    const pending = extensionUiRef.current
     if (!pending) return
     clearExtensionUi(pending.runtimeId)
     const pendingSession = runtimeSessionsRef.current.get(pending.runtimeId)
@@ -59,24 +74,30 @@ export function useExtensionUi({
         ...response,
       })
     } catch (error) {
-      if (runtimeIdRef.current === pending.runtimeId) reportError(error)
+      if (activeRuntimeIdRef.current === pending.runtimeId) reportError(error)
     }
-  }, [bridge, clearExtensionUi, reportError, runtimeIdRef, runtimeSessionsRef, setSessions])
+  }, [bridge, clearExtensionUi, reportError, runtimeSessionsRef, setSessions])
 
   const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(rawEvent)
     if (!request || !bridge) return
-    const pending: PendingExtensionUi = { runtimeId, request, timer: null }
-    const previous = pendingByRuntimeRef.current.put(runtimeId, pending)
+    const previous = pendingByRuntimeRef.current.get(runtimeId)
     if (previous) {
-      if (previous.timer !== null) window.clearTimeout(previous.timer)
       void bridge.agent.command(runtimeId, {
-        type: 'extension_ui_response', id: previous.request.id, cancelled: true,
+        type: 'extension_ui_response',
+        id: previous.request.id,
+        cancelled: true,
       }).catch(() => undefined)
+      clearExtensionUi(runtimeId)
     }
-    if (runtimeIdRef.current === runtimeId) setExtensionUi({ runtimeId, request })
+    const pending = { runtimeId, request }
+    pendingByRuntimeRef.current.set(runtimeId, pending)
+    if (activeRuntimeIdRef.current === runtimeId) {
+      extensionUiRef.current = pending
+      setExtensionUi(pending)
+    }
     if ('timeout' in request && request.timeout !== undefined) {
-      pending.timer = window.setTimeout(() => {
+      timerByRuntimeRef.current.set(runtimeId, window.setTimeout(() => {
         if (pendingByRuntimeRef.current.get(runtimeId)?.request.id !== request.id) return
         void bridge.agent.command(runtimeId, {
           type: 'extension_ui_response',
@@ -84,21 +105,24 @@ export function useExtensionUi({
           cancelled: true,
         }).catch(() => undefined)
         clearExtensionUi(runtimeId)
-      }, request.timeout)
+      }, request.timeout))
     }
-  }, [bridge, clearExtensionUi, runtimeIdRef])
+  }, [bridge, clearExtensionUi])
 
-  useEffect(() => {
-    const pending = activeRuntimeId ? pendingByRuntimeRef.current.get(activeRuntimeId) : undefined
-    setExtensionUi(pending ? { runtimeId: pending.runtimeId, request: pending.request } : null)
-  }, [activeRuntimeId])
+  useEffect(() => { showPendingForActiveRuntime() }, [activeRuntimeId, showPendingForActiveRuntime])
 
   useEffect(() => () => {
+    for (const timer of timerByRuntimeRef.current.values()) window.clearTimeout(timer)
     for (const pending of pendingByRuntimeRef.current.values()) {
-      if (pending.timer !== null) window.clearTimeout(pending.timer)
+      void bridge?.agent.command(pending.runtimeId, {
+        type: 'extension_ui_response',
+        id: pending.request.id,
+        cancelled: true,
+      }).catch(() => undefined)
     }
+    timerByRuntimeRef.current.clear()
     pendingByRuntimeRef.current.clear()
-  }, [])
+  }, [bridge])
 
   return { extensionUi, clearExtensionUi, respondToExtensionUi, showExtensionUi }
 }

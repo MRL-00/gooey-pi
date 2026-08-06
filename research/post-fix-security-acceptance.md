@@ -1,8 +1,8 @@
 # Post-fix security acceptance — `fix/audit-final-closure`
 
-**Reviewed tree:** `/private/tmp/prime-audit-verify`, current tracked/staged/untracked closure relative to `bb41cf7`
-**Method:** independent source/diff review and non-Electron validation. Product/test code was not edited by this review.
-**Verdict:** **ACCEPT**. I found **no remaining code blocker** in the requested CFR/security scope.
+**Reviewed tree:** `/private/tmp/prime-audit-verify`, pending merge of `1358408` into `c911e77` on `fix/audit-final-closure`, with the full integrated closure also reviewed relative to `bb41cf7`
+**Method:** independent source/diff and conflict-resolution review plus non-Electron validation. Product/test code was not edited by this review.
+**Verdict:** **ACCEPT**. I found **no remaining code blocker** in the requested CFR/security scope or in the pending merge resolution.
 
 Public Apple distribution was not executed because this host has no Developer ID/notarization secrets. That is an external credential prerequisite, not a source defect: both the standalone preflight and the public package entry point fail closed before quality/build/package work when the credentials are absent.
 
@@ -11,17 +11,28 @@ Public Apple distribution was not executed because this host has no Developer ID
 | Check | Result |
 |---|---|
 | `npm run typecheck` | **PASS** |
-| `npm run check` | **PASS** — 146 files linted; 12 release/config files format-checked |
-| `npm test` | **PASS** — 30 files, 171 tests |
-| `npm run release:bundle-size` | **PASS** — main 184,354 B; preload 4,874 B; initial renderer 722,023 B; largest chunk 554,693 B; total renderer JS/CSS 1,766,107 B |
+| `npm run check` | **PASS** — 159 files linted; 12 release/config files format-checked |
+| `npm test` | **PASS** — 36 files, 232 tests |
+| `npm run release:bundle-size` | **PASS** — main 212,208 B; preload 5,051 B; initial renderer 730,897 B; largest chunk 554,693 B; total renderer JS/CSS 1,781,632 B |
 | `npm audit --json` | **PASS** — 0 known vulnerabilities across 786 dependencies |
 | `git diff --check && git diff --cached --check` | **PASS** |
 | Clean-environment `npm run release:preflight` | **EXPECTED FAIL-CLOSED** — missing `RELEASE_SIGNING_TEAM_ID` |
 | Clean-environment `node scripts/release/package.mjs --public --dry-run` | **EXPECTED FAIL-CLOSED** — missing `RELEASE_SIGNING_TEAM_ID` |
 
-After the worktree was restored, its temporary dependency link did not contain the newly locked `jsdom`; I replaced the generated `node_modules` with `npm ci`, ran the normal native dependency rebuild/install, and reran the suite to the final green result above. This was dependency setup only and did not change source or lockfiles.
+The integrated tree also has recorded green results for coverage (75.82% statements, 63.38% branches, 83.92% functions, 82.52% lines), build, 23/23 Electron tests, and the local QA package pipeline. Per the explicit coordination instruction, I did **not** independently rerun Playwright, launch Electron, or rebuild/package the application during this merge review. My independent reruns are the non-Electron checks in the table above.
 
-Per the explicit coordination instruction, I did **not** run Playwright, launch Electron, or rerun the packaged application. The already recorded final E2E repair run reports 18/18 passing, including the live CFR-11 boundary cases, but that result was not independently repeated here.
+## Pending-merge conflict review
+
+I inspected every resolved path recorded in `MERGE_MSG`, not only the aggregate staged diff. The resolutions preserve both sides' required controls:
+
+- `sessions.ts` and `sessions/catalog.ts` retain canonical authorization, bounded/coalesced transcript reads, deep-cloned results, two-scan FIFO admission, deterministic bounded catalog admission, containment/deduplication, and post-read validation.
+- `settings-schedules.ts` retains atomic bounded provider-disable updates plus deterministic first-owner schedule reconciliation and fail-closed handling of incomplete runtime catalogs.
+- `verify-package.mjs` retains the exact native unpack/architecture policy while adding per-artifact app verification and package-size accounting.
+- `App.tsx`, Transcript, and the resolved hooks retain workspace-generation/runtime ownership, prompt admission, single-owner event buffering, stale-read/reconciliation guards, background extension-UI isolation, serialized optimistic settings rollback, and provider mutation ordering.
+- The settings-page resolutions retain Privacy and Providers as separate sections, protected auth-store handoff, bounded catalog rendering, and the atomic Enable-all path.
+- The resolved backend/frontend/release tests cover the combined behavior; the E2E conflict preserves both original security boundary cases and the incoming reliability cases.
+
+There are no unresolved index entries, and both working-tree and staged whitespace checks pass.
 
 ## CFR adjudication
 

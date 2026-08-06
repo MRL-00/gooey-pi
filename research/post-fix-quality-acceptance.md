@@ -11,13 +11,27 @@ All acceptance blockers are fixed in the implementation, the formerly excluded T
 | Command | Result |
 |---|---|
 | `npm run typecheck` | **PASS** |
-| `npm test -- --run` | **PASS** — 30 files, 171 tests |
-| `npm run test:coverage` | **PASS** — 30 files, 171 tests; 73.26% statements, 59.30% branches, 82.11% functions, 80.40% lines |
+| `npm test -- --run` | **PASS** — 36 files, 232 tests |
+| `npm run test:coverage` | **PASS** — 36 files, 232 tests; 75.84% statements, 63.38% branches, 83.92% functions, 82.55% lines |
 | `npm run build` | **PASS** — main, preload, and renderer production bundles |
 
-The production HTML now preloads only `react-vendor` and `icons-vendor`. `Transcript` (30.14 kB) and `markdown-vendor` (372.86 kB) are separate dynamic chunks, and markdown is no longer module-preloaded by `out/renderer/index.html`.
+These gates were rerun independently on the staged merge result (`c911e77` plus `origin/main` at `1358408`) after conflicts were resolved. The production HTML still preloads only `react-vendor` and `icons-vendor`. `Transcript` (35.31 kB) and `markdown-vendor` (372.86 kB) remain separate dynamic chunks, and markdown is not module-preloaded by `out/renderer/index.html`.
 
-The final build is also within every new CFR-09 bundle budget: main 184,354 / 262,144 bytes; preload 4,874 / 16,384; initial renderer entry plus modulepreloads 722,023 / 1,310,720; largest renderer JS/CSS chunk 554,693 / 614,400; total renderer JS/CSS 1,766,107 / 2,097,152. These metrics were independently measured from the build output. The normal suite adds deterministic collector tests plus one-over-budget rejection for every bundle and package metric.
+The merged build remains within every CFR-09 bundle budget: main 212,208 / 262,144 bytes; preload 5,051 / 16,384; initial renderer entry plus modulepreloads 730,897 / 1,310,720; largest renderer JS/CSS chunk 554,693 / 614,400; total renderer JS/CSS 1,780,423 / 2,097,152. These metrics were independently measured from the merged build output. The normal suite retains deterministic collector tests plus one-over-budget rejection for every bundle and package metric.
+
+## Merge-conflict regression review
+
+I inspected the staged three-way merge, concentrating on the 31 paths changed by both parents. The resolutions preserve the accepted closure rather than selecting one side wholesale:
+
+- Bootstrap retains atomic project/session ownership and late runtime attachment, then adds main's bounded session-change subscription.
+- Workspace runtime retains the unified transcript read lifecycle, prompt admission revision, buffered reconciliation, and RAF batch reducer while adding externally changed transcript ownership.
+- Settings retains full authoritative panel reconciliation and adds transient compact-layout ownership so background saves do not undo an in-progress responsive panel transition.
+- Extension UI retains pending requests per runtime and now responds through the visible request ref, removing the brief runtime-switch ambiguity noted in the earlier review.
+- App retains lazy Transcript/Markdown, scoped plugin loading, stable Sidebar callback proxies, and initialized New Session admission while incorporating main's Git-status and live-session work.
+- Session service retains canonical-path transcript coalescing and two-read concurrency, now also bounding the pending queue; catalog discovery still admits by filename before per-entry canonicalization/stat.
+- Provider rollback/ordering/fallback and all provider accessibility/telemetry fixes remain intact.
+
+The merged tests exercise both sides of these resolutions: initial/external transcript races, queued settings plus transient panels, background extension activation, plugin scope ownership, bounded transcript pending admission, 50,000-name discovery, provider behavior/accessibility, syntax complexity, bundle boundaries, and release budgets. I found no conflict marker, dropped acceptance guard, or merge-induced blocker.
 
 ## Blocker-by-blocker acceptance
 
@@ -99,21 +113,20 @@ Catalog discovery ranks directory-entry names and slices to `maxSessionFiles` be
 
 ## TSX collection and test quality
 
-`vitest.config.ts` includes `tests/**/*.test.{ts,tsx}` and configures the automatic JSX transform. Both TSX files are collected in the normal suite: `provider-settings.test.tsx` (7 tests) and `renderer-concurrency.test.tsx` (5 tests). They mount hooks/components in jsdom and drive controlled promises and DOM events, so the former false-green collection problem is closed.
+`vitest.config.ts` includes `tests/**/*.test.{ts,tsx}` and configures the automatic JSX transform. Both TSX files are collected in the normal suite: `provider-settings.test.tsx` (9 tests) and `renderer-concurrency.test.tsx` (6 tests). They mount hooks/components in jsdom and drive controlled promises and DOM events, so the former false-green collection problem is closed.
 
-The new tests are generally strong and deterministic. The main minor gaps are the exact inverse settings-queue ordering noted above and full-App keyboard/bootstrap wiring, which is presently supported by direct code guards rather than an App-level test. Neither gap reveals an unfixed implementation defect.
+The expanded merged suite is generally strong and deterministic. The main minor gaps remain the exact inverse settings-queue ordering noted above and a unit-level whole-App keyboard/bootstrap interaction; direct guards and the parent's merged Electron smoke cover the wiring. Main also introduces a small `src/lib/plugin-catalog.ts` admission helper tested in isolation while the production plugin hook continues to use the equivalent, more general scoped-request guard. That redundant helper/test should eventually be consolidated, but it does not weaken the mounted production-hook race coverage or reveal a behavioral defect.
 
 ## Architecture and file sizes
 
-- `App.tsx`: 367 lines, below the stated 400-line ceiling.
-- `Transcript.tsx`: 64 lines after decomposition; transcript modules are 39–149 lines.
-- `useWorkspaceRuntime.ts`: 289 lines, but the duplicated read lifecycle has been consolidated.
+- `App.tsx`: 386 lines, still below the stated 400-line App ceiling after incorporating main's live-session and Git ownership work.
+- `Transcript.tsx`: 119 lines after merging main's active-stream rendering optimization; decomposed transcript modules remain 39–149 lines.
+- `useWorkspaceRuntime.ts`: 311 lines after adding externally changed transcript ownership, while initial/reconciliation reads still share one lifecycle.
 - `usePluginSkills.ts`: 44 lines.
 - `useSidebarActions.ts`: 45 lines.
-- No TypeScript/TSX production file exceeds 400 lines (largest is `App.tsx` at 367).
 - Provider enable persistence has one writer in main rather than a second renderer settings update.
 
-The remaining larger pure/service files (`src/lib/events.ts` at 325 lines, `electron/main/providers.ts` at 320, and `useWorkspaceRuntime.ts` at 289) are cohesive and do not reproduce the earlier duplication or mixed Transcript responsibilities.
+The merged tree's largest TypeScript file is now `electron/main/git.ts` at 401 lines (one line above the earlier general 400-line heuristic); it is a cohesive privileged Git service and does not regress the renderer splits under acceptance. Other larger cohesive files include `electron/main/plugins/mcp.ts` at 364, `src/lib/events.ts` at 325, `electron/main/providers.ts` at 320, and `useWorkspaceRuntime.ts` at 311. The merge did not restore the duplicated transcript lifecycles or mixed 396-line Transcript component.
 
 ### CFR-09 executable size gates
 
@@ -123,4 +136,8 @@ The package verifier also enforces an exact unpacked native allowlist and comple
 
 ## Coordination caveat
 
-Playwright/Electron tests were intentionally not run, exactly as requested. This acceptance therefore covers static inspection plus the non-Electron typecheck, Vitest, coverage, and production build gates. Electron smoke remains a later coordination gate, not a reason to reject this closure.
+I intentionally did not launch Playwright/Electron during this independent post-merge recheck, exactly as requested. My evidence is static conflict-resolution inspection plus fresh non-Electron typecheck, Vitest, coverage, and production build gates. The parent separately reports the merged tree's 23/23 Electron E2E, local QA package, zero audit findings, and fail-closed public preflight; those results are corroborating coordination evidence, not represented as independently rerun here.
+
+## Final DRY cleanup
+
+After this acceptance pass, the unused duplicate `src/lib/plugin-catalog.ts` admission helper and its isolated duplicate test were removed. Production retains the mounted generation/path/request-scoped `usePluginSkills` guard and its structural coverage. The final unit count is 35 files / 230 tests.

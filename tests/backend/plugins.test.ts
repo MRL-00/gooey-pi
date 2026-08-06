@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginService } from '../../electron/main/plugins'
+import { ProjectService } from '../../electron/main/projects'
+import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -21,6 +23,172 @@ describe('PluginService discovery', () => {
 
     expect(duplicate).toBe(first)
     await expect(first).resolves.toEqual(expect.any(Array))
+  })
+
+  it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const alias = join(root, 'project-alias')
+    mkdirSync(agentDir); mkdirSync(project); symlinkSync(project, alias)
+    let discoveries = 0
+    const service = new PluginService(null, async (path) => realpathSync(path), {
+      agentDir,
+      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return [] },
+    })
+
+    await Promise.all([service.list(project), service.list(alias)])
+
+    expect(discoveries).toBe(1)
+  })
+
+  it('coalesces hostile concurrent nested paths to their authorized project root', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const pluginPrompt = join(project, 'project-prompt.md')
+    mkdirSync(agentDir); mkdirSync(project); writeFileSync(pluginPrompt, '# Project prompt')
+    const nestedPaths = Array.from({ length: 96 }, (_, index) => join(project, 'workspaces', String(index), 'deep'))
+    for (const path of nestedPaths) mkdirSync(path, { recursive: true })
+
+    const store = new JsonStateStore(join(root, 'state.json'))
+    const info = lstatSync(project, { bigint: true })
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
+      folderIdentities: { [realpathSync(project)]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projects = new ProjectService(store, () => null)
+    await projects.list()
+
+    let authorized = 0
+    let signalAuthorized = () => undefined
+    const allAuthorized = new Promise<void>((resolveWait) => { signalAuthorized = resolveWait })
+    let releaseDiscovery = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    let discoveries = 0
+    const discoveredRoots = new Set<string | undefined>()
+    const service = new PluginService(null, async (path) => {
+      const authorizedRoot = await projects.authorizeProjectRoot(path)
+      authorized += 1
+      if (authorized === nestedPaths.length) signalAuthorized()
+      return authorizedRoot
+    }, {
+      agentDir,
+      discover: async (_agentDir, projectPath) => {
+        discoveries += 1
+        discoveredRoots.add(projectPath)
+        await discoveryGate
+        return [{
+          id: 'project-prompt', name: 'Project prompt', description: '', kind: 'prompt',
+          location: 'project', path: realpathSync(pluginPrompt), enabled: true,
+        }]
+      },
+    })
+
+    const requests = nestedPaths.map((path) => service.list(path))
+    await allAuthorized
+    expect(discoveries).toBe(1)
+    expect(discoveredRoots).toEqual(new Set([realpathSync(project)]))
+    releaseDiscovery()
+    const results = await Promise.all(requests)
+
+    expect(new Set(results).size).toBe(1)
+    expect(service.authorizeReveal(pluginPrompt)).toBe(realpathSync(pluginPrompt))
+  })
+
+  it('rejects excess distinct discovery work instead of growing the global queue', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let releaseDiscovery = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    let active = 0
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => {
+        active += 1
+        await discoveryGate
+        active -= 1
+        return []
+      },
+    })
+
+    const outcomes = Array.from({ length: 40 }, (_, index) => service.list(join(root, `hostile-${index}`)))
+      .map((request) => request.then(() => 'fulfilled', (error: unknown) => error))
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+    const internal = service as unknown as { discoveryInFlight: Map<string, Promise<unknown>> }
+
+    expect(active).toBe(2)
+    expect(internal.discoveryInFlight.size).toBeLessThanOrEqual(34)
+    releaseDiscovery()
+    const settled = await Promise.all(outcomes)
+    const rejected = settled.filter((outcome) => outcome !== 'fulfilled')
+    expect(rejected).toHaveLength(6)
+    expect(rejected.every((error) => error instanceof TypeError && error.message.includes('Too many plugin discoveries'))).toBe(true)
+  })
+
+  it('bounds catalog work globally across distinct discovery keys', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let active = 0
+    let peak = 0
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+        active -= 1
+        return []
+      },
+    })
+
+    await Promise.all(Array.from({ length: 8 }, (_, index) => service.list(join(root, `project-${index}`))))
+
+    expect(peak).toBe(2)
+  })
+
+  it('retains reveal authorization independently for user and project catalogs', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const userPrompt = join(root, 'user-prompt.md')
+    const projectPrompt = join(project, 'project-prompt.md')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true })
+    writeFileSync(userPrompt, '# User prompt')
+    writeFileSync(projectPrompt, '# Project prompt')
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ prompts: [userPrompt] }))
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify({ prompts: [projectPrompt] }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    await service.list()
+    await service.list(project)
+
+    expect(service.authorizeReveal(userPrompt)).toBe(realpathSync(userPrompt))
+    expect(service.authorizeReveal(projectPrompt)).toBe(realpathSync(projectPrompt))
+  })
+
+  it('discovers only the authorized project .agents root without walking ancestors', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'workspace', 'project')
+    const localSkill = join(project, '.agents', 'skills', 'local', 'SKILL.md')
+    const ancestorSkill = join(root, 'workspace', '.agents', 'skills', 'ancestor', 'SKILL.md')
+    mkdirSync(agentDir)
+    mkdirSync(resolve(localSkill, '..'), { recursive: true })
+    mkdirSync(resolve(ancestorSkill, '..'), { recursive: true })
+    writeFileSync(localSkill, '---\nname: local\n---\nLocal skill')
+    writeFileSync(ancestorSkill, '---\nname: ancestor\n---\nAncestor skill')
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const records = await service.list(project)
+
+    expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
+    expect(records.some((record) => record.path === realpathSync(ancestorSkill))).toBe(false)
+    expect(readFileSync('electron/main/plugins/catalog.ts', 'utf8')).not.toContain('collectAncestorSkills')
   })
 
   it('keeps project-configured discovery contained while accepting in-project files', async () => {
@@ -114,6 +282,46 @@ describe('PluginService MCP connections', () => {
       name: 'escaped', scope: 'project', projectPath: project, type: 'http', url: 'http://127.0.0.1:3333/mcp',
     })).rejects.toThrow(/real directory/)
     expect(() => readFileSync(join(outside, 'agent', 'settings.json'))).toThrow()
+  })
+
+  it('fails closed when the project MCP directory is substituted at the final rename boundary', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const displacedAgentDir = join(project, '.prime', 'agent-original')
+    const outside = join(root, 'outside')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true }); mkdirSync(outside)
+    const settingsPath = join(projectAgentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    writeFileSync(join(outside, 'settings.json'), JSON.stringify({ outside: 'unchanged' }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+    const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
+    const original = internal.settingsFingerprint.bind(service)
+    let substituted = false
+    internal.settingsFingerprint = async (path) => {
+      const fingerprint = await original(path)
+      if (!substituted) {
+        substituted = true
+        const temporaryName = readdirSync(projectAgentDir).find((name) => name.startsWith('settings.json.') && name.endsWith('.tmp'))
+        expect(temporaryName).toBeTypeOf('string')
+        const stagedSettings = readFileSync(join(projectAgentDir, temporaryName!), 'utf8')
+        renameSync(projectAgentDir, displacedAgentDir)
+        symlinkSync(outside, projectAgentDir, 'dir')
+        // Recreate the observed random staging name so the vulnerable lexical
+        // rename would overwrite settings in the substituted directory.
+        writeFileSync(join(outside, temporaryName!), stagedSettings)
+      }
+      return fingerprint
+    }
+
+    await expect(service.connectMcp({
+      name: 'escaped', scope: 'project', projectPath: project, type: 'stdio', command: 'safe-command',
+    })).rejects.toThrow(/configuration directory changed/)
+
+    expect(substituted).toBe(true)
+    expect(JSON.parse(readFileSync(join(outside, 'settings.json'), 'utf8')).outside).toBe('unchanged')
+    expect(JSON.parse(readFileSync(join(displacedAgentDir, 'settings.json'), 'utf8')).mcpServers).toBeUndefined()
   })
 
   it('rejects credentialed URLs and refuses to overwrite an existing server', async () => {

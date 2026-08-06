@@ -11,6 +11,7 @@ const GIT_STATUS_OUTPUT_LIMIT = 4 * 1024 * 1024
 const GIT_CONFIG_OUTPUT_LIMIT = 512 * 1024
 const GIT_DIFF_OUTPUT_LIMIT = 2 * 1024 * 1024
 const GIT_ERROR_LIMIT = 2_000
+const GIT_IDENTITY_VALUE_LIMIT = 320
 const EMPTY_CONFIG_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const BASE_GIT_CONFIG = [
   'core.fsmonitor=false',
@@ -28,7 +29,7 @@ function hardenedGitArgs(args: readonly string[], extraConfig: readonly string[]
   return [...result, ...args]
 }
 
-function runGit(cwd: string, args: readonly string[], options: { timeoutMs: number; maxBytes: number }, extraConfig: readonly string[] = []): Promise<ProcessResult> {
+function runGit(cwd: string, args: readonly string[], options: { timeoutMs: number; maxBytes: number; input?: string }, extraConfig: readonly string[] = []): Promise<ProcessResult> {
   return runProcess('git', hardenedGitArgs(args, extraConfig), { cwd, ...options, env: restrictedGitEnvironment() })
 }
 
@@ -187,12 +188,104 @@ async function filterOverrides(cwd: string): Promise<string[]> {
   return overrides
 }
 
+
+
+function validIdentityValue(value: string): string | undefined {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > GIT_IDENTITY_VALUE_LIMIT || /[\0\r\n]/.test(trimmed)) return undefined
+  return trimmed
+}
+
+async function readConfigValue(
+  cwd: string,
+  scope: '--local' | '--global',
+  key: 'user.name' | 'user.email',
+): Promise<string | undefined> {
+  const env = restrictedGitEnvironment()
+  if (scope === '--global') {
+    delete env.GIT_CONFIG_GLOBAL
+    for (const name of process.platform === 'win32' ? ['USERPROFILE', 'HOME', 'XDG_CONFIG_HOME'] : ['HOME', 'XDG_CONFIG_HOME']) {
+      const value = process.env[name]
+      if (value !== undefined) env[name] = value
+    }
+  }
+  const result = await runProcess('git', hardenedGitArgs(['config', scope, '--no-includes', '--get', key]), {
+    cwd,
+    timeoutMs: 5_000,
+    maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
+    env,
+  })
+  if (result.code === 1 && !result.timedOut && !result.outputExceeded) return undefined
+  requireProcessSuccess(`Git ${scope.slice(2)} identity inspection`, result)
+  return validIdentityValue(result.stdout)
+}
+
+async function commitIdentityOverrides(cwd: string): Promise<string[]> {
+  const [localName, localEmail] = await Promise.all([
+    readConfigValue(cwd, '--local', 'user.name'),
+    readConfigValue(cwd, '--local', 'user.email'),
+  ])
+  const [globalName, globalEmail] = await Promise.all([
+    localName ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.name'),
+    localEmail ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.email'),
+  ])
+  const name = localName ?? globalName
+  const email = localEmail ?? globalEmail
+  return [
+    ...(name ? [`user.name=${name}`] : []),
+    ...(email ? [`user.email=${email}`] : []),
+  ]
+}
+
+function changedPathsFromStatus(output: string): string[] {
+  const paths: string[] = []
+  let cursor = 0
+  while (cursor < output.length) {
+    const field = nextNulField(output, cursor)
+    cursor = field.cursor
+    const record = field.value
+    if (!record || record.startsWith('## ') || record.length < 4) continue
+    const code = record.slice(0, 2)
+    const path = record.slice(3)
+    if (path) paths.push(path)
+    if (code.includes('R') || code.includes('C')) cursor = nextNulField(output, cursor).cursor
+  }
+  return paths
+}
+
+async function rejectFilteredPaths(cwd: string, paths: readonly string[], overrides: readonly string[]): Promise<void> {
+  if (!paths.length) return
+  // Feed the paths to one bounded process. Status output and direct mutation inputs
+  // are capped, so this inspects every path without an attacker causing an
+  // unbounded sequence of check-attr subprocesses.
+  const result = await runGit(cwd, ['check-attr', '-z', '--stdin', 'filter'], {
+    timeoutMs: 10_000,
+    maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
+    input: `${paths.join('\0')}\0`,
+  }, overrides)
+  requireProcessSuccess('Git filter attribute inspection', result)
+  const affected: string[] = []
+  let cursor = 0
+  while (cursor < result.stdout.length) {
+    const path = nextNulField(result.stdout, cursor)
+    const attribute = nextNulField(result.stdout, path.cursor)
+    const value = nextNulField(result.stdout, attribute.cursor)
+    cursor = value.cursor
+    if (attribute.value !== 'filter' || value.value === 'unspecified' || value.value === 'unset' || !path.value) continue
+    affected.push(path.value)
+    if (affected.length >= 5) break
+  }
+  if (!affected.length) return
+  const suffix = affected.length === 1 ? affected[0] : `${affected.join(', ')}${paths.length > affected.length ? ', …' : ''}`
+  throw new Error(`Git operation blocked because clean/smudge filters cannot run safely for: ${suffix}. Use a trusted Git client with the required filter (for example Git LFS).`)
+}
+
 export class GitService {
   constructor(private readonly authorizeCwd: (cwd: string) => Promise<string>) {}
 
   async branch(cwd: string): Promise<string | undefined> {
     try {
-      const safeCwd = await this.authorizeCwd(cwd)
+      const safeCwd = await this.repositoryCwd(cwd)
       const result = await runGit(safeCwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
       if (result.code === 0 && !result.timedOut && !result.outputExceeded) return result.stdout.trim() || undefined
       const detached = await runGit(safeCwd, ['rev-parse', '--verify', '--short', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
@@ -202,14 +295,15 @@ export class GitService {
 
   async status(cwdValue: unknown): Promise<GitStatus> {
     try {
-      const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+      const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
       const overrides = await filterOverrides(cwd)
-      const [statusResult, unstagedResult, stagedResult] = await Promise.all([
-        runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
+      const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
+      requireProcessSuccess('Git status', statusResult)
+      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+      const [unstagedResult, stagedResult] = await Promise.all([
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--cached', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
       ])
-      requireProcessSuccess('Git status', statusResult)
       requireProcessSuccess('Git unstaged statistics', unstagedResult)
       requireProcessSuccess('Git staged statistics', stagedResult)
       return parseStatus(statusResult.stdout, parseNumstat(stagedResult.stdout), parseNumstat(unstagedResult.stdout))
@@ -219,7 +313,7 @@ export class GitService {
   }
 
   async diff(cwdValue: unknown, pathValue?: unknown, stagedValue?: unknown): Promise<GitDiff> {
-    const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
     const path = pathValue === undefined ? undefined : requireGitPath(pathValue)
     if (stagedValue !== undefined && typeof stagedValue !== 'boolean') throw new TypeError('staged must be a boolean')
     const staged = stagedValue === true
@@ -227,6 +321,12 @@ export class GitService {
     if (staged) args.push('--cached')
     if (path) args.push('--', path)
     const overrides = await filterOverrides(cwd)
+    if (path) await rejectFilteredPaths(cwd, [path], overrides)
+    else {
+      const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
+      requireProcessSuccess('Git status', statusResult)
+      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+    }
     const result = await runGit(cwd, args, { timeoutMs: 30_000, maxBytes: GIT_DIFF_OUTPUT_LIMIT }, overrides)
     if (result.outputExceeded) {
       const error = `Diff output exceeded ${GIT_DIFF_OUTPUT_LIMIT / (1024 * 1024)} MiB and was not displayed.`
@@ -246,7 +346,12 @@ export class GitService {
     const cwd = await this.validCwd(cwdValue)
     const paths = this.validPaths(pathsValue)
     const overrides = await filterOverrides(cwd)
-    const result = await runGit(cwd, ['restore', '--staged', '--', ...paths], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
+    const head = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 }, overrides)
+    if (head.timedOut || head.outputExceeded || (head.code !== 0 && head.code !== 1)) requireProcessSuccess('Git HEAD inspection', head)
+    const args = head.code === 0
+      ? ['restore', '--staged', '--', ...paths]
+      : ['rm', '--cached', '--ignore-unmatch', '-r', '-f', '--', ...paths]
+    const result = await runGit(cwd, args, { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
     requireProcessSuccess('Git unstage', result)
     return true
   }
@@ -258,7 +363,7 @@ export class GitService {
   async commit(cwdValue: unknown, messageValue: unknown): Promise<{ ok: boolean; output: string }> {
     const cwd = await this.validCwd(cwdValue)
     const message = requireString(messageValue, 'commit message', { min: 1, max: 20_000, trim: true })
-    const overrides = await filterOverrides(cwd)
+    const overrides = [...await filterOverrides(cwd), ...await commitIdentityOverrides(cwd)]
     const result = await runGit(cwd, ['commit', '--no-verify', '--no-gpg-sign', '--no-status', '-m', message], { timeoutMs: 2 * 60_000, maxBytes: 64 * 1024 }, overrides)
     if (result.outputExceeded) return { ok: false, output: 'Git commit output exceeded the safety limit; the commit result is unknown. Refresh status before retrying.' }
     if (result.timedOut) return { ok: false, output: 'Git commit timed out; the commit result is unknown. Refresh status before retrying.' }
@@ -266,8 +371,17 @@ export class GitService {
     return { ok: result.code === 0, output: output || (result.code === 0 ? 'Commit created.' : processError('Git commit', result).message) }
   }
 
+  private async repositoryCwd(value: string): Promise<string> {
+    const cwd = await this.authorizeCwd(value)
+    const result = await runGit(cwd, ['rev-parse', '--show-toplevel'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
+    requireProcessSuccess('Git repository root inspection', result)
+    const repositoryRoot = result.stdout.trim()
+    if (!repositoryRoot) throw new Error('Git repository root inspection returned no path')
+    return this.authorizeCwd(repositoryRoot)
+  }
+
   private async validCwd(value: unknown): Promise<string> {
-    return this.authorizeCwd(requireString(value, 'cwd', { min: 1, max: 4096 }))
+    return this.repositoryCwd(requireString(value, 'cwd', { min: 1, max: 4096 }))
   }
 
   private validPaths(value: unknown): string[] {
@@ -279,6 +393,7 @@ export class GitService {
     const cwd = await this.validCwd(cwdValue)
     const paths = this.validPaths(pathsValue)
     const overrides = neutralizeFilters ? await filterOverrides(cwd) : []
+    if (neutralizeFilters) await rejectFilteredPaths(cwd, paths, overrides)
     const result = await runGit(cwd, [...command, '--', ...paths], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
     requireProcessSuccess(`Git ${command[0]}`, result)
     return true

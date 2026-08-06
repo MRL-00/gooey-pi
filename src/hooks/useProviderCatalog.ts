@@ -7,10 +7,11 @@ interface UseProviderCatalogOptions {
   bridge: PrimeWorkApi | null
   runtime: RuntimeInfo | null
   syncRuntime(runtimeId: string): Promise<void>
+  syncDisabledProviders(providerIds: string[]): Promise<void> | void
   reportError(error: unknown): void
 }
 
-export function useProviderCatalog({ bridge, runtime, syncRuntime, reportError }: UseProviderCatalogOptions) {
+export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledProviders, reportError }: UseProviderCatalogOptions) {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
@@ -165,6 +166,12 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, reportError }
     if (selectedProvider && disabledProviders.includes(selectedProvider)) { updateModel('auto'); updateFast(false) }
   }, [bridge, catalog?.models, updateFast, updateModel])
 
+  const setAllEnabled = useCallback(async () => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    await syncDisabledProviders([])
+    setCatalog(await bridge.providers.catalog(true))
+  }, [bridge, syncDisabledProviders])
+
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     await bridge.providers.startOAuth(providerId)
@@ -183,6 +190,6 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, reportError }
   return {
     model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels,
     refresh, changeModel, changeEffort, changeFast,
-    saveApiKey, logout, setEnabled, startOAuth, respondOAuth, cancelOAuth,
+    saveApiKey, logout, setEnabled, setAllEnabled, startOAuth, respondOAuth, cancelOAuth,
   }
 }

@@ -97,6 +97,31 @@ describe('settings queue reconciliation', () => {
     expect(state.settings).toEqual(saved)
     expect(errors).toHaveLength(1)
   })
+
+  it('does not replace unrelated transient panel state during authoritative reconciliation', async () => {
+    const save = deferred<AppSettings>()
+    const bridge = {
+      settings: { get: async () => DEFAULT_SETTINGS, update: () => save.promise },
+    } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useAppSettings>
+    function SettingsProbe() {
+      state = useAppSettings({ bridge, reportError })
+      return <Probe />
+    }
+    await act(async () => { root.render(<SettingsProbe />); await Promise.resolve() })
+
+    let mutation!: Promise<void>
+    await act(async () => {
+      mutation = state.updateSettings({ sidebarOpen: false })
+      state.setInspectorOpen(false)
+    })
+    const saved = { ...DEFAULT_SETTINGS, sidebarOpen: false, inspectorOpen: true }
+    await act(async () => { save.resolve(saved); await mutation })
+
+    expect(state.settings).toEqual(saved)
+    expect([state.sidebarOpen, state.inspectorOpen]).toEqual([false, false])
+  })
 })
 
 describe('transcript read ownership', () => {
@@ -142,7 +167,7 @@ describe('bootstrap critical path', () => {
     const runtimes = deferred<RuntimeInfo[]>()
     const bridge = {
       projects: { list: async () => [project] },
-      sessions: { list: async () => [session] },
+      sessions: { list: async () => [session], onChanged: () => () => undefined },
       agent: { list: () => runtimes.promise },
       app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
       schedules: { list: async () => [] },

@@ -3,6 +3,23 @@ import { join } from 'node:path'
 
 export const MINIMUM_NODE = [22, 12, 0]
 
+export const RELEASE_CREDENTIAL_NAMES = [
+  'RELEASE_SIGNING_TEAM_ID',
+  'CSC_LINK',
+  'CSC_KEY_PASSWORD',
+  'APPLE_ID',
+  'APPLE_APP_SPECIFIC_PASSWORD',
+  'APPLE_TEAM_ID',
+  'APPLE_API_KEY',
+  'APPLE_API_KEY_ID',
+  'APPLE_API_ISSUER',
+]
+
+export function withoutReleaseCredentials(env = process.env, allowed = []) {
+  const allowedNames = new Set(allowed)
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !RELEASE_CREDENTIAL_NAMES.includes(name) || allowedNames.has(name)))
+}
+
 export function parseVersion(version) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) throw new Error(`Cannot parse Node.js version: ${version}`)
@@ -45,6 +62,34 @@ export function validateReleaseCredentials(env = process.env, options = {}) {
     throw new Error(`APPLE_API_KEY does not exist: ${env.APPLE_API_KEY}`)
   }
   if (hasApiKeyValue && checkApiKeyFile) accessSync(env.APPLE_API_KEY, constants.R_OK)
+}
+
+export function requireReleaseArtifacts(paths) {
+  const artifacts = { dmg: [], zip: [] }
+  for (const path of paths) {
+    if (path.endsWith('.dmg')) artifacts.dmg.push(path)
+    if (path.endsWith('.zip')) artifacts.zip.push(path)
+  }
+  for (const [extension, matches] of Object.entries(artifacts)) {
+    if (matches.length !== 1) throw new Error(`Expected exactly one ${extension.toUpperCase()} artifact, found ${matches.length}`)
+  }
+  return { dmg: artifacts.dmg[0], zip: artifacts.zip[0] }
+}
+
+export function artifactArchitectures(path) {
+  const architecture = /-(arm64|x64|universal)\.(?:dmg|zip)$/.exec(path)?.[1]
+  if (!architecture) throw new Error(`Artifact name does not declare a supported architecture: ${path}`)
+  if (architecture === 'arm64') return new Set(['arm64'])
+  if (architecture === 'x64') return new Set(['x86_64'])
+  return new Set(['arm64', 'x86_64'])
+}
+
+export function assertExactArchitectures(actual, expected, label) {
+  const missing = [...expected].filter((architecture) => !actual.has(architecture))
+  const unexpected = [...actual].filter((architecture) => !expected.has(architecture))
+  if (missing.length || unexpected.length) {
+    throw new Error(`${label} architectures do not match its artifact name (expected ${[...expected].join(', ')}, found ${[...actual].join(', ')})`)
+  }
 }
 
 export function parseTeamIdentifier(output) {

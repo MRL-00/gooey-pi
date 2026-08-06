@@ -82,7 +82,7 @@ function deferred<T = void>() {
 describe('provider settings behavior and accessibility', () => {
   it('gives each enable checkbox a provider-specific accessible name and reports toggle failure', async () => {
     const onSetEnabled = vi.fn().mockRejectedValue(new Error('Provider policy was not saved'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     const checkbox = container.querySelector<HTMLInputElement>('input[aria-label="Enable Anthropic provider"]')
     expect(checkbox).not.toBeNull()
@@ -92,9 +92,29 @@ describe('provider settings behavior and accessibility', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('Provider policy was not saved')
   })
 
+  it('uses one bulk mutation and exposes the provider and model catalogue UI', async () => {
+    const onSetEnabled = vi.fn().mockResolvedValue(undefined)
+    const onSetAllEnabled = vi.fn().mockResolvedValue(undefined)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+
+    expect(container.textContent).toContain('2 providers · 2 models')
+    expect(container.textContent).toContain('ChatGPT Plus/Pro')
+    expect(container.textContent).toContain('Anthropic')
+    expect(button('Reconnect')).toBeTruthy()
+    expect(button('Add key')).toBeTruthy()
+    await click(button('Enable all'))
+    expect(onSetAllEnabled).toHaveBeenCalledTimes(1)
+    expect(onSetEnabled).not.toHaveBeenCalled()
+
+    await click(button('Models'))
+    expect(container.textContent).toContain('GPT-5.6')
+    expect(container.textContent).toContain('GPT-5.5')
+    expect(container.querySelector('input[aria-label="Search models"]')).not.toBeNull()
+  })
+
   it('keeps API-key failures announced inside the active modal', async () => {
     const onSaveApiKey = vi.fn().mockRejectedValue(new Error('Credential rejected'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     await click(button('Add key'))
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')
@@ -136,27 +156,28 @@ describe('provider runtime mutations', () => {
   function mountCatalogHook(options: {
     command: PrimeWorkApi['agent']['command']
     syncRuntime?: (runtimeId: string) => Promise<void>
+    syncDisabledProviders?: (providerIds: string[]) => Promise<void>
     setEnabled?: PrimeWorkApi['providers']['setEnabled']
     reportError?: (error: unknown) => void
   }) {
     let value: ReturnType<typeof useProviderCatalog> | undefined
-    const settingsUpdate = vi.fn()
+    const catalogMock = vi.fn().mockResolvedValue(catalog)
     const bridge = {
       agent: { command: options.command },
       providers: {
-        catalog: vi.fn().mockResolvedValue(catalog),
+        catalog: catalogMock,
         onAuthEvent: vi.fn().mockReturnValue(() => undefined),
         setEnabled: options.setEnabled ?? vi.fn().mockResolvedValue(catalog),
       },
-      settings: { update: settingsUpdate },
     } as unknown as PrimeWorkApi
     const syncRuntime = options.syncRuntime ?? vi.fn().mockResolvedValue(undefined)
+    const syncDisabledProviders = options.syncDisabledProviders ?? vi.fn().mockResolvedValue(undefined)
     const reportError = options.reportError ?? vi.fn()
     function Harness() {
-      value = useProviderCatalog({ bridge, runtime, syncRuntime, reportError })
+      value = useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledProviders, reportError })
       return null
     }
-    return render(<Harness />).then(() => ({ get value() { return value! }, syncRuntime, reportError, settingsUpdate }))
+    return render(<Harness />).then(() => ({ get value() { return value! }, catalogMock, syncRuntime, syncDisabledProviders, reportError }))
   }
 
   it('serializes rapid reasoning changes and rolls back/synchronizes the latest rejection', async () => {
@@ -204,7 +225,16 @@ describe('provider runtime mutations', () => {
 
     await act(async () => { await hook.value.setEnabled('anthropic', true) })
     expect(setEnabled).toHaveBeenCalledWith('anthropic', true)
-    expect(hook.settingsUpdate).not.toHaveBeenCalled()
+    expect(hook.syncDisabledProviders).not.toHaveBeenCalled()
     expect(hook.value.catalog?.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(true)
+  })
+
+  it('enables every provider with one atomic settings mutation and refreshes the catalogue', async () => {
+    const hook = await mountCatalogHook({ command: vi.fn() })
+
+    await act(async () => { await hook.value.setAllEnabled() })
+    expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
+    expect(hook.syncDisabledProviders).toHaveBeenCalledWith([])
+    expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
   })
 })

@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import type { DownloadItem, Event, WebContents } from 'electron'
-import { BrowserDownloadGuard } from '../../electron/main/browser-downloads'
+import { automaticDownloadPath, BrowserDownloadGuard } from '../../electron/main/browser-downloads'
 
 class FakeDownload extends EventEmitter {
   received = 0
   cancelled = false
   saveOptions: unknown
+  savePath: string | undefined
   constructor(readonly url: string, readonly total = 1024, readonly gesture = true) { super() }
   getURLChain() { return [this.url] }
   getURL() { return this.url }
@@ -14,6 +15,7 @@ class FakeDownload extends EventEmitter {
   hasUserGesture() { return this.gesture }
   getFilename() { return 'download.bin' }
   setSaveDialogOptions(options: unknown) { this.saveOptions = options }
+  setSavePath(path: string) { this.savePath = path }
   getReceivedBytes() { return this.received }
   cancel() { this.cancelled = true }
 }
@@ -23,16 +25,27 @@ const owner = { id: 7, isDestroyed: () => false } as WebContents
 const event = () => ({ preventDefault: vi.fn() }) as unknown as Event & { preventDefault: ReturnType<typeof vi.fn> }
 
 describe('BrowserDownloadGuard', () => {
-  it('denies unsafe, gestureless, disabled, and oversized downloads', () => {
-    const guard = new BrowserDownloadGuard(allowed)
+  it('denies unsafe, gestureless, and oversized downloads', () => {
+    const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
     for (const item of [new FakeDownload('file:///etc/passwd'), new FakeDownload('https://example.test/a', 10, false), new FakeDownload('https://example.test/a', 513 * 1024 * 1024)]) {
       const requested = event(); guard.handle(requested, item as unknown as DownloadItem, owner, true); expect(requested.preventDefault).toHaveBeenCalledOnce()
     }
-    const disabled = event(); guard.handle(disabled, new FakeDownload('https://example.test/a') as unknown as DownloadItem, owner, false); expect(disabled.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('saves to a unique safe default destination when prompting is disabled', () => {
+    const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
+    const item = new FakeDownload('https://example.test/a')
+    const requested = event()
+    guard.handle(requested, item as unknown as DownloadItem, owner, false)
+
+    expect(requested.preventDefault).not.toHaveBeenCalled()
+    expect(item.saveOptions).toBeUndefined()
+    expect(item.savePath).toMatch(/^\/safe-downloads\/download-[0-9a-f-]+\.bin$/)
+    expect(automaticDownloadPath('/safe-downloads', '../../escape.txt', 'unique')).toBe('/safe-downloads/escape-unique.txt')
   })
 
   it('caps concurrent downloads and cancels every item owned by a destroyed guest', () => {
-    const guard = new BrowserDownloadGuard(allowed)
+    const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
     const items = Array.from({ length: 4 }, (_, index) => new FakeDownload(`https://example.test/${index}`))
     for (const item of items.slice(0, 3)) guard.handle(event(), item as unknown as DownloadItem, owner, true)
     const fourth = event(); guard.handle(fourth, items[3] as unknown as DownloadItem, owner, true)
@@ -41,7 +54,7 @@ describe('BrowserDownloadGuard', () => {
   })
 
   it('cancels a streaming download that crosses the per-item byte cap', () => {
-    const guard = new BrowserDownloadGuard(allowed)
+    const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
     const item = new FakeDownload('https://example.test/chunked', -1)
     guard.handle(event(), item as unknown as DownloadItem, owner, true)
     item.received = 512 * 1024 * 1024 + 1; item.emit('updated')

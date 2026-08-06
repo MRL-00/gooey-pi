@@ -1,4 +1,14 @@
-import type { ProjectRecord, RuntimeInfo, SessionRecord } from '@/types/api'
+import type { GitStatus, ProjectRecord, RuntimeInfo, SessionRecord } from '@/types/api'
+
+
+export interface OwnedGitStatus {
+  cwd?: string
+  status: GitStatus
+}
+
+export function gitStatusForWorkspace(snapshot: OwnedGitStatus, cwd?: string): GitStatus {
+  return cwd && snapshot.cwd === cwd ? snapshot.status : { isRepo: false, files: [] }
+}
 
 export interface WorkspaceSelection {
   project?: ProjectRecord
@@ -23,6 +33,14 @@ export function findProjectForSession(projects: ProjectRecord[], session?: Sessi
 export function workspaceCwd(project?: ProjectRecord, session?: SessionRecord): string | undefined {
   if (!project) return undefined
   return session && projectContainsPath(project, session.projectPath) ? session.projectPath : project.primaryFolder
+}
+
+export function newSessionProject(
+  requestedProject?: ProjectRecord,
+  workspaceProject?: ProjectRecord,
+  displayedProject?: ProjectRecord,
+): ProjectRecord | undefined {
+  return requestedProject ?? workspaceProject ?? displayedProject
 }
 
 export function runtimeMatchesWorkspace(runtime: RuntimeInfo, cwd: string, sessionFile: string): boolean {

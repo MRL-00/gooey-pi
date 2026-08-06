@@ -4,65 +4,65 @@ This document tracks the findings from the review of `origin/main` (`4dbefaef`) 
 
 ## A. Release, CI, and supply-chain safety
 
-- [ ] **Scope release credentials narrowly.** Remove signing/notarization secrets from job-wide `env`; expose them only to the preflight/package steps, pin third-party actions to immutable commit SHAs, and ensure install/test/build code cannot read release secrets.
-- [ ] **Verify the uploaded artifacts.** Require both DMG and ZIP outputs and validate the actual archives, signatures/notarization where applicable, architecture, and contained application rather than only the staging `.app`.
-- [ ] **Cover extracted plugin modules.** Add `electron/main/plugins/**/*.ts` to coverage and keep the configured thresholds meaningful.
-- [ ] **Unify fuse hardening.** Remove the dead duplicate `scripts/afterPack.cjs` or make it delegate to the single configured implementation.
-- [ ] **Correct the supported Node version.** Align README/project instructions with the enforced Node `>=22.12.0` requirement.
+- [x] **Scope release credentials narrowly.** Remove signing/notarization secrets from job-wide `env`; expose them only to the preflight/package steps, pin third-party actions to immutable commit SHAs, and ensure install/test/build code cannot read release secrets.
+- [x] **Verify the uploaded artifacts.** Require both DMG and ZIP outputs and validate the actual archives, signatures/notarization where applicable, architecture, and contained application rather than only the staging `.app`.
+- [x] **Cover extracted plugin modules.** Add `electron/main/plugins/**/*.ts` to coverage and keep the configured thresholds meaningful.
+- [x] **Unify fuse hardening.** Remove the dead duplicate `scripts/afterPack.cjs` or make it delegate to the single configured implementation.
+- [x] **Correct the supported Node version.** Align README/project instructions with the enforced Node `>=22.12.0` requirement.
 
 Acceptance: release-script unit tests cover secret scoping helpers/artifact requirements where possible; `npm run check`, `npm run test:coverage`, and package dry-run/preflight checks pass.
 
 ## B. Project authorization and privileged lifecycle safety
 
-- [ ] **Stop access on project removal.** Before removal completes, terminate all agent runtimes and terminals whose cwd is inside a removed root so the documented immediate revocation guarantee applies to already-running processes.
-- [ ] **Close the project MCP symlink race.** Pin and revalidate `.prime/agent` directory identity through the write/rename, or use a no-follow/fd-relative strategy, so project-scoped settings cannot escape the project.
-- [ ] **Track terminal teardown promises.** `killOwner`, output-limit termination, and `killAll` must share tracked termination promises so app shutdown waits through HUP/TERM/KILL escalation.
-- [ ] **Drain desktop-state persistence.** Stop admitting state mutations during shutdown and await store initialization/pending writes before quitting.
-- [ ] **Canonicalize session/project ownership.** Return/use canonical project paths so sessions created through symlink or lexical aliases still map to the correct granted project without creating inferred duplicates.
+- [x] **Stop access on project removal.** Before removal completes, terminate all agent runtimes and terminals whose cwd is inside a removed root so the documented immediate revocation guarantee applies to already-running processes.
+- [x] **Close the project MCP symlink race.** Pin and revalidate `.prime/agent` directory identity through the write/rename, or use a no-follow/fd-relative strategy, so project-scoped settings cannot escape the project.
+- [x] **Track terminal teardown promises.** `killOwner`, output-limit termination, and `killAll` must share tracked termination promises so app shutdown waits through HUP/TERM/KILL escalation.
+- [x] **Drain desktop-state persistence.** Stop admitting state mutations during shutdown and await store initialization/pending writes before quitting.
+- [x] **Canonicalize session/project ownership.** Return/use canonical project paths so sessions created through symlink or lexical aliases still map to the correct granted project without creating inferred duplicates.
 
 Acceptance: focused race/security tests cover removal with a live runtime, MCP directory substitution, concurrent terminal shutdown, immediate quit after a store update, and aliased session cwd ownership.
 
 ## C. Git integrity and multi-folder correctness
 
-- [ ] **Do not silently bypass clean/smudge filters.** Preserve data integrity for Git LFS and other filtered paths; if filters cannot safely run, detect affected paths and fail closed with a clear error rather than staging/restoring different content.
-- [ ] **Preserve a safe commit identity.** Continue blocking hooks/config injection while obtaining and explicitly supplying the user's `user.name`/`user.email` when available.
-- [ ] **Support unstage on unborn HEAD.** Add a hardened fallback for repositories with no first commit.
-- [ ] **Bind Git state and mutations to the active workspace cwd.** Support secondary project folders, clear/invalidate status synchronously on cwd changes, and prevent stale project-A paths from mutating project B.
-- [ ] **Bind the terminal to the active workspace cwd.** A session rooted in a secondary folder must open its PTY in the same folder used by Prime and Git.
+- [x] **Do not silently bypass clean/smudge filters.** Preserve data integrity for Git LFS and other filtered paths; if filters cannot safely run, detect affected paths and fail closed with a clear error rather than staging/restoring different content.
+- [x] **Preserve a safe commit identity.** Continue blocking hooks/config injection while obtaining and explicitly supplying the user's `user.name`/`user.email` when available.
+- [x] **Support unstage on unborn HEAD.** Add a hardened fallback for repositories with no first commit.
+- [x] **Bind Git state and mutations to the active workspace cwd.** Support secondary project folders, clear/invalidate status synchronously on cwd changes, and prevent stale project-A paths from mutating project B.
+- [x] **Bind the terminal to the active workspace cwd.** A session rooted in a secondary folder must open its PTY in the same folder used by Prime and Git.
 
 Acceptance: backend tests cover filters/LFS-style behavior, identity, unborn HEAD, and authorized repository roots; E2E covers Git and terminal behavior from a secondary folder and a workspace-switch race.
 
 ## D. Runtime events, transcripts, and scheduling
 
-- [ ] **Retain background extension UI requests.** Cache pending requests per runtime and show the request when its waiting session becomes active; clear/cancel them deterministically.
-- [ ] **Fix session attention semantics.** Advance `updatedAt`/an event revision on lifecycle changes, do not mark the currently visible completion unread, and ensure repeated background waits/completions generate new attention.
-- [ ] **Prevent stale transcript reconciliation overwrite.** Obsolete or merge an in-flight authoritative read when a new same-runtime prompt is admitted, preserving optimistic user/assistant messages.
-- [ ] **Bound and coalesce transcript reads.** Coalesce by canonical session path, cap global concurrency/admission, and avoid unlimited concurrent scans after rapid switching or hostile IPC calls.
-- [ ] **Bound session discovery before stat fan-out.** Enforce a hard directory-work budget instead of realpath/stat work for every matching file before applying `maxSessionFiles`.
-- [ ] **Align RPC image/frame limits.** A command accepted by schema validation must fit the transport, or validation must reject it consistently.
-- [ ] **Preserve schedule runtime ownership during fallback.** Deduplicate CLI fallback records without overwriting successful runtime-attributed records.
+- [x] **Retain background extension UI requests.** Cache pending requests per runtime and show the request when its waiting session becomes active; clear/cancel them deterministically.
+- [x] **Fix session attention semantics.** Advance `updatedAt`/an event revision on lifecycle changes, do not mark the currently visible completion unread, and ensure repeated background waits/completions generate new attention.
+- [x] **Prevent stale transcript reconciliation overwrite.** Obsolete or merge an in-flight authoritative read when a new same-runtime prompt is admitted, preserving optimistic user/assistant messages.
+- [x] **Bound and coalesce transcript reads.** Coalesce by canonical session path, cap global concurrency/admission, and avoid unlimited concurrent scans after rapid switching or hostile IPC calls.
+- [x] **Bound session discovery before stat fan-out.** Enforce a hard directory-work budget instead of realpath/stat work for every matching file before applying `maxSessionFiles`.
+- [x] **Align RPC image/frame limits.** A command accepted by schema validation must fit the transport, or validation must reject it consistently.
+- [x] **Preserve schedule runtime ownership during fallback.** Deduplicate CLI fallback records without overwriting successful runtime-attributed records.
 
 Acceptance: focused frontend/backend tests cover background questions, repeated attention, new turns during reconciliation, read coalescing/concurrency, large session directories, image-size boundaries, and partial schedule fallback.
 
 ## E. Renderer state and settings correctness
 
-- [ ] **Guard startup New Session.** Cmd-N and buttons during bootstrap must not leave `workspaceRef` empty while the UI falls back to an apparently usable project.
-- [ ] **Guard plugin catalog ownership.** Global, project, refresh, and stale requests must only commit results for their owning project generation.
-- [ ] **Fix optimistic settings rollback across queued fields.** Reconcile panel state from the complete confirmed settings object so an older failed patch cannot leave shell state inconsistent after a newer successful patch.
-- [ ] **Restore the diagnostics preference control.** Allow a persisted `telemetry: true` preference to be disabled, or remove/migrate the unused setting deliberately.
-- [ ] **Correct download preference semantics.** `browserAskForDownloads=false` must not silently block all downloads; either implement a safe no-prompt policy or rename the setting/control to reflect blocking.
-- [ ] **Repair the rejected-setting E2E.** Trigger the draft commit explicitly (Save/blur/Enter) and verify inline/backend failure plus rollback so the release E2E gate passes.
+- [x] **Guard startup New Session.** Cmd-N and buttons during bootstrap must not leave `workspaceRef` empty while the UI falls back to an apparently usable project.
+- [x] **Guard plugin catalog ownership.** Global, project, refresh, and stale requests must only commit results for their owning project generation.
+- [x] **Fix optimistic settings rollback across queued fields.** Reconcile panel state from the complete confirmed settings object so an older failed patch cannot leave shell state inconsistent after a newer successful patch.
+- [x] **Restore the diagnostics preference control.** Allow a persisted `telemetry: true` preference to be disabled, or remove/migrate the unused setting deliberately.
+- [x] **Correct download preference semantics.** `browserAskForDownloads=false` must not silently block all downloads; either implement a safe no-prompt policy or rename the setting/control to reflect blocking.
+- [x] **Repair the rejected-setting E2E.** Trigger the draft commit explicitly (Save/blur/Enter) and verify inline/backend failure plus rollback so the release E2E gate passes.
 
 Acceptance: reducer/component tests cover cross-field queue failure; E2E covers startup input, plugin switching, telemetry, downloads, and rejected draft settings.
 
 ## F. Performance, DRY, and maintainability
 
-- [ ] **Make Sidebar memoization effective.** Stabilize callback props or move streaming transcript state below the app shell so every RAF delta does not rerender project/session navigation.
-- [ ] **Make tool syntax rendering linear.** Tokenize with offsets/types in one pass; do not call `indexOf`/`slice` over the full 200k-character output for every token.
-- [ ] **Deduplicate transcript-load lifecycle code.** Use one read/replay/error/finally/deferred-reconciliation state machine for initial and reconciliation loads.
-- [ ] **Canonicalize plugin discovery keys and reveal ownership.** Coalesce on canonical project roots, globally bound discovery, and avoid last-writer-wins reveal allowlists.
-- [ ] **Remove dead ancestor discovery work.** Keep the explicit project containment boundary and avoid walking parent directories that containment will always reject, unless a separately authorized VCS root is introduced.
-- [ ] **Monitor initial bundle cost.** Keep terminal lazy-loaded and either justify or reduce the eagerly preloaded Markdown vendor chunk.
+- [x] **Make Sidebar memoization effective.** Stabilize callback props or move streaming transcript state below the app shell so every RAF delta does not rerender project/session navigation.
+- [x] **Make tool syntax rendering linear.** Tokenize with offsets/types in one pass; do not call `indexOf`/`slice` over the full 200k-character output for every token.
+- [x] **Deduplicate transcript-load lifecycle code.** Use one read/replay/error/finally/deferred-reconciliation state machine for initial and reconciliation loads.
+- [x] **Canonicalize plugin discovery keys and reveal ownership.** Coalesce on canonical project roots, globally bound discovery, and avoid last-writer-wins reveal allowlists.
+- [x] **Remove dead ancestor discovery work.** Keep the explicit project containment boundary and avoid walking parent directories that containment will always reject, unless a separately authorized VCS root is introduced.
+- [x] **Monitor initial bundle cost.** Keep terminal lazy-loaded and either justify or reduce the eagerly preloaded Markdown vendor chunk.
 
 File-size judgment: there is no size-only blocker. `Transcript.tsx` (about 396 lines) is the best extraction candidate; `App.tsx` (about 360), the Electron composition root, and the split plugin/session modules remain acceptable if the concrete issues above are resolved.
 
@@ -70,14 +70,14 @@ Acceptance: streaming tests assert Sidebar render stability and linear large-out
 
 ## G. Final orchestration and validation
 
-- [ ] Review every section commit for trust-boundary regressions and unrelated changes.
-- [ ] Run `npm run typecheck`.
-- [ ] Run `npm run check`.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:coverage`.
-- [ ] Run `npm run build`.
-- [ ] Run `npm run test:e2e`.
-- [ ] Record final bundle sizes, package/release checks that can run locally, and any platform/credential-gated checks.
+- [x] Review every section commit for trust-boundary regressions and unrelated changes.
+- [x] Run `npm run typecheck`.
+- [x] Run `npm run check`.
+- [x] Run `npm test`.
+- [x] Run `npm run test:coverage`.
+- [x] Run `npm run build`.
+- [x] Run `npm run test:e2e`.
+- [x] Record final bundle sizes, package/release checks that can run locally, and any platform/credential-gated checks.
 
 ## Working protocol and implementation log
 
@@ -99,24 +99,67 @@ These logs are the durable coordination record for compaction and handoff.
 
 ### Section A log — release/CI
 
-- Pending.
+- **Scope release credentials narrowly** — commit: `7bef8184cc658c3a851ac97c2fb35b007268f83d`. Files: `.github/workflows/{ci,release}.yml`, `scripts/release/{lib,package}.mjs`, `tests/release-scripts.test.ts`. Intent: pin every GitHub Action, expose secrets only to preflight/package steps, and strip release credentials from package-internal quality/build processes and post-package verification except for the expected Team ID. Validation: `npm test -- --run tests/release-scripts.test.ts`, `npm run typecheck`, `npm run check`, `npm test` (126 tests). Remaining risk: public signing/notarization remains credential-gated in CI.
+- **Verify the uploaded artifacts** — commit: `c84250f1243f0f7c130ff80ae104a95ec5b1a070`. Files: `scripts/release/{lib,verify-package}.mjs`, `tests/release-scripts.test.ts`. Intent: require exactly one DMG and ZIP, test both containers, mount/extract them without following symlinks, and validate each contained app's declared architecture, native architectures, ASAR, fuses, and (for public builds) Developer ID signature, Team ID, notarization staple, and Gatekeeper assessment. Validation: release-script tests (10 tests), `npm run typecheck`, `npm run check`, `npm test` (127 tests), QA package dry-run, direct unsigned electron-builder package plus archive verifier (pass). Remaining risk: credentialed public signature/notarization validation can run only in release CI; the full local QA wrapper reached a pre-existing rejected-setting E2E failure tracked in Section E before packaging.
+- **Cover extracted plugin modules** — commit: `d79ba0a1396a22c9723f6cf9f96abb0e52e99b08`. Files: `vitest.config.ts`, `tests/release-scripts.test.ts`. Intent: include `electron/main/plugins/**/*.ts` in V8 coverage while retaining the existing global thresholds. Validation: release-script tests (11 tests), `npm run typecheck`, `npm run check`, `npm test` (128 tests), `npm run test:coverage` (72.68% statements, 57.94% branches, 83.40% functions, 80.97% lines). Remaining risk: none specific to this step.
+- **Unify fuse hardening** — commit: `55e73544829f74c6e1e10f6951473c1b381d90b7`. Files: deleted `scripts/afterPack.cjs`; updated `tests/release-scripts.test.ts`. Intent: remove the dead duplicate hook and enforce the single `package.json`-configured `scripts/release/after-pack.cjs` implementation. Validation: release-script tests (12 tests), `npm run typecheck`, `npm run check`, `npm test` (129 tests). Remaining risk: none specific to this step.
+- **Correct the supported Node version** — commit: `1696055eeeb87acae0dab12364a363d567f9ef2d`. Files: `README.md`, `AGENTS.md`, `.nvmrc`, `tests/release-scripts.test.ts`. Intent: align contributor requirements and version-manager metadata with the enforced Node >=22.12.0 and npm >=10.9.0 engines. Validation: release-script tests (13 tests), `npm run typecheck`, `npm run check`, `npm test` (130 tests). Remaining risk: none specific to this step.
+- **Final Section A validation** — `npm run typecheck`, `npm run check`, `npm test` (130 tests), `npm run test:coverage` (72.68% statements, 57.89% branches, 83.40% functions, 80.97% lines), QA package dry-run, credential-shape preflight, and direct unsigned QA DMG/ZIP build plus archive verification passed. Credentialed Developer ID signing/notarization remains CI-gated. The intermediate rejected-setting E2E blocker was subsequently resolved in Section E; the final local QA package wrapper passed as recorded below.
 
 ### Section B log — authorization/lifecycle
 
-- Pending.
+- Project removal process revocation (commit recorded in final Section B log): `electron/main/projects.ts`, `electron/main/agent-rpc/manager.ts`, `electron/main/terminal.ts`, `electron/main/index.ts`; tests in `tests/backend/project-removal.test.ts`, `tests/backend/agent-rpc.test.ts`, and `tests/backend/terminal.test.ts`. Removal revokes new admission first, then awaits matching runtime and PTY teardown before persistence completes. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/project-removal.test.ts tests/backend/agent-rpc.test.ts tests/backend/terminal.test.ts`.
+- Project MCP directory pinning (commit recorded in final Section B log): `electron/main/plugins.ts`, `electron/main/plugins/mcp.ts`; race test in `tests/backend/plugins.test.ts`. Project, `.prime`, and `agent` identities plus the settings file type are revalidated around locking, reads, temporary writes, fingerprinting, and rename. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/plugins.test.ts`.
+- Tracked PTY teardown (commit recorded in final Section B log): `electron/main/terminal.ts`, `electron/main/ipc.ts`; concurrency test in `tests/backend/terminal.test.ts`. Owner revocation, output-limit kills, explicit kills, project removal, and shutdown reuse a tracked per-PTY escalation promise; `killAll` drains already-started teardowns. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/terminal.test.ts`.
+- Desktop-state shutdown drain (commit recorded in final Section B log): `electron/main/store.ts`, `electron/main/index.ts`; shutdown-admission test in `tests/backend/store.test.ts`. `beginShutdown` closes update admission synchronously and drains initialization plus the serialized persistence queue before the final quit. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/store.test.ts`.
+- Canonical session ownership (commit recorded in final Section B log): `electron/main/sessions.ts`; alias-ownership test in `tests/backend/sessions.test.ts`. Existing session cwd values and project filters are canonicalized before return/filtering, aligning session ownership with canonical project grants and runtime cwd values. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/sessions.test.ts tests/backend/project-removal.test.ts`.
 
 ### Section C log — Git/multi-folder
 
-- Pending.
+- **Git filter/LFS integrity** (`fix(git): fail closed for filtered path mutations`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Hardened Git keeps filter commands disabled, inspects attributes without executing drivers, and fails filtered status/diff/stage/restore operations before content can change. Focused validation: `npm test -- --run tests/backend/git.test.ts` (7 passed). Remaining risk: trusted filter execution remains intentionally delegated to an external Git client.
+- **Safe commit identity** (`fix(git): supply a safely inspected commit identity`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Commit identity is read without config includes from repository scope and then the user global scope, validated, and passed back through fixed `-c` arguments while hooks/global config remain blocked. Focused validation: `npm test -- --run tests/backend/git.test.ts`. Remaining risk: invalid or unavailable identities still produce Git's normal explicit commit failure.
+- **Unborn-HEAD unstage** (`fix(git): support unstage before the first commit`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Unstage checks `HEAD` with hardened Git and uses a cached-only forced removal fallback on unborn repositories, preserving the working file even when it changed after staging. Focused validation: `npm test -- --run tests/backend/git.test.ts`. Remaining risk: none known.
+- **Active-workspace Git ownership** (`fix(workspace): bind Git operations to the active cwd`): `electron/main/git.ts`, `src/App.tsx`, `src/lib/workspace.ts`, `src/components/Inspector.tsx`, `src/components/inspector/ChangesPanel.tsx`, `tests/backend/git.test.ts`, `tests/frontend/runtime-state.test.ts`, `tests/e2e/app.spec.ts`. Git status is cwd-owned at render time, secondary-folder sessions drive every Git request, stale status cannot supply paths to a new cwd, and discovered repository roots must independently pass project authorization. Focused validation: `npm run typecheck`; focused backend/frontend tests; secondary-folder/workspace-switch E2E. Remaining risk: none known.
+- **Active-workspace terminal cwd** (`fix(terminal): open the PTY in the active workspace cwd`): `src/App.tsx`, `tests/e2e/app.spec.ts`. The terminal now consumes the same active cwd as Prime and Git, and its existing cwd-keyed lifecycle recreates the PTY when switching between project folders. Focused validation: `npm run typecheck`; secondary-folder terminal E2E verifies `pwd` before and after a folder switch. Remaining risk: none known.
 
 ### Section D log — runtime/transcripts/schedules
 
-- Pending.
+- Background extension UI retention: implemented per-runtime pending request caching, active-runtime reveal, replacement cancellation, timeout cleanup, and runtime-exit cleanup. Files: `src/App.tsx`, `src/hooks/useAgentEvents.ts`, `src/hooks/useExtensionUi.ts`, `tests/frontend/extension-ui.test.ts`. Tests: `npm test -- --run tests/frontend/extension-ui.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `45474fcaf07e9df55a9095380f9ef0d61b54a76e`.
+- Session attention semantics: lifecycle events now advance a monotonic `updatedAt` and `eventRevision`, active visible completions stay read, and repeated background waits/completions create distinct attention signatures. Files: `src/App.tsx`, `src/app/session-attention.ts`, `src/components/Sidebar.tsx`, `src/hooks/useAgentEvents.ts`, `src/types/api.ts`, `tests/frontend/session-attention.test.ts`. Tests: `npm test -- --run tests/frontend/session-attention.test.ts tests/frontend/extension-ui.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `f8ed79161362fcdf89b68d6a46264c7732120c31`.
+- Stale transcript reconciliation: authoritative reads now carry a same-runtime prompt-admission revision and cannot replace newer optimistic messages after a prompt is admitted. Files: `src/App.tsx`, `src/app/agent-events.ts`, `src/hooks/useWorkspaceRuntime.ts`, `tests/frontend/transcript-reconciliation.test.ts`. Tests: `npm test -- --run tests/frontend/transcript-reconciliation.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `fa6b273a8007f24dd48b060968f1fc213ba63e78`.
+- Bounded/coalesced transcript reads: session reads coalesce by requested and canonical paths, use a global three-read cap, and reject beyond a bounded pending queue. Files: `electron/main/sessions.ts`, `tests/backend/sessions.test.ts`. Tests: `npm test -- --run tests/backend/sessions.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `433ff472da225bce68243c52a4bd0cf4cc1a13f4`.
+- Bounded session discovery: matching directory entries are deterministically reduced to a hard 20,000-operation/four-times-catalog work budget before canonicalization/stat fan-out. Files: `electron/main/sessions/catalog.ts`, `tests/backend/sessions.test.ts`. Tests: `npm test -- --run tests/backend/sessions.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `218fda7397f343edabf1e1e575d092b4c42fc3c5`.
+- Aligned RPC image/frame limits: command validation and framed transport now share an exact 2 MiB request-frame budget including the generated request ID/newline, with exact-boundary coverage. Files: `electron/main/agent-rpc/command-schema.ts`, `electron/main/agent-rpc/limits.ts`, `electron/main/agent-rpc/transport.ts`, `tests/backend/agent-rpc.test.ts`. Tests: `npm test -- --run tests/backend/agent-rpc.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `8c5cf8692f59621a767a00573b08b4f5a5bb2cec`.
+- Schedule fallback ownership: deduplication now prefers successful runtime-attributed records over ownerless CLI fallback duplicates, including partial-runtime fallback coverage. Files: `electron/main/settings-schedules.ts`, `tests/backend/schedules.test.ts`. Tests: `npm test -- --run tests/backend/schedules.test.ts`; `npm run typecheck`; `npm run check`; `npm test`. Commit: `7a31f19393c24008c2fc56f57579152090a961c5`.
 
 ### Section E log — renderer/settings
 
-- Pending.
+- `32411ef` Guard startup New Session: `src/App.tsx`, `src/lib/workspace.ts`, `tests/frontend/runtime-state.test.ts`. New-session actions now resolve the displayed bootstrap project without clearing ownership; no-op until any project exists. Validation: `npm run typecheck`; `npx vitest run tests/frontend/runtime-state.test.ts`. Remaining risk: the bootstrap race is deterministically covered at the selection helper boundary rather than with timing-dependent E2E.
+- `80e2164` Guard plugin catalog ownership: `src/App.tsx`, `src/hooks/useBootstrap.ts`, `src/lib/plugin-catalog.ts`, `tests/frontend/plugin-catalog.test.ts`. Centralized global/project loads under latest-request plus workspace-generation/path ownership; refresh and post-MCP reloads cannot commit across project switches. Validation: `npm run typecheck`; focused Vitest (6 tests); `npm run check`. Remaining risk: full switching behavior remains for E2E validation.
+- `825c44c` Fix queued cross-field settings rollback: `src/hooks/useAppSettings.ts`, `src/lib/settings-state.ts`, `tests/frontend/settings-page.test.ts`. Successful or rejected latest queued mutations now reconcile all independent panel state from the complete confirmed settings object. Validation: `npm run typecheck`; focused settings Vitest (12 tests); `npm run check`. Remaining risk: none known.
+
+- `7119b0e` Restore diagnostics preference control: `src/pages/settings/PrivacySettings.tsx`, `tests/e2e/app.spec.ts`. Privacy settings now exposes the persisted telemetry boolean and can disable a pre-existing true value. Validation: typecheck, focused settings Vitest, check, bundle build, and focused Playwright diagnostics E2E (1 passed). Remaining risk: diagnostics remain preference-only until an explicitly privacy-reviewed diagnostics implementation exists.
+
+- `be541a9` Correct browser download preference semantics: `electron/main/browser-downloads.ts`, `electron/main/index.ts`, `tests/backend/browser-downloads.test.ts`, `docs/security.md`. Disabling save prompts now admits otherwise-safe gesture downloads to the OS Downloads folder with a sanitized UUID-suffixed name while preserving URL/size/concurrency/budget controls. Validation: `npm run typecheck`; focused browser-download Vitest (4 tests); `npm run check`. Remaining risk: OS-level destination writability errors are handled by Electron's normal download failure path.
+
+- `9e5c940` Repair rejected-setting E2E: `tests/e2e/app.spec.ts`. The test now presses Enter, asserts inline rollback feedback and the backend validation toast, verifies persisted shell rollback, then remounts the draft to prove confirmed UI restoration. Validation: `npm run typecheck`; `npm run check`; focused Playwright rejected-setting E2E (1 passed). Remaining risk: none known.
+
 
 ### Section F log — performance/DRY
 
-- Pending.
+- `361d140` stabilizes every Sidebar callback at the App shell memo boundary (`src/App.tsx`, `src/hooks/useStableCallback.ts`) and adds a streaming-parent memo assertion (`tests/frontend/streaming-performance.test.ts`). Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/streaming-performance.test.ts` (7 passed).
+- `3fdb896` replaces repeated full-output searches with offset/type tokens (`src/lib/syntax-text.ts`, `src/components/Transcript.tsx`); the 200k-character regression test proves exact reconstruction and zero `String#indexOf` calls (`tests/frontend/syntax-text.test.ts`). Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/syntax-text.test.ts tests/frontend/transcript-rendering.test.ts` (5 passed).
+- `2934e07` routes initial and reconciliation reads through one read/replay/error/finally/deferred state machine (`src/app/transcript-load.ts`, `src/hooks/useWorkspaceRuntime.ts`). Lifecycle and single-path assertions live in `tests/frontend/transcript-load.test.ts`. Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/transcript-load.test.ts tests/frontend/transcript-reconciliation.test.ts tests/frontend/streaming-performance.test.ts` (16 passed).
+- `e42e80f` canonicalizes authorized project keys before coalescing, enforces a process-wide two-discovery bound, and retains reveal allowlists per user/project owner (`electron/main/plugins.ts`). Alias, concurrency, and cross-owner reveal tests are in `tests/backend/plugins.test.ts`. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/plugins.test.ts` (15 passed).
+- `49037fe` removes rejected ancestor traversal and scans only the authorized project’s own `.agents/skills` root while preserving containment (`electron/main/plugins/catalog.ts`). The boundary regression in `tests/backend/plugins.test.ts` confirms local discovery and ancestor exclusion. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/plugins.test.ts` (16 passed).
+- `f811e18` lazy-loads Transcript so its Markdown graph is no longer in the initial renderer module graph, while preserving the Terminal boundary (`src/App.tsx`, `tests/frontend/bundle-boundaries.test.ts`). Focused validation: `npm run typecheck`; focused Vitest (5 passed); `npm run build`. Production output: entry 124.45 kB, Transcript 27.94 kB, Markdown vendor 372.86 kB, Terminal 8.31 kB + vendor 415.93 kB (uncompressed); `out/renderer/index.html` preloads only React/icons, not Markdown/Terminal.
+- Final Section F validation (working tree at `66ed632` plus this log): `npm run typecheck` passed; `npm run check` passed; `npm test` passed (29 files, 138 tests); `npm run build` passed with the bundle sizes above. Remaining risk: Markdown and terminal vendor payloads remain large when their lazy boundaries are opened, but neither is initially preloaded. `scripts/afterPack.cjs` remains untouched for Section A’s fuse-hardening owner; no Section F checkbox or any other section log/checkmark was changed.
+
+### Final orchestration and validation log
+
+- Integrated the six section branches on `fix/final-merge`, reviewed the trust-boundary changes, and added follow-up hardening for nested-workspace Git ownership (`c0260a1`, `88ec5b4`), all-path filter inspection (`319ba4c`), atomic MCP replacement (`c44ed47`), bounded plugin admission (`e8e7f1b`), newest-tail session discovery (`e71b793`), external live-session synchronization (`c6d0813`, `41592c6`), and stable Electron launch teardown/retry (`26aeb54`, `3b618a9`).
+- Excluded standalone `plugins/prime-agent-ask-user` source as unrelated to Sections A–F (`6fe5b70` reverts `7f23f93`). The provider/catalog work already present on `main` remains because it is shipped application functionality and its secure IPC/settings ownership has focused coverage.
+- Final quality pipeline passed: `npm run typecheck`; `npm run check`; `npm test` / coverage with 34 files and 194/194 tests; global coverage 74.74% statements, 61.46% branches, 84.51% functions, and 82.23% lines; production build; and hermetic Electron E2E with 22/22 tests.
+- Final uncompressed build output: main 211.14 kB; preload 5.05 kB; renderer entry 143.71 kB; Transcript 28.76 kB; Markdown vendor 372.86 kB; Terminal 8.31 kB plus terminal vendor 415.93 kB; React vendor 554.69 kB. Markdown and Terminal remain behind lazy boundaries and are not initially preloaded.
+- `npm run package:mac:local-qa` passed end to end. It produced and verified the unsigned arm64 DMG and ZIP, including archive integrity, contained application, exact architectures, ASAR, native `node-pty` architecture, and Electron fuses. The earlier QA dry-run also passed.
+- Residual credential/platform limitation: Developer ID signing, Team ID verification, notarization/stapling, and Gatekeeper validation require release credentials unavailable locally and remain enforced by credentialed release CI. Node on macOS does not expose a directory-fd-relative `renameat`; MCP replacement therefore uses identity checks, backup/rollback, identity-gated cleanup, and a synchronous final rename, with race tests covering target substitution.

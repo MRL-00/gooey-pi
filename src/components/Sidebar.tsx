@@ -20,6 +20,7 @@ import {
 import { memo, useEffect, useMemo, useState } from 'react'
 import type { ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
+import { sessionAttentionSignature } from '@/app/session-attention'
 import { IconButton, Modal, PrimeMark, useFocusTrap } from './ui'
 
 export interface SidebarProps {
@@ -79,12 +80,6 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
 }
 
 
-const attentionSignature = (session: SessionRecord): string | undefined => {
-  if (session.status === 'waiting') return `waiting:${session.updatedAt}`
-  if (session.status === 'complete' && session.unread) return `complete:${session.updatedAt}`
-  return session.unread ? `unread:${session.updatedAt}` : undefined
-}
-
 function readClearedAttention(): Record<string, string> {
   if (typeof window === 'undefined') return {}
   try { return JSON.parse(window.localStorage.getItem('prime-work.cleared-session-attention') ?? '{}') as Record<string, string> } catch { return {} }
@@ -109,11 +104,11 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(readClearedAttention)
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
-    const signature = attentionSignature(session)
+    const signature = sessionAttentionSignature(session)
     return Boolean(signature && clearedAttention[session.id] !== signature)
   }
   const clearAttention = (session: SessionRecord) => {
-    const signature = attentionSignature(session)
+    const signature = sessionAttentionSignature(session)
     if (!signature) return
     setClearedAttention((current) => ({ ...current, [session.id]: signature }))
   }

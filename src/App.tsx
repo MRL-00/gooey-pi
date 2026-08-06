@@ -4,7 +4,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TitleToolbar } from '@/components/TitleToolbar'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
-import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, projectContainsPath, workspaceCwd } from '@/lib/workspace'
+import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import { DEFAULT_SETTINGS, SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { requestFailureMessage } from '@/app/workspace'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
@@ -41,7 +41,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(() => bridge ? [] : SAMPLE_SESSIONS)
   const [schedules, setSchedules] = useState<ScheduleRecord[]>(() => bridge ? [] : SAMPLE_SCHEDULES)
   const [scheduleError, setScheduleError] = useState('')
-  const [git, setGit] = useState<GitStatus>(() => bridge ? { isRepo: false, files: [] } : SAMPLE_GIT)
+  const [gitSnapshot, setGitSnapshot] = useState(() => ({ cwd: bridge ? undefined : SAMPLE_PROJECTS[0]?.primaryFolder, status: bridge ? { isRepo: false, files: [] } as GitStatus : SAMPLE_GIT }))
   const [view, setView] = useState<WorkspaceView>('session')
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -67,11 +67,14 @@ export default function App() {
     const next = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
     if (next && workspace.workspaceRef.current.generation === generation) workspace.attachRuntime(next, generation)
   }, [bridge, workspace.attachRuntime, workspace.workspaceRef])
-  const provider = useProviderCatalog({ bridge, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, reportError })
+  const syncDisabledProviders = useCallback((disabledProviders: string[]) => settingsState.updateSettings({ disabledProviders }), [settingsState.updateSettings])
+  const provider = useProviderCatalog({ bridge, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, syncDisabledProviders, reportError })
   const activeSession = useMemo(() => sessions.find((session) => session.id === workspace.activeSessionId), [sessions, workspace.activeSessionId])
   const activeProject = useMemo(() => findProjectForSession(projects, activeSession)
     ?? projects.find((project) => project.id === workspace.activeProjectId)
     ?? projects[0], [projects, activeSession, workspace.activeProjectId])
+  const activeCwd = workspaceCwd(activeProject, activeSession)
+  const git = gitStatusForWorkspace(gitSnapshot, activeCwd)
   const layout = usePanelLayout({
     sidebarOpen: settingsState.sidebarOpen, setSidebarOpen: settingsState.setSidebarOpen,
     inspectorOpen: settingsState.inspectorOpen, setInspectorOpen: settingsState.setInspectorOpen,
@@ -83,19 +86,19 @@ export default function App() {
     activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime, reportError,
   })
   const extension = useExtensionUi({
-    bridge, activeRuntimeId: workspace.runtime?.runtimeId ?? null, runtimeSessionsRef: workspace.runtimeSessionsRef, runtimeIdRef: workspace.runtimeIdRef,
+    bridge, activeRuntimeId: workspace.runtime?.runtimeId, runtimeSessionsRef: workspace.runtimeSessionsRef,
     setSessions, reportError,
   })
 
   const refreshGit = useCallback(async () => {
     const requestId = ++gitRequestRef.current
-    const cwd = activeProject?.primaryFolder
-    if (!bridge || !cwd) { setGit({ isRepo: false, files: [] }); return }
+    const cwd = activeCwd
+    if (!bridge || !cwd) { setGitSnapshot({ cwd, status: { isRepo: false, files: [] } }); return }
     try {
       const next = await bridge.git.status(cwd)
-      if (gitRequestRef.current === requestId) setGit(next)
-    } catch (error) { if (gitRequestRef.current === requestId) reportError(error) }
-  }, [activeProject?.primaryFolder, bridge, reportError])
+      if (gitRequestRef.current === requestId && workspace.workspaceRef.current.cwd === cwd) setGitSnapshot({ cwd, status: next })
+    } catch (error) { if (gitRequestRef.current === requestId && workspace.workspaceRef.current.cwd === cwd) reportError(error) }
+  }, [activeCwd, bridge, reportError, workspace.workspaceRef])
 
   useAgentEvents({
     bridge, runtimeIdRef: workspace.runtimeIdRef, runtimeSessionsRef: workspace.runtimeSessionsRef,
@@ -103,10 +106,14 @@ export default function App() {
     setSessions, setRuntime: workspace.setRuntime, queueAgentEvent: workspace.queueAgentEvent,
     reconcileTranscriptForEvent: workspace.reconcileTranscriptForEvent,
     showExtensionUi: extension.showExtensionUi, clearExtensionUi: extension.clearExtensionUi,
-    refreshGit, refreshGitOnTerminalEvent: Boolean(activeProject?.primaryFolder),
+    refreshGit, refreshGitOnTerminalEvent: Boolean(activeCwd),
+    activeSessionVisible: view === 'session',
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])
+  useEffect(() => {
+    if (activeSession?.syncRevision) void refreshGit()
+  }, [activeSession?.syncRevision, refreshGit])
   const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
   const pluginSkills = usePluginSkills({ bridge, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
@@ -119,8 +126,10 @@ export default function App() {
     if (selected.project?.id !== project.id) return granted
     workspace.workspaceRef.current = { ...selected, project: granted, cwd: workspaceCwd(granted, selected.session) }
     const requestId = ++gitRequestRef.current
-    const nextGit = await bridge.git.status(granted.primaryFolder)
-    if (gitRequestRef.current === requestId && workspace.workspaceRef.current.generation === selected.generation) setGit(nextGit)
+    const cwd = workspaceCwd(granted, selected.session)
+    if (!cwd) return granted
+    const nextGit = await bridge.git.status(cwd)
+    if (gitRequestRef.current === requestId && workspace.workspaceRef.current.generation === selected.generation && workspace.workspaceRef.current.cwd === cwd) setGitSnapshot({ cwd, status: nextGit })
     return granted
   }
   const persistPanel = (patch: Partial<typeof DEFAULT_SETTINGS>) => { void settingsState.updateSettings(patch) }
@@ -163,8 +172,10 @@ export default function App() {
     try { await grantProject(project); await workspace.reconcileRuntime(generation) }
     catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
-  const newSession = (project = workspace.workspaceRef.current.project) => {
-    if (!initialized || !project) return
+  const newSession = (requestedProject?: ProjectRecord) => {
+    if (!initialized) return
+    const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
+    if (!project) return
     if (layout.compactLayout) settingsState.setSidebarOpen(false)
     workspace.activateWorkspace(project)
     if (!bridge) workspace.setMessages([])
@@ -240,7 +251,15 @@ export default function App() {
         let startedRuntime = false
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
-          activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+          const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
+          if (selected.sessionFile && selectedSession?.status === 'running'
+            && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
+          try {
+            activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+          } catch (startError) {
+            if (selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
+            throw startError
+          }
           startedRuntime = true
           if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
         }
@@ -335,7 +354,7 @@ export default function App() {
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(workspace.runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
     : view === 'plugins' ? <PluginsPage skills={pluginSkills.skills} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
-    : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
+    : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
@@ -349,14 +368,14 @@ export default function App() {
       <div className="workbench__content">{view === 'session' ? <div ref={layout.sessionWorkspaceRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.workspaceRowRef} className="workspace-row">
           <main className="conversation-pane">
-            <Suspense fallback={<LoadingPanel label="transcript" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
+            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
             <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
-          {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} runtime={workspace.runtime} messages={workspace.messages} git={git} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}
+          {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
         </div>
-        {settingsState.terminalOpen ? <Suspense fallback={<LoadingPanel label="terminal" />}><TerminalDrawer cwd={activeProject?.primaryFolder} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={toggleTerminal} onError={reportError} /></Suspense> : null}
+        {settingsState.terminalOpen ? <Suspense fallback={<LoadingPanel label="terminal" />}><TerminalDrawer cwd={activeCwd} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={toggleTerminal} onError={reportError} /></Suspense> : null}
       </div> : <Suspense fallback={<LoadingPanel label={view} />}>{page}</Suspense>}</div>
     </div>
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}

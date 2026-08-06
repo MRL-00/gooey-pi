@@ -165,16 +165,6 @@ async function collectConfigured(
   }
 }
 
-async function collectAncestorSkills(start: string, output: Candidate[], budget: DiscoveryBudget): Promise<void> {
-  let current = resolve(start)
-  while (!discoveryExhausted(budget)) {
-    await collectDirectory(join(current, '.agents', 'skills'), 'skill', 'project', output, budget, { containmentRoot: start })
-    if (await pathExists(join(current, '.git'))) break
-    const parent = dirname(current)
-    if (parent === current) break
-    current = parent
-  }
-}
 
 function displayName(candidate: Candidate, metadata: { name?: string }): string {
   if (metadata.name) return metadata.name
@@ -277,7 +267,7 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
     const projectAgentDir = join(safeProjectPath, '.prime', 'agent')
     projectSettings = await readSettings(join(projectAgentDir, 'settings.json'))
     await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoot: safeProjectPath })
-    await collectAncestorSkills(safeProjectPath, candidates, budget)
+    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoot: safeProjectPath })
     await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoot: safeProjectPath })
     await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoot: safeProjectPath })
     await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, safeProjectPath)

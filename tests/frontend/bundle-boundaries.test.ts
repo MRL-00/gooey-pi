@@ -1,0 +1,17 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+describe('renderer bundle boundaries', () => {
+  const appSource = readFileSync('src/App.tsx', 'utf8')
+
+  it('keeps Transcript and its Markdown graph out of the initial App module graph', () => {
+    expect(appSource).toContain("const Transcript = lazy(() => import('@/components/Transcript')")
+    expect(appSource).not.toContain("import { Transcript } from '@/components/Transcript'")
+    expect(appSource).toContain('<Suspense fallback={<LoadingPanel label="conversation" />}><Transcript')
+  })
+
+  it('continues to lazy-load the terminal dependency graph', () => {
+    expect(appSource).toContain("const TerminalDrawer = lazy(() => import('@/components/TerminalDrawer')")
+    expect(appSource).not.toContain("import { TerminalDrawer } from '@/components/TerminalDrawer'")
+  })
+})

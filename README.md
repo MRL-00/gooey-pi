@@ -21,7 +21,7 @@ Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/Pri
 ## Requirements
 
 - Apple Silicon macOS
-- Node.js 20 or newer and npm
+- Node.js 22.12.0 or newer and npm 10.9.0 or newer
 - Prime Agent installed on `PATH` (Homebrew installations at `/opt/homebrew/bin/prime-agent` are detected)
 - A configured Prime Agent provider/login
 

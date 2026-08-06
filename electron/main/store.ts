@@ -125,6 +125,7 @@ const nodeFileSystem: JsonStateStoreFileSystem = {
 export class JsonStateStore {
   private state: DesktopState
   private queue: Promise<void> = Promise.resolve()
+  private closed = false
 
   constructor(
     private readonly filePath: string,
@@ -147,6 +148,7 @@ export class JsonStateStore {
   }
 
   async update<T>(mutator: (draft: DesktopState) => T): Promise<T> {
+    if (this.closed) throw new Error('Desktop state store is shutting down')
     const operation = this.queue.then(async () => {
       const draft = structuredClone(this.state)
       const result = mutator(draft)
@@ -156,6 +158,11 @@ export class JsonStateStore {
     })
     this.queue = operation.then(() => undefined, () => undefined)
     return operation
+  }
+
+  async beginShutdown(): Promise<void> {
+    this.closed = true
+    await this.queue
   }
 
   private async persist(state: DesktopState): Promise<void> {

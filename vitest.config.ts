@@ -12,6 +12,7 @@ export default defineConfig({
         'electron/main/{browser-downloads,git,jsonl,plugins,process-utils,projects,providers,sessions,settings-schedules,store,terminal,validation}.ts',
         'electron/main/plugins/**/*.ts',
         'electron/main/agent-rpc/**/*.ts',
+        'electron/main/plugins/**/*.ts',
         'electron/main/sessions/**/*.ts',
         'src/lib/{events,extension-ui,render-bounds,workspace}.ts',
         'src/hooks/useProviderCatalog.ts',

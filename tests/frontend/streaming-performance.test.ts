@@ -10,8 +10,6 @@ import {
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
 import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, type PrimeEventReplayStats } from '../../src/lib/events'
-import { createScopedRequestGuard } from '../../src/app/scoped-request'
-import { createRuntimeQueue } from '../../src/app/runtime-queue'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
 import type { ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
@@ -102,6 +100,16 @@ const sidebarProps = (onNewSession: () => void): SidebarProps => ({
 })
 
 describe('Sidebar memoization and scale bounds', () => {
+  it('rejects a streaming parent rerender when navigation data and stable handlers are unchanged', () => {
+    const callbacks = sidebarProps(() => undefined)
+    const before = { ...callbacks }
+    const streamedMessages = applyPrimeEvent(transcript(), delta('next frame'))
+    const after = { ...callbacks }
+
+    expect(streamedMessages).not.toBe(transcript())
+    expect(areSidebarPropsEqual(before, after)).toBe(true)
+  })
+
   it('keeps callback identities stable while dispatching to the latest App render', () => {
     let oldCalls = 0
     let newCalls = 0

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { applySessionLifecycleEvent, sessionLifecycleChange } from '@/app/session-attention'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
 
@@ -16,6 +17,7 @@ interface UseAgentEventsOptions {
   clearExtensionUi(runtimeId?: string): void
   refreshGit(): Promise<void>
   refreshGitOnTerminalEvent: boolean
+  activeSessionVisible: boolean
 }
 
 export function useAgentEvents({
@@ -32,6 +34,7 @@ export function useAgentEvents({
   clearExtensionUi,
   refreshGit,
   refreshGitOnTerminalEvent,
+  activeSessionVisible,
 }: UseAgentEventsOptions) {
   useEffect(() => {
     if (!bridge) return
@@ -41,30 +44,17 @@ export function useAgentEvents({
         ?? (runtimeIdRef.current === runtimeId ? workspaceRef.current.sessionFile : undefined)
       if (sessionFile) {
         runtimeSessionsRef.current.set(runtimeId, sessionFile)
-        const status = type === 'extension_ui_request' ? 'waiting'
-          : type === 'agent_start' || type === 'turn_start' ? 'running'
-          : type === 'agent_end' ? 'complete'
-          : type === 'extension_error' || type === 'error' || type === 'transport_error' ? 'failed'
-          : type === 'runtime_exit' ? event.expected === true ? 'complete' : 'failed'
-          : undefined
-        if (status) {
+        if (sessionLifecycleChange(event)) {
+          const visible = activeSessionVisible && workspaceRef.current.sessionFile === sessionFile
           setSessions((items) => items.map((session) => session.filePath === sessionFile
-            ? {
-                ...session,
-                status,
-                unread: status === 'waiting' || status === 'complete'
-                  ? true
-                  : status === 'running' ? false : session.unread,
-              }
+            ? applySessionLifecycleEvent(session, event, visible)
             : session))
         }
       }
       showExtensionUi(runtimeId, event)
+      if (type === 'runtime_exit') clearExtensionUi(runtimeId)
       if (runtimeIdRef.current !== runtimeId) {
-        if (type === 'runtime_exit') {
-          clearExtensionUi(runtimeId)
-          runtimeSessionsRef.current.delete(runtimeId)
-        }
+        if (type === 'runtime_exit') runtimeSessionsRef.current.delete(runtimeId)
         return
       }
 
@@ -85,6 +75,7 @@ export function useAgentEvents({
       }
     })
   }, [
+    activeSessionVisible,
     bridge,
     clearExtensionUi,
     workspaceRef,

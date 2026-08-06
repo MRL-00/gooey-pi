@@ -9,6 +9,7 @@ interface ProviderSettingsProps {
   onSaveApiKey(providerId: string, apiKey: string): Promise<void>
   onLogout(providerId: string): Promise<void>
   onSetEnabled(providerId: string, enabled: boolean): Promise<void>
+  onSetAllEnabled(): Promise<void>
   onStartOAuth(providerId: string): Promise<void>
   onOpenDocs(): void
 }
@@ -23,7 +24,7 @@ function authDescription(provider: PrimeProviderDescriptor): string {
   return `${source} · ${provider.availableModelCount.toLocaleString()} available models`
 }
 
-export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
+export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
   const [view, setView] = useState<'providers' | 'models'>('providers')
   const [query, setQuery] = useState('')
   const [apiKeyProvider, setApiKeyProvider] = useState<PrimeProviderDescriptor | null>(null)
@@ -65,9 +66,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
   }
 
   const closeApiKey = () => { setApiKey(''); setApiKeyError(''); setApiKeyProvider(null) }
-  const enableAll = () => run('enable-all', async () => {
-    for (const provider of catalog?.providers ?? []) if (!provider.enabled) await onSetEnabled(provider.id, true)
-  })
+  const enableAll = () => run('enable-all', onSetAllEnabled)
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
