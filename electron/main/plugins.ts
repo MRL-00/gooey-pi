@@ -306,8 +306,10 @@ export class PluginService {
   async install(sourceValue: unknown): Promise<{ ok: boolean; output: string }> {
     if (!this.primeAgentPath) return { ok: false, output: 'Prime Agent executable was not found' }
     const source = this.validatePackageSource(sourceValue)
-    const result = await runProcess(this.primeAgentPath, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
-    return { ok: result.code === 0, output: stripAnsi(`${result.stdout}${result.stderr}`).trim() }
+    const operation = this.settingsMutation.then(() => runProcess(this.primeAgentPath!, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 }))
+    this.settingsMutation = operation.then(() => undefined, () => undefined)
+    const result = await operation
+    return { ok: result.code === 0 && !result.timedOut && !result.outputExceeded, output: stripAnsi(`${result.stdout}${result.stderr}`).trim() }
   }
 
   async connectMcp(inputValue: unknown): Promise<{ ok: boolean; output: string }> {
@@ -325,18 +327,22 @@ export class PluginService {
     const mutation = this.settingsMutation.then(async () => {
       const release = await this.acquireSettingsLock(settingsPath)
       try {
-        const settings = await this.readSettingsForUpdate(settingsPath)
-        if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
-        const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
-        if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
-          response = { ok: false, output: `An MCP server named “${input.name}” already exists in this scope.` }
-          return
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const snapshot = await this.readSettingsForUpdate(settingsPath)
+          const settings = snapshot.settings
+          if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
+          const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
+          if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
+            response = { ok: false, output: `An MCP server named “${input.name}” already exists in this scope.` }
+            return
+          }
+          const config = input.type === 'http'
+            ? { type: 'http', url: input.url, enabled: true }
+            : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
+          settings.mcpServers = { ...currentServers, [input.name]: config }
+          if (await this.writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint)) return
         }
-        const config = input.type === 'http'
-          ? { type: 'http', url: input.url, enabled: true }
-          : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
-        settings.mcpServers = { ...currentServers, [input.name]: config }
-        await this.writeSettingsAtomically(settingsPath, settings)
+        throw new Error('Prime Agent settings changed repeatedly; no MCP configuration was overwritten')
       } finally {
         await release()
       }
@@ -474,21 +480,32 @@ export class PluginService {
     return settingsPath
   }
 
-  private async readSettingsForUpdate(path: string): Promise<Record<string, unknown>> {
+  private async readSettingsForUpdate(path: string): Promise<{ settings: Record<string, unknown>; fingerprint: string }> {
     let content: string
     try {
       const value = await readAtMost(path, MAX_SETTINGS_BYTES)
       if (value.truncated) throw new TypeError('Prime Agent settings exceed the maximum supported size')
       content = value.content
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return {}
+      if (errorCode(error) === 'ENOENT') return { settings: {}, fingerprint: 'missing' }
       if (error instanceof TypeError && error.message.includes('maximum supported size')) throw error
       throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server')
     }
     let value: unknown
     try { value = JSON.parse(content) } catch { throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server') }
     if (!isRecord(value)) throw new TypeError('Prime Agent settings must contain a JSON object')
-    return value
+    return { settings: value, fingerprint: createHash('sha256').update(content).digest('hex') }
+  }
+
+  private async settingsFingerprint(path: string): Promise<string> {
+    try {
+      const value = await readAtMost(path, MAX_SETTINGS_BYTES)
+      if (value.truncated) throw new TypeError('Prime Agent settings exceed the maximum supported size')
+      return createHash('sha256').update(value.content).digest('hex')
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return 'missing'
+      throw error
+    }
   }
 
   private async readSettingsLockOwner(lockPath: string): Promise<SettingsLockOwner | null> {
@@ -566,11 +583,13 @@ export class PluginService {
     throw new Error('Prime Agent settings are busy; try again')
   }
 
-  private async writeSettingsAtomically(path: string, settings: Record<string, unknown>): Promise<void> {
+  private async writeSettingsAtomically(path: string, settings: Record<string, unknown>, expectedFingerprint: string): Promise<boolean> {
     const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
     try {
       await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      if (await this.settingsFingerprint(path) !== expectedFingerprint) return false
       await rename(temporary, path)
+      return true
     } finally {
       await rm(temporary, { force: true })
     }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -177,6 +177,55 @@ describe('PluginService MCP connections', () => {
     expect(response.ok).toBe(true)
     expect(JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers['after-crash'].command).toBe('safe-command')
     expect(() => readFileSync(join(lockPath, 'owner.json'))).toThrow()
+  })
+
+  it('detects and merges a non-cooperating writer update before rename', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const settingsPath = join(agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+    const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
+    const original = internal.settingsFingerprint.bind(service)
+    let injected = false
+    internal.settingsFingerprint = async (path) => {
+      if (!injected) {
+        injected = true
+        writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model', changedByCli: true }))
+      }
+      return original(path)
+    }
+
+    expect((await service.connectMcp({ name: 'merged', scope: 'user', type: 'stdio', command: 'safe-command' })).ok).toBe(true)
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(settings.changedByCli).toBe(true)
+    expect(settings.mcpServers.merged.command).toBe('safe-command')
+  })
+
+  it('serializes package installation before an MCP settings merge', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const settingsPath = join(agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const executable = join(root, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const fs=require('node:fs');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(settingsPath)},JSON.stringify({defaultModel:'test/model',packageInstalled:true}));process.stdout.write('installed\\n')},100)
+`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => resolve(path), { agentDir })
+
+    const [installed, connected] = await Promise.all([
+      service.install('npm:example-package'),
+      service.connectMcp({ name: 'after-package', scope: 'user', type: 'stdio', command: 'safe-command' }),
+    ])
+
+    expect(installed.ok).toBe(true)
+    expect(connected.ok).toBe(true)
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(settings.packageInstalled).toBe(true)
+    expect(settings.mcpServers['after-package'].command).toBe('safe-command')
   })
 
 })
