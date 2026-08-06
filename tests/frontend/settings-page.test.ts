@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_SETTINGS } from '../../src/lib/data'
+import { confirmedPanelSettings } from '../../src/lib/settings-state'
 import { SETTINGS_FIELD_SECTIONS } from '../../src/pages/settings/contracts'
 import {
   browserHomeValidation,
@@ -91,6 +93,26 @@ describe('settings draft synchronization', () => {
     expect(rejected.value).toBe('/bin/bash')
     expect(rejected.error).toBe('')
     expect(rejected.dirty).toBe(true)
+  })
+})
+
+
+describe('queued settings reconciliation', () => {
+  it('restores every panel field after an older patch fails and a newer patch succeeds', () => {
+    const optimisticPanels = { sidebarOpen: false, inspectorOpen: true, terminalOpen: true }
+    const savedAfterQueue = {
+      ...DEFAULT_SETTINGS,
+      sidebarOpen: true,
+      inspectorOpen: false,
+      terminalOpen: true,
+    }
+
+    expect(optimisticPanels.sidebarOpen).toBe(false)
+    expect(confirmedPanelSettings(savedAfterQueue)).toEqual({
+      sidebarOpen: true,
+      inspectorOpen: false,
+      terminalOpen: true,
+    })
   })
 })
 

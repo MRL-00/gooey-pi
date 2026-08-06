@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DEFAULT_SETTINGS } from '@/lib/data'
+import { confirmedPanelSettings } from '@/lib/settings-state'
 import type { AppSettings, InspectorTab, PrimeWorkApi } from '@/types/api'
 
 interface UseAppSettingsOptions {
@@ -20,12 +21,13 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
   const settingsQueueRef = useRef<Promise<void>>(Promise.resolve())
   const inspectorTabTouchedRef = useRef(false)
 
-  const applySettings = useCallback((next: AppSettings, panelPatch: Partial<AppSettings>) => {
+  const applySettings = useCallback((next: AppSettings, panelPatch: Partial<AppSettings>, reconcilePanels = false) => {
     settingsRef.current = next
     setSettings(next)
-    if ('sidebarOpen' in panelPatch) setSidebarOpen(next.sidebarOpen)
-    if ('inspectorOpen' in panelPatch) setInspectorOpen(next.inspectorOpen)
-    if ('terminalOpen' in panelPatch) setTerminalOpen(next.terminalOpen)
+    const panels = reconcilePanels ? confirmedPanelSettings(next) : next
+    if (reconcilePanels || 'sidebarOpen' in panelPatch) setSidebarOpen(panels.sidebarOpen)
+    if (reconcilePanels || 'inspectorOpen' in panelPatch) setInspectorOpen(panels.inspectorOpen)
+    if (reconcilePanels || 'terminalOpen' in panelPatch) setTerminalOpen(panels.terminalOpen)
   }, [])
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
@@ -39,13 +41,13 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     const operation = settingsQueueRef.current.catch(() => undefined).then(async () => {
       const saved = await bridge.settings.update(patch)
       confirmedSettingsRef.current = saved
-      if (settingsMutationRef.current === mutation) applySettings(saved, patch)
+      if (settingsMutationRef.current === mutation) applySettings(saved, patch, true)
     })
     settingsQueueRef.current = operation.catch(() => undefined)
     try {
       await operation
     } catch (error) {
-      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, patch)
+      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, patch, true)
       reportError(error)
     }
   }, [applySettings, bridge, reportError])
