@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import type { SkillRecord } from '../../../src/types/api'
 import { isPathWithin, isRecord } from '../validation'
 import { readAtMost } from './file-io'
@@ -256,7 +256,7 @@ export async function bundledSkillsDirectory(primeAgentPath: string | null): Pro
   } catch { return null }
 }
 
-export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, bundled: string | null): Promise<SkillRecord[]> {
+export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, primeAgentPath: string | null): Promise<SkillRecord[]> {
   const candidates: Candidate[] = []
   const budget: DiscoveryBudget = { candidates: 0, directories: 0, entries: 0, seenCandidates: new Set() }
   const globalSettings = await readSettings(join(agentDir, 'settings.json'))
@@ -269,10 +269,11 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget)
   await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget)
 
+  const bundled = await bundledSkillsDirectory(primeAgentPath)
   if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget)
 
   let projectSettings: Record<string, unknown> = {}
-  if (safeProjectPath && await pathExists(safeProjectPath)) {
+  if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
     const projectAgentDir = join(safeProjectPath, '.prime', 'agent')
     projectSettings = await readSettings(join(projectAgentDir, 'settings.json'))
     await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoot: safeProjectPath })

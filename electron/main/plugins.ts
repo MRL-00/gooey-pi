@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { SkillRecord } from '../../src/types/api'
 import { requireString } from './validation'
-import { bundledSkillsDirectory, discoverPlugins } from './plugins/catalog'
+import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
 import { executePackageInstall, validatePackageSource } from './plugins/package-execution'
 
@@ -41,8 +41,7 @@ export class PluginService {
   private async discover(projectPath?: string): Promise<SkillRecord[]> {
     const safeProjectPath = projectPath ? await this.authorizeProject(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
-    const bundled = await bundledSkillsDirectory(this.primeAgentPath)
-    const result = await discoverPlugins(this.agentDir, safeProjectPath, bundled)
+    const result = await discoverPlugins(this.agentDir, safeProjectPath, this.primeAgentPath)
     this.knownPaths = new Set(result.flatMap((item) => item.path ? [item.path] : []))
     return result
   }
