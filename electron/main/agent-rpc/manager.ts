@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { PrimeEventEnvelope, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
 import { rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { RpcRuntime } from './runtime'
@@ -45,7 +45,7 @@ export class AgentRpcManager {
     if (options.thinking !== undefined) {
       const thinking = requireString(options.thinking, 'thinking', { min: 1, max: 16, trim: true })
       if (!isThinkingLevel(thinking)) throw new TypeError('Invalid thinking level')
-      if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking as never)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
+      if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking as PrimeThinkingLevel)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
       args.push('--thinking', thinking)
     }
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')

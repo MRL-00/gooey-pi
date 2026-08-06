@@ -32,8 +32,12 @@ type ProviderAuthEventPayload = WithoutFlow<ProviderAuthEvent>
 
 function modelKey(provider: string, id: string): string { return `${provider}/${id}` }
 
-function safeCatalogId(value: string): boolean {
+function safeModelId(value: string): boolean {
   return value.length > 0 && value.length <= 256 && /^[a-zA-Z0-9._:/+-]+$/.test(value)
+}
+
+function safeProviderId(value: string): boolean {
+  return value.length > 0 && value.length <= 128 && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(value)
 }
 
 function boundedInteger(value: number): number {
@@ -45,7 +49,7 @@ function toModelDescriptor(model: Model<Api>, available: Set<string>): PrimeMode
     key: modelKey(model.provider, model.id),
     provider: model.provider,
     id: model.id,
-    name: model.name,
+    name: model.name.slice(0, 500),
     reasoning: model.reasoning,
     input: model.input.filter((input): input is 'text' | 'image' => input === 'text' || input === 'image'),
     contextWindow: boundedInteger(model.contextWindow),
@@ -82,16 +86,16 @@ export class PrimeProviderService {
     const executableModels = await this.registry.getExecutableModels()
     const available = new Set(executableModels.map((model) => modelKey(model.provider, model.id)))
     const oauthProviders = new Map(this.authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]))
-    const eligibleModels = snapshot.models.filter((model) => safeCatalogId(model.provider) && safeCatalogId(model.id))
+    const eligibleModels = snapshot.models.filter((model) => safeProviderId(model.provider) && safeModelId(model.id))
     const models = eligibleModels.slice(0, MAX_CATALOG_MODELS).map((model) => toModelDescriptor(model, available))
     const providerIds = new Set([...models.map((model) => model.provider), ...oauthProviders.keys()])
-    const providers = [...providerIds].filter(safeCatalogId).slice(0, MAX_CATALOG_PROVIDERS).map((id): PrimeProviderDescriptor => {
+    const providers = [...providerIds].filter(safeProviderId).slice(0, MAX_CATALOG_PROVIDERS).map((id): PrimeProviderDescriptor => {
       const authStatus = this.authStorage.getAuthStatus(id)
       const providerModels = models.filter((model) => model.provider === id)
       const authMethod: ProviderAuthMethod = oauthProviders.has(id) ? 'oauth' : EXTERNAL_AUTH_PROVIDERS.has(id) ? 'external' : 'api_key'
       return {
         id,
-        name: oauthProviders.get(id) ?? this.registry.getProviderDisplayName(id),
+        name: (oauthProviders.get(id) ?? this.registry.getProviderDisplayName(id)).slice(0, 200),
         authMethod,
         configured: authStatus.configured,
         authSource: authStatus.source as ProviderAuthSource | undefined,
@@ -153,7 +157,10 @@ export class PrimeProviderService {
     if ([...this.flows.values()].some((flow) => flow.providerId === providerId)) throw new Error('This provider login is already active')
     const id = randomUUID()
     const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(new Error('Provider login timed out')), OAUTH_TIMEOUT_MS)
+    const timer = setTimeout(() => {
+      const active = this.flows.get(id)
+      if (active) this.abortFlow(active, 'Provider login timed out')
+    }, OAUTH_TIMEOUT_MS)
     timer.unref()
     const flow: OAuthFlow = { id, providerId, abort, timer }
     this.flows.set(id, flow)
@@ -179,9 +186,7 @@ export class PrimeProviderService {
     const flowId = requireString(rawFlowId, 'flowId', { min: 1, max: 128 })
     const flow = this.flows.get(flowId)
     if (!flow) return false
-    flow.abort.abort(new Error('Provider login cancelled'))
-    flow.pending?.reject(new Error('Provider login cancelled'))
-    flow.pending = undefined
+    this.abortFlow(flow, 'Provider login cancelled')
     return true
   }
 
@@ -244,6 +249,13 @@ export class PrimeProviderService {
       flow.pending?.reject(new Error('Provider login ended'))
       this.flows.delete(flow.id)
     }
+  }
+
+  private abortFlow(flow: OAuthFlow, message: string): void {
+    const error = new Error(message)
+    flow.abort.abort(error)
+    flow.pending?.reject(error)
+    flow.pending = undefined
   }
 
   private requestOAuthValue(
