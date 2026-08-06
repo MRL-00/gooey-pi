@@ -74,6 +74,15 @@ describe('release preflight', () => {
   })
 })
 
+describe('fuse hardening configuration', () => {
+  test('uses only the configured canonical afterPack hook', () => {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(packageJson.build.afterPack).toBe('scripts/release/after-pack.cjs')
+    expect(() => readFileSync('scripts/afterPack.cjs', 'utf8')).toThrow()
+    expect(readFileSync(packageJson.build.afterPack, 'utf8')).toContain('FuseV1Options.OnlyLoadAppFromAsar')
+  })
+})
+
 describe('coverage configuration', () => {
   test('includes every extracted plugin module without weakening thresholds', () => {
     const config = readFileSync('vitest.config.ts', 'utf8')
