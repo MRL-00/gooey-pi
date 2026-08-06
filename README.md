@@ -44,7 +44,7 @@ The `ask_user` tool is distributed separately in [Prime Agent Plugins](https://g
 prime-agent package install https://github.com/am-will/prime-agent-plugins
 ```
 
-Prime Work's project settings exclude its legacy workspace copy of this extension when the package is installed, preventing the same `ask_user` tool from being loaded twice. The package supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/RPC questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
+There is no project-local copy of `ask_user`; the standalone package is the only source, so it cannot conflict with a legacy workspace extension. The package supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Restart an already-running Prime Agent daemon after installing or updating the package. Non-interactive modes such as print/JSON do not have a question UI.
 
 ## Develop
 
