@@ -1,4 +1,14 @@
-import type { ProjectRecord, RuntimeInfo, SessionRecord } from '@/types/api'
+import type { GitStatus, ProjectRecord, RuntimeInfo, SessionRecord } from '@/types/api'
+
+
+export interface OwnedGitStatus {
+  cwd?: string
+  status: GitStatus
+}
+
+export function gitStatusForWorkspace(snapshot: OwnedGitStatus, cwd?: string): GitStatus {
+  return cwd && snapshot.cwd === cwd ? snapshot.status : { isRepo: false, files: [] }
+}
 
 export interface WorkspaceSelection {
   project?: ProjectRecord

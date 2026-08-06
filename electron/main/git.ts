@@ -287,7 +287,7 @@ export class GitService {
 
   async branch(cwd: string): Promise<string | undefined> {
     try {
-      const safeCwd = await this.authorizeCwd(cwd)
+      const safeCwd = await this.repositoryCwd(cwd)
       const result = await runGit(safeCwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
       if (result.code === 0 && !result.timedOut && !result.outputExceeded) return result.stdout.trim() || undefined
       const detached = await runGit(safeCwd, ['rev-parse', '--verify', '--short', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
@@ -297,7 +297,7 @@ export class GitService {
 
   async status(cwdValue: unknown): Promise<GitStatus> {
     try {
-      const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+      const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
       const overrides = await filterOverrides(cwd)
       const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
       requireProcessSuccess('Git status', statusResult)
@@ -373,8 +373,18 @@ export class GitService {
     return { ok: result.code === 0, output: output || (result.code === 0 ? 'Commit created.' : processError('Git commit', result).message) }
   }
 
+  private async repositoryCwd(value: string): Promise<string> {
+    const cwd = await this.authorizeCwd(value)
+    const result = await runGit(cwd, ['rev-parse', '--show-toplevel'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
+    requireProcessSuccess('Git repository root inspection', result)
+    const repositoryRoot = result.stdout.trim()
+    if (!repositoryRoot) throw new Error('Git repository root inspection returned no path')
+    await this.authorizeCwd(repositoryRoot)
+    return cwd
+  }
+
   private async validCwd(value: unknown): Promise<string> {
-    return this.authorizeCwd(requireString(value, 'cwd', { min: 1, max: 4096 }))
+    return this.repositoryCwd(requireString(value, 'cwd', { min: 1, max: 4096 }))
   }
 
   private validPaths(value: unknown): string[] {

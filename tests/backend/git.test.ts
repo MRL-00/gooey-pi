@@ -197,6 +197,23 @@ printf 'mutated by filter\n'
     expect(existsSync(marker)).toBe(false)
   })
 
+  it('rejects a repository root outside the authorized project folder', async () => {
+    const outer = repository('prime-work-git-outer-')
+    const inner = join(outer, 'authorized-folder')
+    mkdirSync(inner)
+    writeFileSync(join(inner, 'nested.txt'), 'nested change\n')
+    const service = new GitService(async (candidate) => {
+      if (candidate !== inner) throw new TypeError('repository root is outside the authorized folder')
+      return candidate
+    })
+
+    const status = await service.status(inner)
+    expect(status.isRepo).toBe(false)
+    expect(status.error).toMatch(/repository root is outside the authorized folder/i)
+    await expect(service.stage(inner, ['nested.txt'])).rejects.toThrow(/repository root is outside the authorized folder/i)
+    expect(spawnSync('git', ['ls-files', '--', 'authorized-folder/nested.txt'], { cwd: outer, encoding: 'utf8' }).stdout).toBe('')
+  })
+
   it('surfaces mutation and commit failures instead of returning apparent success', async () => {
     const cwd = repository('prime-work-git-failure-')
     const service = new GitService(async () => cwd)

@@ -1,7 +1,8 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 let app: ElectronApplication
 let page: Page
@@ -20,15 +21,34 @@ function createHermeticFixture(): { userData: string; home: string; project: str
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
   const project = join(fixtureRoot, 'project')
+  const secondary = join(fixtureRoot, 'secondary-project')
   const sessions = join(home, '.prime', 'agent', 'sessions')
   mkdirSync(userData, { recursive: true })
   mkdirSync(project, { recursive: true })
+  mkdirSync(secondary, { recursive: true })
   mkdirSync(sessions, { recursive: true })
   const canonicalProject = realpathSync(project)
+  const canonicalSecondary = realpathSync(secondary)
+  const initializeRepository = (cwd: string, file: string) => {
+    writeFileSync(join(cwd, file), 'base\n')
+    for (const args of [
+      ['init', '-q'],
+      ['config', 'user.name', 'Prime Work E2E'],
+      ['config', 'user.email', 'e2e@example.com'],
+      ['add', file],
+      ['commit', '-qm', 'base'],
+    ]) {
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+  }
+  initializeRepository(project, 'primary.txt')
+  initializeRepository(secondary, 'secondary-change.txt')
+  writeFileSync(join(secondary, 'secondary-change.txt'), 'base\nsecondary workspace change\n')
   writeFileSync(join(project, 'README.md'), '# Hermetic Prime Work fixture\n')
   const sessionFile = join(sessions, 'fixture.jsonl')
   writeFileSync(sessionFile, [
-    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalProject, timestamp: '2026-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalSecondary, timestamp: '2026-01-01T00:00:00.000Z' }),
     JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: 'Hermetic desktop fixture', timestamp: '2026-01-01T00:00:00.000Z' } }),
     JSON.stringify({
       type: 'custom_message', id: 'fixture-agent-message', parentId: 'fixture-message', customType: 'agent_message', display: true,
@@ -44,9 +64,23 @@ function createHermeticFixture(): { userData: string; home: string; project: str
     }),
     '',
   ].join('\n'))
+  writeFileSync(join(sessions, 'primary.jsonl'), [
+    JSON.stringify({ type: 'session', id: 'primary-session', cwd: canonicalProject, timestamp: '2025-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'message', id: 'primary-message', parentId: null, message: { role: 'user', content: 'Primary workspace fixture', timestamp: '2025-01-01T00:00:00.000Z' } }),
+    '',
+  ].join('\n'))
+  const identity = (path: string) => {
+    const info = lstatSync(path, { bigint: true })
+    return { dev: info.dev.toString(), ino: info.ino.toString() }
+  }
   writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
     version: 1,
-    projects: [],
+    projects: [{
+      id: 'multi-folder-project', name: 'Multi-folder fixture', path: canonicalProject,
+      folders: [canonicalProject, canonicalSecondary], primaryFolder: canonicalProject,
+      pinned: false, createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      folderIdentities: { [canonicalProject]: identity(canonicalProject), [canonicalSecondary]: identity(canonicalSecondary) },
+    }],
     settings: { browserHome: 'about:blank' },
     archivedSessions: [],
     dismissedProjectPaths: [],
@@ -386,6 +420,23 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Browser' }).focus()
     await page.keyboard.press('ArrowRight')
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('binds Git to a secondary workspace and clears stale paths during a folder switch', async () => {
+    await page.getByRole('tab', { name: 'Changes' }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await expect(page.getByRole('button', { name: /Stage$/ }).last()).toBeVisible()
+
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await expect(page.locator('.file-changes')).not.toContainText('secondary-change.txt')
+    await expect(page.locator('.file-changes')).toContainText('README.md')
+
+    await page.locator('.session-row').filter({ hasText: 'Hermetic desktop fixture' }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await page.getByRole('button', { name: /Stage$/ }).last().click()
+    await page.getByRole('button', { name: 'Staged', exact: true }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await page.getByRole('button', { name: /Unstage$/ }).last().click()
   })
 
   test('resizes the inspector horizontally and terminal vertically', async () => {
