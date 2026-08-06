@@ -129,6 +129,7 @@ These logs are the durable coordination record for compaction and handoff.
 ### Section E log — renderer/settings
 
 - `32411ef` Guard startup New Session: `src/App.tsx`, `src/lib/workspace.ts`, `tests/frontend/runtime-state.test.ts`. New-session actions now resolve the displayed bootstrap project without clearing ownership; no-op until any project exists. Validation: `npm run typecheck`; `npx vitest run tests/frontend/runtime-state.test.ts`. Remaining risk: the bootstrap race is deterministically covered at the selection helper boundary rather than with timing-dependent E2E.
+- `80e2164` Guard plugin catalog ownership: `src/App.tsx`, `src/hooks/useBootstrap.ts`, `src/lib/plugin-catalog.ts`, `tests/frontend/plugin-catalog.test.ts`. Centralized global/project loads under latest-request plus workspace-generation/path ownership; refresh and post-MCP reloads cannot commit across project switches. Validation: `npm run typecheck`; focused Vitest (6 tests); `npm run check`. Remaining risk: full switching behavior remains for E2E validation.
 
 ### Section F log — performance/DRY
 
