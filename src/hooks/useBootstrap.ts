@@ -8,14 +8,12 @@ import type {
   RuntimeInfo,
   ScheduleRecord,
   SessionRecord,
-  SkillRecord,
 } from '@/types/api'
 
 interface UseBootstrapOptions {
   bridge: PrimeWorkApi | null
   setProjects: React.Dispatch<React.SetStateAction<ProjectRecord[]>>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
-  setSkills: React.Dispatch<React.SetStateAction<SkillRecord[]>>
   setSchedules: React.Dispatch<React.SetStateAction<ScheduleRecord[]>>
   setScheduleError(value: string): void
   runtimeSessionsRef: React.RefObject<Map<string, string>>
@@ -28,7 +26,6 @@ export function useBootstrap({
   bridge,
   setProjects,
   setSessions,
-  setSkills,
   setSchedules,
   setScheduleError,
   runtimeSessionsRef,
@@ -49,10 +46,6 @@ export function useBootstrap({
 
     void bridge.app.getMeta().then((value) => {
       if (!cancelled) setMeta(value)
-    }).catch((error) => { if (!cancelled) reportError(error) })
-
-    void bridge.plugins.list().then((value) => {
-      if (!cancelled) setSkills(value)
     }).catch((error) => { if (!cancelled) reportError(error) })
 
     void bridge.schedules.list().then((value) => {
@@ -109,8 +102,7 @@ export function useBootstrap({
     setScheduleError,
     setSchedules,
     setSessions,
-    setSkills,
-    workspaceRef,
+      workspaceRef,
   ])
 
   return { meta, initialized }

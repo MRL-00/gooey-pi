@@ -7,6 +7,7 @@ import { ResizeHandle } from '@/components/ResizeHandle'
 import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import { DEFAULT_SETTINGS, SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { requestFailureMessage } from '@/app/workspace'
+import { createPluginCatalogAdmission } from '@/lib/plugin-catalog'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
 import { useAppSettings } from '@/hooks/useAppSettings'
 import { useBootstrap } from '@/hooks/useBootstrap'
@@ -50,6 +51,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const gitRequestRef = useRef(0)
+  const pluginCatalogAdmissionRef = useRef(createPluginCatalogAdmission())
+  const pluginCatalogScopeRef = useRef<{ workspaceGeneration: number; projectPath?: string }>({ workspaceGeneration: 0 })
   const demoTimerRef = useRef<number[]>([])
 
   const reportError = useCallback((error: unknown) => {
@@ -82,7 +85,7 @@ export default function App() {
     terminalOpen: settingsState.terminalOpen, view,
   })
   const { meta, initialized } = useBootstrap({
-    bridge, setProjects, setSessions, setSkills, setSchedules, setScheduleError,
+    bridge, setProjects, setSessions, setSchedules, setScheduleError,
     runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
     activateWorkspace: workspace.activateWorkspace, reportError,
   })
@@ -112,13 +115,26 @@ export default function App() {
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])
-  useEffect(() => {
+  const pluginProjectPath = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
+  pluginCatalogScopeRef.current = { workspaceGeneration: workspace.workspaceGeneration, projectPath: pluginProjectPath }
+  const loadSkills = useCallback(async (showLoading: boolean) => {
     if (!bridge) return
-    let cancelled = false
-    const projectPath = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
-    void bridge.plugins.list(projectPath).then((records) => { if (!cancelled) setSkills(records) }).catch(reportError)
-    return () => { cancelled = true }
-  }, [activeProject?.inferred, activeProject?.primaryFolder, bridge, reportError])
+    const owner = pluginCatalogScopeRef.current
+    const request = pluginCatalogAdmissionRef.current.begin(owner.workspaceGeneration, owner.projectPath)
+    setLoadingSkills(showLoading)
+    try {
+      const records = await bridge.plugins.list(owner.projectPath)
+      const current = pluginCatalogScopeRef.current
+      if (pluginCatalogAdmissionRef.current.isCurrent(request, current.workspaceGeneration, current.projectPath)) setSkills(records)
+    } catch (error) {
+      const current = pluginCatalogScopeRef.current
+      if (pluginCatalogAdmissionRef.current.isCurrent(request, current.workspaceGeneration, current.projectPath)) reportError(error)
+    } finally {
+      const current = pluginCatalogScopeRef.current
+      if (showLoading && pluginCatalogAdmissionRef.current.isCurrent(request, current.workspaceGeneration, current.projectPath)) setLoadingSkills(false)
+    }
+  }, [bridge, reportError])
+  useEffect(() => { void loadSkills(false) }, [loadSkills, pluginProjectPath, workspace.workspaceGeneration])
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
 
   const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
@@ -286,12 +302,7 @@ export default function App() {
     } catch (error) { reportError(error) }
   }
 
-  const refreshSkills = async () => {
-    if (!bridge) return
-    setLoadingSkills(true)
-    try { setSkills(await bridge.plugins.list(activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined)) }
-    catch (error) { reportError(error) } finally { setLoadingSkills(false) }
-  }
+  const refreshSkills = async () => { await loadSkills(true) }
   const installSkill = async (source: string) => {
     if (!bridge) return { ok: false, output: 'Package installation is available in the desktop app.' }
     try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
@@ -305,10 +316,7 @@ export default function App() {
         const project = await grantProject(activeProject); connection = { ...input, projectPath: project.primaryFolder }
       }
       const response = await bridge.plugins.connectMcp(connection)
-      if (response.ok) {
-        const path = connection.scope === 'project' ? connection.projectPath : activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
-        setSkills(await bridge.plugins.list(path))
-      }
+      if (response.ok) await loadSkills(false)
       return response
     } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
   }
