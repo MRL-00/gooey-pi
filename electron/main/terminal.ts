@@ -73,6 +73,7 @@ const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeou
 
 export class TerminalService {
   private readonly terminals = new Map<string, OwnedTerminal>()
+  private readonly terminationPromises = new Map<OwnedTerminal, Promise<void>>()
   private readonly allowedShells = systemShells()
   private totalOutputWindowStartedAt = Date.now()
   private totalOutputWindowBytes = 0
@@ -144,12 +145,13 @@ export class TerminalService {
     return true
   }
 
-  killOwner(ownerId: number): void {
-    for (const [id, terminal] of this.terminals) if (terminal.ownerId === ownerId) void this.terminate(id, terminal)
+  async killOwner(ownerId: number): Promise<void> {
+    await Promise.all([...this.terminals].filter(([, terminal]) => terminal.ownerId === ownerId).map(([id, terminal]) => this.terminate(id, terminal)))
   }
 
   async killAll(): Promise<void> {
-    await Promise.all([...this.terminals].map(([id, terminal]) => this.terminate(id, terminal)))
+    const starting = [...this.terminals].map(([id, terminal]) => this.terminate(id, terminal))
+    await Promise.all([...new Set([...this.terminationPromises.values(), ...starting])])
   }
 
   async killForProjectRoots(roots: string[]): Promise<void> {
@@ -183,10 +185,18 @@ export class TerminalService {
     try { owned.owner.send('terminal:data', { terminalId: id, data } satisfies TerminalDataEvent) } catch { /* renderer exited */ }
   }
 
-  private async terminate(id: string, owned: OwnedTerminal): Promise<void> {
-    if (owned.terminating) return
+  private terminate(id: string, owned: OwnedTerminal): Promise<void> {
+    const active = this.terminationPromises.get(owned)
+    if (active) return active
     owned.terminating = true
     this.terminals.delete(id)
+    const operation = this.terminateProcess(id, owned)
+    this.terminationPromises.set(owned, operation)
+    void operation.finally(() => { if (this.terminationPromises.get(owned) === operation) this.terminationPromises.delete(owned) })
+    return operation
+  }
+
+  private async terminateProcess(id: string, owned: OwnedTerminal): Promise<void> {
     if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
     this.flushOutput(id, owned)
     const descendants = await processTree(owned.terminal.pid)

@@ -58,4 +58,21 @@ describe('TerminalService', () => {
     expect(await service.kill(owner, outsideTerminal.terminalId)).toBe(true)
   })
 
+
+  it('makes concurrent app shutdown await an owner teardown already in progress', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-shutdown-')); dirs.push(cwd)
+    const owner = { id: 44, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => '/bin/zsh')
+    const created = await service.create(owner, { cwd, shell: '/bin/zsh', cols: 80, rows: 24 })
+
+    const ownerTeardown = service.killOwner(owner.id)
+    let shutdownFinished = false
+    const shutdown = service.killAll().then(() => { shutdownFinished = true })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(shutdownFinished).toBe(false)
+    await Promise.all([ownerTeardown, shutdown])
+    expect(await service.kill(owner, created.terminalId)).toBe(false)
+  })
+
 })

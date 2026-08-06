@@ -154,7 +154,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   return {
     authorize(webContents) { if (!closed) authorized.add(webContents.id) },
-    revoke(webContentsId) { authorized.delete(webContentsId); services.terminals.killOwner(webContentsId) },
+    revoke(webContentsId) { authorized.delete(webContentsId); void services.terminals.killOwner(webContentsId) },
     dispose() {
       if (closed) return
       closed = true
