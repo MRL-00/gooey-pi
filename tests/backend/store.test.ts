@@ -42,6 +42,44 @@ describe('JsonStateStore', () => {
     expect(JSON.parse(readFileSync(path, 'utf8')).archivedSessions).toHaveLength(20)
   })
 
+  it('stops update admission and drains a write when shutdown starts immediately', async () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeValidState(path)
+    let releaseWrite!: () => void
+    let markWriteStarted!: () => void
+    const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve })
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve })
+    const file: JsonStateStoreFileHandle = {
+      writeFile: async () => { markWriteStarted(); await writeGate },
+      sync: async () => undefined,
+      close: async () => undefined,
+    }
+    const directory: JsonStateStoreFileHandle = {
+      writeFile: async () => { throw new Error('unexpected directory write') },
+      sync: async () => undefined,
+      close: async () => undefined,
+    }
+    const store = new JsonStateStore(path, {
+      open: async (_openedPath, flags) => flags === 'w' ? file : directory,
+      rename: async () => undefined,
+      unlink: async () => undefined,
+    })
+
+    const update = store.update((state) => { state.archivedSessions.push('before-quit') })
+    const drain = store.beginShutdown()
+    await writeStarted
+    await expect(store.update((state) => { state.archivedSessions.push('after-quit') })).rejects.toThrow(/shutting down/)
+    let drained = false
+    void drain.then(() => { drained = true })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(drained).toBe(false)
+
+    releaseWrite()
+    await Promise.all([update, drain])
+    expect(store.snapshot().archivedSessions).toEqual(['before-quit'])
+  })
+
   it('publishes a snapshot only after the file and containing directory are durable', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')

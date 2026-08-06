@@ -25,6 +25,7 @@ let agents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
+let store: JsonStateStore | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -221,9 +222,10 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 async function bootstrap(): Promise<void> {
   const executable = await findPrimeAgent()
   if (shutdownStarted) return
-  const store = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
-  const sessions = new SessionService(store, executable)
-  const projects = new ProjectService(store, () => mainWindow)
+  const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
+  store = stateStore
+  const sessions = new SessionService(stateStore, executable)
+  const projects = new ProjectService(stateStore, () => mainWindow)
   const git = new GitService((cwd) => projects.authorizeCwd(cwd))
   // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
@@ -235,21 +237,21 @@ async function bootstrap(): Promise<void> {
     (cwd) => projects.authorizeCwd(cwd),
     (path) => sessions.requireSessionPath(path),
     providers,
-    () => new Set(store.snapshot().settings.disabledProviders),
+    () => new Set(stateStore.snapshot().settings.disabledProviders),
   )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
-  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => store.snapshot().settings.terminalShell)
+  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.snapshot().settings.terminalShell)
   projects.bindProviders({
     sessions: listCatalogSessions,
     branch: (cwd) => git.branch(cwd),
     stopProjectProcesses: async (roots) => { await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)]) },
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl)
-  const settings = new SettingsService(store, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
+  const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const plugins = new PluginService(executable, (path) => projects.authorizeCwd(path))
@@ -333,7 +335,8 @@ app.on('before-quit', (event) => {
   agents?.beginShutdown()
   beginProcessShutdown()
   downloads?.cancelAll()
+  const storeDrain = store?.beginShutdown() ?? Promise.resolve()
 
   providerService?.cancelAll()
-  void Promise.all([terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses()]).finally(() => app.quit())
+  void Promise.all([terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses(), storeDrain]).finally(() => app.quit())
 })
