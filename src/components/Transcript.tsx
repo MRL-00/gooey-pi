@@ -17,6 +17,7 @@ import React, { Fragment, memo, useEffect, useId, useMemo, useRef, useState, typ
 import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
 import { MarkdownText } from './MarkdownText'
 import { boundText, newestWindow } from '@/lib/render-bounds'
+import { tokenizeSyntaxText } from '@/lib/syntax-text'
 import { PrimeMark } from './ui'
 
 function InlineText({ text }: { text: string }) {
@@ -79,13 +80,7 @@ function toolPreview(part: Extract<MessagePart, { type: 'toolCall' }>): string {
 }
 
 function SyntaxText({ text }: { text: string }) {
-  const tokens = text.split(/("(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?\b)/g)
-  return <>{tokens.map((token, index) => {
-    const className = /^".*"$/.test(token) ? (/(?=\s*:)/.test(text.slice(text.indexOf(token) + token.length)) ? 'syntax-key' : 'syntax-string')
-      : /^(true|false|null)$/.test(token) ? 'syntax-keyword'
-      : /^-?\d/.test(token) ? 'syntax-number' : undefined
-    return <span className={className} key={`${index}-${token.slice(0, 8)}`}>{token}</span>
-  })}</>
+  return <>{tokenizeSyntaxText(text).map((token) => <span className={token.kind === 'plain' ? undefined : `syntax-${token.kind}`} key={token.start}>{token.text}</span>)}</>
 }
 
 function ReasoningPart({ part }: { part: Extract<MessagePart, { type: 'thinking' }> }) {
