@@ -315,7 +315,7 @@ export class GitService {
   }
 
   async diff(cwdValue: unknown, pathValue?: unknown, stagedValue?: unknown): Promise<GitDiff> {
-    const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
     const path = pathValue === undefined ? undefined : requireGitPath(pathValue)
     if (stagedValue !== undefined && typeof stagedValue !== 'boolean') throw new TypeError('staged must be a boolean')
     const staged = stagedValue === true
@@ -379,8 +379,7 @@ export class GitService {
     requireProcessSuccess('Git repository root inspection', result)
     const repositoryRoot = result.stdout.trim()
     if (!repositoryRoot) throw new Error('Git repository root inspection returned no path')
-    await this.authorizeCwd(repositoryRoot)
-    return cwd
+    return this.authorizeCwd(repositoryRoot)
   }
 
   private async validCwd(value: unknown): Promise<string> {

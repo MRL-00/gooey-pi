@@ -44,6 +44,28 @@ describe('GitService', () => {
     expect(committed.output).toContain('test commit')
   }, 15_000)
 
+  it('uses repository-relative status paths for every action from a nested cwd', async () => {
+    const cwd = repository('prime-work-git-nested-')
+    const nested = join(cwd, 'packages', 'app')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(join(nested, 'nested.txt'), 'base\n')
+    git(cwd, 'add', 'packages/app/nested.txt')
+    git(cwd, 'commit', '-qm', 'add nested file')
+    const service = new GitService(async (candidate) => candidate)
+
+    writeFileSync(join(nested, 'nested.txt'), 'base\nchanged\n')
+    let status = await service.status(nested)
+    expect(status.files.find((file) => file.path === 'packages/app/nested.txt')?.staged).toBe(false)
+    expect((await service.diff(nested, 'packages/app/nested.txt', false)).text).toContain('+changed')
+
+    expect(await service.stage(nested, ['packages/app/nested.txt'])).toBe(true)
+    status = await service.status(nested)
+    expect(status.files.find((file) => file.path === 'packages/app/nested.txt')?.staged).toBe(true)
+    expect(await service.unstage(nested, ['packages/app/nested.txt'])).toBe(true)
+    expect(await service.restore(nested, ['packages/app/nested.txt'])).toBe(true)
+    expect(readFileSync(join(nested, 'nested.txt'), 'utf8')).toBe('base\n')
+  })
+
   it('unstages files on an unborn HEAD without changing working content', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-unborn-'))
     dirs.push(cwd)
