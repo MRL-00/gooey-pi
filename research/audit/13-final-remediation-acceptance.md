@@ -24,7 +24,7 @@ The only external prerequisite is access to an Apple Developer ID Application id
 - `npm run typecheck`: pass
 - `npm run check`: pass
 - `npm test`: 35 files / 230 tests pass
-- `npm run test:coverage`: pass; 75.82% statements, 63.38% branches, 83.92% functions, 82.52% lines
+- `npm run test:coverage`: pass; 75.84% statements, 63.38% branches, 83.92% functions, 82.55% lines
 - `npm run build`: pass
 - `npm run release:bundle-size`: pass; main 212,208 B, preload 5,051 B, initial renderer 730,897 B, largest chunk 554,693 B, renderer JS/CSS total 1,780,423 B
 - `npm run test:e2e`: pass; 23/23 Electron tests
