@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { lstat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { isAbsolute } from 'node:path'
 import { StrictJsonlDecoder } from './jsonl'
@@ -12,6 +13,12 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
   if (!isAbsolute(socketPath) || socketPath.includes('\0') || socketPath.length > 4_096) {
     throw new Error('Prime Agent returned an invalid daemon socket path')
   }
+  let socketInfo
+  try { socketInfo = await lstat(socketPath) } catch { throw new Error('Prime Agent daemon socket is unavailable') }
+  const currentUid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  if (!socketInfo.isSocket() || (currentUid !== undefined && socketInfo.uid !== currentUid)) {
+    throw new Error('Prime Agent returned an untrusted daemon socket')
+  }
 
   await new Promise<void>((resolveQueue, rejectQueue) => {
     const socket = createConnection(socketPath)
@@ -19,6 +26,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
     const clientId = `prime-work-${randomUUID()}`
     let commandSent = false
     let settled = false
+    let protocolVersion = DAEMON_PROTOCOL_VERSION
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
@@ -47,9 +55,15 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
           return
         }
         commandSent = true
-        const version = Math.min(protocol.version, DAEMON_PROTOCOL_VERSION)
+        protocolVersion = Math.min(protocol.version, DAEMON_PROTOCOL_VERSION)
         const command = { id: commandId, type: 'follow_up', activeSessionId, message }
-        write({ type: 'command', id: commandId, protocol: { name: DAEMON_PROTOCOL_NAME, version }, clientId, command })
+        write({
+          type: 'command',
+          id: commandId,
+          protocol: { name: DAEMON_PROTOCOL_NAME, version: protocolVersion },
+          clientId,
+          command,
+        })
         return
       }
       if (value.type !== 'response' || value.id !== commandId) return
@@ -59,8 +73,10 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
       }
       const ackId = `prime_work_ack_${randomUUID()}`
       const ack = {
-        type: 'command', id: ackId,
-        protocol: { name: DAEMON_PROTOCOL_NAME, version: DAEMON_PROTOCOL_VERSION }, clientId,
+        type: 'command',
+        id: ackId,
+        protocol: { name: DAEMON_PROTOCOL_NAME, version: protocolVersion },
+        clientId,
         command: { id: ackId, type: 'ack_result', commandId },
       }
       try { socket.end(`${JSON.stringify(ack)}\n`, () => finish()) }

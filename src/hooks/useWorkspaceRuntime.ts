@@ -149,16 +149,19 @@ export function useWorkspaceRuntime({
     admittedLoad?: TranscriptLoad,
   ) => {
     if (!bridge || !selected.sessionFile) return
+    const previousLoad = transcriptLoadRef.current
     const pendingLoad = admittedLoad ?? {
       generation: selected.generation,
       sessionFile: selected.sessionFile,
-      eventBuffer: createPrimeEventBuffer(),
+      eventBuffer: previousLoad?.generation === selected.generation
+        && previousLoad.sessionFile === selected.sessionFile
+        ? previousLoad.eventBuffer
+        : createPrimeEventBuffer(),
       runtimeId,
       reconciliation,
       admissionRevision: promptAdmissionRevisionRef.current,
     }
     transcriptLoadRef.current = pendingLoad
-    if (!reconciliation) setLoadingSession(true)
 
     void runTranscriptRead({
       read: () => bridge.sessions.read(selected.sessionFile!),
@@ -253,9 +256,10 @@ export function useWorkspaceRuntime({
       const load = transcriptLoadRef.current
       if (load?.generation === selected.generation && !load.reconciliation) transcriptLoadRef.current = null
     }
-  }, [activeSession?.filePath, activeSession?.updatedAt, bridge, flushAgentEvents, reportError, startTranscriptRead, workspaceGeneration])
+  }, [activeSession?.filePath, activeSession?.syncRevision, activeSession?.updatedAt, bridge, flushAgentEvents, reportError, startTranscriptRead, workspaceGeneration])
 
   useEffect(() => () => {
+    transcriptLoadRef.current = null
     if (agentEventFrameRef.current !== null) cancelAnimationFrame(agentEventFrameRef.current)
   }, [])
 

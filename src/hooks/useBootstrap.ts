@@ -26,15 +26,19 @@ function mergeSessionCatalog(
   current: SessionRecord[],
   records: SessionRecord[],
   activeFile: string | undefined,
+  changedFiles: ReadonlyMap<string, number>,
+  catalogRevision: number,
 ): SessionRecord[] {
   const previousByPath = new Map(current.map((session) => [session.filePath, session]))
   return records.map((record) => {
     const previous = previousByPath.get(record.filePath)
     const needsAttention = (record.status === 'waiting' || record.status === 'complete')
       && previous?.status !== record.status
+    const syncRevision = changedFiles.get(record.filePath) ?? (catalogRevision || (previous?.syncRevision ?? record.syncRevision))
     return {
       ...record,
       unread: record.filePath === activeFile ? false : needsAttention ? true : previous?.unread ?? record.unread,
+      syncRevision,
     }
   })
 }
@@ -123,22 +127,36 @@ export function useBootstrap({
   ])
 
   useEffect(() => {
-    if (!bridge) return
+    if (!bridge || !initialized) return
     let disposed = false
     let refreshTimer: number | null = null
     let requestId = 0
-    const unsubscribe = bridge.sessions.onChanged(() => {
+    const pendingChangedFiles = new Map<string, number>()
+    let pendingCatalogRevision = 0
+    let nextRevision = 0
+    const unsubscribe = bridge.sessions.onChanged((change) => {
+      const revision = ++nextRevision
+      if (change.filePath) pendingChangedFiles.set(change.filePath, revision)
+      else pendingCatalogRevision = revision
       if (refreshTimer !== null) window.clearTimeout(refreshTimer)
       refreshTimer = window.setTimeout(() => {
         refreshTimer = null
         const currentRequest = ++requestId
-        void Promise.all([
-          bridge.projects.list(),
-          bridge.sessions.list(undefined, true),
-        ]).then(([nextProjects, nextSessions]) => {
+        const changedFiles = new Map(pendingChangedFiles)
+        const catalogRevision = pendingCatalogRevision
+        void bridge.sessions.list(undefined, true).then((nextSessions) => {
           if (disposed || currentRequest !== requestId) return
-          setProjects(nextProjects)
-          setSessions((current) => mergeSessionCatalog(current, nextSessions, workspaceRef.current.sessionFile))
+          setSessions((current) => mergeSessionCatalog(
+            current,
+            nextSessions,
+            workspaceRef.current.sessionFile,
+            changedFiles,
+            catalogRevision,
+          ))
+          for (const [filePath, changedRevision] of changedFiles) {
+            if (pendingChangedFiles.get(filePath) === changedRevision) pendingChangedFiles.delete(filePath)
+          }
+          if (pendingCatalogRevision === catalogRevision) pendingCatalogRevision = 0
         }).catch((error) => {
           if (!disposed && currentRequest === requestId) reportError(error)
         })
@@ -150,7 +168,7 @@ export function useBootstrap({
       unsubscribe()
       if (refreshTimer !== null) window.clearTimeout(refreshTimer)
     }
-  }, [bridge, reportError, setProjects, setSessions, workspaceRef])
+  }, [bridge, initialized, reportError, setSessions, workspaceRef])
 
   return { meta, initialized }
 }

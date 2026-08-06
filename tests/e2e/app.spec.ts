@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process'
 let app: ElectronApplication
 let page: Page
 let fixtureRoot = ''
+let fixtureSessionFile = ''
 let actionableErrors: string[] = []
 
 const attachDiagnostics = (target: Page) => {
@@ -16,7 +17,7 @@ const attachDiagnostics = (target: Page) => {
   })
 }
 
-function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; sessionFile: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
@@ -102,6 +103,10 @@ const server = net.createServer((socket) => {
       const line = buffer.slice(0, index)
       buffer = buffer.slice(index + 1)
       const envelope = JSON.parse(line)
+      if (envelope.command?.type === 'ack_result') {
+        fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'follow-up-ack.json'))}, JSON.stringify(envelope.command))
+        continue
+      }
       if (envelope.command?.type !== 'follow_up') continue
       fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'follow-up-args.json'))}, JSON.stringify(envelope.command))
       const timestamp = new Date().toISOString()
@@ -130,7 +135,7 @@ const resumeIndex = args.indexOf('--resume')
 const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(realpathSync(sessionFile))}
 if (args[0] === 'list') {
   const sessions = ${JSON.stringify(activeSession)}
-    ? [{ id: 'active-fixture', activeSessionId: 'active-fixture', isSessionActive: true, activity: 'working', isStreaming: true, sessionFile, modified: new Date().toISOString() }]
+    ? [{ id: 'active-fixture', activeSessionId: 'active-fixture', lifecycle: 'live', isSessionActive: true, activity: 'working', isStreaming: true, sessionFile, modified: new Date().toISOString() }]
     : []
   process.stdout.write(JSON.stringify({ sessions }) + '\\n')
   process.exit(0)
@@ -181,7 +186,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 })
 `)
   chmodSync(executable, 0o755)
-  return { userData, home, project, executable }
+  return { userData, home, project, executable, sessionFile: realpathSync(sessionFile) }
 }
 
 function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEnv {
@@ -202,7 +207,10 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
 test.describe('Prime Work desktop smoke', () => {
   test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
-    const fixture = createHermeticFixture(testInfo.title === 'queues a reply to a session that is active outside Prime Work')
+    const activeSession = testInfo.title === 'queues a reply to a session that is active outside Prime Work'
+      || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
+    const fixture = createHermeticFixture(activeSession)
+    fixtureSessionFile = fixture.sessionFile
     app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
     page = await app.firstWindow()
     attachDiagnostics(page)
@@ -214,6 +222,7 @@ test.describe('Prime Work desktop smoke', () => {
     await app?.close().catch(() => undefined)
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
+    fixtureSessionFile = ''
   })
 
   test('loads the sandboxed preload bridge and hermetic service data', async () => {
@@ -241,8 +250,44 @@ test.describe('Prime Work desktop smoke', () => {
       activeSessionId: 'active-fixture',
       message: 'Queue this follow-up from Prime Work',
     })
-    await expect(page.getByRole('main').getByText('The external Prime Agent received the queued reply.')).toBeVisible()
+    const ackMarker = join(fixtureRoot, 'follow-up-ack.json')
+    await expect.poll(() => existsSync(ackMarker)).toBe(true)
+    expect(JSON.parse(readFileSync(ackMarker, 'utf8'))).toMatchObject({ type: 'ack_result' })
+    await expect(page.locator('.transcript').getByText('The external Prime Agent received the queued reply.')).toBeVisible()
     await expect(page.getByText(/Prime Agent RPC exited|Request failed/)).toHaveCount(0)
+  })
+
+  test('reflects an external JSONL append without reselecting the live session', async () => {
+    await expect(page.locator('.transcript').getByText('Hermetic desktop fixture', { exact: true })).toBeVisible()
+    const selectedSession = page.locator('.session-row-wrap.is-selected')
+    await expect(selectedSession).toHaveCount(1)
+
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const reasoning = `External live reasoning ${nonce}`
+    const answer = `External live answer ${nonce}`
+    const timestamp = new Date().toISOString()
+    appendFileSync(fixtureSessionFile, `${JSON.stringify({
+      type: 'message',
+      id: `fixture-external-${nonce}`,
+      parentId: 'fixture-goal-summary',
+      timestamp,
+      message: {
+        role: 'assistant',
+        timestamp,
+        content: [
+          { type: 'thinking', thinking: reasoning },
+          { type: 'toolCall', id: `fixture-tool-${nonce}`, name: 'fixture_external_tool', arguments: { nonce } },
+          { type: 'text', text: answer },
+        ],
+      },
+    })}
+`)
+
+    await expect(page.locator('.transcript').getByText(reasoning, { exact: true })).toHaveCount(1)
+    await expect(page.locator('.transcript').getByText(answer, { exact: true })).toHaveCount(1)
+    await expect(page.locator('.activity-line--tool')).toContainText('fixture_external_tool')
+    await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
+    await expect(selectedSession).toHaveCount(1)
   })
 
   test('keeps session options visible and starts a new session from a hovered project', async () => {

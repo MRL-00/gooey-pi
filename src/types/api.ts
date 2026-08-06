@@ -42,6 +42,7 @@ export interface SessionRecord {
   eventRevision?: number
   preview?: string
   archived?: boolean
+  syncRevision?: number
 }
 
 export type MessagePart =

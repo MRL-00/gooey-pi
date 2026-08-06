@@ -178,11 +178,12 @@ export class SessionService {
     if (catalog.code !== 0 || catalog.timedOut || catalog.outputExceeded) throw new Error('Prime Work could not inspect active Prime Agent sessions')
     let parsed: unknown
     try { parsed = JSON.parse(catalog.stdout) } catch { throw new Error('Prime Agent returned an invalid active-session catalog') }
-    if (!isRecord(parsed) || !Array.isArray(parsed.sessions)) throw new Error('Prime Agent returned an invalid active-session catalog')
+    if (!isRecord(parsed) || !Array.isArray(parsed.sessions)
+      || parsed.sessions.length > MAX_SESSION_FILES * 4) throw new Error('Prime Agent returned an invalid active-session catalog')
 
     let active: Record<string, unknown> | undefined
     for (const value of parsed.sessions) {
-      if (!isRecord(value) || value.isSessionActive !== true
+      if (!isRecord(value) || value.lifecycle !== 'live' || value.isSessionActive !== true
         || typeof value.sessionFile !== 'string' || value.sessionFile.length > 4_096) continue
       let candidate: string
       try { candidate = await realpath(value.sessionFile) } catch { continue }
@@ -192,15 +193,14 @@ export class SessionService {
     const activeSessionId = requireId(active.activeSessionId ?? active.id, 'activeSessionId')
     if (activeSessionId.startsWith('-')) throw new Error('Prime Agent returned an invalid active session identifier')
 
-    const status = await runProcess(this.primeAgentPath, ['status', '--json'], { timeoutMs: 10_000, maxBytes: 1024 * 1024 })
-    if (status.code !== 0 || status.timedOut || status.outputExceeded) throw new Error('Prime Work could not locate the Prime Agent daemon')
-    let daemons: unknown
-    try { daemons = JSON.parse(status.stdout) } catch { throw new Error('Prime Agent returned an invalid daemon status') }
-    if (!Array.isArray(daemons)) throw new Error('Prime Agent returned an invalid daemon status')
-    const daemon = daemons.find((value) => isRecord(value) && value.isDefault === true && value.status === 'current')
-      ?? daemons.find((value) => isRecord(value) && value.status === 'current')
-    if (!isRecord(daemon) || typeof daemon.socketPath !== 'string') throw new Error('Prime Work could not locate the Prime Agent daemon')
-    await queueDaemonFollowUp(daemon.socketPath, activeSessionId, safeMessage)
+    const status = await runProcess(this.primeAgentPath, ['status', '--json'], { timeoutMs: 15_000, maxBytes: 1024 * 1024 })
+    if (status.code !== 0 || status.timedOut || status.outputExceeded) throw new Error('Prime Work could not inspect the Prime Agent daemon')
+    let statuses: unknown
+    try { statuses = JSON.parse(status.stdout) } catch { throw new Error('Prime Agent returned an invalid daemon status') }
+    if (!Array.isArray(statuses) || statuses.length > 64) throw new Error('Prime Agent returned an invalid daemon status')
+    const current = statuses.find((value) => isRecord(value) && value.status === 'current' && value.isDefault === true)
+    if (!isRecord(current) || typeof current.socketPath !== 'string') throw new Error('Prime Agent did not report its active daemon socket')
+    await queueDaemonFollowUp(current.socketPath, activeSessionId, safeMessage)
     return true
   }
 
@@ -282,12 +282,13 @@ export class SessionService {
     } else {
       this.catalogOnlyChange = true
     }
-    if (this.changeTimer) clearTimeout(this.changeTimer)
-    this.changeTimer = setTimeout(() => {
-      this.changeTimer = null
-      void this.flushSessionChanges()
-    }, 120)
-    this.changeTimer.unref()
+    if (!this.changeTimer) {
+      this.changeTimer = setTimeout(() => {
+        this.changeTimer = null
+        void this.flushSessionChanges()
+      }, 120)
+      this.changeTimer.unref()
+    }
   }
 
   private async flushSessionChanges(): Promise<void> {
