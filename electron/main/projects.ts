@@ -13,9 +13,11 @@ function inferredId(path: string): string {
 
 export class ProjectService {
   private readonly authorizedRoots = new Map<string, FolderIdentity>()
+  private readonly removalRoots = new Set<string>()
   private authorizationRevision = 0
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
   private branchProvider: (cwd: string) => Promise<string | undefined> = async () => undefined
+  private stopProjectProcesses: (roots: string[]) => Promise<void> = async () => undefined
 
   constructor(private readonly store: JsonStateStore, private readonly windowProvider: () => BrowserWindow | null) {}
 
@@ -35,9 +37,14 @@ export class ProjectService {
     } catch { return undefined }
   }
 
-  bindProviders(providers: { sessions(): Promise<SessionRecord[]>; branch(cwd: string): Promise<string | undefined> }): void {
+  bindProviders(providers: {
+    sessions(): Promise<SessionRecord[]>
+    branch(cwd: string): Promise<string | undefined>
+    stopProjectProcesses?(roots: string[]): Promise<void>
+  }): void {
     this.sessionProvider = providers.sessions
     this.branchProvider = providers.branch
+    this.stopProjectProcesses = providers.stopProjectProcesses ?? (async () => undefined)
   }
 
   private async migrateLegacyFolderIdentities(): Promise<void> {
@@ -142,6 +149,7 @@ export class ProjectService {
       : await dialog.showOpenDialog({ title: 'Add project folder', properties: ['openDirectory', 'createDirectory'] })
     if (result.canceled || result.filePaths.length !== 1) return null
     const { path, identity } = await this.captureFolderIdentity(result.filePaths[0])
+    this.removalRoots.delete(path)
     const now = new Date().toISOString()
     const project = await this.store.update((state): PersistedProject => {
       state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
@@ -174,6 +182,7 @@ export class ProjectService {
   async grantInferred(pathValue: unknown): Promise<ProjectRecord> {
     const { path, identity } = await this.captureFolderIdentity(String(pathValue))
     if (path === resolve('/') || path === resolve(homedir())) throw new TypeError('Broad filesystem roots cannot be inferred as projects')
+    this.removalRoots.delete(path)
     const sessions = await this.sessionProvider()
     let discovered = false
     for (const session of sessions) {
@@ -222,6 +231,12 @@ export class ProjectService {
           if (inferredId(path) === id && path !== resolve('/') && path !== resolve(homedir())) { inferredPath = path; break }
         } catch { /* Not a removable inferred project. */ }
       }
+    }
+    const roots = persisted ? persistedPaths : inferredPath ? [inferredPath] : []
+    if (roots.length) {
+      for (const root of roots) this.removalRoots.add(root)
+      for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
+      await this.stopProjectProcesses([...new Set(roots)])
     }
     const removed = await this.store.update((state) => {
       const index = state.projects.findIndex((project) => project.id === id)
@@ -288,6 +303,7 @@ export class ProjectService {
 
   async authorizePath(value: string): Promise<string> {
     const path = await requireExistingPath(value)
+    if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
     if (!this.authorizedRoots.size) await this.list()
     const authorizationRevision = this.authorizationRevision
     const roots: string[] = []

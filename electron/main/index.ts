@@ -227,7 +227,6 @@ async function bootstrap(): Promise<void> {
   const git = new GitService((cwd) => projects.authorizeCwd(cwd))
   // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
-  projects.bindProviders({ sessions: listCatalogSessions, branch: (cwd) => git.branch(cwd) })
 
   const providers = new PrimeProviderService({ openExternal: async (url) => { await shell.openExternal(url, { activate: true }) } })
   providerService = providers
@@ -244,6 +243,11 @@ async function bootstrap(): Promise<void> {
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
   terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => store.snapshot().settings.terminalShell)
+  projects.bindProviders({
+    sessions: listCatalogSessions,
+    branch: (cwd) => git.branch(cwd),
+    stopProjectProcesses: async (roots) => { await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)]) },
+  })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl)
   const settings = new SettingsService(store, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const browserProfile = session.fromPartition('persist:prime-work-browser')

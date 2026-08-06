@@ -128,4 +128,18 @@ setInterval(() => {}, 1000)
     expect(processExists(pid)).toBe(false)
   }, 12_000)
 
+
+  it('stops only runtimes whose cwd is inside a removed project root', async () => {
+    const project = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const outside = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(project.executable)
+    const projectRuntime = await manager.start({ cwd: project.cwd })
+    const outsideRuntime = await manager.start({ cwd: outside.cwd })
+
+    await manager.stopForProjectRoots([project.cwd])
+
+    expect(manager.list().map((runtime) => runtime.runtimeId)).toEqual([outsideRuntime.runtimeId])
+    expect(manager.list().some((runtime) => runtime.runtimeId === projectRuntime.runtimeId)).toBe(false)
+  })
+
 })
