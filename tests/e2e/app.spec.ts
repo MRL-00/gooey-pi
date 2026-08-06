@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -16,7 +16,7 @@ const attachDiagnostics = (target: Page) => {
   })
 }
 
-function createHermeticFixture(): { userData: string; home: string; project: string; executable: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
@@ -86,6 +86,39 @@ function createHermeticFixture(): { userData: string; home: string; project: str
     dismissedProjectPaths: [],
   }))
 
+  const daemonExecutable = join(fixtureRoot, 'prime-agent-daemon-fixture.cjs')
+  writeFileSync(daemonExecutable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const net = require('node:net')
+const socketPath = ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))}
+try { fs.unlinkSync(socketPath) } catch {}
+const server = net.createServer((socket) => {
+  socket.write(JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] }) + '\\n')
+  let buffer = ''
+  socket.on('data', (chunk) => {
+    buffer += chunk.toString('utf8')
+    while (buffer.includes('\\n')) {
+      const index = buffer.indexOf('\\n')
+      const line = buffer.slice(0, index)
+      buffer = buffer.slice(index + 1)
+      const envelope = JSON.parse(line)
+      if (envelope.command?.type !== 'follow_up') continue
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'follow-up-args.json'))}, JSON.stringify(envelope.command))
+      const timestamp = new Date().toISOString()
+      fs.appendFileSync(${JSON.stringify(sessionFile)}, [
+        JSON.stringify({ type: 'message', id: 'fixture-external-user', parentId: 'fixture-goal-summary', timestamp, message: { role: 'user', content: envelope.command.message } }),
+        JSON.stringify({ type: 'message', id: 'fixture-external-assistant', parentId: 'fixture-external-user', timestamp, message: { role: 'assistant', content: 'The external Prime Agent received the queued reply.' } }),
+      ].join('\\n') + '\\n')
+      socket.write(JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} }) + '\\n')
+    }
+  })
+  socket.on('end', () => server.close())
+})
+server.listen(socketPath)
+setTimeout(() => server.close(), 30_000).unref()
+`)
+  chmodSync(daemonExecutable, 0o755)
+
   const executable = join(fixtureRoot, 'prime-agent-fixture.cjs')
   writeFileSync(executable, `#!/usr/bin/env node
 const fs = require('node:fs')
@@ -94,7 +127,27 @@ const args = process.argv.slice(2)
 if (args.includes('--version')) { process.stdout.write('prime-agent 0.7.0\\n'); process.exit(0) }
 if (args[0] === 'schedule') { process.stdout.write(JSON.stringify({ jobs: [] }) + '\\n'); process.exit(0) }
 const resumeIndex = args.indexOf('--resume')
-const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(sessionFile)}
+const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(realpathSync(sessionFile))}
+if (args[0] === 'list') {
+  const sessions = ${JSON.stringify(activeSession)}
+    ? [{ id: 'active-fixture', activeSessionId: 'active-fixture', isSessionActive: true, activity: 'working', isStreaming: true, sessionFile, modified: new Date().toISOString() }]
+    : []
+  process.stdout.write(JSON.stringify({ sessions }) + '\\n')
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  const { spawn } = require('node:child_process')
+  if (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))})) {
+    const child = spawn(process.execPath, [${JSON.stringify(join(fixtureRoot, 'prime-agent-daemon-fixture.cjs'))}], { detached: true, stdio: 'ignore' })
+    child.unref()
+    const wait = new Int32Array(new SharedArrayBuffer(4))
+    const deadline = Date.now() + 3_000
+    while (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))}) && Date.now() < deadline) Atomics.wait(wait, 0, 0, 20)
+  }
+  if (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))})) process.exit(2)
+  process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))} }]) + '\\n')
+  process.exit(0)
+}
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -147,9 +200,9 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
 }
 
 test.describe('Prime Work desktop smoke', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
-    const fixture = createHermeticFixture()
+    const fixture = createHermeticFixture(testInfo.title === 'queues a reply to a session that is active outside Prime Work')
     app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
     page = await app.firstWindow()
     attachDiagnostics(page)
@@ -174,6 +227,22 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('queues a reply to a session that is active outside Prime Work', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Queue this follow-up from Prime Work')
+    await composer.press('Enter')
+
+    const marker = join(fixtureRoot, 'follow-up-args.json')
+    await expect.poll(() => existsSync(marker)).toBe(true)
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({
+      type: 'follow_up',
+      activeSessionId: 'active-fixture',
+      message: 'Queue this follow-up from Prime Work',
+    })
+    await expect(page.getByRole('main').getByText('The external Prime Agent received the queued reply.')).toBeVisible()
+    await expect(page.getByText(/Prime Agent RPC exited|Request failed/)).toHaveCount(0)
   })
 
   test('keeps session options visible and starts a new session from a hovered project', async () => {
@@ -398,7 +467,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(completedRow).not.toHaveClass(/has-attention/)
   })
 
-  test('rolls back a rejected optimistic setting', async () => {
+  test('preserves a rejected settings draft with an actionable error', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
     const shell = page.locator('.settings-content input.mono')

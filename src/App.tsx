@@ -269,7 +269,15 @@ export default function App() {
         let startedRuntime = false
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
-          activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+          const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
+          if (selected.sessionFile && selectedSession?.status === 'running'
+            && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
+          try {
+            activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+          } catch (startError) {
+            if (selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt)) return
+            throw startError
+          }
           startedRuntime = true
           if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
         }

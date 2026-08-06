@@ -36,8 +36,9 @@ async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (valu
 }
 
 export class SessionMetadataCatalog {
-  private catalogCache: { expiresAt: number; sessions: Map<string, JsonRecord> } | null = null
-  private catalogRequest: Promise<Map<string, JsonRecord>> | null = null
+  private catalogCache: { expiresAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
+  private catalogRequest: { revision: number; promise: Promise<Map<string, JsonRecord>> } | null = null
+  private catalogRevision = 0
   private sessionScanRequest: Promise<SessionMetadata[]> | null = null
   private readonly metadataCache = new Map<string, SessionMetadata>()
   private readonly metadataRequests = new Map<string, Promise<SessionMetadata>>()
@@ -48,6 +49,11 @@ export class SessionMetadataCatalog {
     private readonly maxSessionFiles: number,
     private readonly readMetadata: (filePath: string, knownStat?: Stats) => Promise<SessionMetadata>,
   ) {}
+
+  invalidateLiveCatalog(): void {
+    this.catalogRevision += 1
+    this.catalogCache = null
+  }
 
   async all(): Promise<SessionMetadata[]> {
     if (this.sessionScanRequest) return this.sessionScanRequest
@@ -124,24 +130,35 @@ export class SessionMetadataCatalog {
 
   private async liveCatalog(): Promise<Map<string, JsonRecord>> {
     if (!this.primeAgentPath) return new Map()
-    if (this.catalogCache && this.catalogCache.expiresAt > Date.now()) return this.catalogCache.sessions
-    if (this.catalogRequest) return this.catalogRequest
-    this.catalogRequest = (async () => {
-      const sessions = new Map<string, JsonRecord>()
-      try {
-        const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
-        if (result.code === 0) {
-          const parsed: unknown = JSON.parse(result.stdout)
-          if (isRecord(parsed) && Array.isArray(parsed.sessions)) {
-            for (const raw of parsed.sessions) {
-              if (isRecord(raw) && typeof raw.sessionFile === 'string') sessions.set(resolve(raw.sessionFile), raw)
+    const revision = this.catalogRevision
+    if (this.catalogCache && this.catalogCache.revision === revision && this.catalogCache.expiresAt > Date.now()) {
+      return this.catalogCache.sessions
+    }
+    if (this.catalogRequest?.revision === revision) return this.catalogRequest.promise
+    const request = {
+      revision,
+      promise: (async () => {
+        const sessions = new Map<string, JsonRecord>()
+        try {
+          const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
+          if (result.code === 0) {
+            const parsed: unknown = JSON.parse(result.stdout)
+            if (isRecord(parsed) && Array.isArray(parsed.sessions)) {
+              for (const raw of parsed.sessions) {
+                if (isRecord(raw) && typeof raw.sessionFile === 'string') sessions.set(resolve(raw.sessionFile), raw)
+              }
             }
           }
+        } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
+        if (this.catalogRevision === revision) {
+          this.catalogCache = { expiresAt: Date.now() + 2_000, revision, sessions }
         }
-      } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
-      this.catalogCache = { expiresAt: Date.now() + 2_000, sessions }
-      return sessions
-    })()
-    try { return await this.catalogRequest } finally { this.catalogRequest = null }
+        return sessions
+      })(),
+    }
+    this.catalogRequest = request
+    try { return await request.promise } finally {
+      if (this.catalogRequest === request) this.catalogRequest = null
+    }
   }
 }

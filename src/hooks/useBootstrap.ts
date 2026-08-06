@@ -22,6 +22,23 @@ interface UseBootstrapOptions {
   reportError(error: unknown): void
 }
 
+function mergeSessionCatalog(
+  current: SessionRecord[],
+  records: SessionRecord[],
+  activeFile: string | undefined,
+): SessionRecord[] {
+  const previousByPath = new Map(current.map((session) => [session.filePath, session]))
+  return records.map((record) => {
+    const previous = previousByPath.get(record.filePath)
+    const needsAttention = (record.status === 'waiting' || record.status === 'complete')
+      && previous?.status !== record.status
+    return {
+      ...record,
+      unread: record.filePath === activeFile ? false : needsAttention ? true : previous?.unread ?? record.unread,
+    }
+  })
+}
+
 export function useBootstrap({
   bridge,
   setProjects,
@@ -104,6 +121,36 @@ export function useBootstrap({
     setSessions,
       workspaceRef,
   ])
+
+  useEffect(() => {
+    if (!bridge) return
+    let disposed = false
+    let refreshTimer: number | null = null
+    let requestId = 0
+    const unsubscribe = bridge.sessions.onChanged(() => {
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        const currentRequest = ++requestId
+        void Promise.all([
+          bridge.projects.list(),
+          bridge.sessions.list(undefined, true),
+        ]).then(([nextProjects, nextSessions]) => {
+          if (disposed || currentRequest !== requestId) return
+          setProjects(nextProjects)
+          setSessions((current) => mergeSessionCatalog(current, nextSessions, workspaceRef.current.sessionFile))
+        }).catch((error) => {
+          if (!disposed && currentRequest === requestId) reportError(error)
+        })
+      }, 80)
+    })
+    return () => {
+      disposed = true
+      requestId += 1
+      unsubscribe()
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer)
+    }
+  }, [bridge, reportError, setProjects, setSessions, workspaceRef])
 
   return { meta, initialized }
 }

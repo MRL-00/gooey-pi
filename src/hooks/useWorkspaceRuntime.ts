@@ -254,7 +254,7 @@ export function useWorkspaceRuntime({
       const load = transcriptLoadRef.current
       if (load?.generation === selected.generation && !load.reconciliation) transcriptLoadRef.current = null
     }
-  }, [activeSession?.filePath, bridge, startTranscriptRead, workspaceGeneration])
+  }, [activeSession?.filePath, activeSession?.updatedAt, bridge, flushAgentEvents, reportError, startTranscriptRead, workspaceGeneration])
 
   useEffect(() => () => {
     if (agentEventFrameRef.current !== null) cancelAnimationFrame(agentEventFrameRef.current)

@@ -1,4 +1,5 @@
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -289,6 +290,86 @@ describe('SessionService transcript bounds', () => {
 
 
 describe('SessionService orchestration', () => {
+  it('queues a follow-up through the active Prime Agent daemon instead of resuming its locked session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-active-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'active.jsonl')
+    writeSession(file, project, 'active')
+    const socketPath = join(dir, 'daemon.sock')
+    const followUps: Array<Record<string, unknown>> = []
+    const daemon = createServer((socket) => {
+      socket.write(`${JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] })}\n`)
+      let buffer = ''
+      socket.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        while (buffer.includes('\n')) {
+          const index = buffer.indexOf('\n')
+          const line = buffer.slice(0, index)
+          buffer = buffer.slice(index + 1)
+          const envelope = JSON.parse(line) as { id?: string; command?: Record<string, unknown> }
+          if (envelope.command?.type !== 'follow_up') continue
+          followUps.push(envelope)
+          socket.write(`${JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} })}\n`)
+        }
+      })
+    })
+    await new Promise<void>((resolveListen, rejectListen) => {
+      daemon.once('error', rejectListen)
+      daemon.listen(socketPath, resolveListen)
+    })
+
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args[0] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'active-worker', activeSessionId: 'active-worker', isSessionActive: true, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(socketPath)} }]))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    try {
+      await expect(service.followUp(file, 'queue this reply')).resolves.toBe(true)
+      expect(followUps).toHaveLength(1)
+      expect(followUps[0]).toMatchObject({
+        type: 'command',
+        protocol: { name: 'prime-agent.daemon', version: 7 },
+        command: { type: 'follow_up', activeSessionId: 'active-worker', message: 'queue this reply' },
+      })
+    } finally {
+      await new Promise<void>((resolveClose) => daemon.close(() => resolveClose()))
+    }
+  })
+
+  it('does not send a follow-up when the session is no longer active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-inactive-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'inactive.jsonl')
+    writeSession(file, project, 'inactive')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'inactive-worker', activeSessionId: 'inactive-worker', isSessionActive: false, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+process.exit(9)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
+  })
+
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'runtime.jsonl')

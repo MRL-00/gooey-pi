@@ -128,6 +128,10 @@ export interface PrimeEventEnvelope {
   event: Record<string, unknown>
 }
 
+export interface SessionChangeEvent {
+  filePath?: string
+}
+
 export interface SkillRecord {
   id: string
   name: string
@@ -204,7 +208,14 @@ export interface ScheduleRecord {
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
-  sessions: { list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>; read(filePath: string): Promise<TranscriptMessage[]>; rename(filePath: string, title: string): Promise<boolean>; archive(filePath: string, archived?: boolean): Promise<boolean> }
+  sessions: {
+    list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>
+    read(filePath: string): Promise<TranscriptMessage[]>
+    followUp(filePath: string, message: string): Promise<boolean>
+    rename(filePath: string, title: string): Promise<boolean>
+    archive(filePath: string, archived?: boolean): Promise<boolean>
+    onChanged(callback: (event: SessionChangeEvent) => void): () => void
+  }
   agent: {
     start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string; fast?: boolean }): Promise<RuntimeInfo>
     command(runtimeId: string, command: Record<string, unknown>): Promise<Record<string, unknown>>
