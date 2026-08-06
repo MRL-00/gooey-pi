@@ -99,7 +99,7 @@ These logs are the durable coordination record for compaction and handoff.
 
 ### Section A log — release/CI
 
-- Pending.
+- **Scope release credentials narrowly** — commit: `scope-release-credentials` (final SHA recorded below). Files: `.github/workflows/{ci,release}.yml`, `scripts/release/{lib,package}.mjs`, `tests/release-scripts.test.ts`. Intent: pin every GitHub Action, expose secrets only to preflight/package steps, and strip release credentials from package-internal quality/build processes and post-package verification except for the expected Team ID. Validation: `npm test -- --run tests/release-scripts.test.ts`, `npm run typecheck`, `npm run check`, `npm test` (126 tests). Remaining risk: public signing/notarization remains credential-gated in CI.
 
 ### Section B log — authorization/lifecycle
 

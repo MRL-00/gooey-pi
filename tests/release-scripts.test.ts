@@ -1,5 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { assertArchitectureCoverage, assertAsarLayout, assertSupportedNode, parseArchitectures, parseTeamIdentifier, validateReleaseCredentials } from '../scripts/release/lib.mjs'
+import {
+  assertArchitectureCoverage,
+  assertAsarLayout,
+  assertSupportedNode,
+  parseArchitectures,
+  parseTeamIdentifier,
+  validateReleaseCredentials,
+  withoutReleaseCredentials,
+} from '../scripts/release/lib.mjs'
 
 const baseEnvironment = {
   RELEASE_SIGNING_TEAM_ID: 'TEAM123',
@@ -38,6 +47,27 @@ describe('release preflight', () => {
 
   test('binds Apple ID notarization to the signing Team ID', () => {
     expect(() => validateReleaseCredentials({ ...baseEnvironment, APPLE_TEAM_ID: 'OTHER' }, { checkApiKeyFile: false })).toThrow(/must match/)
+  })
+
+  test('removes release credentials from untrusted verification commands', () => {
+    const environment = { PATH: '/usr/bin', ...baseEnvironment, APPLE_API_KEY: '/tmp/private-key' }
+    expect(withoutReleaseCredentials(environment)).toEqual({ PATH: '/usr/bin' })
+    expect(withoutReleaseCredentials(environment, ['RELEASE_SIGNING_TEAM_ID'])).toEqual({
+      PATH: '/usr/bin',
+      RELEASE_SIGNING_TEAM_ID: 'TEAM123',
+    })
+  })
+
+  test('pins actions and limits workflow secrets to release steps', () => {
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
+    for (const workflow of [releaseWorkflow, ciWorkflow]) {
+      expect(workflow).not.toMatch(/uses: actions\/[^@\s]+@v\d/)
+      expect(workflow).not.toMatch(/uses: actions\/[^@\s]+@(main|master)/)
+    }
+    expect(releaseWorkflow).not.toMatch(/^    env:/m)
+    expect(releaseWorkflow.match(/secrets\./g)).toHaveLength(12)
+    expect(releaseWorkflow.match(/^        env:$/gm)).toHaveLength(2)
   })
 })
 

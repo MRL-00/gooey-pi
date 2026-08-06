@@ -2,6 +2,23 @@ import { accessSync, constants, existsSync } from 'node:fs'
 
 export const MINIMUM_NODE = [22, 12, 0]
 
+export const RELEASE_CREDENTIAL_NAMES = [
+  'RELEASE_SIGNING_TEAM_ID',
+  'CSC_LINK',
+  'CSC_KEY_PASSWORD',
+  'APPLE_ID',
+  'APPLE_APP_SPECIFIC_PASSWORD',
+  'APPLE_TEAM_ID',
+  'APPLE_API_KEY',
+  'APPLE_API_KEY_ID',
+  'APPLE_API_ISSUER',
+]
+
+export function withoutReleaseCredentials(env = process.env, allowed = []) {
+  const allowedNames = new Set(allowed)
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !RELEASE_CREDENTIAL_NAMES.includes(name) || allowedNames.has(name)))
+}
+
 export function parseVersion(version) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) throw new Error(`Cannot parse Node.js version: ${version}`)
