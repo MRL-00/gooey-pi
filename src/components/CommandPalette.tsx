@@ -1,5 +1,5 @@
 import { Bell, CalendarClock, Folder, LayoutPanelLeft, PackageOpen, Plus, Search, Settings, Terminal, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WorkspaceView } from '@/types/api'
 import { BrowserGlobe, useFocusTrap } from './ui'
@@ -22,7 +22,7 @@ export function CommandPalette({ open, onClose, onNavigate, onNewSession, onTogg
     {id:'sidebar',label:'Toggle sidebar',detail:'Show or hide project navigation',shortcut:'⌘B',icon:<LayoutPanelLeft size={14}/>,run:onToggleSidebar},
     {id:'settings',label:'Open Settings',detail:'Configure Prime Work',shortcut:'⌘,',icon:<Settings size={14}/>,run:()=>onNavigate('settings')},
   ]
-  const visible=useMemo(()=>commands.filter((command)=>`${command.label} ${command.detail}`.toLowerCase().includes(query.toLowerCase())),[query])
+  const visible=commands.filter((command)=>`${command.label} ${command.detail}`.toLowerCase().includes(query.toLowerCase()))
   useEffect(()=>{if(open){setQuery('');setActive(0);requestAnimationFrame(()=>inputRef.current?.focus())}},[open])
   useEffect(()=>setActive(0),[query])
   useEffect(()=>{if(!open)return;const shell=document.querySelector<HTMLElement>('.app-shell');if(!shell)return;shell.inert=true;shell.setAttribute('aria-hidden','true');return()=>{shell.inert=false;shell.removeAttribute('aria-hidden')}},[open])

@@ -8,7 +8,7 @@ import {
   Plus,
   ShieldCheck,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { SkillRecord } from '@/types/api'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
@@ -36,6 +36,8 @@ const commands = [
 export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, skills, onModelChange, onEffortChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
+  const [activeSuggestion, setActiveSuggestion] = useState(0)
+  const menuId = useId()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submittingRef = useRef(false)
   const enabledSkills = skills.filter((skill) => skill.enabled).slice(0, 6)
@@ -59,6 +61,20 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
     textareaRef.current?.focus()
   }
 
+  const suggestions = menu === 'command'
+    ? commands.filter((item) => item.command.startsWith(value)).map((item) => ({
+        key: item.command, label: item.command, detail: item.detail, icon: <Command size={14} />,
+        choose: () => { setValue(`${item.command} `); setMenu(null); textareaRef.current?.focus() },
+      }))
+    : menu === 'skill'
+      ? enabledSkills.map((skill) => ({ key: skill.id, label: skill.name, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
+      : menu === 'add'
+        ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
+        : []
+
+  useEffect(() => { setActiveSuggestion(0) }, [menu, value, suggestions.length])
+  const chooseSuggestion = (index: number) => suggestions[index]?.choose()
+
   return (
     <div className="composer-wrap">
       <div className={`composer ${busy || submitting ? 'composer--busy' : ''}`}>
@@ -69,22 +85,44 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
           rows={2}
           placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? 'Starting Prime…' : 'Ask Prime anything, @ for skills, / for commands'}
           aria-label="Message Prime"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={Boolean(menu && suggestions.length)}
+          aria-controls={menu ? menuId : undefined}
+          aria-activedescendant={menu && suggestions.length ? `${menuId}-option-${activeSuggestion}` : undefined}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit() }
-            if (event.key === 'Escape') setMenu(null)
+            if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+              event.preventDefault()
+              setActiveSuggestion((current) => event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length)
+              return
+            }
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              if (menu && suggestions.length) chooseSuggestion(activeSuggestion)
+              else void submit()
+            }
+            if (event.key === 'Escape') { event.preventDefault(); setMenu(null) }
           }}
         />
-        {menu ? (
-          <div className="composer-menu" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
-            {menu === 'command' ? commands.filter((item) => item.command.startsWith(value)).map((item) => <button type="button" key={item.command} onClick={() => { setValue(`${item.command} `); setMenu(null); textareaRef.current?.focus() }}><Command size={14} /><span><strong>{item.command}</strong><small>{item.detail}</small></span></button>) : null}
-            {menu === 'skill' ? enabledSkills.map((skill) => <button type="button" key={skill.id} onClick={() => insert(`${skill.name} `)}><AtSign size={14} /><span><strong>{skill.name}</strong><small>{skill.description}</small></span></button>) : null}
-            {menu === 'add' ? <button type="button" onClick={() => insert('@')}><AtSign size={14} /><span><strong>Mention a skill</strong><small>Add an enabled Prime capability</small></span></button> : null}
+        {menu && suggestions.length ? (
+          <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
+            {suggestions.map((suggestion, index) => <button
+              id={`${menuId}-option-${index}`}
+              type="button"
+              role="option"
+              tabIndex={-1}
+              aria-selected={activeSuggestion === index}
+              className={activeSuggestion === index ? 'is-active' : ''}
+              key={suggestion.key}
+              onMouseEnter={() => setActiveSuggestion(index)}
+              onClick={suggestion.choose}
+            >{suggestion.icon}<span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span></button>)}
           </div>
         ) : null}
         <div className="composer__footer">
           <div className="composer__controls">
-            <IconButton label="Add skill" onClick={() => setMenu((current) => current === 'add' ? null : 'add')}><Plus size={17} /></IconButton>
+            <IconButton label="Add skill" aria-expanded={menu === 'add'} aria-controls={menu === 'add' ? menuId : undefined} onClick={() => { setMenu((current) => current === 'add' ? null : 'add'); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Plus size={17} /></IconButton>
             <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option><option value="gpt-5.6-sol">GPT-5.6 Sol</option><option value="gpt-5.4">GPT-5.4</option><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
             </SelectControl>

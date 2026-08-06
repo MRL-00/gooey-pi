@@ -107,14 +107,21 @@ export default function App() {
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [loadingSession, setLoadingSession] = useState(false)
+  const [initialized, setInitialized] = useState(!bridge)
   const [submitting, setSubmitting] = useState(false)
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState('medium')
   const [toast, setToast] = useState<string | null>(null)
   const [extensionUi, setExtensionUi] = useState<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+  const confirmedSettingsRef = useRef(settings)
+  const settingsMutationRef = useRef(0)
+  const settingsQueueRef = useRef<Promise<void>>(Promise.resolve())
   const extensionUiRef = useRef<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
   const extensionUiTimerRef = useRef<number | null>(null)
+  const inspectorTabTouchedRef = useRef(false)
   const runtimeIdRef = useRef<string | null>(null)
   const runtimeOwnerRef = useRef<{ runtimeId: string; generation: number } | null>(null)
   const workspaceRef = useRef<WorkspaceSnapshot>({
@@ -277,6 +284,8 @@ export default function App() {
   useEffect(() => {
     if (!bridge) return
     let cancelled = false
+    const startupGeneration = workspaceRef.current.generation
+    const startupSettingsRevision = settingsMutationRef.current
     Promise.allSettled([
       bridge.app.getMeta(), bridge.projects.list(), bridge.sessions.list(undefined, true), bridge.settings.get(), bridge.plugins.list(), bridge.schedules.list(), bridge.agent.list(),
     ]).then(([metaResult, projectsResult, sessionsResult, settingsResult, skillsResult, schedulesResult, runtimesResult]) => {
@@ -287,15 +296,16 @@ export default function App() {
       const nextRuntimes = runtimesResult.status === 'fulfilled' ? runtimesResult.value : []
       if (projectsResult.status === 'fulfilled') setProjects(nextProjects)
       if (sessionsResult.status === 'fulfilled') setSessions(nextSessions)
-      if (projectsResult.status === 'fulfilled') {
+      if (projectsResult.status === 'fulfilled' && workspaceRef.current.generation === startupGeneration) {
         const selected = selectStartupWorkspace(nextProjects, nextSessions, nextRuntimes)
         activateWorkspace(selected.project, selected.session, selected.runtime)
       }
-      if (settingsResult.status === 'fulfilled') { setSettings(settingsResult.value); setSidebarOpen(settingsResult.value.sidebarOpen); setInspectorOpen(settingsResult.value.inspectorOpen); setTerminalOpen(settingsResult.value.terminalOpen); setInspectorTab(settingsResult.value.defaultInspectorTab) }
+      if (settingsResult.status === 'fulfilled' && settingsMutationRef.current === startupSettingsRevision) { settingsRef.current = settingsResult.value; confirmedSettingsRef.current = settingsResult.value; setSettings(settingsResult.value); setSidebarOpen(settingsResult.value.sidebarOpen); setInspectorOpen(settingsResult.value.inspectorOpen); setTerminalOpen(settingsResult.value.terminalOpen); if (!inspectorTabTouchedRef.current) setInspectorTab(settingsResult.value.defaultInspectorTab) }
       if (skillsResult.status === 'fulfilled') setSkills(skillsResult.value)
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value)
       const failure = [metaResult, projectsResult, sessionsResult, settingsResult].find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') reportError(failure.reason)
+      setInitialized(true)
     })
     return () => { cancelled = true }
   }, [activateWorkspace, bridge, reportError])
@@ -379,13 +389,30 @@ export default function App() {
     return () => { gitRequestRef.current += 1 }
   }, [refreshGit])
 
+  const applySettings = useCallback((next: AppSettings, panelPatch: Partial<AppSettings>) => {
+    settingsRef.current = next
+    setSettings(next)
+    if ('sidebarOpen' in panelPatch) setSidebarOpen(next.sidebarOpen)
+    if ('inspectorOpen' in panelPatch) setInspectorOpen(next.inspectorOpen)
+    if ('terminalOpen' in panelPatch) setTerminalOpen(next.terminalOpen)
+  }, [])
+
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    setSettings((current) => ({ ...current, ...patch }))
-    if ('sidebarOpen' in patch && patch.sidebarOpen !== undefined) setSidebarOpen(patch.sidebarOpen)
-    if ('inspectorOpen' in patch && patch.inspectorOpen !== undefined) setInspectorOpen(patch.inspectorOpen)
-    if ('terminalOpen' in patch && patch.terminalOpen !== undefined) setTerminalOpen(patch.terminalOpen)
-    if (bridge) { try { setSettings(await bridge.settings.update(patch)) } catch (error) { reportError(error) } }
-  }, [bridge, reportError])
+    const mutation = ++settingsMutationRef.current
+    const previous = settingsRef.current
+    applySettings({ ...previous, ...patch }, patch)
+    if (!bridge) { confirmedSettingsRef.current = settingsRef.current; return }
+    const operation = settingsQueueRef.current.catch(() => undefined).then(async () => {
+      const saved = await bridge.settings.update(patch)
+      confirmedSettingsRef.current = saved
+      if (settingsMutationRef.current === mutation) applySettings(saved, patch)
+    })
+    settingsQueueRef.current = operation.catch(() => undefined)
+    try { await operation } catch (error) {
+      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, patch)
+      reportError(error)
+    }
+  }, [applySettings, bridge, reportError])
 
   const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
     if (!bridge || !project.inferred) return project
@@ -613,11 +640,16 @@ export default function App() {
     try { await bridge.schedules.cancel(schedule.runtimeId ?? runtime!.runtimeId, schedule.id); setSchedules(await bridge.schedules.list()) } catch (error) { reportError(error) }
   }
 
-  const openBrowser = () => { if (compactLayout && sidebarOpen) setSidebarOpen(false); setView('session'); setInspectorTab('browser'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
-  const openChanges = () => { if (compactLayout && sidebarOpen) setSidebarOpen(false); setInspectorTab('changes'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
+  const selectInspectorTab = (tab: InspectorTab) => { inspectorTabTouchedRef.current = true; setInspectorTab(tab) }
+  const openBrowser = () => { inspectorTabTouchedRef.current = true; if (compactLayout && sidebarOpen) setSidebarOpen(false); setView('session'); selectInspectorTab('browser'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
+  const openChanges = () => { if (compactLayout && sidebarOpen) setSidebarOpen(false); selectInspectorTab('changes'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector('.modal[role="dialog"][aria-modal="true"]')) {
+        if (event.metaKey || event.ctrlKey) event.preventDefault()
+        return
+      }
       const command = event.metaKey || event.ctrlKey
       if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(true) }
       else if (command && event.key.toLowerCase() === 'n') { event.preventDefault(); newSession() }
@@ -635,11 +667,16 @@ export default function App() {
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} canCreate={Boolean(runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
     : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
-    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => { if (bridge) await bridge.settings.resetBrowserData(); setBrowserGeneration((value) => value + 1) }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} />
+    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => {
+        if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
+        const cleared = await bridge.settings.resetBrowserData()
+        if (!cleared) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
+        setBrowserGeneration((value) => value + 1)
+      }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} />
     : null
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
       {sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={activeSessionId} activeView={view} onSelectProject={selectProject} onSelectSession={selectSession} onNavigate={navigate} onNewSession={newSession} onAddProject={() => void addProject()} onClose={toggleSidebar} onOpenPalette={() => setPaletteOpen(true)} onRenameSession={renameSession} onArchiveSession={(session) => setSessionArchived(session, true)} overlay={compactLayout} /> : null}
       {sidebarOpen ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
       <div className="workbench" inert={compactLayout && sidebarOpen ? true : undefined}>
@@ -657,7 +694,7 @@ export default function App() {
                   <Composer busy={busy} submitting={submitting} loading={loadingSession} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
                 </main>
                 {inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={inspectorWidth} min={INSPECTOR_MIN} max={inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={setInspectorWidth} /> : null}
-                {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={setInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={compactLayout} /> : null}
+                {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={selectInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={compactLayout} /> : null}
                 {inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
               </div>
               {terminalOpen ? <TerminalDrawer cwd={activeProject?.primaryFolder} shell={settings.terminalShell} height={terminalHeight} minHeight={TERMINAL_MIN} maxHeight={terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={setTerminalHeight} onClose={toggleTerminal} onError={reportError} /> : null}

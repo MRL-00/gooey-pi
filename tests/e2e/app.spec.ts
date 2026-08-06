@@ -48,12 +48,22 @@ if (args[0] === 'schedule') { process.stdout.write(JSON.stringify({ jobs: [] }) 
 const resumeIndex = args.indexOf('--resume')
 const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(sessionFile)}
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+let pendingPrompt
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { sessionId: 'fixture-session', sessionFile, isStreaming: false, thinkingLevel: 'medium', model: { provider: 'fixture', id: 'fixture-model', name: 'Fixture Model' } } })
   } else if (command.type === 'list_schedules') {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
+  } else if (command.type === 'prompt' || command.type === 'follow_up') {
+    pendingPrompt = command
+    send({ type: 'agent_start' })
+    send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta'] })
+  } else if (command.type === 'extension_ui_response' && pendingPrompt) {
+    const prompt = pendingPrompt
+    pendingPrompt = undefined
+    send({ type: 'agent_end' })
+    send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
   } else if (command.id) {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
   }
@@ -86,6 +96,7 @@ test.describe('Prime Work desktop smoke', () => {
     page = await app.firstWindow()
     attachDiagnostics(page)
     await page.locator('.app-shell').waitFor()
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
   })
 
   test.afterEach(async () => {
@@ -135,10 +146,51 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toBeVisible()
     await expect(page.getByRole('button', { name: 'Close' })).toBeFocused()
     await expect(page.locator('.app-shell')).toHaveAttribute('inert')
+    await page.keyboard.press('Meta+K')
+    await expect(page.getByRole('dialog', { name: 'Command palette' })).toHaveCount(0)
+    await expect(dialog).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     await expect(trigger).toBeFocused()
     await expect(page.locator('.app-shell')).not.toHaveAttribute('inert')
+  })
+
+  test('supports keyboard navigation for composer suggestions', async () => {
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('/')
+    const options = page.locator('.composer-menu').getByRole('option')
+    await expect(options).toHaveCount(4)
+    await expect(composer).toHaveAttribute('aria-expanded', 'true')
+    await page.keyboard.press('ArrowDown')
+    await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+    await expect(composer).toHaveValue('/plan ')
+    await expect(composer).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('round-trips an agent multiple-choice question through the desktop modal', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Ask me which release channel to use')
+    await composer.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Choose a release channel' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('option', { name: 'Stable' })).toBeVisible()
+    await expect(dialog.getByRole('option', { name: 'Beta' })).toBeVisible()
+    await dialog.getByRole('option', { name: 'Beta' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('.message--assistant .message-actions')).toBeVisible()
+  })
+
+  test('rolls back a rejected optimistic setting', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
+    const shell = page.locator('.settings-content input.mono')
+    await expect(shell).toHaveValue('/bin/zsh')
+    await shell.fill('/definitely/not-an-executable')
+    await expect(page.locator('.toast')).toContainText(/shell is not executable/i)
+    await expect(shell).toHaveValue('/bin/zsh')
   })
 
   test('uses overlay panels at the compact desktop breakpoint', async () => {
