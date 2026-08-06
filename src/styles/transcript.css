@@ -11,7 +11,7 @@
 .prompt-suggestions button { min-height: 31px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--surface-raised); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .message { width: 100%; margin-bottom: 26px; }
-.message--user { display: flex; justify-content: flex-end; padding-left: 14%; }
+.message--user { display: flex; flex-direction: column; align-items: flex-end; padding-left: 14%; }
 .user-bubble { max-width: 88%; padding: 9px 13px; border-radius: 15px; border-bottom-right-radius: 5px; background: var(--surface-subtle); color: var(--text); font-size: 14px; line-height: 1.55; }
 .message--assistant { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; }
 .assistant-mark { padding-top: 1px; }
@@ -89,7 +89,9 @@
 .message-actions button, .message-actions span { min-height: 23px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; }
 .message-actions button:hover { color: var(--text-secondary); background: var(--surface-hover); }
 .message-actions span { margin-left: auto; }
+.message--user .message-actions { justify-content: flex-end; }
 .message--agent { margin: 7px 0 20px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--prime) 22%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--prime-soft) 76%, var(--canvas)); }
+.agent-message__content .message-actions { margin-top: 5px; margin-bottom: -5px; }
 .agent-message__summary { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--text-secondary); background: transparent; text-align: left; transition: background 130ms ease-out; }
 .agent-message__summary:hover { background: color-mix(in srgb, var(--prime) 7%, transparent); }
 .agent-message__label { flex: 0 0 auto; font-size: 11.5px; font-weight: 560; }

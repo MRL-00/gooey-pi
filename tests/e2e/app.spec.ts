@@ -161,11 +161,42 @@ test.describe('Prime Work desktop smoke', () => {
       return { background: styles.backgroundColor, danger }
     })
     expect(tones.background).not.toBe(tones.danger)
-    await expect(page.getByText('Fixture review complete. The readable agent response is available here.')).toHaveCount(0)
+    const content = page.locator('.message--agent .agent-message__content')
+    await expect(content).toHaveCount(0)
     await disclosure.click()
     await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
-    await expect(page.getByText('Fixture review complete. The readable agent response is available here.')).toBeVisible()
+    await expect(content).toContainText('Fixture review complete. The readable agent response is available here.')
     await expect(page.getByText('Envelope metadata that should stay hidden.')).toHaveCount(0)
+  })
+
+  test('copies a specific user or agent message from the action directly below it', async () => {
+    await page.evaluate(() => {
+      const target = window as Window & { __copiedMessage?: string }
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (text: string) => { target.__copiedMessage = text } },
+      })
+    })
+
+    const userMessage = page.locator('.message--user').filter({ hasText: 'Hermetic desktop fixture' })
+    await userMessage.hover()
+    const userCopy = userMessage.locator('.message-actions button')
+    await expect(userCopy).toHaveAccessibleName('Copy user message')
+    await expect(userCopy).toBeVisible()
+    await userCopy.click()
+    await expect(userCopy).toHaveAccessibleName('Copied user message')
+    await expect.poll(() => page.evaluate(() => (window as Window & { __copiedMessage?: string }).__copiedMessage)).toBe('Hermetic desktop fixture')
+
+    const agentMessage = page.locator('.message--agent')
+    await expect(agentMessage.getByRole('button', { name: 'Copy agent message' })).toHaveCount(0)
+    await agentMessage.getByRole('button', { name: 'Message from agent: fixture-reviewer' }).click()
+    await agentMessage.hover()
+    const agentCopy = agentMessage.locator('.message-actions button')
+    await expect(agentCopy).toHaveAccessibleName('Copy agent message')
+    await expect(agentCopy).toBeVisible()
+    await agentCopy.click()
+    await expect(agentCopy).toHaveAccessibleName('Copied agent message')
+    await expect.poll(() => page.evaluate(() => (window as Window & { __copiedMessage?: string }).__copiedMessage)).toBe('Fixture review complete. The readable agent response is available here.')
   })
 
   test('navigates all primary workspace pages and command palette', async () => {
