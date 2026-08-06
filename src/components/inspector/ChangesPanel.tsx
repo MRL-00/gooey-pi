@@ -1,6 +1,6 @@
 import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, RotateCcw, Undo2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { GitStatus, ProjectRecord } from '@/types/api'
+import type { GitStatus } from '@/types/api'
 import { boundLines } from '@/lib/render-bounds'
 import { EmptyState, IconButton, Modal, Segmented } from '../ui'
 
@@ -13,7 +13,7 @@ function DiffView({ text }: { text: string }) {
   return <pre className="diff-view">{lines.map((line, index) => <span key={index} className={line.startsWith('+') && !line.startsWith('+++') ? 'diff-line diff-line--add' : line.startsWith('-') && !line.startsWith('---') ? 'diff-line diff-line--remove' : line.startsWith('@@') ? 'diff-line diff-line--hunk' : 'diff-line'}><i>{index + 1}</i><code>{line || ' '}</code></span>)}{truncated ? <span className="diff-line diff-line--truncated"><i>…</i><code>Diff truncated in the desktop view. Open the file or use Git for the complete diff.</code></span> : null}</pre>
 }
 
-export function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: ProjectRecord; git: GitStatus; onRefreshGit(): Promise<void> | void; onGitChange?(git: GitStatus): void }) {
+export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: GitStatus; onRefreshGit(): Promise<void> | void }) {
   const [scope, setScope] = useState<'unstaged' | 'staged'>('unstaged')
   const [selectedPath, setSelectedPath] = useState<string | undefined>(git.files[0]?.path)
   const [diff, setDiff] = useState('')
@@ -22,7 +22,6 @@ export function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { proj
   const [commitMessage, setCommitMessage] = useState('')
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
-  const cwd = project?.primaryFolder
   const visibleFiles = git.files.filter((file) => scope === 'staged' ? file.staged : !file.staged)
 
   useEffect(() => {

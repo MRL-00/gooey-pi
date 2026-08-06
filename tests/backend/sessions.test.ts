@@ -1,21 +1,28 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ProjectService } from '../../electron/main/projects'
 import { SessionService } from '../../electron/main/sessions'
+import { boundedSessionDiscoveryNames, SessionMetadataCatalog } from '../../electron/main/sessions/catalog'
+import type { SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function setup(maxSessionFiles?: number): { root: string; project: string; service: SessionService } {
+function setup(
+  maxSessionFiles?: number,
+  transcriptOptions?: ConstructorParameters<typeof SessionService>[3],
+): { root: string; project: string; service: SessionService; store: JsonStateStore } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
-  const service = new SessionService(store, null, maxSessionFiles)
+  const service = new SessionService(store, null, maxSessionFiles, transcriptOptions)
   Object.defineProperty(service, 'sessionRoot', { value: root })
-  return { root, project, service }
+  return { root, project, service, store }
 }
 
 function writeSession(path: string, project: string, id: string, timestamp = '2025-01-01T00:00:00.000Z'): void {
@@ -25,6 +32,43 @@ function writeSession(path: string, project: string, id: string, timestamp = '20
     '',
   ].join('\n'))
 }
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+  }
+}
+
+function metadata(filePath: string, projectPath: string, id: string): SessionMetadata {
+  return {
+    id,
+    filePath,
+    projectPath,
+    title: id,
+    createdAt: '2025-01-01T00:00:00.000Z',
+    updatedAt: '2025-01-01T00:00:00.000Z',
+    status: 'idle',
+    depth: 0,
+    pinned: false,
+    unread: false,
+  }
+}
+
+describe('session discovery work bounds', () => {
+  it('applies a deterministic hard budget before canonicalization and stat work', () => {
+    const hostile = Array.from({ length: 50_000 }, (_, index) => `${String(49_999 - index).padStart(5, '0')}.jsonl`)
+    const selected = boundedSessionDiscoveryNames(hostile, 5_000)
+    expect(selected).toHaveLength(20_000)
+    expect(selected[0]).toBe('30000.jsonl')
+    expect(selected.at(-1)).toBe('49999.jsonl')
+    expect(boundedSessionDiscoveryNames(hostile, 2)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `${49_992 + index}.jsonl`),
+    )
+    expect(boundedSessionDiscoveryNames(hostile, 0)).toEqual([])
+  })
+})
 
 describe('SessionService catalog scaling', () => {
   it('coalesces concurrent lists and reuses metadata by canonical path, mtime, and size', async () => {
@@ -50,6 +94,31 @@ describe('SessionService catalog scaling', () => {
     expect(readMetadata).toHaveBeenCalledTimes(2)
   })
 
+  it('returns canonical ownership for sessions created through a project alias', async () => {
+    const { root, project, service, store } = setup()
+    const alias = join(project, '..', 'project-alias')
+    symlinkSync(project, alias, 'dir')
+    const file = join(root, 'aliased.jsonl')
+    writeSession(file, `${alias}/.`, 'aliased')
+
+    const records = await service.list(alias)
+
+    expect(records).toHaveLength(1)
+    expect(records[0].projectPath).toBe(realpathSync(project))
+    expect(await service.projectPaths()).toEqual([realpathSync(project)])
+
+    const info = lstatSync(project, { bigint: true })
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project,
+      pinned: false, createdAt: now, lastOpenedAt: now,
+      folderIdentities: { [project]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projects = new ProjectService(store, () => null)
+    projects.bindProviders({ sessions: () => service.list(), branch: async () => undefined })
+    expect(await projects.list()).toEqual([expect.objectContaining({ id: 'project', sessionCount: 1 })])
+  })
+
   it('selects the newest files before parsing with a deterministic canonical-path tie break', async () => {
     const { root, project, service } = setup(2)
     const oldest = join(root, 'c-oldest.jsonl')
@@ -66,6 +135,153 @@ describe('SessionService catalog scaling', () => {
 
     const records = await service.list()
     expect(records.map((record) => record.id)).toEqual(['newest-a', 'newest-b'])
+  })
+})
+
+describe('SessionMetadataCatalog live synchronization', () => {
+  it('canonicalizes daemon session paths and never regresses the JSONL update time', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-live-catalog-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'live.jsonl')
+    writeSession(file, project, 'live', '2025-02-01T00:00:00.000Z')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(file)}, isStreaming: true, modified: '2024-01-01T00:00:00.000Z' }] }))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    const record = (await service.list())[0]
+    expect(record?.filePath).toBe(realpathSync(file))
+    expect(record?.status).toBe('running')
+    expect(record?.updatedAt).toBe('2025-02-01T00:00:00.000Z')
+  })
+
+  it('does not let an in-flight pre-append scan satisfy a post-invalidation refresh', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-scan-race-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'race.jsonl')
+    writeSession(file, project, 'old')
+    const canonical = realpathSync(file)
+    const releases: Array<(value: SessionMetadata) => void> = []
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      null,
+      20,
+      async () => new Promise<SessionMetadata>((resolveMetadata) => releases.push(resolveMetadata)),
+    )
+
+    const stale = catalog.all()
+    await waitUntil(() => releases.length === 1)
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'new', message: { role: 'user', content: 'new' } })}\n`)
+    catalog.invalidateLiveCatalog()
+    const refreshed = catalog.all()
+    await waitUntil(() => releases.length === 2)
+    releases[1](metadata(canonical, project, 'new'))
+    await expect(refreshed).resolves.toMatchObject([{ id: 'new' }])
+    releases[0](metadata(canonical, project, 'old'))
+    await expect(stale).resolves.toMatchObject([{ id: 'old' }])
+    await expect(catalog.all()).resolves.toMatchObject([{ id: 'new' }])
+    expect(releases).toHaveLength(2)
+  })
+})
+
+
+describe('SessionService live changes', () => {
+  it('emits refreshes during continuous JSONL writes instead of waiting for the stream to stop', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'streaming.jsonl')
+    writeSession(file, project, 'streaming')
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+    let index = 0
+    const writes = setInterval(() => {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `stream-${index++}`, message: { role: 'user', content: 'stream' } })}
+`)
+    }, 25)
+
+    try {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 350))
+      expect(events.some((event) => event.filePath === realpathSync(file))).toBe(true)
+    } finally {
+      clearInterval(writes)
+      unsubscribe()
+    }
+  })
+
+  it('debounces canonical JSONL changes, rejects outside aliases, and stops after unsubscribe', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'watched.jsonl')
+    writeSession(file, project, 'watched')
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribeThrowing = service.onDidChange(() => { throw new Error('listener failure') })
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+
+    // Continuous writes above cover the real fs.watch path. Drive the private
+    // debounce admission directly here so parallel coverage load cannot drop the
+    // single kernel event that this deterministic coalescing assertion needs.
+    const watcherHarness = service as unknown as { queueSessionChange(filename: string): void }
+    watcherHarness.queueSessionChange('watched.jsonl')
+    watcherHarness.queueSessionChange('watched.jsonl')
+    await waitUntil(() => events.some((event) => event.filePath === realpathSync(file)), 4_000)
+    expect(events.filter((event) => event.filePath === realpathSync(file))).toHaveLength(1)
+
+    const outside = join(root, '..', 'outside.jsonl')
+    writeSession(outside, project, 'outside')
+    symlinkSync(outside, join(root, 'outside-alias.jsonl'))
+    watcherHarness.queueSessionChange('outside-alias.jsonl')
+    await waitUntil(() => events.some((event) => event.filePath === undefined), 4_000)
+    expect(events.some((event) => event.filePath === realpathSync(outside))).toBe(false)
+
+    unsubscribeThrowing()
+    unsubscribe()
+    const count = events.length
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'after-unsubscribe', message: { role: 'user', content: 'ignored' } })}\n`)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    expect(events).toHaveLength(count)
+  })
+})
+
+describe('SessionService transcript read admission', () => {
+  it('coalesces canonical paths and bounds global concurrency and pending admission', async () => {
+    let active = 0
+    let peak = 0
+    let releaseReads: (() => void) | undefined
+    const gate = new Promise<void>((resolveGate) => { releaseReads = resolveGate })
+    const reader = vi.fn(async (filePath: string) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await gate
+      active -= 1
+      return [{ id: filePath, role: 'user' as const, parts: [{ type: 'text' as const, text: filePath }] }]
+    })
+    const { root, project, service } = setup(undefined, { maxConcurrent: 2, maxPending: 3, reader })
+    const files = Array.from({ length: 5 }, (_, index) => join(root, `${index}.jsonl`))
+    for (const [index, file] of files.entries()) writeSession(file, project, String(index))
+    const alias = join(root, 'alias.jsonl')
+    symlinkSync(files[0], alias)
+
+    const first = service.read(files[0])
+    expect(service.read(files[0])).toBe(first)
+    const aliased = service.read(alias)
+    const second = service.read(files[1])
+    const third = service.read(files[2])
+    const fourth = service.read(files[3])
+    await expect(service.read(files[4])).rejects.toThrow('Too many transcript reads are pending')
+    await vi.waitFor(() => expect(reader).toHaveBeenCalledTimes(1))
+    expect(peak).toBe(1)
+
+    releaseReads?.()
+    await expect(Promise.all([first, aliased, second, third, fourth])).resolves.toHaveLength(5)
+    expect(reader).toHaveBeenCalledTimes(4)
+    expect(peak).toBeLessThanOrEqual(2)
   })
 })
 
@@ -212,6 +428,114 @@ describe('SessionService transcript bounds', () => {
 
 
 describe('SessionService orchestration', () => {
+  it('queues a follow-up through the active Prime Agent daemon instead of resuming its locked session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-active-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'active.jsonl')
+    writeSession(file, project, 'active')
+    const socketPath = join(dir, 'daemon.sock')
+    const followUps: Array<Record<string, unknown>> = []
+    const daemon = createServer((socket) => {
+      socket.write(`${JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] })}\n`)
+      let buffer = ''
+      socket.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        while (buffer.includes('\n')) {
+          const index = buffer.indexOf('\n')
+          const line = buffer.slice(0, index)
+          buffer = buffer.slice(index + 1)
+          const envelope = JSON.parse(line) as { id?: string; command?: Record<string, unknown> }
+          if (envelope.command?.type !== 'follow_up') continue
+          followUps.push(envelope)
+          socket.write(`${JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} })}\n`)
+        }
+      })
+    })
+    await new Promise<void>((resolveListen, rejectListen) => {
+      daemon.once('error', rejectListen)
+      daemon.listen(socketPath, resolveListen)
+    })
+
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args[0] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'active-worker', activeSessionId: 'active-worker', lifecycle: 'live', isSessionActive: true, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(socketPath)} }]))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    try {
+      await expect(service.followUp(file, 'queue this reply')).resolves.toBe(true)
+      expect(followUps).toHaveLength(1)
+      expect(followUps[0]).toMatchObject({
+        type: 'command',
+        protocol: { name: 'prime-agent.daemon', version: 7 },
+        command: { type: 'follow_up', activeSessionId: 'active-worker', message: 'queue this reply' },
+      })
+    } finally {
+      await new Promise<void>((resolveClose) => daemon.close(() => resolveClose()))
+    }
+  })
+
+  it('rejects a daemon endpoint that is not a same-user Unix socket', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-untrusted-daemon-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'active.jsonl')
+    writeSession(file, project, 'active')
+    const socketPath = join(dir, 'not-a-socket')
+    writeFileSync(socketPath, 'not a daemon')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args[0] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'active-worker', lifecycle: 'live', isSessionActive: true, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  process.stdout.write(JSON.stringify([{ status: 'current', isDefault: true, socketPath: ${JSON.stringify(socketPath)} }]))
+  process.exit(0)
+}
+process.exit(2)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await expect(service.followUp(file, 'do not disclose this')).rejects.toThrow('untrusted daemon socket')
+  })
+
+  it('does not send a follow-up when the session is no longer active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-inactive-session-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'inactive.jsonl')
+    writeSession(file, project, 'inactive')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === 'list') {
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'inactive-worker', activeSessionId: 'inactive-worker', lifecycle: 'live', isSessionActive: false, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+process.exit(9)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
+  })
+
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'runtime.jsonl')

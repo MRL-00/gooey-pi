@@ -11,6 +11,7 @@ export default defineConfig({
       include: [
         'electron/main/{browser-downloads,git,jsonl,plugins,process-utils,projects,sessions,settings-schedules,store,terminal,validation}.ts',
         'electron/main/agent-rpc/**/*.ts',
+        'electron/main/plugins/**/*.ts',
         'electron/main/sessions/**/*.ts',
         'src/lib/{events,extension-ui,render-bounds,workspace}.ts',
         'scripts/release/lib.mjs',

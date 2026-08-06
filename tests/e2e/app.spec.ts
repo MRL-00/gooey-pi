@@ -1,11 +1,13 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 let app: ElectronApplication
 let page: Page
 let fixtureRoot = ''
+let fixtureSessionFile = ''
 let actionableErrors: string[] = []
 
 const attachDiagnostics = (target: Page) => {
@@ -15,20 +17,39 @@ const attachDiagnostics = (target: Page) => {
   })
 }
 
-function createHermeticFixture(): { userData: string; home: string; project: string; executable: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; sessionFile: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
   const project = join(fixtureRoot, 'project')
+  const secondary = join(fixtureRoot, 'secondary-project')
   const sessions = join(home, '.prime', 'agent', 'sessions')
   mkdirSync(userData, { recursive: true })
   mkdirSync(project, { recursive: true })
+  mkdirSync(secondary, { recursive: true })
   mkdirSync(sessions, { recursive: true })
   const canonicalProject = realpathSync(project)
+  const canonicalSecondary = realpathSync(secondary)
+  const initializeRepository = (cwd: string, file: string) => {
+    writeFileSync(join(cwd, file), 'base\n')
+    for (const args of [
+      ['init', '-q'],
+      ['config', 'user.name', 'Prime Work E2E'],
+      ['config', 'user.email', 'e2e@example.com'],
+      ['add', file],
+      ['commit', '-qm', 'base'],
+    ]) {
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+  }
+  initializeRepository(project, 'primary.txt')
+  initializeRepository(secondary, 'secondary-change.txt')
+  writeFileSync(join(secondary, 'secondary-change.txt'), 'base\nsecondary workspace change\n')
   writeFileSync(join(project, 'README.md'), '# Hermetic Prime Work fixture\n')
   const sessionFile = join(sessions, 'fixture.jsonl')
   writeFileSync(sessionFile, [
-    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalProject, timestamp: '2026-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalSecondary, timestamp: '2026-01-01T00:00:00.000Z' }),
     JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: 'Hermetic desktop fixture', timestamp: '2026-01-01T00:00:00.000Z' } }),
     JSON.stringify({
       type: 'custom_message', id: 'fixture-agent-message', parentId: 'fixture-message', customType: 'agent_message', display: true,
@@ -44,13 +65,64 @@ function createHermeticFixture(): { userData: string; home: string; project: str
     }),
     '',
   ].join('\n'))
+  writeFileSync(join(sessions, 'primary.jsonl'), [
+    JSON.stringify({ type: 'session', id: 'primary-session', cwd: canonicalProject, timestamp: '2025-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'message', id: 'primary-message', parentId: null, message: { role: 'user', content: 'Primary workspace fixture', timestamp: '2025-01-01T00:00:00.000Z' } }),
+    '',
+  ].join('\n'))
+  const identity = (path: string) => {
+    const info = lstatSync(path, { bigint: true })
+    return { dev: info.dev.toString(), ino: info.ino.toString() }
+  }
   writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
     version: 1,
-    projects: [],
-    settings: { browserHome: 'about:blank' },
+    projects: [{
+      id: 'multi-folder-project', name: 'Multi-folder fixture', path: canonicalProject,
+      folders: [canonicalProject, canonicalSecondary], primaryFolder: canonicalProject,
+      pinned: false, createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      folderIdentities: { [canonicalProject]: identity(canonicalProject), [canonicalSecondary]: identity(canonicalSecondary) },
+    }],
+    settings: { browserHome: 'about:blank', telemetry: true },
     archivedSessions: [],
     dismissedProjectPaths: [],
   }))
+
+  const daemonExecutable = join(fixtureRoot, 'prime-agent-daemon-fixture.cjs')
+  writeFileSync(daemonExecutable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const net = require('node:net')
+const socketPath = ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))}
+try { fs.unlinkSync(socketPath) } catch {}
+const server = net.createServer((socket) => {
+  socket.write(JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] }) + '\\n')
+  let buffer = ''
+  socket.on('data', (chunk) => {
+    buffer += chunk.toString('utf8')
+    while (buffer.includes('\\n')) {
+      const index = buffer.indexOf('\\n')
+      const line = buffer.slice(0, index)
+      buffer = buffer.slice(index + 1)
+      const envelope = JSON.parse(line)
+      if (envelope.command?.type === 'ack_result') {
+        fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'follow-up-ack.json'))}, JSON.stringify(envelope.command))
+        continue
+      }
+      if (envelope.command?.type !== 'follow_up') continue
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'follow-up-args.json'))}, JSON.stringify(envelope.command))
+      const timestamp = new Date().toISOString()
+      fs.appendFileSync(${JSON.stringify(sessionFile)}, [
+        JSON.stringify({ type: 'message', id: 'fixture-external-user', parentId: 'fixture-goal-summary', timestamp, message: { role: 'user', content: envelope.command.message } }),
+        JSON.stringify({ type: 'message', id: 'fixture-external-assistant', parentId: 'fixture-external-user', timestamp, message: { role: 'assistant', content: 'The external Prime Agent received the queued reply.' } }),
+      ].join('\\n') + '\\n')
+      socket.write(JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} }) + '\\n')
+    }
+  })
+  socket.on('end', () => server.close())
+})
+server.listen(socketPath)
+setTimeout(() => server.close(), 30_000).unref()
+`)
+  chmodSync(daemonExecutable, 0o755)
 
   const executable = join(fixtureRoot, 'prime-agent-fixture.cjs')
   writeFileSync(executable, `#!/usr/bin/env node
@@ -60,7 +132,27 @@ const args = process.argv.slice(2)
 if (args.includes('--version')) { process.stdout.write('prime-agent 0.7.0\\n'); process.exit(0) }
 if (args[0] === 'schedule') { process.stdout.write(JSON.stringify({ jobs: [] }) + '\\n'); process.exit(0) }
 const resumeIndex = args.indexOf('--resume')
-const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(sessionFile)}
+const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(realpathSync(sessionFile))}
+if (args[0] === 'list') {
+  const sessions = ${JSON.stringify(activeSession)}
+    ? [{ id: 'active-fixture', activeSessionId: 'active-fixture', lifecycle: 'live', isSessionActive: true, activity: 'working', isStreaming: true, sessionFile, modified: new Date().toISOString() }]
+    : []
+  process.stdout.write(JSON.stringify({ sessions }) + '\\n')
+  process.exit(0)
+}
+if (args[0] === 'status') {
+  const { spawn } = require('node:child_process')
+  if (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))})) {
+    const child = spawn(process.execPath, [${JSON.stringify(join(fixtureRoot, 'prime-agent-daemon-fixture.cjs'))}], { detached: true, stdio: 'ignore' })
+    child.unref()
+    const wait = new Int32Array(new SharedArrayBuffer(4))
+    const deadline = Date.now() + 3_000
+    while (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))}) && Date.now() < deadline) Atomics.wait(wait, 0, 0, 20)
+  }
+  if (!fs.existsSync(${JSON.stringify(join(fixtureRoot, 'daemon.sock'))})) process.exit(2)
+  process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))} }]) + '\\n')
+  process.exit(0)
+}
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -94,7 +186,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 })
 `)
   chmodSync(executable, 0o755)
-  return { userData, home, project, executable }
+  return { userData, home, project, executable, sessionFile: realpathSync(sessionFile) }
 }
 
 function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEnv {
@@ -112,21 +204,59 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
   return env
 }
 
+
+async function closeElectron(target: ElectronApplication | undefined, timeoutMs = 5_000): Promise<void> {
+  if (!target) return
+  let timeout: NodeJS.Timeout | undefined
+  await Promise.race([
+    target.close().catch(() => undefined),
+    new Promise<void>((resolveClose) => {
+      timeout = setTimeout(() => {
+        try { target.process().kill('SIGKILL') } catch { /* The process already exited. */ }
+        resolveClose()
+      }, timeoutMs)
+    }),
+  ])
+  if (timeout) clearTimeout(timeout)
+}
+
+
 test.describe('Prime Work desktop smoke', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
-    const fixture = createHermeticFixture()
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
-    page = await app.firstWindow()
+    const activeSession = testInfo.title === 'queues a reply to a session that is active outside Prime Work'
+      || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
+    let launchError: unknown
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const fixture = createHermeticFixture(activeSession)
+      fixtureSessionFile = fixture.sessionFile
+      let candidate: ElectronApplication | undefined
+      try {
+        candidate = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
+        const firstPage = await candidate.firstWindow({ timeout: 12_000 })
+        app = candidate
+        page = firstPage
+        launchError = undefined
+        break
+      } catch (error) {
+        launchError = error
+        await closeElectron(candidate, 1_000)
+        if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
+        fixtureRoot = ''
+        fixtureSessionFile = ''
+      }
+    }
+    if (launchError) throw launchError
     attachDiagnostics(page)
     await page.locator('.app-shell').waitFor()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
   })
 
   test.afterEach(async () => {
-    await app?.close().catch(() => undefined)
+    await closeElectron(app)
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
+    fixtureSessionFile = ''
   })
 
   test('loads the sandboxed preload bridge and hermetic service data', async () => {
@@ -140,6 +270,58 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('queues a reply to a session that is active outside Prime Work', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Queue this follow-up from Prime Work')
+    await composer.press('Enter')
+
+    const marker = join(fixtureRoot, 'follow-up-args.json')
+    await expect.poll(() => existsSync(marker)).toBe(true)
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({
+      type: 'follow_up',
+      activeSessionId: 'active-fixture',
+      message: 'Queue this follow-up from Prime Work',
+    })
+    const ackMarker = join(fixtureRoot, 'follow-up-ack.json')
+    await expect.poll(() => existsSync(ackMarker)).toBe(true)
+    expect(JSON.parse(readFileSync(ackMarker, 'utf8'))).toMatchObject({ type: 'ack_result' })
+    await expect(page.locator('.transcript').getByText('The external Prime Agent received the queued reply.')).toBeVisible()
+    await expect(page.getByText(/Prime Agent RPC exited|Request failed/)).toHaveCount(0)
+  })
+
+  test('reflects an external JSONL append without reselecting the live session', async () => {
+    await expect(page.locator('.transcript').getByText('Hermetic desktop fixture', { exact: true })).toBeVisible()
+    const selectedSession = page.locator('.session-row-wrap.is-selected')
+    await expect(selectedSession).toHaveCount(1)
+
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const reasoning = `External live reasoning ${nonce}`
+    const answer = `External live answer ${nonce}`
+    const timestamp = new Date().toISOString()
+    appendFileSync(fixtureSessionFile, `${JSON.stringify({
+      type: 'message',
+      id: `fixture-external-${nonce}`,
+      parentId: 'fixture-goal-summary',
+      timestamp,
+      message: {
+        role: 'assistant',
+        timestamp,
+        content: [
+          { type: 'thinking', thinking: reasoning },
+          { type: 'toolCall', id: `fixture-tool-${nonce}`, name: 'fixture_external_tool', arguments: { nonce } },
+          { type: 'text', text: answer },
+        ],
+      },
+    })}
+`)
+
+    await expect(page.locator('.transcript').getByText(reasoning, { exact: true })).toHaveCount(1)
+    await expect(page.locator('.transcript').getByText(answer, { exact: true })).toHaveCount(1)
+    await expect(page.locator('.activity-line--tool')).toContainText('fixture_external_tool')
+    await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
+    await expect(selectedSession).toHaveCount(1)
   })
 
   test('keeps session options visible and starts a new session from a hovered project', async () => {
@@ -270,6 +452,17 @@ test.describe('Prime Work desktop smoke', () => {
     expect(colors.note).not.toContain('rgba')
   })
 
+  test('disables a persisted diagnostics preference', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Privacy', exact: true }).click()
+    const diagnostics = page.getByRole('checkbox', { name: 'Share optional diagnostics' })
+    await expect(diagnostics).toBeChecked()
+    await diagnostics.focus()
+    await diagnostics.press('Space')
+    await expect(diagnostics).not.toBeChecked()
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).telemetry)).toBe(false)
+  })
+
   test('applies dark appearance and restores system appearance', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
@@ -347,20 +540,26 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.message--assistant .message-actions')).toBeVisible()
 
     const completedRow = page.locator('.session-row-wrap--complete').first()
-    await expect(completedRow).toHaveClass(/has-attention/)
-    await expect(page.locator('.unread-dot')).toHaveCount(0)
-    await completedRow.locator('.session-row').click()
+    await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
+    await expect(page.locator('.unread-dot')).toHaveCount(0)
   })
 
-  test('rolls back a rejected optimistic setting', async () => {
+  test('preserves a rejected settings draft with an actionable error', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
     const shell = page.locator('.settings-content input.mono')
     await expect(shell).toHaveValue('/bin/zsh')
     await shell.fill('/definitely/not-an-executable')
+    await shell.press('Enter')
+    await expect(page.getByRole('alert')).toContainText(/could not be saved/i)
     await expect(page.locator('.toast')).toContainText(/shell is not executable/i)
-    await expect(shell).toHaveValue('/bin/zsh')
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).terminalShell)).toBe('/bin/zsh')
+    await expect(shell).toHaveValue('/definitely/not-an-executable')
+
+    await page.getByRole('button', { name: 'General', exact: true }).click()
+    await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
+    await expect(page.locator('.settings-content input.mono')).toHaveValue('/bin/zsh')
   })
 
   test('uses overlay panels at the compact desktop breakpoint', async () => {
@@ -370,9 +569,17 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.inspector')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
     await page.locator('.panel-scrim--sidebar').click({ position: { x: 900, y: 300 } })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
+    // Panel reconciliation may restore a confirmed inspector preference after
+    // the sidebar closes. Normalize either valid state before testing the toggle.
+    await page.waitForTimeout(250)
+    if (await page.locator('.inspector').count()) {
+      await page.locator('.inspector').getByRole('button', { name: 'Close inspector' }).click()
+      await expect(page.locator('.inspector')).toHaveCount(0)
+    }
     await page.getByRole('button', { name: 'Toggle inspector' }).click()
     await expect.poll(() => page.locator('.inspector').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
-    await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
     await page.setViewportSize({ width: 1440, height: 920 })
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440)
@@ -390,6 +597,23 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Browser' }).focus()
     await page.keyboard.press('ArrowRight')
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('binds Git to a secondary workspace and clears stale paths during a folder switch', async () => {
+    await page.getByRole('tab', { name: 'Changes' }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await expect(page.getByRole('button', { name: /Stage$/ }).last()).toBeVisible()
+
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await expect(page.locator('.file-changes')).not.toContainText('secondary-change.txt')
+    await expect(page.locator('.file-changes')).toContainText('README.md')
+
+    await page.locator('.session-row').filter({ hasText: 'Hermetic desktop fixture' }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await page.getByRole('button', { name: /Stage$/ }).last().click()
+    await page.getByRole('button', { name: 'Staged', exact: true }).click()
+    await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
+    await page.getByRole('button', { name: /Unstage$/ }).last().click()
   })
 
   test('resizes the inspector horizontally and terminal vertically', async () => {
@@ -431,6 +655,25 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('ArrowDown')
     expect((await drawer.boundingBox())!.height).toBeLessThan(terminalAfter!.height)
     await page.getByLabel('Close terminal').click()
+  })
+
+  test('recreates the terminal in the active secondary-folder cwd', async () => {
+    await page.getByLabel(/Toggle terminal/).click()
+    const input = page.locator('.terminal-drawer .xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    await input.click()
+    await page.keyboard.type('pwd')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/secondary-project/, { timeout: 8_000 })
+
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    const restartedInput = page.locator('.terminal-drawer .xterm-helper-textarea')
+    await expect(restartedInput).toBeVisible()
+    await restartedInput.click()
+    await page.keyboard.type('pwd')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/prime-work-e2e-[^/]+\/project/, { timeout: 8_000 })
+    await expect(page.locator('.terminal-drawer .xterm-rows')).not.toContainText('secondary-project')
   })
 
   test('opens a real PTY and exposes only functional terminal controls', async () => {

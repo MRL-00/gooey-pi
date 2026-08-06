@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import type { PrimeEventEnvelope, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
-import { rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
+import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { RpcRuntime } from './runtime'
 import type { RpcObject } from './types'
@@ -104,6 +104,11 @@ export class AgentRpcManager {
       const path = runtime.snapshot().sessionFile
       return path !== undefined && resolve(path) === wanted
     })
+    await Promise.all(matches.map((runtime) => runtime.stop()))
+  }
+
+  async stopForProjectRoots(roots: string[]): Promise<void> {
+    const matches = [...this.runtimes.values()].filter((runtime) => roots.some((root) => isPathWithin(root, runtime.snapshot().cwd)))
     await Promise.all(matches.map((runtime) => runtime.stop()))
   }
 

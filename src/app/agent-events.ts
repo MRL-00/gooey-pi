@@ -14,6 +14,7 @@ export interface TranscriptReconciliationMarker {
   generation: number
   runtimeId: string
   sessionFile: string
+  admissionRevision?: number
 }
 
 const TERMINAL_TRANSCRIPT_EVENTS = new Set([
@@ -49,11 +50,12 @@ export function reconciliationMatches(
 
 export function authoritativeTranscriptReadIsCurrent(
   marker: TranscriptReconciliationMarker,
-  current: { generation: number; sessionFile?: string },
+  current: { generation: number; sessionFile?: string; admissionRevision?: number },
   currentRuntimeId: string | null,
 ): boolean {
   return marker.generation === current.generation
     && marker.sessionFile === current.sessionFile
+    && (marker.admissionRevision ?? 0) === (current.admissionRevision ?? 0)
     && (currentRuntimeId === null || currentRuntimeId === marker.runtimeId)
 }
 

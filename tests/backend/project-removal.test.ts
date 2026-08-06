@@ -80,7 +80,7 @@ describe('project removal', () => {
     releaseBranch()
     await staleList
 
-    await expect(service.authorizeCwd(second)).rejects.toThrow(/not inside/)
+    await expect(service.authorizeCwd(second)).rejects.toThrow(/being removed/)
   })
 
   it('does not duplicate a persisted multi-folder project as an inferred project', async () => {
@@ -122,6 +122,37 @@ describe('project removal', () => {
     expect(await service.remove('project-1')).toBe(true)
     releaseVerification()
     await expect(pendingAuthorization).rejects.toThrow(/authorization changed/)
+  })
+
+
+  it('revokes admission and waits for matching project processes before removal completes', async () => {
+    const { folder, store, service } = fixture()
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
+    }) })
+    await service.list()
+    let releaseStop!: () => void
+    let markStopStarted!: () => void
+    const stopStarted = new Promise<void>((resolve) => { markStopStarted = resolve })
+    const stopGate = new Promise<void>((resolve) => { releaseStop = resolve })
+    let stoppedRoots: string[] = []
+    service.bindProviders({
+      sessions: async () => [],
+      branch: async () => undefined,
+      stopProjectProcesses: async (roots) => { stoppedRoots = roots; markStopStarted(); await stopGate },
+    })
+
+    const removal = service.remove('project-1')
+    await stopStarted
+    expect(stoppedRoots).toContain(realpathSync(folder))
+    expect(store.snapshot().projects).toHaveLength(1)
+    await expect(service.authorizeCwd(folder)).rejects.toThrow(/being removed/)
+
+    releaseStop()
+    await expect(removal).resolves.toBe(true)
+    expect(store.snapshot().projects).toEqual([])
   })
 
 })

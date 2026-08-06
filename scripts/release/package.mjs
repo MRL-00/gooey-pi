@@ -1,8 +1,8 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
-import { assertSupportedNode, validateReleaseCredentials } from './lib.mjs'
+import { assertSupportedNode, validateReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
 
 const args = new Set(process.argv.slice(2))
 const isPublic = args.has('--public')
@@ -25,14 +25,14 @@ try {
   assertSupportedNode()
   if (process.platform !== 'darwin') throw new Error('macOS packaging must run on macOS')
   if (isPublic) validateReleaseCredentials(process.env)
-  run('npm', ['run', 'release:verify'])
+  run('npm', ['run', 'release:verify'], withoutReleaseCredentials(process.env))
   if (!dryRun) rmSync(resolve('release'), { recursive: true, force: true })
 
   const builderArgs = ['exec', '--', 'electron-builder', '--mac', '--publish', 'never']
   const builderEnv = isQa ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' } : process.env
   if (isQa) builderArgs.push('-c.mac.identity=null', '-c.mac.notarize=false')
   run('npm', builderArgs, builderEnv)
-  run('node', ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa'])
+  run('node', ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa'], withoutReleaseCredentials(process.env, ['RELEASE_SIGNING_TEAM_ID']))
   console.log(`\n${isPublic ? 'Public' : 'Local QA'} package pipeline passed.`)
 } catch (error) {
   console.error(`\nPackaging failed: ${error instanceof Error ? error.message : String(error)}`)

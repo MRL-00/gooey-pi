@@ -18,6 +18,7 @@ export interface ProcessResult {
 export const PROCESS_CONCURRENCY_LIMIT = 8
 export const PROCESS_QUEUE_LIMIT = 64
 
+const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
 const activeChildren = new Set<ChildProcess>()
 const pendingAdmissions: Array<{ start: () => void; reject: (error: Error) => void }> = []
 let processAdmissionClosed = false
@@ -127,12 +128,16 @@ export function runProcess(file: string, args: readonly string[], options: {
   timeoutMs?: number
   maxBytes?: number
   env?: NodeJS.ProcessEnv
+  input?: string
 } = {}): Promise<ProcessResult> {
   if (processAdmissionClosed) return Promise.reject(new Error('Process admission is closed during shutdown'))
   const timeoutMs = options.timeoutMs ?? 30_000
   const maxBytes = options.maxBytes ?? 16 * 1024 * 1024
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(new TypeError('timeoutMs must be positive'))
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return Promise.reject(new TypeError('maxBytes must be a positive safe integer'))
+  if (options.input !== undefined && Buffer.byteLength(options.input) > PROCESS_INPUT_LIMIT) {
+    return Promise.reject(new TypeError(`process input must not exceed ${PROCESS_INPUT_LIMIT} bytes`))
+  }
 
   return new Promise((resolve, reject) => {
     const start = (): void => {
@@ -141,11 +146,12 @@ export function runProcess(file: string, args: readonly string[], options: {
         cwd: options.cwd,
         env: options.env ?? safeChildEnvironment(),
         shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
         detached: process.platform !== 'win32',
       })
       activeChildren.add(child)
+      if (options.input !== undefined) child.stdin?.on('error', () => { /* child close/error reports the process result */ })
       const stdout: Buffer[] = []
       const stderr: Buffer[] = []
       let stdoutBytes = 0
@@ -186,8 +192,8 @@ export function runProcess(file: string, args: readonly string[], options: {
         }
         if (chunk.length > remaining) exceedOutputLimit()
       }
-      child.stdout.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
-      child.stderr.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
+      child.stdout?.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
+      child.stderr?.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
 
       const finish = (): void => {
         activeChildren.delete(child)
@@ -216,6 +222,7 @@ export function runProcess(file: string, args: readonly string[], options: {
           stderrBytes,
         })
       })
+      if (options.input !== undefined) child.stdin?.end(options.input)
     }
 
     if (activeChildren.size < PROCESS_CONCURRENCY_LIMIT) start()

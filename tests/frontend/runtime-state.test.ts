@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   createSingleFlightAdmission,
   findRuntimeForWorkspace,
+  gitStatusForWorkspace,
+  newSessionProject,
   selectStartupWorkspace,
 } from '../../src/lib/workspace'
 import type { ProjectRecord, RuntimeInfo, SessionRecord } from '../../src/types/api'
@@ -55,6 +57,22 @@ describe('workspace and runtime ownership', () => {
     expect(selected.session?.id).toBe('newest')
     expect(selected.cwd).toBe('/workspace/package')
     expect(selected.runtime?.runtimeId).toBe('matching-idle')
+  })
+
+  it('invalidates Git data synchronously when the workspace cwd changes', () => {
+    const projectAStatus = { isRepo: true, branch: 'project-a', files: [{ path: 'a-only.txt', status: 'M', staged: false, additions: 1, deletions: 0 }] }
+    const snapshot = { cwd: '/project-a', status: projectAStatus }
+
+    expect(gitStatusForWorkspace(snapshot, '/project-a')).toBe(projectAStatus)
+    expect(gitStatusForWorkspace(snapshot, '/project-b')).toEqual({ isRepo: false, files: [] })
+    expect(gitStatusForWorkspace(snapshot, undefined)).toEqual({ isRepo: false, files: [] })
+  })
+
+  it('uses the displayed bootstrap project for New Session without clearing workspace ownership', () => {
+    const displayedProject = project('loaded-during-bootstrap', ['/project'])
+
+    expect(newSessionProject(undefined, undefined, displayedProject)).toBe(displayedProject)
+    expect(newSessionProject(undefined, undefined, undefined)).toBeUndefined()
   })
 
   it('does not attach a runtime from another cwd or session', () => {

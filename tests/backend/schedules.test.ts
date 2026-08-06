@@ -29,6 +29,23 @@ describe('ScheduleService catalog completeness', () => {
     await expect(service.list()).rejects.toThrow(/catalog would be incomplete/i)
   })
 
+  it('preserves successful runtime ownership when fallback repeats a job', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-schedules-')); dirs.push(dir)
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ jobs: [${JSON.stringify(job('shared'))}, ${JSON.stringify(job('fallback'))}] }) + '\\n')
+`)
+    chmodSync(executable, 0o755)
+    const service = new ScheduleService(agents(['owner', 'broken'], async (id) => {
+      if (id === 'broken') throw new Error('runtime unavailable')
+      return { data: { jobs: [job('shared')] } }
+    }), executable)
+
+    const records = await service.list()
+    expect(records.find((item) => item.id === 'shared')?.runtimeId).toBe('owner')
+    expect(records.find((item) => item.id === 'fallback')?.runtimeId).toBeUndefined()
+  })
+
   it('uses a successful CLI catalog to recover from a runtime failure', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-schedules-')); dirs.push(dir)
     const executable = join(dir, 'prime-agent.cjs')

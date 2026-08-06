@@ -96,6 +96,16 @@ const sidebarProps = (onNewSession: () => void): SidebarProps => ({
 })
 
 describe('Sidebar memoization', () => {
+  it('rejects a streaming parent rerender when navigation data and stable handlers are unchanged', () => {
+    const callbacks = sidebarProps(() => undefined)
+    const before = { ...callbacks }
+    const streamedMessages = applyPrimeEvent(transcript(), delta('next frame'))
+    const after = { ...callbacks }
+
+    expect(streamedMessages).not.toBe(transcript())
+    expect(areSidebarPropsEqual(before, after)).toBe(true)
+  })
+
   it('admits identical data props with a replacement handler and invokes only the newest handler', () => {
     let oldCalls = 0
     let newCalls = 0

@@ -5,16 +5,54 @@ import type { SkillRecord } from '../../src/types/api'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
+import type { ProjectSettingsPath } from './plugins/mcp'
 import { executePackageInstall, validatePackageSource } from './plugins/package-execution'
 
-interface PluginServiceOptions { agentDir?: string }
+type PluginDiscovery = typeof discoverPlugins
+
+interface PluginServiceOptions {
+  agentDir?: string
+  discover?: PluginDiscovery
+}
+
+const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
+const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
+let activePluginDiscoveries = 0
+const discoveryWaiters: Array<() => void> = []
+
+async function acquirePluginDiscoverySlot(): Promise<void> {
+  if (activePluginDiscoveries < MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
+    activePluginDiscoveries += 1
+    return
+  }
+  if (discoveryWaiters.length >= MAX_QUEUED_PLUGIN_DISCOVERIES) {
+    throw new TypeError('Too many plugin discoveries are pending')
+  }
+  await new Promise<void>((resolve) => discoveryWaiters.push(resolve))
+}
+
+function releasePluginDiscoverySlot(): void {
+  const next = discoveryWaiters.shift()
+  if (next) next()
+  else activePluginDiscoveries -= 1
+}
+
+async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {
+  await acquirePluginDiscoverySlot()
+  try {
+    return await operation()
+  } finally {
+    releasePluginDiscoverySlot()
+  }
+}
 
 export class PluginService {
   private lastProjectPath: string | undefined
-  private knownPaths = new Set<string>()
+  private readonly knownPathsByOwner = new Map<string, Set<string>>()
   private settingsMutation = Promise.resolve()
   private readonly discoveryInFlight = new Map<string, Promise<SkillRecord[]>>()
   private readonly agentDir: string
+  private readonly discoverCatalog: PluginDiscovery
 
   constructor(
     private readonly primeAgentPath: string | null,
@@ -22,14 +60,21 @@ export class PluginService {
     options: PluginServiceOptions = {},
   ) {
     this.agentDir = options.agentDir ?? join(homedir(), '.prime', 'agent')
+    this.discoverCatalog = options.discover ?? discoverPlugins
   }
 
   list(projectPath?: string): Promise<SkillRecord[]> {
-    const key = projectPath ? `project:${projectPath}` : 'user'
+    if (!projectPath) return this.listCanonical()
+    const requested = requireString(projectPath, 'projectPath', { min: 1, max: 4096 })
+    return this.authorizeProject(requested).then((safeProjectPath) => this.listCanonical(safeProjectPath))
+  }
+
+  private listCanonical(safeProjectPath?: string): Promise<SkillRecord[]> {
+    const key = safeProjectPath ? `project:${safeProjectPath}` : 'user'
     const active = this.discoveryInFlight.get(key)
     if (active) return active
 
-    const discovery = this.discover(projectPath)
+    const discovery = schedulePluginDiscovery(() => this.discover(safeProjectPath, key))
     this.discoveryInFlight.set(key, discovery)
     const clear = () => {
       if (this.discoveryInFlight.get(key) === discovery) this.discoveryInFlight.delete(key)
@@ -38,11 +83,10 @@ export class PluginService {
     return discovery
   }
 
-  private async discover(projectPath?: string): Promise<SkillRecord[]> {
-    const safeProjectPath = projectPath ? await this.authorizeProject(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
+  private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<SkillRecord[]> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
-    const result = await discoverPlugins(this.agentDir, safeProjectPath, this.primeAgentPath)
-    this.knownPaths = new Set(result.flatMap((item) => item.path ? [item.path] : []))
+    const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.primeAgentPath)
+    this.knownPathsByOwner.set(ownerKey, new Set(result.flatMap((item) => item.path ? [item.path] : [])))
     return result
   }
 
@@ -50,7 +94,9 @@ export class PluginService {
     const requested = requireString(pathValue, 'plugin path', { min: 1, max: 4096 })
     let path: string
     try { path = realpathSync(requested) } catch { throw new TypeError('plugin path does not exist') }
-    if (!this.knownPaths.has(path)) throw new TypeError('plugin path was not discovered')
+    if (![...this.knownPathsByOwner.values()].some((knownPaths) => knownPaths.has(path))) {
+      throw new TypeError('plugin path was not discovered')
+    }
     return path
   }
 
@@ -75,21 +121,21 @@ export class PluginService {
 
   async connectMcp(inputValue: unknown): Promise<{ ok: boolean; output: string }> {
     const input = validateMcpConnection(inputValue)
-    let settingsPath: string
+    let settingsTarget: string | ProjectSettingsPath
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsPath = prepareProjectSettingsPath(projectPath)
+      settingsTarget = prepareProjectSettingsPath(projectPath)
     } else {
-      settingsPath = join(this.agentDir, 'settings.json')
+      settingsTarget = join(this.agentDir, 'settings.json')
     }
 
-    const mutation = this.settingsMutation.then(() => updateMcpSettings(settingsPath, input, (path) => this.settingsFingerprint(path)))
+    const mutation = this.settingsMutation.then(() => updateMcpSettings(settingsTarget, input, (path) => this.settingsFingerprint(path)))
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
   }
 
-  refresh(): Promise<SkillRecord[]> { return this.list(this.lastProjectPath) }
+  refresh(): Promise<SkillRecord[]> { return this.listCanonical(this.lastProjectPath) }
 
   private settingsFingerprint(path: string): Promise<string> {
     return settingsFingerprint(path)
