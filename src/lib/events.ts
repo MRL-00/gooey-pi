@@ -86,9 +86,16 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
     return updateLastAssistant(messages, (message) => ({ ...message, parts: finishTool(message.parts, id, name, raw.result, raw.isError === true) }))
   }
   if (type === 'agent_end') return messages.map((message) => message.streaming ? { ...message, streaming: false, parts: message.parts.length ? message.parts : [{ type: 'text', text: 'Completed without a text response.' }] } : message)
-  if (type === 'extension_error' || type === 'error') {
+  if (type === 'extension_error' || type === 'error' || type === 'transport_error') {
     const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
-    return [...messages.map((message) => message.streaming ? { ...message, streaming: false } : message), { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] }]
+    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false } : message)
+    return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] }]
+  }
+  if (type === 'runtime_exit') {
+    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false } : message)
+    if (raw.expected === true || finalized.at(-1)?.role === 'system') return finalized
+    const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
+    return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] }]
   }
   return messages
 }

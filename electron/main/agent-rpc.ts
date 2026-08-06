@@ -12,6 +12,7 @@ interface PendingRequest {
   reject(error: Error): void
   timer: NodeJS.Timeout
   bytes: number
+  command: string
 }
 
 const SIMPLE_COMMANDS = new Set([
@@ -142,6 +143,83 @@ async function validateRpcCommand(raw: unknown, validateSessionPath: (path: stri
   throw new TypeError(`RPC command ${type} is not exposed to the renderer`)
 }
 
+export interface AgentEventLimits {
+  maxEvents: number
+  maxEnvelopeBytes: number
+  maxWindowBytes: number
+  windowMs: number
+}
+
+const DEFAULT_AGENT_EVENT_LIMITS: AgentEventLimits = {
+  maxEvents: 500,
+  maxEnvelopeBytes: 8 * 1024 * 1024,
+  maxWindowBytes: 32 * 1024 * 1024,
+  windowMs: 1_000,
+}
+
+/** Applies the same byte accounting to real and synthetic events before they reach Electron IPC. */
+export class AgentEventForwarder {
+  private readonly limits: AgentEventLimits
+  private windowStarted = Date.now()
+  private eventCount = 0
+  private windowBytes = 0
+  private readonly reportedLimits = new Set<string>()
+
+  constructor(
+    private readonly runtimeId: string,
+    private readonly onEvent: (envelope: PrimeEventEnvelope) => void,
+    limits: Partial<AgentEventLimits> = {},
+  ) {
+    this.limits = { ...DEFAULT_AGENT_EVENT_LIMITS, ...limits }
+  }
+
+  emit(event: RpcObject): void {
+    this.resetWindowIfNeeded()
+    this.eventCount += 1
+    if (this.eventCount > this.limits.maxEvents && event.type !== 'runtime_exit') {
+      this.reportLimit('count', 'Prime Agent event rate exceeded the desktop limit')
+      return
+    }
+
+    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event }
+    const bytes = this.serializedBytes(envelope)
+    if (bytes === null || bytes > this.limits.maxEnvelopeBytes) {
+      this.reportLimit('envelope', 'Prime Agent event exceeded the desktop envelope byte limit')
+      return
+    }
+    const critical = event.type === 'runtime_exit'
+    if (!critical && this.windowBytes + bytes > this.limits.maxWindowBytes) {
+      this.reportLimit('bytes', 'Prime Agent event byte rate exceeded the desktop limit')
+      return
+    }
+    if (!critical) this.windowBytes += bytes
+    this.onEvent(envelope)
+  }
+
+  private resetWindowIfNeeded(): void {
+    const now = Date.now()
+    if (now - this.windowStarted < this.limits.windowMs) return
+    this.windowStarted = now
+    this.eventCount = 0
+    this.windowBytes = 0
+    this.reportedLimits.clear()
+  }
+
+  private reportLimit(kind: string, error: string): void {
+    if (this.reportedLimits.has(kind)) return
+    this.reportedLimits.add(kind)
+    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event: { type: 'transport_error', error } }
+    const bytes = this.serializedBytes(envelope)
+    if (bytes === null || bytes > this.limits.maxEnvelopeBytes || this.windowBytes + bytes > this.limits.maxWindowBytes) return
+    this.windowBytes += bytes
+    this.onEvent(envelope)
+  }
+
+  private serializedBytes(envelope: PrimeEventEnvelope): number | null {
+    try { return Buffer.byteLength(JSON.stringify(envelope), 'utf8') } catch { return null }
+  }
+}
+
 class RpcRuntime {
   readonly runtimeId = randomUUID()
   private readonly pending = new Map<string, PendingRequest>()
@@ -151,8 +229,7 @@ class RpcRuntime {
   private readonly exited: Promise<void>
   private resolveExited!: () => void
   private stopPromise: Promise<boolean> | null = null
-  private eventWindowStarted = Date.now()
-  private eventCount = 0
+  private readonly eventForwarder: AgentEventForwarder
   private stopped = false
   private info: RuntimeInfo
 
@@ -165,6 +242,7 @@ class RpcRuntime {
   ) {
     this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false }
     this.exited = new Promise((resolveExit) => { this.resolveExited = resolveExit })
+    this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.decoder = new StrictJsonlDecoder((line) => this.handleLine(line), 16 * 1024 * 1024)
     this.child.stdout.on('data', (chunk: Buffer) => {
@@ -247,6 +325,7 @@ class RpcRuntime {
   private request(command: RpcObject, timeoutMs: number): Promise<RpcObject> {
     if (this.stopped || !this.child.stdin.writable) return Promise.reject(new Error('Runtime is not available'))
     if (this.pending.size >= 32) return Promise.reject(new Error('Too many pending RPC requests'))
+    const commandType = String(command.type)
     const id = randomUUID()
     const line = `${JSON.stringify({ ...command, id })}\n`
     const bytes = Buffer.byteLength(line)
@@ -255,21 +334,22 @@ class RpcRuntime {
     return new Promise((resolveRequest, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id)
-        if (pending) this.pendingBytes -= pending.bytes
+        if (!pending) return
+        this.pendingBytes -= pending.bytes
         this.pending.delete(id)
-        reject(new Error(`RPC command ${String(command.type)} timed out`))
+        pending.reject(new Error(`RPC command ${commandType} timed out`))
       }, timeoutMs)
       timer.unref()
-      this.pending.set(id, { resolve: resolveRequest, reject, timer, bytes })
-      this.child.stdin.write(line, (error) => {
-        if (!error) return
+      this.pending.set(id, { resolve: resolveRequest, reject, timer, bytes, command: commandType })
+      const failWrite = (error: unknown) => {
         const pending = this.pending.get(id)
         if (!pending) return
         clearTimeout(pending.timer)
         this.pendingBytes -= pending.bytes
         this.pending.delete(id)
-        pending.reject(error)
-      })
+        pending.reject(error instanceof Error ? error : new Error(errorMessage(error)))
+      }
+      try { this.child.stdin.write(line, (error) => { if (error) failWrite(error) }) } catch (error) { failWrite(error) }
     })
   }
 
@@ -286,6 +366,16 @@ class RpcRuntime {
       clearTimeout(pending.timer)
       this.pendingBytes -= pending.bytes
       this.pending.delete(value.id)
+      if (value.command !== pending.command) {
+        pending.reject(new Error(`Prime Agent returned a mismatched response for ${pending.command}`))
+        this.emit({ type: 'transport_error', error: 'Prime Agent returned a mismatched RPC response' })
+        return
+      }
+      if (value.success !== true) {
+        const detail = typeof value.error === 'string' && value.error.trim() ? value.error.trim().slice(0, 4_000) : `RPC command ${pending.command} failed`
+        pending.reject(new Error(detail))
+        return
+      }
       pending.resolve(value)
       return
     }
@@ -309,16 +399,7 @@ class RpcRuntime {
     } else if (raw.model === null) this.info.model = null
   }
 
-  private emit(event: RpcObject): void {
-    const now = Date.now()
-    if (now - this.eventWindowStarted >= 1_000) { this.eventWindowStarted = now; this.eventCount = 0 }
-    this.eventCount += 1
-    if (this.eventCount > 500 && event.type !== 'runtime_exit') {
-      if (this.eventCount === 501) this.onEvent({ runtimeId: this.runtimeId, event: { type: 'transport_error', error: 'Prime Agent event rate exceeded the desktop limit' } })
-      return
-    }
-    this.onEvent({ runtimeId: this.runtimeId, event })
-  }
+  private emit(event: RpcObject): void { this.eventForwarder.emit(event) }
 
   private fail(error: Error): void {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
@@ -330,6 +411,7 @@ class RpcRuntime {
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
+  private closed = false
 
   constructor(
     private readonly executable: string | null,
@@ -339,11 +421,15 @@ export class AgentRpcManager {
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
 
+  beginShutdown(): void { this.closed = true }
+
   async start(raw: unknown): Promise<RuntimeInfo> {
+    this.requireOpen()
     if (!this.executable) throw new Error('Prime Agent executable was not found')
     const options = requireRecord(raw, 'options')
     rejectUnknownKeys(options, ['cwd', 'sessionPath', 'model', 'thinking'], 'options')
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
+    this.requireOpen()
     const args = ['--mode', 'rpc', '--cwd', cwd]
     if (options.sessionPath !== undefined) args.push('--resume', await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 })))
     if (options.model !== undefined) {
@@ -356,6 +442,7 @@ export class AgentRpcManager {
       if (!THINKING_LEVELS.has(thinking)) throw new TypeError('Invalid thinking level')
       args.push('--thinking', thinking)
     }
+    this.requireOpen()
     if (this.runtimes.size >= 4) throw new Error('Prime Work supports at most four concurrent agent runtimes')
     const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId))
     this.runtimes.set(runtime.runtimeId, runtime)
@@ -363,8 +450,10 @@ export class AgentRpcManager {
   }
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
+    this.requireOpen()
     const runtime = this.requireRuntime(runtimeId)
     const command = await validateRpcCommand(rawCommand, this.validateSessionPath)
+    this.requireOpen()
     return runtime.command(command)
   }
 
@@ -392,6 +481,7 @@ export class AgentRpcManager {
   }
 
   async renameForSession(filePath: string, title: string): Promise<boolean> {
+    this.requireOpen()
     const wanted = resolve(filePath)
     const runtime = [...this.runtimes.values()].find((candidate) => {
       const path = candidate.snapshot().sessionFile
@@ -402,7 +492,15 @@ export class AgentRpcManager {
     return response.success === true
   }
 
-  async stopAll(): Promise<void> { await Promise.all([...this.runtimes.values()].map((runtime) => runtime.stop())) }
+  async stopAll(): Promise<void> {
+    this.beginShutdown()
+    const runtimes = [...this.runtimes.values()]
+    await Promise.all(runtimes.map((runtime) => runtime.stop()))
+  }
+
+  private requireOpen(): void {
+    if (this.closed) throw new Error('Prime Agent manager is shutting down')
+  }
 
   private requireRuntime(value: unknown): RpcRuntime {
     const id = requireId(value, 'runtimeId')

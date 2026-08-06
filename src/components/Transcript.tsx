@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
+import { MarkdownText } from './MarkdownText'
 import { PrimeMark } from './ui'
 
 function InlineText({ text }: { text: string }) {
@@ -76,7 +77,7 @@ function AssistantMessage({ message, git, isLast, onOpenChanges }: { message: Tr
       <div className="message__content">
         {message.parts.map((part, index) => {
           if (part.type === 'toolResult' && visibleToolResultIds.has(index)) return null
-          if (part.type === 'text') return <p key={index} className="prose"><InlineText text={part.text} /></p>
+          if (part.type === 'text') return <MarkdownText key={index} text={part.text} />
           if (part.type === 'thinking') return <ThinkingPart key={index} part={part} running={Boolean(message.streaming)} />
           if (part.type === 'toolCall') {
             const next = message.parts[index + 1]
