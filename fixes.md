@@ -128,7 +128,7 @@ These logs are the durable coordination record for compaction and handoff.
 
 ### Section E log — renderer/settings
 
-- Pending.
+- `32411ef` Guard startup New Session: `src/App.tsx`, `src/lib/workspace.ts`, `tests/frontend/runtime-state.test.ts`. New-session actions now resolve the displayed bootstrap project without clearing ownership; no-op until any project exists. Validation: `npm run typecheck`; `npx vitest run tests/frontend/runtime-state.test.ts`. Remaining risk: the bootstrap race is deterministically covered at the selection helper boundary rather than with timing-dependent E2E.
 
 ### Section F log — performance/DRY
 
