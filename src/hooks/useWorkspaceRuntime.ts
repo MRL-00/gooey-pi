@@ -237,6 +237,11 @@ export function useWorkspaceRuntime({
   }, [])
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
+  const locallyOwnedActiveSession = Boolean(
+    activeSession?.filePath && runtime?.sessionFile === activeSession.filePath,
+  )
+  const externalSessionUpdatedAt = locallyOwnedActiveSession ? undefined : activeSession?.updatedAt
+  const externalSessionSyncRevision = locallyOwnedActiveSession ? undefined : activeSession?.syncRevision
 
   useEffect(() => {
     if (!bridge || !activeSession?.filePath) {
@@ -256,7 +261,7 @@ export function useWorkspaceRuntime({
       const load = transcriptLoadRef.current
       if (load?.generation === selected.generation && !load.reconciliation) transcriptLoadRef.current = null
     }
-  }, [activeSession?.filePath, activeSession?.syncRevision, activeSession?.updatedAt, bridge, flushAgentEvents, reportError, startTranscriptRead, workspaceGeneration])
+  }, [activeSession?.filePath, bridge, externalSessionSyncRevision, externalSessionUpdatedAt, flushAgentEvents, locallyOwnedActiveSession, reportError, startTranscriptRead, workspaceGeneration])
 
   useEffect(() => () => {
     transcriptLoadRef.current = null
