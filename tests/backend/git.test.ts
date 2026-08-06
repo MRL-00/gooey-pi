@@ -112,13 +112,17 @@ exit 1
       expect(env.GIT_CONFIG_VALUE_0).toBeUndefined()
 
       const service = new GitService(async () => cwd)
-      expect((await service.status(cwd)).isRepo).toBe(true)
-      expect((await service.diff(cwd, 'file.txt', false)).text).toContain('+changed')
-      expect(await service.stage(cwd, ['file.txt'])).toBe(true)
+      const status = await service.status(cwd)
+      expect(status.isRepo).toBe(false)
+      expect(status.error).toMatch(/clean\/smudge filters cannot run safely.*file\.txt/i)
+      await expect(service.diff(cwd, 'file.txt', false)).rejects.toThrow(/clean\/smudge filters cannot run safely.*file\.txt/i)
+      await expect(service.stage(cwd, ['file.txt'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*file\.txt/i)
+      await expect(service.restore(cwd, ['file.txt'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*file\.txt/i)
+
+      writeFileSync(join(cwd, 'file.txt'), 'base\n')
+      writeFileSync(join(cwd, 'README.md'), 'safe change\n')
+      expect(await service.stage(cwd, ['README.md'])).toBe(true)
       expect((await service.commit(cwd, 'hostile helpers disabled')).ok).toBe(true)
-      writeFileSync(join(cwd, 'file.txt'), 'dirty\n')
-      expect(await service.restore(cwd, ['file.txt'])).toBe(true)
-      expect(readFileSync(join(cwd, 'file.txt'), 'utf8')).toBe('base\nchanged\n')
       expect(existsSync(marker)).toBe(false)
     } finally {
       const restore = (key: string, value: string | undefined) => { if (value === undefined) delete process.env[key]; else process.env[key] = value }
@@ -128,6 +132,31 @@ exit 1
       restore('GIT_CONFIG_VALUE_0', oldValues.value)
     }
   }, 20_000)
+
+  it('fails closed for LFS-style filtered content without changing the index or worktree', async () => {
+    const cwd = repository('prime-work-git-lfs-')
+    const marker = join(cwd, 'lfs-filter-ran')
+    const filter = join(cwd, 'lfs-filter.sh')
+    writeFileSync(filter, `#!/bin/sh
+printf 'ran\n' >> ${JSON.stringify(marker)}
+printf 'mutated by filter\n'
+`)
+    chmodSync(filter, 0o755)
+    git(cwd, 'config', 'filter.lfs.clean', filter)
+    git(cwd, 'config', 'filter.lfs.smudge', filter)
+    git(cwd, 'config', 'filter.lfs.required', 'true')
+    writeFileSync(join(cwd, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n')
+    writeFileSync(join(cwd, 'asset.bin'), 'original bytes\n')
+    const beforeIndex = spawnSync('git', ['ls-files', '--stage', '--', 'asset.bin'], { cwd, encoding: 'utf8' }).stdout
+    const service = new GitService(async () => cwd)
+
+    await expect(service.stage(cwd, ['asset.bin'])).rejects.toThrow(/required filter.*Git LFS/i)
+    await expect(service.restore(cwd, ['asset.bin'])).rejects.toThrow(/required filter.*Git LFS/i)
+    const afterIndex = spawnSync('git', ['ls-files', '--stage', '--', 'asset.bin'], { cwd, encoding: 'utf8' }).stdout
+    expect(afterIndex).toBe(beforeIndex)
+    expect(readFileSync(join(cwd, 'asset.bin'), 'utf8')).toBe('original bytes\n')
+    expect(existsSync(marker)).toBe(false)
+  })
 
   it('surfaces mutation and commit failures instead of returning apparent success', async () => {
     const cwd = repository('prime-work-git-failure-')

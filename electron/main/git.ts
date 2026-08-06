@@ -9,6 +9,7 @@ export const GIT_STATUS_ENTRY_LIMIT = 1_000
 export const GIT_DIFF_LINE_LIMIT = 5_000
 const GIT_STATUS_OUTPUT_LIMIT = 4 * 1024 * 1024
 const GIT_CONFIG_OUTPUT_LIMIT = 512 * 1024
+const GIT_ATTRIBUTE_PATH_LIMIT = 1_000
 const GIT_DIFF_OUTPUT_LIMIT = 2 * 1024 * 1024
 const GIT_ERROR_LIMIT = 2_000
 const EMPTY_CONFIG_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -187,6 +188,51 @@ async function filterOverrides(cwd: string): Promise<string[]> {
   return overrides
 }
 
+
+function changedPathsFromStatus(output: string): string[] {
+  const paths: string[] = []
+  let cursor = 0
+  while (cursor < output.length) {
+    const field = nextNulField(output, cursor)
+    cursor = field.cursor
+    const record = field.value
+    if (!record || record.startsWith('## ') || record.length < 4) continue
+    const code = record.slice(0, 2)
+    const path = record.slice(3)
+    if (path) paths.push(path)
+    if (code.includes('R') || code.includes('C')) cursor = nextNulField(output, cursor).cursor
+    if (paths.length >= GIT_ATTRIBUTE_PATH_LIMIT) break
+  }
+  return paths
+}
+
+async function rejectFilteredPaths(cwd: string, paths: readonly string[], overrides: readonly string[]): Promise<void> {
+  if (!paths.length) return
+  const affected: string[] = []
+  for (let offset = 0; offset < paths.length; offset += 200) {
+    const chunk = paths.slice(offset, offset + 200)
+    const result = await runGit(cwd, ['check-attr', '-z', 'filter', '--', ...chunk], {
+      timeoutMs: 10_000,
+      maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
+    }, overrides)
+    requireProcessSuccess('Git filter attribute inspection', result)
+    let cursor = 0
+    while (cursor < result.stdout.length) {
+      const path = nextNulField(result.stdout, cursor)
+      const attribute = nextNulField(result.stdout, path.cursor)
+      const value = nextNulField(result.stdout, attribute.cursor)
+      cursor = value.cursor
+      if (attribute.value !== 'filter' || value.value === 'unspecified' || value.value === 'unset' || !path.value) continue
+      affected.push(path.value)
+      if (affected.length >= 5) break
+    }
+    if (affected.length >= 5) break
+  }
+  if (!affected.length) return
+  const suffix = affected.length === 1 ? affected[0] : `${affected.join(', ')}${paths.length > affected.length ? ', …' : ''}`
+  throw new Error(`Git operation blocked because clean/smudge filters cannot run safely for: ${suffix}. Use a trusted Git client with the required filter (for example Git LFS).`)
+}
+
 export class GitService {
   constructor(private readonly authorizeCwd: (cwd: string) => Promise<string>) {}
 
@@ -204,12 +250,13 @@ export class GitService {
     try {
       const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
       const overrides = await filterOverrides(cwd)
-      const [statusResult, unstagedResult, stagedResult] = await Promise.all([
-        runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
+      const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
+      requireProcessSuccess('Git status', statusResult)
+      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+      const [unstagedResult, stagedResult] = await Promise.all([
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--cached', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
       ])
-      requireProcessSuccess('Git status', statusResult)
       requireProcessSuccess('Git unstaged statistics', unstagedResult)
       requireProcessSuccess('Git staged statistics', stagedResult)
       return parseStatus(statusResult.stdout, parseNumstat(stagedResult.stdout), parseNumstat(unstagedResult.stdout))
@@ -227,6 +274,12 @@ export class GitService {
     if (staged) args.push('--cached')
     if (path) args.push('--', path)
     const overrides = await filterOverrides(cwd)
+    if (path) await rejectFilteredPaths(cwd, [path], overrides)
+    else {
+      const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
+      requireProcessSuccess('Git status', statusResult)
+      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+    }
     const result = await runGit(cwd, args, { timeoutMs: 30_000, maxBytes: GIT_DIFF_OUTPUT_LIMIT }, overrides)
     if (result.outputExceeded) {
       const error = `Diff output exceeded ${GIT_DIFF_OUTPUT_LIMIT / (1024 * 1024)} MiB and was not displayed.`
@@ -279,6 +332,7 @@ export class GitService {
     const cwd = await this.validCwd(cwdValue)
     const paths = this.validPaths(pathsValue)
     const overrides = neutralizeFilters ? await filterOverrides(cwd) : []
+    if (neutralizeFilters) await rejectFilteredPaths(cwd, paths, overrides)
     const result = await runGit(cwd, [...command, '--', ...paths], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
     requireProcessSuccess(`Git ${command[0]}`, result)
     return true
