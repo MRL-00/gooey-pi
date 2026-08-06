@@ -26,6 +26,7 @@ const METADATA_CONCURRENCY = 16
 const SETTINGS_LOCK_ATTEMPTS = 40
 const SETTINGS_LOCK_RETRY_MS = 50
 const SETTINGS_LOCK_OWNER = 'owner.json'
+const SETTINGS_UPDATE_ATTEMPTS = 4
 
 interface DiscoveryBudget {
   candidates: number
@@ -306,7 +307,18 @@ export class PluginService {
   async install(sourceValue: unknown): Promise<{ ok: boolean; output: string }> {
     if (!this.primeAgentPath) return { ok: false, output: 'Prime Agent executable was not found' }
     const source = this.validatePackageSource(sourceValue)
-    const operation = this.settingsMutation.then(() => runProcess(this.primeAgentPath!, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 }))
+    const settingsPath = join(this.agentDir, 'settings.json')
+    const operation = this.settingsMutation.then(async () => {
+      // The Prime CLI does not participate in Prime Work's settings lock. Holding
+      // it around the subprocess still coordinates package installs launched by
+      // this app with MCP updates from every PluginService instance.
+      const release = await this.acquireSettingsLock(settingsPath)
+      try {
+        return await runProcess(this.primeAgentPath!, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+      } finally {
+        await release()
+      }
+    })
     this.settingsMutation = operation.then(() => undefined, () => undefined)
     const result = await operation
     return { ok: result.code === 0 && !result.timedOut && !result.outputExceeded, output: stripAnsi(`${result.stdout}${result.stderr}`).trim() }
@@ -327,7 +339,7 @@ export class PluginService {
     const mutation = this.settingsMutation.then(async () => {
       const release = await this.acquireSettingsLock(settingsPath)
       try {
-        for (let attempt = 0; attempt < 4; attempt += 1) {
+        for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
           const snapshot = await this.readSettingsForUpdate(settingsPath)
           const settings = snapshot.settings
           if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')

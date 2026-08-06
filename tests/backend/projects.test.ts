@@ -41,6 +41,19 @@ describe('ProjectService file listing', () => {
     const { root, service } = setup()
     await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
   })
+
+  it('migrates explicit project grants created before folder identities were persisted', async () => {
+    const { root, service, store } = setup()
+    writeFileSync(join(root, 'README.md'), 'read me')
+    await store.update((state) => { state.projects.push({
+      id: 'legacy-project', name: 'Legacy project', path: root, folders: [root], primaryFolder: root, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
+    }) })
+
+    expect(await service.listFiles(root)).toEqual([{ path: 'README.md', type: 'file' }])
+    expect(store.snapshot().projects[0].folderIdentities).toEqual(identities(root))
+  })
+
   it('revokes a grant when its directory is replaced by a symlink, including after restart', async () => {
     const { root, service, store } = setup()
     const original = `${root}-original`

@@ -1,0 +1,235 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import type { McpConnectionInput } from '../../../src/types/api'
+import { isPathWithin, isRecord, requireString } from '../validation'
+import { errorCode, readAtMost } from './file-io'
+
+const MAX_SETTINGS_BYTES = 4 * 1024 * 1024
+const SETTINGS_LOCK_ATTEMPTS = 40
+const SETTINGS_LOCK_RETRY_MS = 50
+const SETTINGS_LOCK_OWNER = 'owner.json'
+const SETTINGS_UPDATE_ATTEMPTS = 4
+
+interface SettingsLockOwner {
+  version: 1
+  pid: number
+  token: string
+  createdAt: number
+}
+
+type FingerprintSettings = (path: string) => Promise<string>
+
+function parseSettingsLockOwner(value: unknown): SettingsLockOwner | null {
+  if (!isRecord(value) || value.version !== 1) return null
+  if (!Number.isSafeInteger(value.pid) || (value.pid as number) <= 0) return null
+  if (typeof value.token !== 'string' || value.token.length < 1 || value.token.length > 200) return null
+  if (typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt) || value.createdAt <= 0) return null
+  return { version: 1, pid: value.pid as number, token: value.token, createdAt: value.createdAt }
+}
+
+function sameSettingsLockOwner(left: SettingsLockOwner | null, right: SettingsLockOwner): boolean {
+  return left?.version === right.version && left.pid === right.pid && left.token === right.token && left.createdAt === right.createdAt
+}
+
+async function readSettingsForUpdate(path: string): Promise<{ settings: Record<string, unknown>; fingerprint: string }> {
+  let content: string
+  try {
+    const value = await readAtMost(path, MAX_SETTINGS_BYTES)
+    if (value.truncated) throw new TypeError('Prime Agent settings exceed the maximum supported size')
+    content = value.content
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return { settings: {}, fingerprint: 'missing' }
+    if (error instanceof TypeError && error.message.includes('maximum supported size')) throw error
+    throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server')
+  }
+  let value: unknown
+  try { value = JSON.parse(content) } catch { throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server') }
+  if (!isRecord(value)) throw new TypeError('Prime Agent settings must contain a JSON object')
+  return { settings: value, fingerprint: createHash('sha256').update(content).digest('hex') }
+}
+
+export async function settingsFingerprint(path: string): Promise<string> {
+  try {
+    const value = await readAtMost(path, MAX_SETTINGS_BYTES)
+    if (value.truncated) throw new TypeError('Prime Agent settings exceed the maximum supported size')
+    return createHash('sha256').update(value.content).digest('hex')
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return 'missing'
+    throw error
+  }
+}
+
+async function readSettingsLockOwner(lockPath: string): Promise<SettingsLockOwner | null> {
+  try {
+    const { content, truncated } = await readAtMost(join(lockPath, SETTINGS_LOCK_OWNER), 4 * 1024)
+    if (truncated) return null
+    return parseSettingsLockOwner(JSON.parse(content) as unknown)
+  } catch { return null }
+}
+
+function isProcessProvablyDead(pid: number): boolean {
+  if (pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return errorCode(error) === 'ESRCH'
+  }
+}
+
+async function createSettingsLock(lockPath: string): Promise<(() => Promise<void>) | null> {
+  try {
+    await mkdir(lockPath, { mode: 0o700 })
+  } catch (error) {
+    if (errorCode(error) === 'EEXIST') return null
+    throw error
+  }
+
+  const owner: SettingsLockOwner = { version: 1, pid: process.pid, token: randomUUID(), createdAt: Date.now() }
+  try {
+    await writeFile(join(lockPath, SETTINGS_LOCK_OWNER), `${JSON.stringify(owner)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+  } catch (error) {
+    await rm(lockPath, { recursive: true, force: true })
+    throw error
+  }
+  return async () => {
+    const current = await readSettingsLockOwner(lockPath)
+    if (sameSettingsLockOwner(current, owner)) await rm(lockPath, { recursive: true, force: true })
+  }
+}
+
+async function recoverStaleSettingsLock(lockPath: string): Promise<(() => Promise<void>) | null> {
+  const observed = await readSettingsLockOwner(lockPath)
+  if (!observed || !isProcessProvablyDead(observed.pid)) return null
+
+  // The recovery directory serializes competing reapers. The owner is checked
+  // again after claiming it, so a replacement lock is never removed by token.
+  const recoveryPath = `${lockPath}.recovery`
+  try {
+    await mkdir(recoveryPath, { mode: 0o700 })
+  } catch (error) {
+    if (errorCode(error) === 'EEXIST') return null
+    throw error
+  }
+  try {
+    const current = await readSettingsLockOwner(lockPath)
+    if (!sameSettingsLockOwner(current, observed) || !isProcessProvablyDead(observed.pid)) return null
+    await rm(lockPath, { recursive: true, force: true })
+    return await createSettingsLock(lockPath)
+  } finally {
+    await rm(recoveryPath, { recursive: true, force: true })
+  }
+}
+
+export async function acquireSettingsLock(settingsPath: string): Promise<() => Promise<void>> {
+  await mkdir(dirname(settingsPath), { recursive: true })
+  const lockPath = `${settingsPath}.lock`
+  for (let attempt = 0; attempt < SETTINGS_LOCK_ATTEMPTS; attempt += 1) {
+    const acquired = await createSettingsLock(lockPath)
+    if (acquired) return acquired
+    const recovered = await recoverStaleSettingsLock(lockPath)
+    if (recovered) return recovered
+    await new Promise((resolveWait) => setTimeout(resolveWait, SETTINGS_LOCK_RETRY_MS))
+  }
+  throw new Error('Prime Agent settings are busy; try again')
+}
+
+async function writeSettingsAtomically(
+  path: string,
+  settings: Record<string, unknown>,
+  expectedFingerprint: string,
+  fingerprint: FingerprintSettings,
+): Promise<boolean> {
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    if (await fingerprint(path) !== expectedFingerprint) return false
+    await rename(temporary, path)
+    return true
+  } finally {
+    await rm(temporary, { force: true })
+  }
+}
+
+export function validateMcpConnection(value: unknown): McpConnectionInput {
+  if (!isRecord(value)) throw new TypeError('MCP connection must be an object')
+  const name = requireString(value.name, 'MCP server name', { min: 1, max: 64, trim: true })
+  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name) || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
+  const scope = value.scope
+  if (scope !== 'user' && scope !== 'project') throw new TypeError('MCP scope must be user or project')
+  const projectPath = scope === 'project' ? requireString(value.projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
+  if (value.type === 'http') {
+    const urlValue = requireString(value.url, 'MCP server URL', { min: 1, max: 2_048, trim: true })
+    let url: URL
+    try { url = new URL(urlValue) } catch { throw new TypeError('MCP server URL is invalid') }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('MCP server URL must use http or https')
+    if (url.username || url.password) throw new TypeError('MCP server URL credentials are not allowed')
+    return { name, scope, projectPath, type: 'http', url: url.toString() }
+  }
+  if (value.type === 'stdio') {
+    const command = requireString(value.command, 'MCP command', { min: 1, max: 2_048, trim: true })
+    if (command.startsWith('-') || /[\0\r\n\u2028\u2029]/.test(command)) throw new TypeError('MCP command is invalid')
+    if (value.args !== undefined && !Array.isArray(value.args)) throw new TypeError('MCP arguments must be a list')
+    const args = (value.args ?? []).map((arg, index) => {
+      const parsed = requireString(arg, `MCP argument ${index + 1}`, { max: 2_048 })
+      if (/[\0\r\n\u2028\u2029]/.test(parsed)) throw new TypeError(`MCP argument ${index + 1} is invalid`)
+      return parsed
+    })
+    if (args.length > 64) throw new TypeError('MCP arguments exceed the maximum count')
+    return { name, scope, projectPath, type: 'stdio', command, args }
+  }
+  throw new TypeError('MCP transport must be http or stdio')
+}
+
+export function prepareProjectSettingsPath(projectPath: string): string {
+  const projectRoot = realpathSync(projectPath)
+  let directory = projectRoot
+  for (const segment of ['.prime', 'agent']) {
+    const candidate = join(directory, segment)
+    if (existsSync(candidate)) {
+      const stat = lstatSync(candidate)
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TypeError(`Project ${segment} configuration path must be a real directory`)
+    } else {
+      mkdirSync(candidate, { mode: 0o700 })
+    }
+    directory = realpathSync(candidate)
+    if (!isPathWithin(projectRoot, directory)) throw new TypeError('Project MCP configuration path escapes the project')
+  }
+  const settingsPath = join(directory, 'settings.json')
+  if (existsSync(settingsPath)) {
+    const stat = lstatSync(settingsPath)
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError('Project MCP settings must be a regular file')
+  }
+  return settingsPath
+}
+
+export async function updateMcpSettings(
+  settingsPath: string,
+  input: McpConnectionInput,
+  fingerprint: FingerprintSettings = settingsFingerprint,
+): Promise<{ ok: boolean; output: string }> {
+  const release = await acquireSettingsLock(settingsPath)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      const snapshot = await readSettingsForUpdate(settingsPath)
+      const settings = snapshot.settings
+      if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
+      const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
+      if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
+        return { ok: false, output: `An MCP server named “${input.name}” already exists in this scope.` }
+      }
+      const config = input.type === 'http'
+        ? { type: 'http', url: input.url, enabled: true }
+        : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
+      settings.mcpServers = { ...currentServers, [input.name]: config }
+      if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, fingerprint)) {
+        return { ok: true, output: `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
+      }
+    }
+    throw new Error('Prime Agent settings changed repeatedly; no MCP configuration was overwritten')
+  } finally {
+    await release()
+  }
+}

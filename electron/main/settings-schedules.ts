@@ -12,14 +12,14 @@ export class SettingsService {
 
   async update(raw: unknown): Promise<AppSettings> {
     if (!isRecord(raw)) throw new TypeError('settings patch must be an object')
-    const keys: Array<keyof AppSettings> = ['theme', 'sidebarOpen', 'inspectorOpen', 'terminalOpen', 'defaultInspectorTab', 'browserHome', 'browserAskForDownloads', 'terminalShell', 'reduceMotion', 'telemetry']
+    const keys: Array<keyof AppSettings> = ['theme', 'sidebarOpen', 'inspectorOpen', 'terminalOpen', 'defaultInspectorTab', 'browserHome', 'browserAskForDownloads', 'terminalShell', 'reduceMotion', 'showReasoningSummaries', 'showToolCalls', 'telemetry']
     rejectUnknownKeys(raw, keys, 'settings patch')
     const patch: Partial<AppSettings> = {}
     if (raw.theme !== undefined) {
       if (raw.theme !== 'system' && raw.theme !== 'light' && raw.theme !== 'dark') throw new TypeError('Invalid theme')
       patch.theme = raw.theme
     }
-    for (const key of ['sidebarOpen', 'inspectorOpen', 'terminalOpen', 'browserAskForDownloads', 'reduceMotion', 'telemetry'] as const) {
+    for (const key of ['sidebarOpen', 'inspectorOpen', 'terminalOpen', 'browserAskForDownloads', 'reduceMotion', 'showReasoningSummaries', 'showToolCalls', 'telemetry'] as const) {
       if (raw[key] !== undefined) patch[key] = requireBoolean(raw[key], key)
     }
     if (raw.defaultInspectorTab !== undefined) {

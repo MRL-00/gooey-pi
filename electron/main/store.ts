@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync } from 'node:fs'
+import { open, rename, unlink } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { AppSettings, ProjectRecord } from '../../src/types/api'
 import { isRecord } from './validation'
@@ -29,6 +31,8 @@ export function defaultSettings(): AppSettings {
     browserAskForDownloads: true,
     terminalShell: process.env.SHELL && process.env.SHELL.startsWith('/') ? process.env.SHELL : '/bin/zsh',
     reduceMotion: false,
+    showReasoningSummaries: true,
+    showToolCalls: true,
     telemetry: false,
   }
 }
@@ -79,6 +83,8 @@ function parseSettings(value: unknown): AppSettings {
     browserAskForDownloads: typeof value.browserAskForDownloads === 'boolean' ? value.browserAskForDownloads : defaults.browserAskForDownloads,
     terminalShell: typeof value.terminalShell === 'string' ? value.terminalShell : defaults.terminalShell,
     reduceMotion: typeof value.reduceMotion === 'boolean' ? value.reduceMotion : defaults.reduceMotion,
+    showReasoningSummaries: typeof value.showReasoningSummaries === 'boolean' ? value.showReasoningSummaries : defaults.showReasoningSummaries,
+    showToolCalls: typeof value.showToolCalls === 'boolean' ? value.showToolCalls : defaults.showToolCalls,
     telemetry: typeof value.telemetry === 'boolean' ? value.telemetry : defaults.telemetry,
   }
 }
@@ -94,11 +100,32 @@ function parseState(value: unknown): DesktopState {
   }
 }
 
+export interface JsonStateStoreFileHandle {
+  writeFile(data: string, options: { encoding: 'utf8' }): Promise<void>
+  sync(): Promise<void>
+  close(): Promise<void>
+}
+
+export interface JsonStateStoreFileSystem {
+  open(path: string, flags: string, mode?: number): Promise<JsonStateStoreFileHandle>
+  rename(oldPath: string, newPath: string): Promise<void>
+  unlink(path: string): Promise<void>
+}
+
+const nodeFileSystem: JsonStateStoreFileSystem = {
+  open: (path, flags, mode) => open(path, flags, mode) as Promise<FileHandle>,
+  rename,
+  unlink,
+}
+
 export class JsonStateStore {
   private state: DesktopState
-  private queue: Promise<unknown> = Promise.resolve()
+  private queue: Promise<void> = Promise.resolve()
 
-  constructor(private readonly filePath: string) {
+  constructor(
+    private readonly filePath: string,
+    private readonly fileSystem: JsonStateStoreFileSystem = nodeFileSystem,
+  ) {
     mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
     try {
       this.state = parseState(JSON.parse(readFileSync(filePath, 'utf8')))
@@ -107,7 +134,7 @@ export class JsonStateStore {
       try {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') renameSync(filePath, `${filePath}.corrupt-${Date.now()}`)
       } catch { /* The valid in-memory fallback remains usable. */ }
-      this.persist(this.state)
+      this.queue = this.persist(this.state).catch(() => undefined)
     }
   }
 
@@ -116,30 +143,40 @@ export class JsonStateStore {
   }
 
   async update<T>(mutator: (draft: DesktopState) => T): Promise<T> {
-    const operation = this.queue.then(() => {
+    const operation = this.queue.then(async () => {
       const draft = structuredClone(this.state)
       const result = mutator(draft)
-      this.persist(draft)
+      await this.persist(draft)
       this.state = draft
       return result
     })
-    this.queue = operation.catch(() => undefined)
+    this.queue = operation.then(() => undefined, () => undefined)
     return operation
   }
 
-  private persist(state: DesktopState): void {
+  private async persist(state: DesktopState): Promise<void> {
     const temp = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
-    const fd = openSync(temp, 'w', 0o600)
     try {
-      writeFileSync(fd, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
-      fsyncSync(fd)
+      const file = await this.fileSystem.open(temp, 'w', 0o600)
+      try {
+        await file.writeFile(`${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8' })
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+
+      await this.fileSystem.rename(temp, this.filePath)
+
+      try {
+        const directory = await this.fileSystem.open(dirname(this.filePath), 'r')
+        try { await directory.sync() } finally { await directory.close() }
+      } catch { /* Some filesystems do not allow fsync on a directory. */ }
     } finally {
-      closeSync(fd)
+      try {
+        await this.fileSystem.unlink(temp)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
-    renameSync(temp, this.filePath)
-    try {
-      const directoryFd = openSync(dirname(this.filePath), 'r')
-      try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
-    } catch { /* Some filesystems do not allow fsync on a directory. */ }
   }
 }

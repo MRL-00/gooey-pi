@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -203,6 +203,55 @@ describe('PluginService MCP connections', () => {
     expect(settings.mcpServers.merged.command).toBe('safe-command')
   })
 
+  it('retries multiple non-cooperating writer conflicts and merges the latest snapshot', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const settingsPath = join(agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+    const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
+    const original = internal.settingsFingerprint.bind(service)
+    let conflicts = 0
+    internal.settingsFingerprint = async (path) => {
+      if (conflicts < 2) {
+        conflicts += 1
+        writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model', externalRevision: conflicts }))
+      }
+      return original(path)
+    }
+
+    expect((await service.connectMcp({ name: 'after-retries', scope: 'user', type: 'stdio', command: 'safe-command' })).ok).toBe(true)
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(conflicts).toBe(2)
+    expect(settings.externalRevision).toBe(2)
+    expect(settings.mcpServers['after-retries'].command).toBe('safe-command')
+  })
+
+  it('fails after bounded conflicts without replacing the external writer snapshot', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const settingsPath = join(agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+    const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
+    const original = internal.settingsFingerprint.bind(service)
+    let externalRevision = 0
+    internal.settingsFingerprint = async (path) => {
+      externalRevision += 1
+      writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model', externalRevision }))
+      return original(path)
+    }
+
+    await expect(service.connectMcp({ name: 'never-written', scope: 'user', type: 'stdio', command: 'safe-command' }))
+      .rejects.toThrow(/changed repeatedly/)
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(externalRevision).toBe(4)
+    expect(settings.externalRevision).toBe(4)
+    expect(settings.mcpServers).toBeUndefined()
+  })
+
   it('serializes package installation before an MCP settings merge', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
@@ -210,15 +259,22 @@ describe('PluginService MCP connections', () => {
     const settingsPath = join(agentDir, 'settings.json')
     writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
     const executable = join(root, 'prime-agent.cjs')
+    const installStarted = join(root, 'install-started')
     writeFileSync(executable, `#!/usr/bin/env node
-const fs=require('node:fs');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(settingsPath)},JSON.stringify({defaultModel:'test/model',packageInstalled:true}));process.stdout.write('installed\\n')},100)
+const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(installStarted)},'');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(settingsPath)},JSON.stringify({defaultModel:'test/model',packageInstalled:true}));process.stdout.write('installed\\n')},100)
 `)
     chmodSync(executable, 0o755)
-    const service = new PluginService(executable, async (path) => resolve(path), { agentDir })
+    const installer = new PluginService(executable, async (path) => resolve(path), { agentDir })
+    const connector = new PluginService(null, async (path) => resolve(path), { agentDir })
 
+    const installPromise = installer.install('npm:example-package')
+    for (let attempt = 0; attempt < 200 && !existsSync(installStarted); attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5))
+    }
+    expect(existsSync(installStarted)).toBe(true)
     const [installed, connected] = await Promise.all([
-      service.install('npm:example-package'),
-      service.connectMcp({ name: 'after-package', scope: 'user', type: 'stdio', command: 'safe-command' }),
+      installPromise,
+      connector.connectMcp({ name: 'after-package', scope: 'user', type: 'stdio', command: 'safe-command' }),
     ])
 
     expect(installed.ok).toBe(true)

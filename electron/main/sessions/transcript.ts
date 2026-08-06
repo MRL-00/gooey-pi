@@ -1,0 +1,263 @@
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import type { MessagePart, TranscriptMessage } from '../../../src/types/api'
+import { strictJsonLines } from '../jsonl'
+import { isRecord } from '../validation'
+import type { JsonRecord } from './metadata'
+
+const MAX_TRANSCRIPT_RECORD_BYTES = 8 * 1024 * 1024
+const MAX_TRANSCRIPT_GRAPH_BYTES = 16 * 1024 * 1024
+const MAX_TRANSCRIPT_GRAPH_RECORDS = 10_000
+const MAX_TRANSCRIPT_MESSAGES = 400
+const MAX_TRANSCRIPT_PARTS = 2_000
+const MAX_TRANSCRIPT_TEXT_CHARS = 1024 * 1024
+const MAX_TRANSCRIPT_TOOL_CHARS = 512 * 1024
+const MAX_TRANSCRIPT_ARGS_CHARS = 256 * 1024
+const MAX_TRANSCRIPT_IMAGE_CHARS = 512 * 1024
+const MAX_PART_TEXT_CHARS = 256 * 1024
+const MAX_PART_TOOL_CHARS = 128 * 1024
+const MAX_PART_ARGS_CHARS = 128 * 1024
+const MAX_PART_IMAGE_CHARS = 256 * 1024
+const MAX_PARTS_PER_RECORD = 200
+const TRUNCATION_MARKER = '\n… [truncated] …\n'
+
+export function boundedString(value: string, max: number): string {
+  if (max <= 0) return ''
+  if (value.length <= max) return value
+  if (max <= TRUNCATION_MARKER.length) return value.slice(-max)
+  const available = max - TRUNCATION_MARKER.length
+  const head = Math.floor(available / 3)
+  return `${value.slice(0, head)}${TRUNCATION_MARKER}${value.slice(-(available - head))}`
+}
+
+export function textFromContent(content: unknown, max = MAX_PART_TEXT_CHARS): string {
+  if (typeof content === 'string') return boundedString(content, max)
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const part of content) {
+    if (!isRecord(part)) continue
+    const addition = part.type === 'text' && typeof part.text === 'string' ? part.text
+      : part.type === 'thinking' && typeof part.thinking === 'string' ? part.thinking : ''
+    if (!addition) continue
+    text += `${text ? '\n' : ''}${addition}`
+    if (text.length > max) return boundedString(text, max)
+  }
+  return text
+}
+
+export function compactText(value: string, max = 160): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim()
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine
+}
+
+export function validTimestamp(value: unknown, fallback: string): string {
+  if ((typeof value === 'string' || typeof value === 'number') && Number.isFinite(Date.parse(String(value)))) return new Date(value).toISOString()
+  return fallback
+}
+
+function roleOf(message: JsonRecord): TranscriptMessage['role'] {
+  switch (message.role) {
+    case 'user': return 'user'
+    case 'assistant': return 'assistant'
+    case 'system': return 'system'
+    default: return 'tool'
+  }
+}
+
+function boundedArgs(value: unknown): unknown {
+  if (value === undefined) return undefined
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    return serialized.length <= MAX_PART_ARGS_CHARS ? value : boundedString(serialized, MAX_PART_ARGS_CHARS)
+  } catch { return '[unserializable arguments]' }
+}
+
+function partsFromMessage(message: JsonRecord): MessagePart[] {
+  const content = message.content
+  const parts: MessagePart[] = []
+  if (typeof content === 'string') parts.push({ type: 'text', text: boundedString(content, MAX_PART_TEXT_CHARS) })
+  else if (Array.isArray(content)) {
+    const selected = content.length <= MAX_PARTS_PER_RECORD ? content : [...content.slice(0, 20), ...content.slice(-(MAX_PARTS_PER_RECORD - 20))]
+    for (const raw of selected) {
+      if (!isRecord(raw) || typeof raw.type !== 'string') continue
+      if (raw.type === 'text' && typeof raw.text === 'string') parts.push({ type: 'text', text: boundedString(raw.text, MAX_PART_TEXT_CHARS) })
+      else if (raw.type === 'thinking' && typeof raw.thinking === 'string') parts.push({ type: 'thinking', text: boundedString(raw.thinking, MAX_PART_TEXT_CHARS) })
+      else if ((raw.type === 'toolCall' || raw.type === 'tool_call') && typeof raw.name === 'string') {
+        parts.push({
+          type: 'toolCall',
+          id: typeof raw.id === 'string' ? boundedString(raw.id, 1_024) : undefined,
+          name: boundedString(raw.name, 512),
+          args: boundedArgs(raw.arguments ?? raw.args),
+        })
+      } else if (raw.type === 'image') {
+        parts.push({
+          type: 'image',
+          mimeType: typeof raw.mimeType === 'string' ? boundedString(raw.mimeType, 128) : undefined,
+          data: typeof raw.data === 'string' ? boundedString(raw.data, MAX_PART_IMAGE_CHARS) : undefined,
+        })
+      }
+    }
+  }
+  if (message.role === 'toolResult' || message.role === 'tool') {
+    const text = parts.filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text').map((part) => part.text).join('\n')
+    return [{
+      type: 'toolResult',
+      name: typeof message.toolName === 'string' ? boundedString(message.toolName, 512) : undefined,
+      text: boundedString(text, MAX_PART_TOOL_CHARS),
+      isError: message.isError === true,
+    }]
+  }
+  if (message.role === 'bashExecution') {
+    return [{
+      type: 'toolResult',
+      name: 'bash',
+      text: typeof message.output === 'string' ? boundedString(message.output, MAX_PART_TOOL_CHARS) : '',
+      isError: typeof message.exitCode === 'number' && message.exitCode !== 0,
+    }]
+  }
+  return parts.length ? parts : [{ type: 'text', text: '' }]
+}
+
+function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[] {
+  let textBudget = MAX_TRANSCRIPT_TEXT_CHARS
+  let toolBudget = MAX_TRANSCRIPT_TOOL_CHARS
+  let argsBudget = MAX_TRANSCRIPT_ARGS_CHARS
+  let imageBudget = MAX_TRANSCRIPT_IMAGE_CHARS
+  let partBudget = MAX_TRANSCRIPT_PARTS
+  const bounded: TranscriptMessage[] = []
+
+  for (const message of transcript.slice(-MAX_TRANSCRIPT_MESSAGES).reverse()) {
+    const parts: MessagePart[] = []
+    for (const part of [...message.parts].reverse()) {
+      if (partBudget <= 0) break
+      let next: MessagePart | undefined
+      if (part.type === 'text' || part.type === 'thinking') {
+        if (textBudget > 0) {
+          const text = boundedString(part.text, textBudget)
+          textBudget -= text.length
+          next = { ...part, text }
+        }
+      } else if (part.type === 'toolResult') {
+        if (toolBudget > 0) {
+          const text = boundedString(part.text, toolBudget)
+          toolBudget -= text.length
+          next = { ...part, text }
+        }
+      } else if (part.type === 'toolCall') {
+        let args: unknown
+        if (part.args !== undefined && argsBudget > 0) {
+          const serialized = typeof part.args === 'string' ? part.args : JSON.stringify(part.args)
+          if (serialized.length <= argsBudget) args = part.args
+          else args = boundedString(serialized, argsBudget)
+          argsBudget -= Math.min(serialized.length, argsBudget)
+        }
+        next = { ...part, args }
+      } else {
+        let data: string | undefined
+        if (part.data && imageBudget > 0) {
+          data = boundedString(part.data, imageBudget)
+          imageBudget -= data.length
+        }
+        next = { ...part, data }
+      }
+      if (next) {
+        parts.push(next)
+        partBudget -= 1
+      }
+    }
+    if (parts.length) bounded.push({ ...message, parts: parts.reverse() })
+  }
+  return bounded.reverse()
+}
+
+export async function readTranscript(filePath: string, isStreaming: boolean): Promise<TranscriptMessage[]> {
+  if ((await stat(filePath)).size > 256 * 1024 * 1024) throw new Error('Session transcript is too large to display')
+  const entries = new Map<string, { id: string; parentId: string | null; entry: JsonRecord; bytes: number }>()
+  let graphBytes = 0
+  let leafId: string | null = null
+  let recordCount = 0
+  for await (const line of strictJsonLines(createReadStream(filePath), MAX_TRANSCRIPT_RECORD_BYTES)) {
+    if (!line) continue
+    if (++recordCount > 200_000) throw new Error('Session transcript has too many records')
+    let entry: unknown
+    try { entry = JSON.parse(line) } catch { continue }
+    if (!isRecord(entry) || entry.type === 'session' || typeof entry.id !== 'string') continue
+    const parentId = typeof entry.parentId === 'string' ? entry.parentId : null
+    const existing = entries.get(entry.id)
+    if (existing) {
+      graphBytes -= existing.bytes
+      entries.delete(entry.id)
+    }
+    const bytes = Buffer.byteLength(line, 'utf8')
+    entries.set(entry.id, { id: entry.id, parentId, entry, bytes })
+    graphBytes += bytes
+    leafId = entry.id
+    while (entries.size > MAX_TRANSCRIPT_GRAPH_RECORDS || graphBytes > MAX_TRANSCRIPT_GRAPH_BYTES) {
+      const oldestId = entries.keys().next().value as string | undefined
+      if (oldestId === undefined) break
+      graphBytes -= entries.get(oldestId)?.bytes ?? 0
+      entries.delete(oldestId)
+    }
+  }
+  const branch: Array<{ id: string; entry: JsonRecord }> = []
+  const visited = new Set<string>()
+  while (leafId && !visited.has(leafId)) {
+    visited.add(leafId)
+    const node = entries.get(leafId)
+    if (!node) break
+    if (node.entry.type === 'message' || (node.entry.type === 'custom_message' && node.entry.display === true)) branch.push(node)
+    leafId = node.parentId
+  }
+  branch.reverse()
+  const transcript: TranscriptMessage[] = []
+  let activeAssistant: TranscriptMessage | undefined
+  for (const { id, entry } of branch) {
+    const safeId = boundedString(id, 1_024)
+    if (entry.type === 'custom_message') {
+      const details = isRecord(entry.details) ? entry.details : undefined
+      const from = isRecord(details?.from) ? details.from : undefined
+      const isAgentMessage = entry.customType === 'agent_message'
+      const detailMessage = typeof details?.message === 'string' ? details.message : undefined
+      const agentName = typeof from?.sessionName === 'string' ? boundedString(from.sessionName, 200) : undefined
+      const text = boundedString(detailMessage ?? textFromContent(entry.content), MAX_PART_TEXT_CHARS)
+      transcript.push({
+        id: safeId,
+        role: isAgentMessage ? 'agent' : 'system',
+        timestamp: typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined,
+        agentName: isAgentMessage ? agentName : undefined,
+        parts: [{ type: 'text', text }],
+      })
+      activeAssistant = undefined
+      continue
+    }
+    const message = isRecord(entry.message) ? entry.message : {}
+    const role = roleOf(message)
+    const rawTimestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp
+      : typeof entry.timestamp === 'string' ? entry.timestamp : undefined
+    const timestamp = typeof rawTimestamp === 'string' ? boundedString(rawTimestamp, 128) : rawTimestamp
+    const parts = partsFromMessage(message)
+    if (role === 'tool' && activeAssistant) {
+      const toolCallId = typeof message.toolCallId === 'string' ? boundedString(message.toolCallId, 1_024) : undefined
+      const callIndex = toolCallId ? activeAssistant.parts.findIndex((part) => part.type === 'toolCall' && part.id === toolCallId) : -1
+      if (callIndex >= 0) activeAssistant.parts.splice(callIndex + 1, 0, ...parts)
+      else activeAssistant.parts.push(...parts)
+      activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
+      continue
+    }
+    if (role === 'assistant') {
+      if (activeAssistant) {
+        activeAssistant.parts.push(...parts)
+        activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
+      } else {
+        activeAssistant = { id: safeId, role, timestamp, startedAt: timestamp, completedAt: timestamp, parts }
+        transcript.push(activeAssistant)
+      }
+      continue
+    }
+    const item: TranscriptMessage = { id: safeId, role, timestamp, parts }
+    transcript.push(item)
+    activeAssistant = undefined
+  }
+  if (isStreaming && activeAssistant) { activeAssistant.streaming = true; activeAssistant.completedAt = undefined }
+  return boundedTranscript(transcript)
+}

@@ -1,0 +1,85 @@
+import type { PrimeEventEnvelope } from '../../../src/types/api'
+import type { RpcObject } from './types'
+
+export interface AgentEventLimits {
+  maxEvents: number
+  maxEnvelopeBytes: number
+  maxWindowBytes: number
+  windowMs: number
+}
+
+const DEFAULT_AGENT_EVENT_LIMITS: AgentEventLimits = {
+  maxEvents: 500,
+  maxEnvelopeBytes: 8 * 1024 * 1024,
+  maxWindowBytes: 32 * 1024 * 1024,
+  windowMs: 1_000,
+}
+
+/** Applies the same byte accounting to real and synthetic events before they reach Electron IPC. */
+export class AgentEventForwarder {
+  private readonly limits: AgentEventLimits
+  private windowStarted = Date.now()
+  private eventCount = 0
+  private criticalEventCount = 0
+  private windowBytes = 0
+  private readonly reportedLimits = new Set<string>()
+
+  constructor(
+    private readonly runtimeId: string,
+    private readonly onEvent: (envelope: PrimeEventEnvelope) => void,
+    limits: Partial<AgentEventLimits> = {},
+  ) {
+    this.limits = { ...DEFAULT_AGENT_EVENT_LIMITS, ...limits }
+  }
+
+  emit(event: RpcObject): void {
+    this.resetWindowIfNeeded()
+    const critical = event.type === 'runtime_exit' || event.type === 'agent_start' || event.type === 'agent_end'
+    if (critical) {
+      this.criticalEventCount += 1
+      if (this.criticalEventCount > 32) { this.reportLimit('critical-count', 'Prime Agent lifecycle event rate exceeded the desktop limit'); return }
+    } else {
+      this.eventCount += 1
+      if (this.eventCount > this.limits.maxEvents) { this.reportLimit('count', 'Prime Agent event rate exceeded the desktop limit'); return }
+    }
+
+    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event }
+    const bytes = this.serializedBytes(envelope)
+    if (bytes === null || bytes > this.limits.maxEnvelopeBytes) {
+      this.reportLimit('envelope', 'Prime Agent event exceeded the desktop envelope byte limit')
+      return
+    }
+    const reserve = Math.min(64 * 1024, Math.floor(this.limits.maxWindowBytes / 4))
+    const byteLimit = critical ? this.limits.maxWindowBytes : this.limits.maxWindowBytes - reserve
+    if (this.windowBytes + bytes > byteLimit) {
+      this.reportLimit('bytes', 'Prime Agent event byte rate exceeded the desktop limit')
+      return
+    }
+    this.windowBytes += bytes
+    this.onEvent(envelope)
+  }
+
+  private resetWindowIfNeeded(): void {
+    const now = Date.now()
+    if (now - this.windowStarted < this.limits.windowMs) return
+    this.windowStarted = now
+    this.eventCount = 0
+    this.criticalEventCount = 0
+    this.windowBytes = 0
+    this.reportedLimits.clear()
+  }
+
+  private reportLimit(kind: string, error: string): void {
+    if (this.reportedLimits.has(kind)) return
+    this.reportedLimits.add(kind)
+    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event: { type: 'transport_error', error } }
+    const bytes = this.serializedBytes(envelope)
+    if (bytes === null || bytes > this.limits.maxEnvelopeBytes || this.windowBytes + bytes > this.limits.maxWindowBytes) return
+    this.windowBytes += bytes
+    this.onEvent(envelope)
+  }
+
+  private serializedBytes(envelope: PrimeEventEnvelope): number | null {
+    try { return Buffer.byteLength(JSON.stringify(envelope), 'utf8') } catch { return null }
+  }
+}

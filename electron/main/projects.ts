@@ -40,7 +40,33 @@ export class ProjectService {
     this.branchProvider = providers.branch
   }
 
+  private async migrateLegacyFolderIdentities(): Promise<void> {
+    const legacyProjects = this.store.snapshot().projects.filter((project) => project.folderIdentities === undefined)
+    if (!legacyProjects.length) return
+
+    const captured = new Map<string, Record<string, FolderIdentity>>()
+    for (const project of legacyProjects) {
+      const identities: Record<string, FolderIdentity> = {}
+      for (const folder of project.folders) {
+        try {
+          const current = await this.captureFolderIdentity(folder)
+          identities[current.path] = current.identity
+        } catch { /* Stale and symlinked legacy grants remain unauthorized. */ }
+      }
+      if (Object.keys(identities).length) captured.set(project.id, identities)
+    }
+    if (!captured.size) return
+
+    await this.store.update((state) => {
+      for (const project of state.projects) {
+        const identities = captured.get(project.id)
+        if (identities && project.folderIdentities === undefined) project.folderIdentities = identities
+      }
+    })
+  }
+
   async list(): Promise<ProjectRecord[]> {
+    await this.migrateLegacyFolderIdentities()
     const authorizationRevision = this.authorizationRevision
     const sessions = await this.sessionProvider()
     const canonicalSessionPaths = new Map<string, string>()

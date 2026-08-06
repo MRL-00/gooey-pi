@@ -124,4 +124,90 @@ describe('SessionService transcript bounds', () => {
     expect(result?.text).toContain('[truncated]')
     expect(image?.data).toContain('[truncated]')
   })
+
+
+  it('preserves agent messages as a distinct transcript role with only the readable body', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'agent-message.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'agent-message', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Delegate this task' } }),
+      JSON.stringify({
+        type: 'custom_message', id: 'handoff', parentId: 'root', customType: 'agent_message', display: true,
+        content: '[from child:reviewer]\nAgent-to-agent message received.\n\nThe full envelope should not be shown.',
+        details: {
+          message: 'Review complete. The project authorization gate was the root cause.',
+          from: { sessionName: 'project-reviewer', runtimeKind: 'subagent' },
+        },
+      }),
+      '',
+    ].join('\n'))
+
+    const transcript = await service.read(file)
+    expect(transcript.at(-1)).toMatchObject({
+      id: 'handoff',
+      role: 'agent',
+      agentName: 'project-reviewer',
+      parts: [{ type: 'text', text: 'Review complete. The project authorization gate was the root cause.' }],
+    })
+  })
+
+  it('reconstructs only the final parent branch and merges assistant tool activity', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'branch.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'branch', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'keep-root' } }),
+      JSON.stringify({ type: 'message', id: 'discarded', parentId: 'root', message: { role: 'user', content: 'discard-me' } }),
+      JSON.stringify({
+        type: 'message', id: 'assistant', parentId: 'root',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call', name: 'lookup', arguments: { query: 'value' } }] },
+      }),
+      JSON.stringify({
+        type: 'message', id: 'result', parentId: 'assistant',
+        message: { role: 'toolResult', toolCallId: 'call', toolName: 'lookup', content: 'tool-output' },
+      }),
+      JSON.stringify({
+        type: 'message', id: 'continuation', parentId: 'result',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'final-answer' }] },
+      }),
+      '',
+    ].join('\n'))
+
+    const transcript = await service.read(file)
+    expect(transcript.map((message) => message.id)).toEqual(['root', 'assistant'])
+    expect(transcript[1]?.parts.map((part) => part.type)).toEqual(['toolCall', 'toolResult', 'text'])
+    expect(transcript[1]?.parts.at(-1)).toEqual({ type: 'text', text: 'final-answer' })
+  })
+})
+
+
+describe('SessionService orchestration', () => {
+  it('overlays runtime state and preserves archive and rename hook semantics', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'runtime.jsonl')
+    writeSession(file, project, 'runtime')
+    const safePath = await service.requireSessionPath(file)
+    const stop = vi.fn(async () => undefined)
+    const rename = vi.fn(async () => true)
+    service.bindRuntimeHooks({
+      get: (candidate) => candidate === safePath ? { isStreaming: true } : undefined,
+      stop,
+      rename,
+    })
+
+    expect((await service.list())[0]?.status).toBe('running')
+    await expect(service.rename(file, '  Renamed session  ')).resolves.toBe(true)
+    expect(rename).toHaveBeenCalledWith(safePath, 'Renamed session')
+    await expect(service.rename(file, '-invalid')).rejects.toThrow('title contains invalid characters')
+
+    await expect(service.archive(file)).resolves.toBe(true)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(await service.list()).toEqual([])
+    expect((await service.list(undefined, true))[0]?.archived).toBe(true)
+
+    await expect(service.archive(file, false)).resolves.toBe(true)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect((await service.list())[0]?.archived).toBe(false)
+  })
 })

@@ -112,6 +112,16 @@ const readline=require('node:readline');const fs=require('node:fs');fs.writeFile
     expect(forwardedBytes).toBeLessThanOrEqual(700)
     expect(windowEnvelopes.some((envelope) => envelope.event.type === 'burst_event')).toBe(true)
     expect(windowEnvelopes.filter((envelope) => envelope.event.type === 'burst_event').length).toBeLessThan(10)
+
+    const lifecycleEvents: Array<Record<string, unknown>> = []
+    const lifecycleForwarder = new AgentEventForwarder('runtime-lifecycle', (envelope) => lifecycleEvents.push(envelope.event), {
+      maxEvents: 1, maxEnvelopeBytes: 512, maxWindowBytes: 700, windowMs: 60_000,
+    })
+    lifecycleForwarder.emit({ type: 'message_update', value: 'first' })
+    lifecycleForwarder.emit({ type: 'message_update', value: 'dropped' })
+    lifecycleForwarder.emit({ type: 'agent_end' })
+    expect(lifecycleEvents.some((event) => event.type === 'transport_error')).toBe(true)
+    expect(lifecycleEvents.some((event) => event.type === 'agent_end')).toBe(true)
   })
 
   it('closes agent admission before stopAll snapshots in-flight starts', async () => {

@@ -25,6 +25,7 @@ let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
+let windowCreation: Promise<BrowserWindow | null> | null = null
 
 function appIconPath(): string {
   return app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'assets', 'icon.png')
@@ -106,7 +107,23 @@ function hardenRenderer(window: BrowserWindow): void {
   })
 }
 
-function createWindow(): BrowserWindow {
+interface InitialRendererWindow {
+  loadURL(url: string): Promise<unknown>
+  isDestroyed(): boolean
+  destroy(): void
+}
+
+export async function loadInitialRenderer(window: InitialRendererWindow, rendererUrl: string): Promise<void> {
+  try {
+    await window.loadURL(rendererUrl)
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy()
+    throw error
+  }
+}
+
+async function createWindow(): Promise<BrowserWindow | null> {
+  if (shutdownStarted) return null
   const macOptions = process.platform === 'darwin' ? {
     titleBarStyle: 'hiddenInset' as const,
     trafficLightPosition: { x: 18, y: 18 },
@@ -144,13 +161,59 @@ function createWindow(): BrowserWindow {
     if (isMainFrame && !isTrustedRendererUrl(url, trustedRendererUrl)) ipc?.revoke(rendererId)
   })
   renderer.on('render-process-gone', () => ipc?.revoke(rendererId))
-  window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show() })
+  let rendererLoaded = false
+  let readyToShow = false
+  window.once('ready-to-show', () => {
+    readyToShow = true
+    if (rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
+  })
   window.on('closed', () => {
     ipc?.revoke(rendererId)
     if (mainWindow === window) mainWindow = null
   })
-  void window.loadURL(trustedRendererUrl)
+  try {
+    await loadInitialRenderer(window, trustedRendererUrl)
+  } catch (error) {
+    ipc?.revoke(rendererId)
+    if (mainWindow === window) mainWindow = null
+    throw error
+  }
+  if (shutdownStarted || window.isDestroyed() || mainWindow !== window) {
+    ipc?.revoke(rendererId)
+    if (!window.isDestroyed()) window.destroy()
+    if (mainWindow === window) mainWindow = null
+    return null
+  }
+  rendererLoaded = true
+  if (readyToShow) window.show()
   return window
+}
+
+function ensureWindow(): Promise<BrowserWindow | null> {
+  if (shutdownStarted) return Promise.resolve(null)
+  if (mainWindow && !mainWindow.isDestroyed()) return windowCreation ?? Promise.resolve(mainWindow)
+  if (windowCreation) return windowCreation
+  const creation = createWindow()
+  windowCreation = creation
+  const clearCreation = () => { if (windowCreation === creation) windowCreation = null }
+  void creation.then(clearCreation, clearCreation)
+  return creation
+}
+
+function boundedErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/[\r\n\t]+/g, ' ').slice(0, 512) || 'Unknown error'
+}
+
+function requestWindow(reason: 'activation' | 'second instance'): void {
+  void ensureWindow().then((window) => {
+    if (!window || shutdownStarted || window.isDestroyed()) return
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }).catch((error: unknown) => {
+    if (!shutdownStarted) console.error(`Prime Work failed to open a window after ${reason}: ${boundedErrorMessage(error)}`)
+  })
 }
 
 async function bootstrap(): Promise<void> {
@@ -196,7 +259,7 @@ async function bootstrap(): Promise<void> {
       renderer.send('agent:event', envelope)
     }
   })
-  createWindow()
+  await ensureWindow()
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -222,13 +285,13 @@ else void app.whenReady().then(async () => {
   }
   await bootstrap()
   app.on('second-instance', () => {
-    if (shutdownStarted) return
-    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
-    else { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus() }
+    if (!shutdownStarted) requestWindow('second instance')
   })
-  app.on('activate', () => { if (!shutdownStarted && BrowserWindow.getAllWindows().length === 0) createWindow() })
-}).catch((error) => {
-  console.error('Prime Work failed to start:', error)
+  app.on('activate', () => {
+    if (!shutdownStarted && BrowserWindow.getAllWindows().length === 0) requestWindow('activation')
+  })
+}).catch((error: unknown) => {
+  if (!shutdownStarted) console.error(`Prime Work failed to start: ${boundedErrorMessage(error)}`)
   app.quit()
 })
 
