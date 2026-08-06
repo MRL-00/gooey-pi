@@ -2,7 +2,7 @@
 
 ## Project
 
-Prime Work is a macOS Electron desktop client for Prime Agent, built with strict TypeScript, React 19, electron-vite, and `node-pty`. It expects Node 20+, npm, and a configured `prime-agent` executable on `PATH`.
+Prime Work is a macOS Electron desktop client for Prime Agent, built with strict TypeScript, React 19, electron-vite, and `node-pty`. It expects Node 22.12.0+, npm 10.9.0+, and a configured `prime-agent` executable on `PATH`.
 
 ## Code map
 

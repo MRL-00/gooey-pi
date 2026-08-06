@@ -29,6 +29,14 @@ describe('release preflight', () => {
     expect(() => assertSupportedNode('v24.0.0')).not.toThrow()
   })
 
+  test('keeps contributor instructions aligned with the enforced engines', () => {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
+    expect(packageJson.engines).toEqual({ node: '>=22.12.0', npm: '>=10.9.0' })
+    expect(readFileSync('.nvmrc', 'utf8').trim()).toBe('22.12.0')
+    expect(readFileSync('README.md', 'utf8')).toContain('Node.js 22.12.0 or newer and npm 10.9.0 or newer')
+    expect(readFileSync('AGENTS.md', 'utf8')).toContain('Node 22.12.0+, npm 10.9.0+')
+  })
+
   test('fails closed without Developer ID credentials', () => {
     expect(() => validateReleaseCredentials({}, { checkApiKeyFile: false })).toThrow(/RELEASE_SIGNING_TEAM_ID/)
     expect(() => validateReleaseCredentials({ ...baseEnvironment, CSC_LINK: '' }, { checkApiKeyFile: false })).toThrow(/CSC_LINK/)
