@@ -24,7 +24,14 @@ interface Services {
 type IpcEvent = IpcMainInvokeEvent | IpcMainEvent
 
 export function isTrustedRendererUrl(url: string, expectedRendererUrl: string): boolean {
-  return url === expectedRendererUrl
+  try {
+    const actual = new URL(url)
+    const expected = new URL(expectedRendererUrl)
+    // Fragments never cross the document/security boundary; allow in-document anchors only.
+    actual.hash = ''
+    expected.hash = ''
+    return actual.href === expected.href
+  } catch { return false }
 }
 
 export interface IpcRegistration {

@@ -8,8 +8,12 @@ interface MarkdownTextProps {
 }
 
 function openMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string): void {
-  if (!href || href.startsWith('#')) return
+  if (!href) return
   event.preventDefault()
+  if (href.startsWith('#')) {
+    try { document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView({ block: 'start' }) } catch { /* malformed fragment */ }
+    return
+  }
   if (!/^(https?:|mailto:)/i.test(href)) return
   if (window.prime) {
     void window.prime.app.openExternal(href)
