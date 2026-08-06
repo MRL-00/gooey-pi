@@ -213,12 +213,12 @@ export class PluginService {
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsPath = join(projectPath, '.prime', 'agent', 'settings.json')
+      settingsPath = this.prepareProjectSettingsPath(projectPath)
     } else {
       settingsPath = join(this.agentDir, 'settings.json')
     }
 
-    let response = { ok: true, output: `Connected MCP server “${input.name}”. It will be available in new Prime sessions.` }
+    let response = { ok: true, output: `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
     const mutation = this.settingsMutation.then(async () => {
       const release = await this.acquireSettingsLock(settingsPath)
       try {
@@ -309,6 +309,28 @@ export class PluginService {
       return { name, scope, projectPath, type: 'stdio', command, args }
     }
     throw new TypeError('MCP transport must be http or stdio')
+  }
+
+  private prepareProjectSettingsPath(projectPath: string): string {
+    const projectRoot = realpathSync(projectPath)
+    let directory = projectRoot
+    for (const segment of ['.prime', 'agent']) {
+      const candidate = join(directory, segment)
+      if (existsSync(candidate)) {
+        const stat = lstatSync(candidate)
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TypeError(`Project ${segment} configuration path must be a real directory`)
+      } else {
+        mkdirSync(candidate, { mode: 0o700 })
+      }
+      directory = realpathSync(candidate)
+      if (!isPathWithin(projectRoot, directory)) throw new TypeError('Project MCP configuration path escapes the project')
+    }
+    const settingsPath = join(directory, 'settings.json')
+    if (existsSync(settingsPath)) {
+      const stat = lstatSync(settingsPath)
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError('Project MCP settings must be a regular file')
+    }
+    return settingsPath
   }
 
   private readSettingsForUpdate(path: string): Record<string, unknown> {

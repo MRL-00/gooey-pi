@@ -51,6 +51,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
   const activeSessions = useMemo(() => sessions.filter((session) => !session.archived), [sessions])
+  const belongsToProject = (session: SessionRecord, project: ProjectRecord) => project.path === session.projectPath || project.folders.includes(session.projectPath)
   useEffect(() => {
     if (!sessionMenu) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.session-row-wrap')) setSessionMenu(null) }
@@ -59,7 +60,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
     return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', escape, true) }
   }, [sessionMenu])
   const normalized = query.trim().toLowerCase()
-  const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || activeSessions.some((session) => session.projectPath === project.path && `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, activeSessions, normalized])
+  const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || activeSessions.some((session) => belongsToProject(session, project) && `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, activeSessions, normalized])
 
   return (
     <aside ref={sidebarRef} className="sidebar" aria-label="Project and session navigation" tabIndex={overlay ? -1 : undefined}>
@@ -95,7 +96,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
         <div className="sidebar__section-heading"><span>Projects</span><IconButton size="small" label="Add project" onClick={onAddProject}><Plus size={13} /></IconButton></div>
         {visibleProjects.length === 0 ? <p className="sidebar__empty">No matching work</p> : null}
         {visibleProjects.map((project) => {
-          const projectSessions = activeSessions.filter((session) => session.projectPath === project.path && (!normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized)))
+          const projectSessions = activeSessions.filter((session) => belongsToProject(session, project) && (!normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized)))
           const isCollapsed = collapsed[project.id] ?? false
           const running = projectSessions.some((session) => session.status === 'running')
           return (

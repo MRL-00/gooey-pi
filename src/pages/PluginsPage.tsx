@@ -122,7 +122,7 @@ export function PluginsPage({ skills, loading, activeProjectPath, onRefresh, onI
           <Modal
             title="Add tools to Prime"
             onClose={() => setAddOpen(false)}
-            footer={<><button type="button" className="button" onClick={() => setAddOpen(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? 'Connecting…' : 'Installing…') : (addKind === 'mcp' ? 'Connect server' : 'Install package')}</button></>}
+            footer={<><button type="button" className="button" onClick={() => setAddOpen(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? 'Saving…' : 'Installing…') : (addKind === 'mcp' ? 'Save server configuration' : 'Install package')}</button></>}
           >
             <Segmented value={addKind} options={[{ value: 'mcp', label: 'MCP server' }, { value: 'repository', label: 'Repository package' }]} onChange={selectAddKind} label="What to add"/>
             {addKind === 'repository' ? (
@@ -133,13 +133,13 @@ export function PluginsPage({ skills, loading, activeProjectPath, onRefresh, onI
               </div>
             ) : (
               <div className="add-tool-form">
-                <p className="modal-intro">Connect a running local or remote MCP server by URL, or let Prime launch a local MCP process. Nothing is cloned or installed.</p>
+                <p className="modal-intro">Save the endpoint or command that an MCP integration package will use. This does not install an integration or test the server.</p>
                 <label className="field"><span>Server name</span><input autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="my-local-tools"/></label>
                 <div className="field"><span>Connection</span><Segmented value={mcpTransport} options={[{ value: 'http', label: 'Server / Studio URL' }, { value: 'stdio', label: 'Local command' }]} onChange={(value) => setMcpTransport(value as McpTransport)} label="MCP connection type"/></div>
                 {mcpTransport === 'http' ? (
-                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="http://127.0.0.1:3000/mcp"/></label><small className="field-help">Use the MCP endpoint shown by your local Studio or server. HTTP and HTTPS are supported.</small></>
+                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="http://127.0.0.1:3000/mcp"/></label><small className="field-help">Use the MCP endpoint shown by your local Studio or server. Prime Agent also needs a matching MCP integration skill to expose its tools.</small></>
                 ) : (
-                  <><label className="field"><span>Executable</span><input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} placeholder="npx"/></label><label className="field"><span>Arguments <small>(one per line)</small></span><textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/project'}/></label></>
+                  <><p className="field-help">Local command definitions are saved for package-specific bridges; Prime Agent 0.7 does not expose arbitrary stdio servers by itself.</p><label className="field"><span>Executable</span><input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} placeholder="npx"/></label><label className="field"><span>Arguments <small>(one per line)</small></span><textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/project'}/></label></>
                 )}
                 <label className="field"><span>Available in</span><select value={mcpScope} onChange={(event) => setMcpScope(event.target.value as McpScope)}><option value="user">All projects (personal)</option><option value="project" disabled={!activeProjectPath}>Current project</option></select></label>
                 <p className="connection-warning"><ShieldCheck size={13}/> Only connect servers you trust. MCP tools can read data or run actions with your user permissions.</p>
