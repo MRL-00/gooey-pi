@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import type { PrimeEventEnvelope, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { safeChildEnvironment } from '../process-utils'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
@@ -28,6 +28,7 @@ export class RpcRuntime {
   private readonly eventForwarder: AgentEventForwarder
   private stopped = false
   private info: RuntimeInfo
+  private requestedServiceTier: PrimeServiceTier = 'default'
 
   constructor(
     executable: string,
@@ -64,6 +65,37 @@ export class RpcRuntime {
     return this.snapshot()
   }
 
+  applyCapabilities(model: PrimeModelDescriptor | undefined): void {
+    this.info.availableThinkingLevels = model?.availableThinkingLevels ?? ['off']
+    this.info.fastModeSupported = model?.fastModeSupported ?? false
+    if (!this.info.fastModeSupported) {
+      this.requestedServiceTier = 'default'
+      this.info.serviceTier = 'default'
+    }
+  }
+
+  async setServiceTier(serviceTier: 'default' | 'priority', probe = false): Promise<boolean> {
+    if (serviceTier === 'priority' && !this.info.fastModeSupported) {
+      this.requestedServiceTier = 'default'
+      this.info.serviceTier = 'default'
+      return false
+    }
+    try {
+      await this.request({ type: 'set_service_tier', serviceTier }, 10_000)
+      this.requestedServiceTier = serviceTier
+      this.info.serviceTier = serviceTier
+      this.info.fastModeAvailable = true
+      return true
+    } catch (error) {
+      this.info.fastModeAvailable = false
+      this.info.serviceTier = 'default'
+      if (!probe) throw error
+      return false
+    }
+  }
+
+  serviceTierPreference(): 'default' | 'priority' { return this.requestedServiceTier === 'priority' ? 'priority' : 'default' }
+
   async command(command: RpcObject): Promise<RpcObject> {
     if (command.type === 'extension_ui_response') {
       await this.transport.enqueue(`${JSON.stringify(command)}\n`)
@@ -72,10 +104,10 @@ export class RpcRuntime {
     const timeout = command.type === 'compact' ? 10 * 60_000 : 60_000
     const response = await this.request(command, timeout)
     if (command.type === 'get_state') this.updateFromState(response.data)
-    if (response.success === true && [
-      'prompt', 'new_session', 'switch_session', 'clone', 'fork', 'set_model', 'cycle_model',
-      'set_thinking_level', 'cycle_thinking_level',
-    ].includes(String(command.type))) {
+    if (response.success === true && ['set_model', 'cycle_model', 'set_thinking_level', 'cycle_thinking_level'].includes(String(command.type))) {
+      const state = await this.request({ type: 'get_state' }, 60_000)
+      this.updateFromState(state.data)
+    } else if (response.success === true && ['prompt', 'new_session', 'switch_session', 'clone', 'fork'].includes(String(command.type))) {
       void this.request({ type: 'get_state' }, 60_000).then((state) => this.updateFromState(state.data)).catch(() => undefined)
     }
     return response
@@ -201,6 +233,11 @@ export class RpcRuntime {
     if (typeof raw.sessionFile === 'string') this.info.sessionFile = raw.sessionFile
     if (typeof raw.isStreaming === 'boolean') this.info.isStreaming = raw.isStreaming
     if (typeof raw.thinkingLevel === 'string') this.info.thinkingLevel = raw.thinkingLevel
+    if (raw.serviceTier === 'default' || raw.serviceTier === 'priority') {
+      this.info.serviceTier = raw.serviceTier
+      this.info.fastModeAvailable = true
+      this.requestedServiceTier = raw.serviceTier
+    }
     if (isRecord(raw.model)) {
       this.info.model = {
         provider: typeof raw.model.provider === 'string' ? raw.model.provider : undefined,

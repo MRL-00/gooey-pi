@@ -11,6 +11,10 @@
 .select-control select { max-width: 122px; border: 0; outline: 0; color: inherit; background: transparent; appearance: none; font-size: 11px; font-weight: 520; }
 .select-control--compact { height: 26px; border-radius: 999px; }
 .permissions-chip { height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--surface-subtle); font-size: 10.5px; }
+.fast-mode-toggle { height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--surface-subtle); font-size: 10.5px; }
+.fast-mode-toggle:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.fast-mode-toggle.is-active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-subtle)); }
+.fast-mode-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .send-button { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border-radius: 50%; color: var(--canvas); background: var(--text); }
 .send-button:hover { opacity: .88; }
 .send-button:disabled { color: var(--text-tertiary); background: var(--surface-selected); opacity: 1; }
@@ -22,4 +26,3 @@
 .composer-menu button > span { min-width: 0; display: flex; flex-direction: column; }
 .composer-menu strong { color: var(--text); font-size: 12px; font-weight: 540; }
 .composer-menu small { overflow: hidden; color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; text-overflow: ellipsis; }
-

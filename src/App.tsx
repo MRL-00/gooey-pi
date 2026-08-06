@@ -13,6 +13,7 @@ import { useAppSettings } from '@/hooks/useAppSettings'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useExtensionUi } from '@/hooks/useExtensionUi'
 import { INSPECTOR_DEFAULT, INSPECTOR_MIN, TERMINAL_DEFAULT, TERMINAL_MIN, usePanelLayout } from '@/hooks/usePanelLayout'
+import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
 import type { GitStatus, McpConnectionInput, ProjectRecord, ScheduleRecord, SessionRecord, SkillRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
@@ -20,6 +21,7 @@ const Inspector = lazy(() => import('@/components/Inspector').then((module) => (
 const TerminalDrawer = lazy(() => import('@/components/TerminalDrawer').then((module) => ({ default: module.TerminalDrawer })))
 const CommandPalette = lazy(() => import('@/components/CommandPalette').then((module) => ({ default: module.CommandPalette })))
 const ExtensionUiModal = lazy(() => import('@/components/ExtensionUiModal').then((module) => ({ default: module.ExtensionUiModal })))
+const ProviderAuthModal = lazy(() => import('@/components/ProviderAuthModal').then((module) => ({ default: module.ProviderAuthModal })))
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage').then((module) => ({ default: module.ActivityPage })))
 const ScheduledPage = lazy(() => import('@/pages/ScheduledPage').then((module) => ({ default: module.ScheduledPage })))
@@ -44,8 +46,6 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [loadingSkills, setLoadingSkills] = useState(false)
-  const [model, setModel] = useState('auto')
-  const [effort, setEffort] = useState('medium')
   const [toast, setToast] = useState<string | null>(null)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const gitRequestRef = useRef(0)
@@ -61,6 +61,14 @@ export default function App() {
     bridge, initialProject, initialSession, projects, sessions,
     initialMessages: bridge ? [] : SAMPLE_TRANSCRIPT, reportError,
   })
+  const syncProviderRuntime = useCallback(async (runtimeId: string) => {
+    if (!bridge) return
+    const generation = workspace.workspaceRef.current.generation
+    const next = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
+    if (next && workspace.workspaceRef.current.generation === generation) workspace.attachRuntime(next, generation)
+  }, [bridge, workspace.attachRuntime, workspace.workspaceRef])
+  const syncDisabledProviders = useCallback((disabledProviders: string[]) => settingsState.updateSettings({ disabledProviders }), [settingsState.updateSettings])
+  const provider = useProviderCatalog({ bridge, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, syncDisabledProviders, reportError })
   const activeSession = useMemo(() => sessions.find((session) => session.id === workspace.activeSessionId), [sessions, workspace.activeSessionId])
   const activeProject = useMemo(() => findProjectForSession(projects, activeSession)
     ?? projects.find((project) => project.id === workspace.activeProjectId)
@@ -236,7 +244,7 @@ export default function App() {
         let startedRuntime = false
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
-          activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: model === 'auto' ? undefined : model, thinking: effort })
+          activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
           startedRuntime = true
           if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
         }
@@ -329,7 +337,7 @@ export default function App() {
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(workspace.runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
     : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
-    : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} onUpdate={settingsState.updateSettings} onResetBrowser={async () => {
+    : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
@@ -344,7 +352,7 @@ export default function App() {
         <div ref={layout.workspaceRowRef} className="workspace-row">
           <main className="conversation-pane">
             <Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} />
-            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
+            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} skills={skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
           {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} runtime={workspace.runtime} messages={workspace.messages} git={git} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}
@@ -355,6 +363,7 @@ export default function App() {
     </div>
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
+    {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}
     {toast ? <div className="toast" role="status">{toast}<button type="button" aria-label="Dismiss" onClick={() => setToast(null)}>×</button></div> : null}
   </div>
 }

@@ -57,6 +57,11 @@ export async function validateRpcCommand(raw: unknown, validateSessionPath: (pat
     if (!THINKING_LEVELS.has(level)) throw new TypeError('Invalid thinking level')
     return { type, level }
   }
+  if (type === 'set_service_tier') {
+    rejectUnknownKeys(command, ['type', 'serviceTier'], 'command')
+    if (command.serviceTier !== 'default' && command.serviceTier !== 'priority') throw new TypeError('Invalid service tier')
+    return { type, serviceTier: command.serviceTier }
+  }
   if (type === 'set_steering_mode' || type === 'set_follow_up_mode') {
     rejectUnknownKeys(command, ['type', 'mode'], 'command')
     if (command.mode !== 'all' && command.mode !== 'one-at-a-time') throw new TypeError('Invalid queue mode')

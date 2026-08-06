@@ -69,7 +69,58 @@ export interface RuntimeInfo {
   isStreaming: boolean
   model?: { provider?: string; id?: string; name?: string } | null
   thinkingLevel?: string
+  availableThinkingLevels?: PrimeThinkingLevel[]
+  fastModeSupported?: boolean
+  fastModeAvailable?: boolean
+  serviceTier?: PrimeServiceTier
 }
+
+export type PrimeThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type PrimeServiceTier = 'auto' | 'default' | 'flex' | 'scale' | 'priority' | null
+export type ProviderAuthMethod = 'oauth' | 'api_key' | 'external'
+export type ProviderAuthSource = 'stored' | 'runtime' | 'environment' | 'prime_cli' | 'fallback' | 'models_json_key' | 'models_json_command' | 'stale'
+
+export interface PrimeModelDescriptor {
+  key: string
+  provider: string
+  id: string
+  name: string
+  reasoning: boolean
+  input: Array<'text' | 'image'>
+  contextWindow: number
+  maxTokens: number
+  availableThinkingLevels: PrimeThinkingLevel[]
+  fastModeSupported: boolean
+  available: boolean
+}
+
+export interface PrimeProviderDescriptor {
+  id: string
+  name: string
+  authMethod: ProviderAuthMethod
+  configured: boolean
+  authSource?: ProviderAuthSource
+  authLabel?: string
+  modelCount: number
+  availableModelCount: number
+  enabled: boolean
+}
+
+export interface PrimeModelCatalog {
+  primeVersion: string
+  refreshedAt: string
+  models: PrimeModelDescriptor[]
+  providers: PrimeProviderDescriptor[]
+  warning?: string
+}
+
+export type ProviderAuthEvent =
+  | { flowId: string; providerId: string; type: 'auth'; url: string; instructions?: string }
+  | { flowId: string; providerId: string; type: 'progress'; message: string }
+  | { flowId: string; providerId: string; type: 'prompt'; promptId: string; message: string; placeholder?: string; allowEmpty?: boolean }
+  | { flowId: string; providerId: string; type: 'select'; promptId: string; message: string; options: Array<{ id: string; label: string }> }
+  | { flowId: string; providerId: string; type: 'complete' | 'cancelled' }
+  | { flowId: string; providerId: string; type: 'error'; error: string }
 
 export interface PrimeEventEnvelope {
   runtimeId: string
@@ -135,6 +186,7 @@ export interface AppSettings {
   showReasoningSummaries: boolean
   showToolCalls: boolean
   telemetry: boolean
+  disabledProviders: string[]
 }
 
 export interface ScheduleRecord {
@@ -153,11 +205,21 @@ export interface PrimeWorkApi {
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
   sessions: { list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>; read(filePath: string): Promise<TranscriptMessage[]>; rename(filePath: string, title: string): Promise<boolean>; archive(filePath: string, archived?: boolean): Promise<boolean> }
   agent: {
-    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string }): Promise<RuntimeInfo>
+    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string; fast?: boolean }): Promise<RuntimeInfo>
     command(runtimeId: string, command: Record<string, unknown>): Promise<Record<string, unknown>>
     stop(runtimeId: string): Promise<boolean>
     list(): Promise<RuntimeInfo[]>
     onEvent(callback: (envelope: PrimeEventEnvelope) => void): () => void
+  }
+  providers: {
+    catalog(force?: boolean): Promise<PrimeModelCatalog>
+    saveApiKey(providerId: string, apiKey: string): Promise<PrimeModelCatalog>
+    logout(providerId: string): Promise<PrimeModelCatalog>
+    setEnabled(providerId: string, enabled: boolean): Promise<PrimeModelCatalog>
+    startOAuth(providerId: string): Promise<{ flowId: string }>
+    respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
+    cancelOAuth(flowId: string): Promise<boolean>
+    onAuthEvent(callback: (event: ProviderAuthEvent) => void): () => void
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>

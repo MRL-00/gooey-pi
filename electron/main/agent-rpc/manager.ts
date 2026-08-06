@@ -1,9 +1,10 @@
 import { resolve } from 'node:path'
-import type { PrimeEventEnvelope, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
 import { rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { RpcRuntime } from './runtime'
 import type { RpcObject } from './types'
+import type { PrimeProviderService } from '../providers'
 
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
@@ -14,6 +15,8 @@ export class AgentRpcManager {
     private readonly executable: string | null,
     private readonly authorizeCwd: (cwd: string) => Promise<string>,
     private readonly validateSessionPath: (path: string) => Promise<string>,
+    private readonly providers?: PrimeProviderService,
+    private readonly disabledProviders: () => ReadonlySet<string> = () => new Set(),
   ) {}
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
@@ -24,26 +27,38 @@ export class AgentRpcManager {
     this.requireOpen()
     if (!this.executable) throw new Error('Prime Agent executable was not found')
     const options = requireRecord(raw, 'options')
-    rejectUnknownKeys(options, ['cwd', 'sessionPath', 'model', 'thinking'], 'options')
+    rejectUnknownKeys(options, ['cwd', 'sessionPath', 'model', 'thinking', 'fast'], 'options')
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
     this.requireOpen()
     const args = ['--mode', 'rpc', '--cwd', cwd]
     if (options.sessionPath !== undefined) args.push('--resume', await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 })))
+    let selectedModel
     if (options.model !== undefined) {
-      const model = requireString(options.model, 'model', { min: 1, max: 256, trim: true })
+      selectedModel = this.providers
+        ? await this.providers.requireAvailableModel(options.model, this.disabledProviders())
+        : undefined
+      const model = selectedModel?.id ?? requireString(options.model, 'model', { min: 1, max: 256, trim: true })
       if (model.startsWith('-') || /[\r\n]/.test(model)) throw new TypeError('Invalid model')
+      if (selectedModel) args.push('--provider', selectedModel.provider)
       args.push('--model', model)
     }
     if (options.thinking !== undefined) {
       const thinking = requireString(options.thinking, 'thinking', { min: 1, max: 16, trim: true })
       if (!isThinkingLevel(thinking)) throw new TypeError('Invalid thinking level')
+      if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking as PrimeThinkingLevel)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
       args.push('--thinking', thinking)
     }
+    if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
     if (this.runtimes.size >= 4) throw new Error('Prime Work supports at most four concurrent agent runtimes')
     const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId))
     this.runtimes.set(runtime.runtimeId, runtime)
-    try { return await runtime.handshake() } catch (error) { await runtime.stop(); throw error }
+    try {
+      await runtime.handshake()
+      await this.decorate(runtime)
+      if (runtime.snapshot().fastModeSupported && options.fast === true) await runtime.setServiceTier('priority', true)
+      return runtime.snapshot()
+    } catch (error) { await runtime.stop(); throw error }
   }
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
@@ -51,7 +66,22 @@ export class AgentRpcManager {
     const runtime = this.requireRuntime(runtimeId)
     const command = await validateRpcCommand(rawCommand, this.validateSessionPath)
     this.requireOpen()
-    return runtime.command(command)
+    if (command.type === 'set_model' && this.providers) {
+      await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders())
+    }
+    if (command.type === 'set_service_tier') {
+      const serviceTier = command.serviceTier === 'priority' ? 'priority' : 'default'
+      const supported = await runtime.setServiceTier(serviceTier)
+      if (!supported) throw new Error('Fast mode is not supported by the selected model')
+      return { type: 'response', command: 'set_service_tier', success: true }
+    }
+    const response = await runtime.command(command)
+    if (command.type === 'set_model' || command.type === 'cycle_model') {
+      const preference = runtime.serviceTierPreference()
+      await this.decorate(runtime)
+      if (runtime.snapshot().fastModeSupported) await runtime.setServiceTier(preference, true)
+    } else if (command.type === 'set_thinking_level' || command.type === 'cycle_thinking_level') await this.decorate(runtime)
+    return response
   }
 
   async stop(runtimeId: unknown): Promise<boolean> {
@@ -97,6 +127,12 @@ export class AgentRpcManager {
 
   private requireOpen(): void {
     if (this.closed) throw new Error('Prime Agent manager is shutting down')
+  }
+
+  private async decorate(runtime: RpcRuntime): Promise<void> {
+    if (!this.providers) return
+    const snapshot = runtime.snapshot()
+    runtime.applyCapabilities(await this.providers.capabilities(snapshot.model?.provider, snapshot.model?.id))
   }
 
   private requireRuntime(value: unknown): RpcRuntime {

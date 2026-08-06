@@ -26,4 +26,5 @@ export const SETTINGS_FIELD_SECTIONS = {
   showReasoningSummaries: 'agent',
   showToolCalls: 'agent',
   telemetry: 'privacy',
+  disabledProviders: 'agent',
 } as const satisfies Record<keyof AppSettings, SettingsSection>

@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showReasoningSummaries: true,
   showToolCalls: true,
   telemetry: false,
+  disabledProviders: [],
 }
 
 export const SAMPLE_PROJECTS: ProjectRecord[] = [

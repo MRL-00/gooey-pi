@@ -1,15 +1,16 @@
-import { app, BrowserWindow, protocol, session } from 'electron'
+import { app, BrowserWindow, protocol, session, shell } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import type { AppMeta } from '../../src/types/api'
+import type { AppMeta, ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService } from './plugins'
+import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
 import { ScheduleService, SettingsService } from './settings-schedules'
 import { SessionService } from './sessions'
@@ -23,6 +24,7 @@ let ipc: IpcRegistration | null = null
 let agents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
+let providerService: PrimeProviderService | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -227,7 +229,15 @@ async function bootstrap(): Promise<void> {
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
   projects.bindProviders({ sessions: listCatalogSessions, branch: (cwd) => git.branch(cwd) })
 
-  agents = new AgentRpcManager(executable, (cwd) => projects.authorizeCwd(cwd), (path) => sessions.requireSessionPath(path))
+  const providers = new PrimeProviderService({ openExternal: async (url) => { await shell.openExternal(url, { activate: true }) } })
+  providerService = providers
+  agents = new AgentRpcManager(
+    executable,
+    (cwd) => projects.authorizeCwd(cwd),
+    (path) => sessions.requireSessionPath(path),
+    providers,
+    () => new Set(store.snapshot().settings.disabledProviders),
+  )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     stop: async (path) => { await agents?.stopForSession(path) },
@@ -250,13 +260,21 @@ async function bootstrap(): Promise<void> {
     primeAgentVersion: detectedPrimeVersion,
   }
   trustedRendererUrl = resolveRendererUrl()
-  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, settings, schedules }, trustedRendererUrl)
+  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, schedules }, trustedRendererUrl)
   agents.setEventSink((envelope) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
       && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
       && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
       renderer.send('agent:event', envelope)
+    }
+  })
+  providers.setEventSink((event: ProviderAuthEvent) => {
+    const renderer = mainWindow?.webContents
+    if (!shutdownStarted && renderer && !renderer.isDestroyed()
+      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
+      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
+      renderer.send('providers:auth-event', event)
     }
   })
   await ensureWindow()
@@ -312,5 +330,6 @@ app.on('before-quit', (event) => {
   beginProcessShutdown()
   downloads?.cancelAll()
 
+  providerService?.cancelAll()
   void Promise.all([terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses()]).finally(() => app.quit())
 })

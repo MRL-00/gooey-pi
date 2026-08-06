@@ -1,7 +1,7 @@
 import { Bot, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { BrowserGlobe, Modal } from '@/components/ui'
-import type { AppMeta, AppSettings } from '@/types/api'
+import type { AppMeta, AppSettings, PrimeModelCatalog } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
 import { AgentSettings } from './settings/AgentSettings'
 import { AppearanceSettings } from './settings/AppearanceSettings'
@@ -24,12 +24,18 @@ const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<
 interface SettingsPageProps {
   settings: AppSettings
   meta?: AppMeta | null
+  providerCatalog: PrimeModelCatalog | null
   onUpdate: SettingsUpdate
   onResetBrowser(): Promise<void> | void
   onOpenDocs(): void
+  onRefreshProviders(): Promise<void>
+  onSaveProviderApiKey(providerId: string, apiKey: string): Promise<void>
+  onLogoutProvider(providerId: string): Promise<void>
+  onSetProviderEnabled(providerId: string, enabled: boolean): Promise<void>
+  onStartProviderOAuth(providerId: string): Promise<void>
 }
 
-export function SettingsPage({ settings, meta, onUpdate, onResetBrowser, onOpenDocs }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onStartProviderOAuth }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>('general')
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -52,7 +58,7 @@ export function SettingsPage({ settings, meta, onUpdate, onResetBrowser, onOpenD
     switch (section) {
       case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
-      case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
+      case 'agent': return <AgentSettings settings={settings} meta={meta} providerCatalog={providerCatalog} onUpdate={onUpdate} onRefreshProviders={onRefreshProviders} onSaveProviderApiKey={onSaveProviderApiKey} onLogoutProvider={onLogoutProvider} onSetProviderEnabled={onSetProviderEnabled} onStartProviderOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />

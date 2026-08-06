@@ -3,11 +3,12 @@ import type { AppMeta } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
 import type { GitService } from './git'
 import type { PluginService } from './plugins'
+import type { PrimeProviderService } from './providers'
 import type { ProjectService } from './projects'
 import type { ScheduleService, SettingsService } from './settings-schedules'
 import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
-import { requireExistingPath, requireWebUrl } from './validation'
+import { requireExistingPath, requireString, requireWebUrl } from './validation'
 
 interface Services {
   meta: AppMeta
@@ -17,6 +18,7 @@ interface Services {
   terminals: TerminalService
   git: GitService
   plugins: PluginService
+  providers: PrimeProviderService
   settings: SettingsService
   schedules: ScheduleService
 }
@@ -99,6 +101,31 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('agent:command', (_event, runtimeId, command) => services.agents.command(runtimeId, command))
   handle('agent:stop', (_event, runtimeId) => services.agents.stop(runtimeId))
   handle('agent:list', () => services.agents.list())
+
+  const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders))
+  handle('providers:catalog', (_event, force) => providerCatalog(force === true))
+  handle('providers:save-api-key', async (_event, providerId, apiKey) => {
+    await services.providers.saveApiKey(providerId, apiKey)
+    return providerCatalog(true)
+  })
+  handle('providers:logout', async (_event, providerId) => {
+    await services.providers.logout(providerId)
+    return providerCatalog(true)
+  })
+  handle('providers:set-enabled', async (_event, providerId, enabled) => {
+    const id = requireString(providerId, 'providerId', { min: 1, max: 128, trim: true })
+    if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
+    const catalog = await providerCatalog()
+    if (!catalog.providers.some((provider) => provider.id === id)) throw new Error('Provider was not found')
+    const disabled = new Set(services.settings.get().disabledProviders)
+    if (enabled) disabled.delete(id)
+    else disabled.add(id)
+    await services.settings.update({ disabledProviders: [...disabled].sort() })
+    return providerCatalog()
+  })
+  handle('providers:start-oauth', (_event, providerId) => services.providers.startOAuth(providerId))
+  handle('providers:respond-oauth', (_event, flowId, promptId, value) => services.providers.respondOAuth(flowId, promptId, value))
+  handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
   on('terminal:input', (event, terminalId, data) => services.terminals.input(event.sender, terminalId, data))

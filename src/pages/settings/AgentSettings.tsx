@@ -1,11 +1,23 @@
 import { Bot, ShieldCheck } from 'lucide-react'
+import type { PrimeModelCatalog } from '@/types/api'
+import { ProviderSettings } from './ProviderSettings'
 import type { SettingsMetaSectionProps } from './contracts'
 import { SettingsToggle } from './SettingsToggle'
 
-export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionProps) {
+interface AgentSettingsProps extends SettingsMetaSectionProps {
+  providerCatalog: PrimeModelCatalog | null
+  onRefreshProviders(): Promise<void>
+  onSaveProviderApiKey(providerId: string, apiKey: string): Promise<void>
+  onLogoutProvider(providerId: string): Promise<void>
+  onSetProviderEnabled(providerId: string, enabled: boolean): Promise<void>
+  onStartProviderOAuth(providerId: string): Promise<void>
+  onOpenDocs(): void
+}
+
+export function AgentSettings({ settings, meta, providerCatalog, onUpdate, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onStartProviderOAuth, onOpenDocs }: AgentSettingsProps) {
   return (
     <>
-      <header><h1>Prime Agent</h1><p>Runtime discovery and workspace permissions.</p></header>
+      <header><h1>Prime Agent</h1><p>Runtime discovery, model providers, and workspace permissions.</p></header>
       <section className="settings-group">
         <h2>Runtime</h2>
         <div className="runtime-card">
@@ -17,6 +29,7 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
           {meta?.primeAgentVersion ? <code>v{meta.primeAgentVersion}</code> : null}
         </div>
       </section>
+      <ProviderSettings catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       <section className="settings-group">
         <h2>Transcript</h2>
         <SettingsToggle checked={settings.showReasoningSummaries} onChange={(showReasoningSummaries) => { void onUpdate({ showReasoningSummaries }) }} label="Show reasoning summaries" description="Display reasoning summaries and traces while Prime works. Completed work stays collapsed." />
