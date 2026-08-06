@@ -40,6 +40,23 @@ describe('security boundaries', () => {
     await expect(service.authorizeCwd(folder)).rejects.toThrow(/not inside/)
   })
 
+  it('lists an inferred project without recursively authorizing it for Git execution', async () => {
+    const dir = temp('prime-work-inferred-')
+    const folder = join(dir, 'project'); mkdirSync(folder)
+    const store = new JsonStateStore(join(dir, 'state.json'))
+    const service = new ProjectService(store, () => null)
+    let branchCalls = 0
+    service.bindProviders({
+      sessions: async () => [{ id: 'session', filePath: join(dir, 'session.jsonl'), projectPath: folder, title: 'session', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'idle', depth: 0, pinned: false, unread: false } satisfies SessionRecord],
+      branch: async (cwd) => { branchCalls += 1; await service.authorizeCwd(cwd); return undefined },
+    })
+    const listed = await service.list()
+    expect(listed).toHaveLength(1)
+    expect(listed[0].inferred).toBe(true)
+    expect(branchCalls).toBe(0)
+    await expect(service.authorizeCwd(folder)).rejects.toThrow(/not inside/)
+  })
+
   it('awaits TERM/KILL escalation for an RPC child that refuses graceful shutdown', async () => {
     const dir = temp('prime-work-agent-stop-')
     const executable = join(dir, 'fake-agent.cjs')
