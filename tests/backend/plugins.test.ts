@@ -83,6 +83,26 @@ describe('PluginService discovery', () => {
     expect(service.authorizeReveal(projectPrompt)).toBe(realpathSync(projectPrompt))
   })
 
+  it('discovers only the authorized project .agents root without walking ancestors', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'workspace', 'project')
+    const localSkill = join(project, '.agents', 'skills', 'local', 'SKILL.md')
+    const ancestorSkill = join(root, 'workspace', '.agents', 'skills', 'ancestor', 'SKILL.md')
+    mkdirSync(agentDir)
+    mkdirSync(resolve(localSkill, '..'), { recursive: true })
+    mkdirSync(resolve(ancestorSkill, '..'), { recursive: true })
+    writeFileSync(localSkill, '---\nname: local\n---\nLocal skill')
+    writeFileSync(ancestorSkill, '---\nname: ancestor\n---\nAncestor skill')
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const records = await service.list(project)
+
+    expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
+    expect(records.some((record) => record.path === realpathSync(ancestorSkill))).toBe(false)
+    expect(readFileSync('electron/main/plugins/catalog.ts', 'utf8')).not.toContain('collectAncestorSkills')
+  })
+
   it('keeps project-configured discovery contained while accepting in-project files', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
