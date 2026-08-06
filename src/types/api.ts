@@ -46,12 +46,19 @@ export interface SessionRecord {
   syncRevision?: number
 }
 
+export interface PromptImage {
+  type: 'image'
+  mimeType: string
+  data: string
+}
+
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'toolCall'; id?: string; name: string; args?: unknown }
   | { type: 'toolResult'; name?: string; text: string; isError?: boolean }
-  | { type: 'image'; mimeType?: string; data?: string }
+  | { type: 'agentMessage'; text: string; agentName?: string }
+  | { type: 'image'; mimeType?: string; data?: string; dataTruncated?: boolean }
 
 export interface TranscriptMessage {
   id: string

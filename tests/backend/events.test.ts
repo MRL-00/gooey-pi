@@ -23,6 +23,19 @@ describe('agent transport events', () => {
     expect(afterTransportError).toHaveLength(exited.length)
   })
 
+  it('nests live agent messages in the streaming assistant activity', () => {
+    const event = {
+      type: 'custom_message', customType: 'agent_message', content: 'fallback',
+      details: { message: 'Review complete.', from: { sessionName: 'reviewer' } },
+    }
+    const applied = applyPrimeEvent([streamingMessage()], event)
+    expect(applied[0].parts.at(-1)).toEqual({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
+
+    const buffered = createPrimeEventBuffer()
+    buffered.push(event)
+    expect(buffered.replay([streamingMessage()])[0].parts.at(-1)).toEqual({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
+  })
+
   it('replays live events over an older transcript load result', () => {
     const pendingLoadEvents = createPrimeEventBuffer()
     pendingLoadEvents.push({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: ' plus live output' } })

@@ -13,11 +13,11 @@ const MAX_TRANSCRIPT_PARTS = 2_000
 const MAX_TRANSCRIPT_TEXT_CHARS = 1024 * 1024
 const MAX_TRANSCRIPT_TOOL_CHARS = 512 * 1024
 const MAX_TRANSCRIPT_ARGS_CHARS = 256 * 1024
-const MAX_TRANSCRIPT_IMAGE_CHARS = 512 * 1024
+const MAX_TRANSCRIPT_IMAGE_CHARS = 2 * 1024 * 1024
 const MAX_PART_TEXT_CHARS = 256 * 1024
 const MAX_PART_TOOL_CHARS = 128 * 1024
 const MAX_PART_ARGS_CHARS = 128 * 1024
-const MAX_PART_IMAGE_CHARS = 256 * 1024
+const MAX_PART_IMAGE_CHARS = 2 * 1024 * 1024
 const MAX_PARTS_PER_RECORD = 200
 const TRUNCATION_MARKER = '\n… [truncated] …\n'
 
@@ -50,8 +50,18 @@ export function compactText(value: string, max = 160): string {
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine
 }
 
+function customActivityName(value: string): string {
+  return value.split(/[_-]+/).filter(Boolean).map((word) => word.toLowerCase() === 'ipython'
+    ? 'IPython'
+    : `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`).join(' ') || 'Activity'
+}
+
 export function validTimestamp(value: unknown, fallback: string): string {
-  if ((typeof value === 'string' || typeof value === 'number') && Number.isFinite(Date.parse(String(value)))) return new Date(value).toISOString()
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const timestamp = new Date(value)
+    if (Number.isFinite(timestamp.getTime())) return timestamp.toISOString()
+  }
+  if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return new Date(value).toISOString()
   return fallback
 }
 
@@ -94,6 +104,7 @@ function partsFromMessage(message: JsonRecord): MessagePart[] {
           type: 'image',
           mimeType: typeof raw.mimeType === 'string' ? boundedString(raw.mimeType, 128) : undefined,
           data: typeof raw.data === 'string' ? boundedString(raw.data, MAX_PART_IMAGE_CHARS) : undefined,
+          dataTruncated: typeof raw.data === 'string' && raw.data.length > MAX_PART_IMAGE_CHARS || undefined,
         })
       }
     }
@@ -131,11 +142,13 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
     for (const part of [...message.parts].reverse()) {
       if (partBudget <= 0) break
       let next: MessagePart | undefined
-      if (part.type === 'text' || part.type === 'thinking') {
+      if (part.type === 'text' || part.type === 'thinking' || part.type === 'agentMessage') {
         if (textBudget > 0) {
           const text = boundedString(part.text, textBudget)
           textBudget -= text.length
-          next = { ...part, text }
+          next = part.type === 'agentMessage'
+            ? { ...part, text, agentName: part.agentName ? boundedString(part.agentName, 200) : undefined }
+            : { ...part, text }
         }
       } else if (part.type === 'toolResult') {
         if (toolBudget > 0) {
@@ -156,9 +169,9 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
         let data: string | undefined
         if (part.data && imageBudget > 0) {
           data = boundedString(part.data, imageBudget)
-          imageBudget -= data.length
+          imageBudget -= Math.min(part.data.length, imageBudget)
         }
-        next = { ...part, data }
+        next = { ...part, data, dataTruncated: part.dataTruncated || Boolean(part.data && data !== part.data) || undefined }
       }
       if (next) {
         parts.push(next)
@@ -216,21 +229,35 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     if (entry.type === 'custom_message') {
       const details = isRecord(entry.details) ? entry.details : undefined
       const from = isRecord(details?.from) ? details.from : undefined
-      const isAgentMessage = entry.customType === 'agent_message'
-      const isGoalSummary = entry.customType === 'goal_context'
+      const customType = typeof entry.customType === 'string' ? boundedString(entry.customType, 200) : 'activity'
+      const isAgentMessage = customType === 'agent_message'
+      const isGoalSummary = customType === 'goal_context'
       const detailMessage = typeof details?.message === 'string' ? details.message : undefined
       const goalObjective = typeof details?.objective === 'string' ? details.objective : undefined
       const agentName = typeof from?.sessionName === 'string' ? boundedString(from.sessionName, 200) : undefined
       const readableText = isGoalSummary ? goalObjective ?? detailMessage : detailMessage
       const text = boundedString(readableText ?? textFromContent(entry.content), MAX_PART_TEXT_CHARS)
-      transcript.push({
-        id: safeId,
-        role: isAgentMessage ? 'agent' : isGoalSummary ? 'goal' : 'system',
-        timestamp: typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined,
-        agentName: isAgentMessage ? agentName : undefined,
-        parts: [{ type: 'text', text }],
-      })
-      activeAssistant = undefined
+      const timestamp = typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined
+      if (isAgentMessage && activeAssistant) {
+        activeAssistant.parts.push({ type: 'agentMessage', text, agentName })
+        activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
+      } else if (!isAgentMessage && !isGoalSummary && activeAssistant) {
+        const name = customActivityName(customType)
+        activeAssistant.parts.push({ type: 'toolCall', id: safeId, name }, { type: 'toolResult', name, text })
+        activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
+      } else {
+        const name = customActivityName(customType)
+        transcript.push({
+          id: safeId,
+          role: isAgentMessage ? 'agent' : isGoalSummary ? 'goal' : 'tool',
+          timestamp,
+          agentName: isAgentMessage ? agentName : undefined,
+          parts: isAgentMessage || isGoalSummary
+            ? [{ type: 'text', text }]
+            : [{ type: 'toolCall', id: safeId, name }, { type: 'toolResult', name, text }],
+        })
+        activeAssistant = undefined
+      }
       continue
     }
     const message = isRecord(entry.message) ? entry.message : {}

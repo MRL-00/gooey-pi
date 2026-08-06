@@ -5,14 +5,37 @@ import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { PrimeMark } from '../ui'
 import { InlineText } from './syntax'
-import { ThinkingDots, WorkDisclosure } from './timeline'
+import { ThinkingDots, WorkDisclosure, WorkTimeline } from './timeline'
+
+function imageSource(part: Extract<MessagePart, { type: 'image' }>): string | undefined {
+  if (part.dataTruncated || !part.data || !part.mimeType || !/^image\/(png|jpeg|gif|webp)$/i.test(part.mimeType) || !/^[a-z\d+/=\s]+$/i.test(part.data)) return undefined
+  return `data:${part.mimeType};base64,${part.data.replace(/\s/g, '')}`
+}
+
+function renderImage(part: Extract<MessagePart, { type: 'image' }>, key: string) {
+  const source = imageSource(part)
+  return source ? <img key={key} className="image-part" src={source} alt="User attachment" /> : <div key={key} className="image-part image-part--unavailable">Image attachment unavailable</div>
+}
 
 function renderNarrative(parts: MessagePart[], keyPrefix: string) {
   return parts.map((part, index) => {
     if (part.type === 'text') return <MarkdownText key={`${keyPrefix}-${index}`} text={part.text} />
-    if (part.type === 'image') return <div key={`${keyPrefix}-${index}`} className="image-part">Image attachment</div>
+    if (part.type === 'image') return renderImage(part, `${keyPrefix}-${index}`)
     return null
   })
+}
+
+function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, showReasoning: boolean, showTools: boolean) {
+  const groups: Array<{ activity: boolean; parts: MessagePart[] }> = []
+  for (const part of parts) {
+    const activity = part.type !== 'text' && part.type !== 'image'
+    const current = groups.at(-1)
+    if (current?.activity === activity) current.parts.push(part)
+    else groups.push({ activity, parts: [part] })
+  }
+  return groups.map((group, index) => group.activity
+    ? <WorkTimeline key={`${keyPrefix}-activity-${index}`} parts={group.parts} showReasoning={showReasoning} showTools={showTools} />
+    : <div key={`${keyPrefix}-narrative-${index}`}>{renderNarrative(group.parts, `${keyPrefix}-${index}`)}</div>)
 }
 
 function messageText(message: TranscriptMessage): string {
@@ -85,15 +108,21 @@ function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): 
 }
 
 export const AssistantMessage = memo(function AssistantMessage({ message, git, isLast, showReasoning, showTools, onOpenChanges }: { message: TranscriptMessage; git: GitStatus; isLast: boolean; showReasoning: boolean; showTools: boolean; onOpenChanges(): void }) {
-  const firstActivity = message.parts.findIndex((part) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult')
+  const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage'
+  const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult'
+  const firstActivity = message.parts.findIndex(isActivity)
   let lastActivity = -1
+  let lastCoreActivity = -1
   for (let index = message.parts.length - 1; index >= 0; index -= 1) {
-    if (message.parts[index].type === 'thinking' || message.parts[index].type === 'toolCall' || message.parts[index].type === 'toolResult') { lastActivity = index; break }
+    if (lastActivity < 0 && isActivity(message.parts[index])) lastActivity = index
+    if (isCoreActivity(message.parts[index])) { lastCoreActivity = index; break }
   }
-  const hasVisibleActivity = firstActivity >= 0 && (showReasoning && message.parts.some((part) => part.type === 'thinking') || showTools && message.parts.some((part) => part.type === 'toolCall' || part.type === 'toolResult'))
+  const finalNarrative = lastCoreActivity < 0 ? -1 : message.parts.findIndex((part, index) => index > lastCoreActivity && (part.type === 'text' || part.type === 'image'))
+  const workEnd = finalNarrative >= 0 ? finalNarrative : lastActivity + 1
   const before = firstActivity < 0 ? message.parts : message.parts.slice(0, firstActivity)
-  const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, lastActivity + 1)
-  const after = firstActivity < 0 ? [] : message.parts.slice(lastActivity + 1)
+  const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, workEnd)
+  const after = firstActivity < 0 ? [] : message.parts.slice(workEnd)
+  const hasVisibleActivity = work.some((part) => part.type === 'agentMessage' || part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools)
   const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
   const copyableNarrative = hasVisibleActivity ? [...before, ...after] : [...before, ...hiddenMiddleNarrative, ...after]
   const copyableText = copyableNarrative.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')
@@ -103,7 +132,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, git, i
       <div className="message__content">
         {renderNarrative(before, 'before')}
         {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle')}
-        {renderNarrative(after, 'after')}
+        {renderNarrativeWithActivity(after, 'after', showReasoning, showTools)}
         {isLast && git.files.length > 0 && !message.streaming ? <ChangesCard git={git} onOpenChanges={onOpenChanges} /> : null}
         {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div> : null}
         {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
@@ -113,7 +142,20 @@ export const AssistantMessage = memo(function AssistantMessage({ message, git, i
 }, (previous, next) => previous.message === next.message && previous.isLast === next.isLast && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools && (!next.isLast || previous.git === next.git && previous.onOpenChanges === next.onOpenChanges))
 
 export const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
-  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, partIndex) => part.type === 'text' ? <InlineText key={partIndex} text={part.text} /> : null)}</div><MessageActions message={message} /></article>
+  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, index) => part.type === 'text' ? <InlineText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null)}</div><MessageActions message={message} /></article>
+})
+
+export const ActivityMessage = memo(function ActivityMessage({ message }: { message: TranscriptMessage }) {
+  const sourceParts: MessagePart[] = message.role === 'system'
+    ? [
+        { type: 'toolCall', id: message.id, name: 'Prime message' },
+        { type: 'toolResult', name: 'Prime message', text: messageText(message), isError: true },
+      ]
+    : message.parts
+  const parts = sourceParts.flatMap((part, index) => part.type === 'toolResult' && sourceParts[index - 1]?.type !== 'toolCall'
+    ? [{ type: 'toolCall' as const, id: `${message.id}-${index}`, name: part.name ?? 'Tool' }, part]
+    : [part])
+  return <article className="message message--activity"><WorkTimeline parts={parts} showReasoning showTools /></article>
 })
 
 export const AgentMessage = memo(function AgentMessage({ message }: { message: TranscriptMessage }) {

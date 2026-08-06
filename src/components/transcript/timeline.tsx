@@ -8,6 +8,7 @@ import {
   Github,
   Globe2,
   LoaderCircle,
+  MessageCircle,
   MessageCircleQuestion,
   TerminalSquare,
   Wrench,
@@ -111,7 +112,21 @@ function StandaloneToolResult({ part }: { part: Extract<MessagePart, { type: 'to
   return <div className={`activity-line activity-line--result ${part.isError ? 'is-error' : ''}`}><span className="activity-line__icon">{part.isError ? <CircleAlert size={13} /> : <Check size={13} />}</span><span>{boundText(part.text, 2_000, '…')}</span></div>
 }
 
-function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
+function AgentActivityPart({ part }: { part: Extract<MessagePart, { type: 'agentMessage' }> }) {
+  const [open, setOpen] = useState(false)
+  const canExpand = Boolean(part.text)
+  return <div className="activity-line activity-line--agent">
+    <button type="button" className="activity-tool__summary" disabled={!canExpand} onClick={() => setOpen((value) => !value)} aria-expanded={canExpand ? open : undefined}>
+      <span className="activity-line__icon"><MessageCircle size={14} /></span>
+      <span className="activity-line__kind">Message from agent</span>
+      {part.agentName ? <span className="activity-agent__name">{part.agentName}</span> : null}
+      {canExpand ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}
+    </button>
+    {open && part.text ? <div className="activity-agent__details"><MarkdownText text={boundText(part.text, 40_000, '\n… [Agent message truncated in the desktop view.]')} /></div> : null}
+  </div>
+}
+
+export function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
   const pairedResults = new Set<number>()
   return <div className="work-timeline">{parts.map((part, index) => {
     if (part.type === 'toolResult' && pairedResults.has(index)) return null
@@ -123,14 +138,15 @@ function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[
       return <ToolPart key={part.id ?? index} part={part} next={next} />
     }
     if (part.type === 'toolResult') return showTools ? <StandaloneToolResult key={index} part={part} /> : null
+    if (part.type === 'agentMessage') return <AgentActivityPart key={index} part={part} />
     if (part.type === 'text') return <div className="activity-line activity-line--note" key={index}><MarkdownText text={part.text} /></div>
     return null
   })}</div>
 }
 
-export function WorkDisclosure({ message, parts, showReasoning, showTools }: { message: TranscriptMessage; parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
+export function WorkDisclosure({ message, parts, showReasoning, showTools, running = message.streaming }: { message: TranscriptMessage; parts: MessagePart[]; showReasoning: boolean; showTools: boolean; running?: boolean }) {
   const [open, setOpen] = useState(false)
-  if (message.streaming) {
+  if (running) {
     return <section className="work-disclosure is-running" aria-label="Prime work activity"><WorkTimeline parts={parts} showReasoning={showReasoning} showTools={showTools} /><div className="work-disclosure__thinking"><ThinkingDots labelled /></div></section>
   }
   const startedAt = timestamp(message.startedAt ?? message.timestamp) ?? 0

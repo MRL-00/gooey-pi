@@ -184,6 +184,37 @@ describe('SessionService catalog scaling', () => {
   })
 })
 
+describe('SessionService user-message ordering', () => {
+  it('ignores later assistant activity until a new user message is sent', async () => {
+    const { root, project, service, store } = setup()
+    const newerUser = join(root, 'newer-user.jsonl')
+    const olderUser = join(root, 'older-user.jsonl')
+    writeFileSync(newerUser, [
+      JSON.stringify({ type: 'session', id: 'newer-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'message', id: 'newer-user-message', parentId: null, timestamp: '2025-03-01T00:00:00.000Z', message: { role: 'user', content: 'newer prompt' } }),
+      '',
+    ].join('\n'))
+    writeFileSync(olderUser, [
+      JSON.stringify({ type: 'session', id: 'older-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'message', id: 'older-user-message', parentId: null, message: { role: 'user', content: 'older prompt', timestamp: '2025-02-01T00:00:00.000Z' } }),
+      JSON.stringify({ type: 'message', id: 'late-assistant', parentId: 'older-user-message', timestamp: '2025-04-01T00:00:00.000Z', message: { role: 'assistant', content: 'late completion' } }),
+      '',
+    ].join('\n'))
+
+    const first = await service.list()
+    expect(first.map((record) => record.id)).toEqual(['newer-user', 'older-user'])
+    expect(first.map((record) => record.lastUserMessageAt)).toEqual([
+      '2025-03-01T00:00:00.000Z',
+      '2025-02-01T00:00:00.000Z',
+    ])
+
+    appendFileSync(olderUser, `${JSON.stringify({ type: 'message', id: 'follow-up', parentId: 'late-assistant', timestamp: '2025-05-01T00:00:00.000Z', message: { role: 'user', content: 'new follow-up' } })}\n`)
+    const refreshed = new SessionService(store, null)
+    Object.defineProperty(refreshed, 'sessionRoot', { value: root })
+    expect((await refreshed.list()).map((record) => record.id)).toEqual(['older-user', 'newer-user'])
+  })
+})
+
 describe('SessionMetadataCatalog live synchronization', () => {
   it('canonicalizes daemon session paths and never regresses the JSONL update time', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-live-catalog-')); dirs.push(dir)
@@ -377,7 +408,7 @@ describe('SessionService transcript bounds', () => {
     const { root, project, service } = setup()
     const file = join(root, 'large-parts.jsonl')
     const largeArgs = `args-start-${'a'.repeat(300_000)}-args-end`
-    const largeImage = `image-start-${'i'.repeat(600_000)}-image-end`
+    const largeImage = `image-start-${'i'.repeat(3_000_000)}-image-end`
     const largeOutput = `output-start-${'o'.repeat(300_000)}-output-end`
     writeFileSync(file, [
       JSON.stringify({ type: 'session', id: 'large-parts', cwd: project }),
@@ -403,10 +434,11 @@ describe('SessionService transcript bounds', () => {
     expect(typeof call?.args).toBe('string')
     expect((call?.args as string).length).toBeLessThanOrEqual(128 * 1024)
     expect(result?.text.length).toBeLessThanOrEqual(128 * 1024)
-    expect(image?.data?.length).toBeLessThanOrEqual(256 * 1024)
+    expect(image?.data?.length).toBeLessThanOrEqual(2 * 1024 * 1024)
     expect(call?.args).toContain('[truncated]')
     expect(result?.text).toContain('[truncated]')
     expect(image?.data).toContain('[truncated]')
+    expect(image?.dataTruncated).toBe(true)
   })
 
 
@@ -433,6 +465,70 @@ describe('SessionService transcript bounds', () => {
       role: 'agent',
       agentName: 'project-reviewer',
       parts: [{ type: 'text', text: 'Review complete. The project authorization gate was the root cause.' }],
+    })
+  })
+
+  it('nests agent messages inside an assistant work block', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'nested-agent-message.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'nested-agent-message', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Delegate this task' } }),
+      JSON.stringify({ type: 'message', id: 'assistant', parentId: 'root', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Coordinating work' }] } }),
+      JSON.stringify({
+        type: 'custom_message', id: 'handoff', parentId: 'assistant', customType: 'agent_message', display: true,
+        details: { message: 'Review complete.', from: { sessionName: 'project-reviewer' } },
+      }),
+      JSON.stringify({ type: 'message', id: 'continuation', parentId: 'handoff', message: { role: 'assistant', content: 'Continuing after the review.' } }),
+      '',
+    ].join('\n'))
+
+    const transcript = await service.read(file)
+    expect(transcript).toHaveLength(2)
+    expect(transcript[1]).toMatchObject({
+      role: 'assistant',
+      parts: [
+        { type: 'thinking', text: 'Coordinating work' },
+        { type: 'agentMessage', text: 'Review complete.', agentName: 'project-reviewer' },
+        { type: 'text', text: 'Continuing after the review.' },
+      ],
+    })
+  })
+
+  it('keeps late agent activity nested after an assistant final answer', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'late-agent-message.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'late-agent-message', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Delegate this task' } }),
+      JSON.stringify({ type: 'message', id: 'assistant', parentId: 'root', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Work' }, { type: 'text', text: 'Final answer' }] } }),
+      JSON.stringify({ type: 'custom_message', id: 'late', parentId: 'assistant', customType: 'agent_message', display: true, details: { message: 'Late review', from: { sessionName: 'reviewer' } } }),
+      '',
+    ].join('\n'))
+
+    expect((await service.read(file))[1]?.parts).toEqual([
+      { type: 'thinking', text: 'Work' },
+      { type: 'text', text: 'Final answer' },
+      { type: 'agentMessage', text: 'Late review', agentName: 'reviewer' },
+    ])
+  })
+
+  it('maps informational custom messages to tool activity instead of system errors', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'ipython-state.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'ipython-state', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Restore state' } }),
+      JSON.stringify({ type: 'custom_message', id: 'state', parentId: 'root', customType: 'ipython_state_restored', display: true, content: 'Kernel state restored.' }),
+      '',
+    ].join('\n'))
+
+    expect((await service.read(file)).at(-1)).toMatchObject({
+      role: 'tool',
+      parts: [
+        { type: 'toolCall', name: 'IPython State Restored' },
+        { type: 'toolResult', name: 'IPython State Restored', text: 'Kernel state restored.' },
+      ],
     })
   })
 
@@ -632,34 +728,3 @@ process.exit(9)
     expect((await service.list())[0]?.archived).toBe(false)
   })
 })
-describe('SessionService user-message ordering', () => {
-  it('ignores later assistant activity until a new user message is sent', async () => {
-    const { root, project, service, store } = setup()
-    const newerUser = join(root, 'newer-user.jsonl')
-    const olderUser = join(root, 'older-user.jsonl')
-    writeFileSync(newerUser, [
-      JSON.stringify({ type: 'session', id: 'newer-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
-      JSON.stringify({ type: 'message', id: 'newer-user-message', parentId: null, timestamp: '2025-03-01T00:00:00.000Z', message: { role: 'user', content: 'newer prompt' } }),
-      '',
-    ].join('\n'))
-    writeFileSync(olderUser, [
-      JSON.stringify({ type: 'session', id: 'older-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
-      JSON.stringify({ type: 'message', id: 'older-user-message', parentId: null, message: { role: 'user', content: 'older prompt', timestamp: '2025-02-01T00:00:00.000Z' } }),
-      JSON.stringify({ type: 'message', id: 'late-assistant', parentId: 'older-user-message', timestamp: '2025-04-01T00:00:00.000Z', message: { role: 'assistant', content: 'late completion' } }),
-      '',
-    ].join('\n'))
-
-    const first = await service.list()
-    expect(first.map((record) => record.id)).toEqual(['newer-user', 'older-user'])
-    expect(first.map((record) => record.lastUserMessageAt)).toEqual([
-      '2025-03-01T00:00:00.000Z',
-      '2025-02-01T00:00:00.000Z',
-    ])
-
-    appendFileSync(olderUser, `${JSON.stringify({ type: 'message', id: 'follow-up', parentId: 'late-assistant', timestamp: '2025-05-01T00:00:00.000Z', message: { role: 'user', content: 'new follow-up' } })}\n`)
-    const refreshed = new SessionService(store, null)
-    Object.defineProperty(refreshed, 'sessionRoot', { value: root })
-    expect((await refreshed.list()).map((record) => record.id)).toEqual(['older-user', 'newer-user'])
-  })
-})
-

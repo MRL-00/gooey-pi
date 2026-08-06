@@ -1,13 +1,11 @@
 import { useMemo } from 'react'
 import { ChevronRight, FileCode2, LoaderCircle } from 'lucide-react'
-import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
-import { boundText } from '@/lib/render-bounds'
+import type { GitStatus, TranscriptMessage } from '@/types/api'
 import { MarkdownText } from './MarkdownText'
 import { PrimeMark } from './ui'
-import { AgentMessage, AssistantMessage, GoalMessage, UserMessage } from './transcript/messages'
+import { ActivityMessage, AgentMessage, AssistantMessage, GoalMessage, UserMessage } from './transcript/messages'
 import { useTranscriptScroll } from './transcript/scroll'
-import { SyntaxText } from './transcript/syntax'
-import { ThinkingDots } from './transcript/timeline'
+import { ThinkingDots, WorkDisclosure } from './transcript/timeline'
 
 export { classifyTool, formatWorkedDuration } from './transcript/timeline'
 export { tokenizeSyntax } from './transcript/syntax'
@@ -26,46 +24,18 @@ interface TranscriptProps {
 
 const EMPTY_GIT: GitStatus = { isRepo: false, files: [] }
 
-function serialize(value: unknown): string {
-  if (value === undefined) return ''
-  if (typeof value === 'string') return value
-  try { return JSON.stringify(value, null, 2) } catch { return String(value) }
-}
-
 function ActiveAssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
-  const visibleActivity = message.parts.some((part) => part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools)
-  const rendered = new Set<number>()
+  const visibleActivity = message.parts.some((part) => part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools || part.type === 'agentMessage')
   return (
     <article className="message message--assistant">
       <div className="assistant-mark"><PrimeMark size={24} /></div>
       <div className="message__content">
-        {visibleActivity ? <section className="work-disclosure is-running" aria-label="Prime work activity">
-          <div className="work-timeline">{message.parts.map((part, index) => {
-            if (rendered.has(index)) return null
-            if (part.type === 'text') return <div className="activity-line activity-line--note" key={index}><MarkdownText text={part.text} /></div>
-            if (part.type === 'thinking') return showReasoning ? <div className="activity-line activity-line--reasoning" key={index}><MarkdownText text={boundText(part.text, 40_000, '\n… [Reasoning truncated in the desktop view.]')} /></div> : null
-            if (part.type === 'toolCall') {
-              if (!showTools) return null
-              const next = message.parts[index + 1]
-              const result = next?.type === 'toolResult' ? next : undefined
-              if (result) rendered.add(index + 1)
-              const details = boundText(`${serialize(part.args)}${part.args !== undefined && result?.text ? '\n\n' : ''}${result?.text ?? ''}`, 200_000, '\n\n[Output truncated in the desktop view.]')
-              return <div className="activity-line activity-line--tool" key={part.id ?? index}>
-                <button type="button" className="activity-tool__summary" disabled={!details} aria-expanded={details ? true : undefined}>
-                  <span className="activity-line__kind">{part.name}</span>
-                  <span className="activity-tool__state">{result ? 'done' : 'running'}</span>
-                </button>
-                {details ? <pre className="activity-tool__details"><SyntaxText text={details} /></pre> : null}
-              </div>
-            }
-            if (part.type === 'toolResult') return showTools ? <div className={`activity-line activity-line--result ${part.isError ? 'is-error' : ''}`} key={index}>{boundText(part.text, 2_000, '…')}</div> : null
-            return null
-          })}</div>
-          <div className="work-disclosure__thinking"><ThinkingDots labelled /></div>
-        </section> : <>
-          {message.parts.map((part, index) => part.type === 'text' ? <MarkdownText key={index} text={part.text} /> : null)}
-          <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div>
-        </>}
+        {visibleActivity
+          ? <WorkDisclosure message={message} parts={message.parts} showReasoning={showReasoning} showTools={showTools} running />
+          : <>
+            {message.parts.map((part, index) => part.type === 'text' ? <MarkdownText key={index} text={part.text} /> : null)}
+            <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div>
+          </>}
       </div>
     </article>
   )
@@ -107,6 +77,7 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
             : <AssistantMessage key={message.id} message={message} git={EMPTY_GIT} isLast={false} showReasoning={showReasoning} showTools={showTools} onOpenChanges={onOpenChanges} />
           : message.role === 'agent' ? <AgentMessage key={message.id} message={message} />
           : message.role === 'goal' ? <GoalMessage key={message.id} message={message} />
+          : message.role === 'tool' || message.role === 'system' ? <ActivityMessage key={message.id} message={message} />
           : <div className={`message message--${message.role}`} key={message.id}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>)}
         {active && !activeAssistantId ? <article className="message message--assistant transcript-active-placeholder" aria-live="polite">
           <div className="assistant-mark"><PrimeMark size={24} /></div><div className="streaming-state"><ThinkingDots /> Prime is working</div>

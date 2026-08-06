@@ -42,8 +42,8 @@ describe('transcript rendering', () => {
     expect(html).not.toContain('>Reasoning<')
     expect(html).not.toContain('Worked for')
     expect(html).toContain('activity-line--tool')
-    expect(html).toContain('activity-tool__details')
-    expect(html).toContain('aria-expanded="true"')
+    expect(html).not.toContain('activity-tool__details')
+    expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('package.json')
     expect(html).toContain('thinking-dots')
     expect(html.match(/thinking-dots[\s\S]*?<span><\/span><span><\/span><span><\/span>/)).not.toBeNull()
@@ -68,8 +68,8 @@ describe('transcript rendering', () => {
     expect(html).toContain('Explaining the next step.')
     expect(html).toContain('read_file')
     expect(html).toContain('src/App.tsx')
-    expect(html).toContain('read complete')
-    expect(html).toContain('aria-expanded="true"')
+    expect(html).not.toContain('read complete')
+    expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('Prime work activity')
     expect(html).not.toContain('Worked for')
     expect(html).not.toContain('message-actions')
@@ -124,6 +124,20 @@ describe('transcript rendering', () => {
     expect(html).toContain('1 file changed')
   })
 
+  it('renders valid user images and keeps truncated history as a safe placeholder', () => {
+    const html = render([{
+      id: 'user-image', role: 'user', parts: [
+        { type: 'text', text: 'See this' },
+        { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+        { type: 'image', mimeType: 'image/png', data: 'truncated', dataTruncated: true },
+      ],
+    }])
+
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(html).toContain('Image attachment unavailable')
+    expect(html).not.toContain('src="data:image/png;base64,truncated"')
+  })
+
   it('renders goal summaries as collapsed disclosures rather than system errors', () => {
     const html = render([{
       id: 'goal',
@@ -138,4 +152,71 @@ describe('transcript rendering', () => {
     expect(html).not.toContain('Ship the blue goal summary.')
     expect(html).not.toContain('message--system')
   })
+  it('keeps a final answer visible and copyable when an agent message arrives late', () => {
+    const html = render([{
+      id: 'late-agent-message',
+      role: 'assistant',
+      timestamp: 1_000,
+      completedAt: 2_000,
+      parts: [
+        { type: 'thinking', text: 'Earlier reasoning.' },
+        { type: 'text', text: 'The final answer stays visible.' },
+        { type: 'agentMessage', agentName: 'late-reviewer', text: 'Late details.' },
+      ],
+    }])
+
+    expect(html).toContain('The final answer stays visible.')
+    expect(html).toContain('Message from agent')
+    expect(html).toContain('late-reviewer')
+    expect(html).not.toContain('Late details.')
+    expect(html).toContain('aria-label="Copy assistant message"')
+  })
+
+  it('nests agent messages in active work without opening their contents', () => {
+    const html = render([{
+      id: 'active-agent-message',
+      role: 'assistant',
+      streaming: true,
+      parts: [
+        { type: 'thinking', text: '**Coordinating agents**' },
+        { type: 'agentMessage', agentName: 'reviewer', text: 'Detailed child-agent response.' },
+        { type: 'toolCall', id: 'next', name: 'read_file', args: { path: 'src/App.tsx' } },
+      ],
+    }])
+
+    expect(html).toContain('activity-line--agent')
+    expect(html).toContain('Message from agent')
+    expect(html).toContain('reviewer')
+    expect(html).not.toContain('Detailed child-agent response.')
+    expect(html).not.toContain('message--agent')
+    expect(html.match(/aria-expanded="false"/g)).toHaveLength(2)
+  })
+
+  it('renders system failures as compact expandable activity instead of red boxes', () => {
+    const html = render([{ id: 'failure', role: 'system', parts: [{ type: 'text', text: 'Request failed with details.' }] }])
+    expect(html).toContain('message--activity')
+    expect(html).toContain('Prime message')
+    expect(html).toContain('failed')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Request failed with details.')
+    expect(html).not.toContain('message--system')
+  })
+
+  it('renders standalone informational output as a collapsed tool row', () => {
+    const html = render([{
+      id: 'ipython-state',
+      role: 'tool',
+      parts: [
+        { type: 'toolCall', id: 'ipython-state', name: 'IPython state restored' },
+        { type: 'toolResult', name: 'IPython state restored', text: 'Large diagnostic details.' },
+      ],
+    }])
+
+    expect(html).toContain('message--activity')
+    expect(html).toContain('IPython state restored')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Large diagnostic details.')
+    expect(html).not.toContain('message--system')
+  })
+
 })

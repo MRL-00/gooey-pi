@@ -15,6 +15,14 @@ function resultText(value: unknown): string {
   try { return JSON.stringify(value, null, 2) } catch { return String(value) }
 }
 
+function agentMessagePart(raw: Record<string, unknown>): Extract<MessagePart, { type: 'agentMessage' }> | undefined {
+  if (raw.customType !== 'agent_message') return undefined
+  const details = record(raw.details)
+  const from = record(details?.from)
+  const text = string(details?.message) ?? string(raw.content) ?? ''
+  return { type: 'agentMessage', text, agentName: string(from?.sessionName) }
+}
+
 function updateLastAssistant(messages: TranscriptMessage[], updater: (message: TranscriptMessage) => TranscriptMessage): TranscriptMessage[] {
   let index = -1
   for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
@@ -221,6 +229,11 @@ export function replayPrimeEvents(
       }
       continue
     }
+    if (type === 'custom_message') {
+      const part = agentMessagePart(raw)
+      if (part) appendNode(draftParts(assistantIndex()), part)
+      continue
+    }
     if (type === 'agent_end') {
       finalizeStreaming(Date.now(), true)
       continue
@@ -303,6 +316,10 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
     const id = string(raw.toolCallId)
     const name = string(raw.toolName) ?? 'Tool'
     return updateLastAssistant(messages, (message) => ({ ...message, parts: finishTool(message.parts, id, name, raw.result, raw.isError === true) }))
+  }
+  if (type === 'custom_message') {
+    const part = agentMessagePart(raw)
+    return part ? updateLastAssistant(messages, (message) => ({ ...message, parts: [...message.parts, part] })) : messages
   }
   if (type === 'agent_end') {
     const completedAt = Date.now()
