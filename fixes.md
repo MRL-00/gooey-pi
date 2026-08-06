@@ -109,6 +109,7 @@ These logs are the durable coordination record for compaction and handoff.
 ### Section B log — authorization/lifecycle
 
 - Project removal process revocation (commit recorded in final Section B log): `electron/main/projects.ts`, `electron/main/agent-rpc/manager.ts`, `electron/main/terminal.ts`, `electron/main/index.ts`; tests in `tests/backend/project-removal.test.ts`, `tests/backend/agent-rpc.test.ts`, and `tests/backend/terminal.test.ts`. Removal revokes new admission first, then awaits matching runtime and PTY teardown before persistence completes. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/project-removal.test.ts tests/backend/agent-rpc.test.ts tests/backend/terminal.test.ts`.
+- Project MCP directory pinning (commit recorded in final Section B log): `electron/main/plugins.ts`, `electron/main/plugins/mcp.ts`; race test in `tests/backend/plugins.test.ts`. Project, `.prime`, and `agent` identities plus the settings file type are revalidated around locking, reads, temporary writes, fingerprinting, and rename. Focused validation: `npm run typecheck`; `npx vitest run tests/backend/plugins.test.ts`.
 
 ### Section C log — Git/multi-folder
 

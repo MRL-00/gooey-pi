@@ -21,6 +21,11 @@ interface SettingsLockOwner {
 
 type FingerprintSettings = (path: string) => Promise<string>
 
+export interface ProjectSettingsPath {
+  path: string
+  verify(): void
+}
+
 function parseSettingsLockOwner(value: unknown): SettingsLockOwner | null {
   if (!isRecord(value) || value.version !== 1) return null
   if (!Number.isSafeInteger(value.pid) || (value.pid as number) <= 0) return null
@@ -123,14 +128,20 @@ async function recoverStaleSettingsLock(lockPath: string): Promise<(() => Promis
   }
 }
 
-export async function acquireSettingsLock(settingsPath: string): Promise<() => Promise<void>> {
-  await mkdir(dirname(settingsPath), { recursive: true })
+export async function acquireSettingsLock(settingsPath: string, verify?: () => void): Promise<() => Promise<void>> {
+  if (verify) verify()
+  else await mkdir(dirname(settingsPath), { recursive: true })
   const lockPath = `${settingsPath}.lock`
   for (let attempt = 0; attempt < SETTINGS_LOCK_ATTEMPTS; attempt += 1) {
+    verify?.()
     const acquired = await createSettingsLock(lockPath)
-    if (acquired) return acquired
+    if (acquired) {
+      try { verify?.(); return acquired } catch (error) { await acquired(); throw error }
+    }
     const recovered = await recoverStaleSettingsLock(lockPath)
-    if (recovered) return recovered
+    if (recovered) {
+      try { verify?.(); return recovered } catch (error) { await recovered(); throw error }
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, SETTINGS_LOCK_RETRY_MS))
   }
   throw new Error('Prime Agent settings are busy; try again')
@@ -141,6 +152,7 @@ async function writeSettingsAtomically(
   settings: Record<string, unknown>,
   expectedFingerprint: string,
   fingerprint: FingerprintSettings,
+  verify?: () => void,
 ): Promise<boolean> {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
@@ -183,8 +195,15 @@ export function validateMcpConnection(value: unknown): McpConnectionInput {
   throw new TypeError('MCP transport must be http or stdio')
 }
 
-export function prepareProjectSettingsPath(projectPath: string): string {
+export function prepareProjectSettingsPath(projectPath: string): ProjectSettingsPath {
   const projectRoot = realpathSync(projectPath)
+  const pinnedDirectories = new Map<string, { dev: string; ino: string }>()
+  const pin = (path: string): void => {
+    const stat = lstatSync(path, { bigint: true })
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TypeError('Project MCP configuration path must remain a real directory')
+    pinnedDirectories.set(path, { dev: stat.dev.toString(), ino: stat.ino.toString() })
+  }
+  pin(projectRoot)
   let directory = projectRoot
   for (const segment of ['.prime', 'agent']) {
     const candidate = join(directory, segment)
@@ -196,24 +215,39 @@ export function prepareProjectSettingsPath(projectPath: string): string {
     }
     directory = realpathSync(candidate)
     if (!isPathWithin(projectRoot, directory)) throw new TypeError('Project MCP configuration path escapes the project')
+    pin(directory)
   }
   const settingsPath = join(directory, 'settings.json')
-  if (existsSync(settingsPath)) {
-    const stat = lstatSync(settingsPath)
-    if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError('Project MCP settings must be a regular file')
+  const verify = (): void => {
+    for (const [path, expected] of pinnedDirectories) {
+      let stat
+      try { stat = lstatSync(path, { bigint: true }) } catch { throw new TypeError('Project MCP configuration directory changed during update') }
+      if (stat.isSymbolicLink() || !stat.isDirectory() || stat.dev.toString() !== expected.dev || stat.ino.toString() !== expected.ino) {
+        throw new TypeError('Project MCP configuration directory changed during update')
+      }
+    }
+    if (existsSync(settingsPath)) {
+      const stat = lstatSync(settingsPath)
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError('Project MCP settings must be a regular file')
+    }
   }
-  return settingsPath
+  verify()
+  return { path: settingsPath, verify }
 }
 
 export async function updateMcpSettings(
-  settingsPath: string,
+  target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
 ): Promise<{ ok: boolean; output: string }> {
-  const release = await acquireSettingsLock(settingsPath)
+  const settingsPath = typeof target === 'string' ? target : target.path
+  const verify = typeof target === 'string' ? undefined : target.verify
+  const release = await acquireSettingsLock(settingsPath, verify)
   try {
     for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      verify?.()
       const snapshot = await readSettingsForUpdate(settingsPath)
+      verify?.()
       const settings = snapshot.settings
       if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
       const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
@@ -224,7 +258,7 @@ export async function updateMcpSettings(
         ? { type: 'http', url: input.url, enabled: true }
         : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
       settings.mcpServers = { ...currentServers, [input.name]: config }
-      if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, fingerprint)) {
+      if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, fingerprint, verify)) {
         return { ok: true, output: `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
       }
     }

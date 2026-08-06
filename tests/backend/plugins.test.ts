@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -194,6 +194,38 @@ describe('PluginService MCP connections', () => {
       name: 'escaped', scope: 'project', projectPath: project, type: 'http', url: 'http://127.0.0.1:3333/mcp',
     })).rejects.toThrow(/real directory/)
     expect(() => readFileSync(join(outside, 'agent', 'settings.json'))).toThrow()
+  })
+
+  it('fails closed when the project MCP directory is substituted during an update', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const displacedAgentDir = join(project, '.prime', 'agent-original')
+    const outside = join(root, 'outside')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true }); mkdirSync(outside)
+    const settingsPath = join(projectAgentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+    const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
+    const original = internal.settingsFingerprint.bind(service)
+    let substituted = false
+    internal.settingsFingerprint = async (path) => {
+      if (!substituted) {
+        substituted = true
+        renameSync(projectAgentDir, displacedAgentDir)
+        symlinkSync(outside, projectAgentDir, 'dir')
+      }
+      return original(path)
+    }
+
+    await expect(service.connectMcp({
+      name: 'escaped', scope: 'project', projectPath: project, type: 'stdio', command: 'safe-command',
+    })).rejects.toThrow(/configuration directory changed/)
+
+    expect(substituted).toBe(true)
+    expect(() => readFileSync(join(outside, 'settings.json'))).toThrow()
+    expect(JSON.parse(readFileSync(join(displacedAgentDir, 'settings.json'), 'utf8')).mcpServers).toBeUndefined()
   })
 
   it('rejects credentialed URLs and refuses to overwrite an existing server', async () => {

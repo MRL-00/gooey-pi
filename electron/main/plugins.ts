@@ -5,6 +5,7 @@ import type { SkillRecord } from '../../src/types/api'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
+import type { ProjectSettingsPath } from './plugins/mcp'
 import { executePackageInstall, validatePackageSource } from './plugins/package-execution'
 
 type PluginDiscovery = typeof discoverPlugins
@@ -106,16 +107,16 @@ export class PluginService {
 
   async connectMcp(inputValue: unknown): Promise<{ ok: boolean; output: string }> {
     const input = validateMcpConnection(inputValue)
-    let settingsPath: string
+    let settingsTarget: string | ProjectSettingsPath
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsPath = prepareProjectSettingsPath(projectPath)
+      settingsTarget = prepareProjectSettingsPath(projectPath)
     } else {
-      settingsPath = join(this.agentDir, 'settings.json')
+      settingsTarget = join(this.agentDir, 'settings.json')
     }
 
-    const mutation = this.settingsMutation.then(() => updateMcpSettings(settingsPath, input, (path) => this.settingsFingerprint(path)))
+    const mutation = this.settingsMutation.then(() => updateMcpSettings(settingsTarget, input, (path) => this.settingsFingerprint(path)))
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
   }
