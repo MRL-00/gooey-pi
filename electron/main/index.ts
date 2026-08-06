@@ -160,7 +160,9 @@ async function bootstrap(): Promise<void> {
   const sessions = new SessionService(store, executable)
   const projects = new ProjectService(store, () => mainWindow)
   const git = new GitService((cwd) => projects.authorizeCwd(cwd))
-  projects.bindProviders({ sessions: () => sessions.list(undefined, true), branch: (cwd) => git.branch(cwd) })
+  // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
+  const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
+  projects.bindProviders({ sessions: listCatalogSessions, branch: (cwd) => git.branch(cwd) })
 
   agents = new AgentRpcManager(executable, (cwd) => projects.authorizeCwd(cwd), (path) => sessions.requireSessionPath(path))
   sessions.bindRuntimeHooks({

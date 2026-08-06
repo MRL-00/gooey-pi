@@ -17,4 +17,13 @@ describe('StrictJsonlDecoder', () => {
     const decoder = new StrictJsonlDecoder(() => undefined, 8)
     expect(() => decoder.push('123456789')).toThrow(/maximum frame size/)
   })
+
+  it('assembles highly fragmented records without repeatedly copying the buffered prefix', () => {
+    const lines: string[] = []
+    const decoder = new StrictJsonlDecoder((line) => lines.push(line), 100_000)
+    for (let index = 0; index < 50_000; index += 1) decoder.push('x')
+    decoder.push('\n')
+    decoder.end()
+    expect(lines).toEqual(['x'.repeat(50_000)])
+  })
 })

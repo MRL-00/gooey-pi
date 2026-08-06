@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, type Stats } from 'node:fs'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -12,16 +12,51 @@ type JsonRecord = Record<string, unknown>
 
 interface RuntimeSessionState { isStreaming: boolean }
 interface SessionMetadata extends SessionRecord { sessionName?: string }
+interface SessionFileCandidate { filePath: string; fileStat: Stats; fingerprint: string }
 
-function textFromContent(content: unknown): string {
-  if (typeof content === 'string') return content
+const MAX_SESSION_FILES = 5_000
+const MAX_TRANSCRIPT_RECORD_BYTES = 8 * 1024 * 1024
+const MAX_TRANSCRIPT_GRAPH_BYTES = 16 * 1024 * 1024
+const MAX_TRANSCRIPT_GRAPH_RECORDS = 10_000
+const MAX_TRANSCRIPT_MESSAGES = 400
+const MAX_TRANSCRIPT_PARTS = 2_000
+const MAX_TRANSCRIPT_TEXT_CHARS = 1024 * 1024
+const MAX_TRANSCRIPT_TOOL_CHARS = 512 * 1024
+const MAX_TRANSCRIPT_ARGS_CHARS = 256 * 1024
+const MAX_TRANSCRIPT_IMAGE_CHARS = 512 * 1024
+const MAX_PART_TEXT_CHARS = 256 * 1024
+const MAX_PART_TOOL_CHARS = 128 * 1024
+const MAX_PART_ARGS_CHARS = 128 * 1024
+const MAX_PART_IMAGE_CHARS = 256 * 1024
+const MAX_PARTS_PER_RECORD = 200
+const TRUNCATION_MARKER = '\n… [truncated] …\n'
+
+function boundedString(value: string, max: number): string {
+  if (max <= 0) return ''
+  if (value.length <= max) return value
+  if (max <= TRUNCATION_MARKER.length) return value.slice(-max)
+  const available = max - TRUNCATION_MARKER.length
+  const head = Math.floor(available / 3)
+  return `${value.slice(0, head)}${TRUNCATION_MARKER}${value.slice(-(available - head))}`
+}
+
+function comparePaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function textFromContent(content: unknown, max = MAX_PART_TEXT_CHARS): string {
+  if (typeof content === 'string') return boundedString(content, max)
   if (!Array.isArray(content)) return ''
-  return content.map((part) => {
-    if (!isRecord(part)) return ''
-    if (part.type === 'text' && typeof part.text === 'string') return part.text
-    if (part.type === 'thinking' && typeof part.thinking === 'string') return part.thinking
-    return ''
-  }).filter(Boolean).join('\n')
+  let text = ''
+  for (const part of content) {
+    if (!isRecord(part)) continue
+    const addition = part.type === 'text' && typeof part.text === 'string' ? part.text
+      : part.type === 'thinking' && typeof part.thinking === 'string' ? part.thinking : ''
+    if (!addition) continue
+    text += `${text ? '\n' : ''}${addition}`
+    if (text.length > max) return boundedString(text, max)
+  }
+  return text
 }
 
 function compactText(value: string, max = 160): string {
@@ -43,34 +78,110 @@ function roleOf(message: JsonRecord): TranscriptMessage['role'] {
   }
 }
 
+function boundedArgs(value: unknown): unknown {
+  if (value === undefined) return undefined
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    return serialized.length <= MAX_PART_ARGS_CHARS ? value : boundedString(serialized, MAX_PART_ARGS_CHARS)
+  } catch { return '[unserializable arguments]' }
+}
+
 function partsFromMessage(message: JsonRecord): MessagePart[] {
   const content = message.content
-  if (typeof content === 'string') return [{ type: 'text', text: content }]
   const parts: MessagePart[] = []
-  if (Array.isArray(content)) {
-    for (const raw of content) {
+  if (typeof content === 'string') parts.push({ type: 'text', text: boundedString(content, MAX_PART_TEXT_CHARS) })
+  else if (Array.isArray(content)) {
+    const selected = content.length <= MAX_PARTS_PER_RECORD ? content : [...content.slice(0, 20), ...content.slice(-(MAX_PARTS_PER_RECORD - 20))]
+    for (const raw of selected) {
       if (!isRecord(raw) || typeof raw.type !== 'string') continue
-      if (raw.type === 'text' && typeof raw.text === 'string') parts.push({ type: 'text', text: raw.text })
-      else if (raw.type === 'thinking' && typeof raw.thinking === 'string') parts.push({ type: 'thinking', text: raw.thinking })
+      if (raw.type === 'text' && typeof raw.text === 'string') parts.push({ type: 'text', text: boundedString(raw.text, MAX_PART_TEXT_CHARS) })
+      else if (raw.type === 'thinking' && typeof raw.thinking === 'string') parts.push({ type: 'thinking', text: boundedString(raw.thinking, MAX_PART_TEXT_CHARS) })
       else if ((raw.type === 'toolCall' || raw.type === 'tool_call') && typeof raw.name === 'string') {
-        parts.push({ type: 'toolCall', id: typeof raw.id === 'string' ? raw.id : undefined, name: raw.name, args: raw.arguments ?? raw.args })
+        parts.push({
+          type: 'toolCall',
+          id: typeof raw.id === 'string' ? boundedString(raw.id, 1_024) : undefined,
+          name: boundedString(raw.name, 512),
+          args: boundedArgs(raw.arguments ?? raw.args),
+        })
       } else if (raw.type === 'image') {
         parts.push({
           type: 'image',
-          mimeType: typeof raw.mimeType === 'string' ? raw.mimeType : undefined,
-          data: typeof raw.data === 'string' && raw.data.length <= 16 * 1024 * 1024 ? raw.data : undefined,
+          mimeType: typeof raw.mimeType === 'string' ? boundedString(raw.mimeType, 128) : undefined,
+          data: typeof raw.data === 'string' ? boundedString(raw.data, MAX_PART_IMAGE_CHARS) : undefined,
         })
       }
     }
   }
   if (message.role === 'toolResult' || message.role === 'tool') {
     const text = parts.filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text').map((part) => part.text).join('\n')
-    return [{ type: 'toolResult', name: typeof message.toolName === 'string' ? message.toolName : undefined, text, isError: message.isError === true }]
+    return [{
+      type: 'toolResult',
+      name: typeof message.toolName === 'string' ? boundedString(message.toolName, 512) : undefined,
+      text: boundedString(text, MAX_PART_TOOL_CHARS),
+      isError: message.isError === true,
+    }]
   }
   if (message.role === 'bashExecution') {
-    return [{ type: 'toolResult', name: 'bash', text: typeof message.output === 'string' ? message.output : '', isError: typeof message.exitCode === 'number' && message.exitCode !== 0 }]
+    return [{
+      type: 'toolResult',
+      name: 'bash',
+      text: typeof message.output === 'string' ? boundedString(message.output, MAX_PART_TOOL_CHARS) : '',
+      isError: typeof message.exitCode === 'number' && message.exitCode !== 0,
+    }]
   }
   return parts.length ? parts : [{ type: 'text', text: '' }]
+}
+
+function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[] {
+  let textBudget = MAX_TRANSCRIPT_TEXT_CHARS
+  let toolBudget = MAX_TRANSCRIPT_TOOL_CHARS
+  let argsBudget = MAX_TRANSCRIPT_ARGS_CHARS
+  let imageBudget = MAX_TRANSCRIPT_IMAGE_CHARS
+  let partBudget = MAX_TRANSCRIPT_PARTS
+  const bounded: TranscriptMessage[] = []
+
+  for (const message of transcript.slice(-MAX_TRANSCRIPT_MESSAGES).reverse()) {
+    const parts: MessagePart[] = []
+    for (const part of [...message.parts].reverse()) {
+      if (partBudget <= 0) break
+      let next: MessagePart | undefined
+      if (part.type === 'text' || part.type === 'thinking') {
+        if (textBudget > 0) {
+          const text = boundedString(part.text, textBudget)
+          textBudget -= text.length
+          next = { ...part, text }
+        }
+      } else if (part.type === 'toolResult') {
+        if (toolBudget > 0) {
+          const text = boundedString(part.text, toolBudget)
+          toolBudget -= text.length
+          next = { ...part, text }
+        }
+      } else if (part.type === 'toolCall') {
+        let args: unknown
+        if (part.args !== undefined && argsBudget > 0) {
+          const serialized = typeof part.args === 'string' ? part.args : JSON.stringify(part.args)
+          if (serialized.length <= argsBudget) args = part.args
+          else args = boundedString(serialized, argsBudget)
+          argsBudget -= Math.min(serialized.length, argsBudget)
+        }
+        next = { ...part, args }
+      } else {
+        let data: string | undefined
+        if (part.data && imageBudget > 0) {
+          data = boundedString(part.data, imageBudget)
+          imageBudget -= data.length
+        }
+        next = { ...part, data }
+      }
+      if (next) {
+        parts.push(next)
+        partBudget -= 1
+      }
+    }
+    if (parts.length) bounded.push({ ...message, parts: parts.reverse() })
+  }
+  return bounded.reverse()
 }
 
 function statusFrom(taskState: string | undefined, lifecycle: string | undefined, lastRole: string | undefined, stopReason: string | undefined): SessionStatus {
@@ -104,8 +215,15 @@ export class SessionService {
   private renameRuntimeSession: (filePath: string, title: string) => Promise<boolean> = async () => false
   private catalogCache: { expiresAt: number; sessions: Map<string, JsonRecord> } | null = null
   private catalogRequest: Promise<Map<string, JsonRecord>> | null = null
+  private sessionScanRequest: Promise<SessionMetadata[]> | null = null
+  private readonly metadataCache = new Map<string, SessionMetadata>()
+  private readonly metadataRequests = new Map<string, Promise<SessionMetadata>>()
 
-  constructor(private readonly store: JsonStateStore, private readonly primeAgentPath: string | null) {}
+  constructor(
+    private readonly store: JsonStateStore,
+    private readonly primeAgentPath: string | null,
+    private readonly maxSessionFiles = MAX_SESSION_FILES,
+  ) {}
 
   bindRuntimeHooks(hooks: {
     get(filePath: string): RuntimeSessionState | undefined
@@ -119,28 +237,90 @@ export class SessionService {
 
   async list(projectPath?: string, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
     const includeArchived = requireBoolean(includeArchivedValue, 'includeArchived')
-    let names: string[]
-    try { names = (await readdir(this.sessionRoot)).filter((name) => name.endsWith('.jsonl') && !name.startsWith('.')).slice(0, 5_000) } catch { return [] }
-    const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
     const project = projectPath ? resolve(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
-    const catalog = await this.liveCatalog()
-    const sessions = await mapLimit(names, 6, async (name) => {
-      let filePath: string
-      try { filePath = await realpath(join(this.sessionRoot, name)) } catch { return null }
-      const isArchived = archived.has(resolve(filePath))
-      if (isArchived && !includeArchived) return null
+    const sessions = await this.allSessionMetadata()
+    const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
+    const records: SessionRecord[] = []
+    for (const original of sessions) {
+      const metadata = { ...original }
+      const isArchived = archived.has(resolve(metadata.filePath))
+      if ((isArchived && !includeArchived) || (project && resolve(metadata.projectPath) !== project)) continue
+      const runtime = this.runtimeForSession(metadata.filePath)
+      if (runtime) metadata.status = runtime.isStreaming ? 'running' : 'idle'
+      const { sessionName: _sessionName, ...record } = metadata
+      records.push({ ...record, archived: isArchived })
+    }
+    return records.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || comparePaths(a.filePath, b.filePath))
+  }
+
+  private async allSessionMetadata(): Promise<SessionMetadata[]> {
+    if (this.sessionScanRequest) return this.sessionScanRequest
+    const request = this.scanSessionMetadata()
+    this.sessionScanRequest = request
+    try { return await request } finally {
+      if (this.sessionScanRequest === request) this.sessionScanRequest = null
+    }
+  }
+
+  private async scanSessionMetadata(): Promise<SessionMetadata[]> {
+    let names: string[]
+    let root: string
+    try {
+      [names, root] = await Promise.all([
+        readdir(this.sessionRoot).then((items) => items.filter((name) => name.endsWith('.jsonl') && !name.startsWith('.'))),
+        realpath(this.sessionRoot),
+      ])
+    } catch { return [] }
+
+    const discovered = await mapLimit(names, 32, async (name): Promise<SessionFileCandidate | null> => {
       try {
-        const metadata = await this.readMetadata(filePath)
-        if (project && resolve(metadata.projectPath) !== project) return null
-        const live = catalog.get(resolve(filePath))
-        if (live) this.applyLiveMetadata(metadata, live)
-        const runtime = this.runtimeForSession(filePath)
-        if (runtime) metadata.status = runtime.isStreaming ? 'running' : 'idle'
-        const { sessionName: _sessionName, ...record } = metadata
-        return { ...record, archived: isArchived }
+        const filePath = await realpath(join(root, name))
+        if (!isPathWithin(root, filePath)) return null
+        const fileStat = await stat(filePath)
+        if (!fileStat.isFile()) return null
+        return { filePath, fileStat, fingerprint: `${filePath}\0${fileStat.mtimeMs}\0${fileStat.size}` }
       } catch { return null }
     })
-    return sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    const byCanonicalPath = new Map<string, SessionFileCandidate>()
+    for (const candidate of discovered) byCanonicalPath.set(candidate.filePath, candidate)
+    const selected = [...byCanonicalPath.values()]
+      .sort((a, b) => b.fileStat.mtimeMs - a.fileStat.mtimeMs || comparePaths(a.filePath, b.filePath))
+      .slice(0, this.maxSessionFiles)
+    const activeFingerprints = new Set(selected.map((candidate) => candidate.fingerprint))
+    for (const fingerprint of this.metadataCache.keys()) {
+      if (!activeFingerprints.has(fingerprint)) this.metadataCache.delete(fingerprint)
+    }
+
+    const catalogPromise = this.liveCatalog()
+    const metadata = await mapLimit(selected, 6, async (candidate) => {
+      try { return await this.cachedMetadata(candidate) } catch { return null }
+    })
+    const catalog = await catalogPromise
+    return metadata.map((original) => {
+      const item = { ...original }
+      const live = catalog.get(resolve(item.filePath))
+      if (live) this.applyLiveMetadata(item, live)
+      return item
+    })
+  }
+
+  private async cachedMetadata(candidate: SessionFileCandidate): Promise<SessionMetadata> {
+    const cached = this.metadataCache.get(candidate.fingerprint)
+    if (cached) return { ...cached }
+    const inFlight = this.metadataRequests.get(candidate.fingerprint)
+    if (inFlight) return { ...await inFlight }
+    const request = this.readMetadata(candidate.filePath, candidate.fileStat)
+    this.metadataRequests.set(candidate.fingerprint, request)
+    try {
+      const metadata = await request
+      const current = await stat(candidate.filePath)
+      if (current.mtimeMs === candidate.fileStat.mtimeMs && current.size === candidate.fileStat.size) {
+        this.metadataCache.set(candidate.fingerprint, metadata)
+      }
+      return { ...metadata }
+    } finally {
+      if (this.metadataRequests.get(candidate.fingerprint) === request) this.metadataRequests.delete(candidate.fingerprint)
+    }
   }
 
   async projectPaths(): Promise<string[]> {
@@ -151,18 +331,32 @@ export class SessionService {
   async read(filePath: string): Promise<TranscriptMessage[]> {
     const safePath = await this.requireSessionPath(filePath)
     if ((await stat(safePath)).size > 256 * 1024 * 1024) throw new Error('Session transcript is too large to display')
-    const entries = new Map<string, { id: string; parentId: string | null; entry: JsonRecord }>()
+    const entries = new Map<string, { id: string; parentId: string | null; entry: JsonRecord; bytes: number }>()
+    let graphBytes = 0
     let leafId: string | null = null
     let recordCount = 0
-    for await (const line of strictJsonLines(createReadStream(safePath))) {
+    for await (const line of strictJsonLines(createReadStream(safePath), MAX_TRANSCRIPT_RECORD_BYTES)) {
       if (!line) continue
       if (++recordCount > 200_000) throw new Error('Session transcript has too many records')
       let entry: unknown
       try { entry = JSON.parse(line) } catch { continue }
       if (!isRecord(entry) || entry.type === 'session' || typeof entry.id !== 'string') continue
       const parentId = typeof entry.parentId === 'string' ? entry.parentId : null
-      entries.set(entry.id, { id: entry.id, parentId, entry })
+      const existing = entries.get(entry.id)
+      if (existing) {
+        graphBytes -= existing.bytes
+        entries.delete(entry.id)
+      }
+      const bytes = Buffer.byteLength(line, 'utf8')
+      entries.set(entry.id, { id: entry.id, parentId, entry, bytes })
+      graphBytes += bytes
       leafId = entry.id
+      while (entries.size > MAX_TRANSCRIPT_GRAPH_RECORDS || graphBytes > MAX_TRANSCRIPT_GRAPH_BYTES) {
+        const oldestId = entries.keys().next().value as string | undefined
+        if (oldestId === undefined) break
+        graphBytes -= entries.get(oldestId)?.bytes ?? 0
+        entries.delete(oldestId)
+      }
     }
     const branch: Array<{ id: string; entry: JsonRecord }> = []
     const visited = new Set<string>()
@@ -177,18 +371,26 @@ export class SessionService {
     const transcript: TranscriptMessage[] = []
     let activeAssistant: TranscriptMessage | undefined
     for (const { id, entry } of branch) {
+      const safeId = boundedString(id, 1_024)
       if (entry.type === 'custom_message') {
         const text = textFromContent(entry.content)
-        transcript.push({ id, role: 'system', timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : undefined, parts: [{ type: 'text', text }] })
+        transcript.push({
+          id: safeId,
+          role: 'system',
+          timestamp: typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined,
+          parts: [{ type: 'text', text }],
+        })
         activeAssistant = undefined
         continue
       }
       const message = isRecord(entry.message) ? entry.message : {}
       const role = roleOf(message)
-      const timestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp : typeof entry.timestamp === 'string' ? entry.timestamp : undefined
+      const rawTimestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp
+        : typeof entry.timestamp === 'string' ? entry.timestamp : undefined
+      const timestamp = typeof rawTimestamp === 'string' ? boundedString(rawTimestamp, 128) : rawTimestamp
       const parts = partsFromMessage(message)
       if (role === 'tool' && activeAssistant) {
-        const toolCallId = typeof message.toolCallId === 'string' ? message.toolCallId : undefined
+        const toolCallId = typeof message.toolCallId === 'string' ? boundedString(message.toolCallId, 1_024) : undefined
         const callIndex = toolCallId ? activeAssistant.parts.findIndex((part) => part.type === 'toolCall' && part.id === toolCallId) : -1
         if (callIndex >= 0) activeAssistant.parts.splice(callIndex + 1, 0, ...parts)
         else activeAssistant.parts.push(...parts)
@@ -200,17 +402,17 @@ export class SessionService {
           activeAssistant.parts.push(...parts)
           activeAssistant.timestamp = timestamp ?? activeAssistant.timestamp
         } else {
-          activeAssistant = { id, role, timestamp, parts }
+          activeAssistant = { id: safeId, role, timestamp, parts }
           transcript.push(activeAssistant)
         }
         continue
       }
-      const item: TranscriptMessage = { id, role, timestamp, parts }
+      const item: TranscriptMessage = { id: safeId, role, timestamp, parts }
       transcript.push(item)
       activeAssistant = undefined
     }
     if (this.runtimeForSession(safePath)?.isStreaming && activeAssistant) activeAssistant.streaming = true
-    return transcript
+    return boundedTranscript(transcript)
   }
 
   async rename(filePath: string, title: string): Promise<boolean> {
@@ -283,8 +485,8 @@ export class SessionService {
     }
   }
 
-  private async readMetadata(filePath: string): Promise<SessionMetadata> {
-    const fileStat = await stat(filePath)
+  private async readMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
+    const fileStat = knownStat ?? await stat(filePath)
     if (fileStat.size > 256 * 1024 * 1024) throw new Error('Session file is too large')
     const fallbackCreated = fileStat.birthtime.toISOString()
     const fallbackUpdated = fileStat.mtime.toISOString()
@@ -329,7 +531,7 @@ export class SessionService {
         const message = value.message
         if (typeof message.role === 'string') lastRole = message.role
         if (typeof message.stopReason === 'string') stopReason = message.stopReason
-        const text = textFromContent(message.content)
+        const text = textFromContent(message.content, 4_096)
         if (message.role === 'user' && !firstUser && text) firstUser = text
         if ((message.role === 'assistant' || message.role === 'user') && text) preview = text
       }

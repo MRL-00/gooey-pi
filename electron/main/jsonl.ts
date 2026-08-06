@@ -3,54 +3,85 @@ import { StringDecoder } from 'node:string_decoder'
 
 const MAX_UNFRAMED_BYTES = 64 * 1024 * 1024
 
+class FragmentedLineBuffer {
+  private fragments: string[] = []
+  private bytes = 0
+
+  constructor(private readonly maxUnframedBytes: number, private readonly recordName: string) {}
+
+  append(fragment: string): void {
+    if (!fragment) return
+    const bytes = Buffer.byteLength(fragment, 'utf8')
+    if (this.bytes + bytes > this.maxUnframedBytes) this.tooLarge()
+    this.fragments.push(fragment)
+    this.bytes += bytes
+  }
+
+  takeLine(fragment: string): string {
+    const fragmentBytes = Buffer.byteLength(fragment, 'utf8')
+    const totalBytes = this.bytes + fragmentBytes
+    // A CR immediately before LF is framing, so it does not count toward the record limit.
+    if (totalBytes > this.maxUnframedBytes + 1) this.tooLarge()
+    if (fragment) this.fragments.push(fragment)
+    const line = this.fragments.join('')
+    this.fragments = []
+    this.bytes = 0
+    const framed = line.endsWith('\r') ? line.slice(0, -1) : line
+    if (totalBytes - Number(line.endsWith('\r')) > this.maxUnframedBytes) this.tooLarge()
+    return framed
+  }
+
+  finish(): string | undefined {
+    if (!this.fragments.length) return undefined
+    const line = this.fragments.join('')
+    this.fragments = []
+    this.bytes = 0
+    return line.endsWith('\r') ? line.slice(0, -1) : line
+  }
+
+  private tooLarge(): never { throw new Error(`${this.recordName} record exceeded the maximum frame size`) }
+}
+
+function* decodedLines(text: string, buffer: FragmentedLineBuffer): Generator<string> {
+  let start = 0
+  while (true) {
+    const index = text.indexOf('\n', start)
+    if (index < 0) break
+    yield buffer.takeLine(text.slice(start, index))
+    start = index + 1
+  }
+  buffer.append(text.slice(start))
+}
+
 /** Strict JSONL parser: only LF is a delimiter; U+2028/U+2029 stay inside JSON strings. */
 export async function* strictJsonLines(stream: Readable, maxUnframedBytes = MAX_UNFRAMED_BYTES): AsyncGenerator<string> {
   const decoder = new StringDecoder('utf8')
-  let buffer = ''
+  const buffer = new FragmentedLineBuffer(maxUnframedBytes, 'JSONL')
   for await (const raw of stream) {
-    buffer += typeof raw === 'string' ? raw : decoder.write(raw as Buffer)
-    if (Buffer.byteLength(buffer, 'utf8') > maxUnframedBytes && !buffer.includes('\n')) {
-      throw new Error('JSONL record exceeded the maximum frame size')
-    }
-    while (true) {
-      const index = buffer.indexOf('\n')
-      if (index < 0) break
-      let line = buffer.slice(0, index)
-      buffer = buffer.slice(index + 1)
-      if (line.endsWith('\r')) line = line.slice(0, -1)
-      if (Buffer.byteLength(line, 'utf8') > maxUnframedBytes) throw new Error('JSONL record exceeded the maximum frame size')
-      yield line
-    }
+    const decoded = typeof raw === 'string' ? raw : decoder.write(raw as Buffer)
+    for (const line of decodedLines(decoded, buffer)) yield line
   }
-  buffer += decoder.end()
-  if (buffer) yield buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer
+  buffer.append(decoder.end())
+  const finalLine = buffer.finish()
+  if (finalLine !== undefined) yield finalLine
 }
 
 export class StrictJsonlDecoder {
   private readonly decoder = new StringDecoder('utf8')
-  private buffer = ''
-  constructor(private readonly onLine: (line: string) => void, private readonly maxUnframedBytes = MAX_UNFRAMED_BYTES) {}
+  private readonly buffer: FragmentedLineBuffer
+
+  constructor(private readonly onLine: (line: string) => void, maxUnframedBytes = MAX_UNFRAMED_BYTES) {
+    this.buffer = new FragmentedLineBuffer(maxUnframedBytes, 'RPC')
+  }
 
   push(chunk: Buffer | string): void {
-    this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk)
-    if (Buffer.byteLength(this.buffer, 'utf8') > this.maxUnframedBytes && !this.buffer.includes('\n')) {
-      throw new Error('RPC record exceeded the maximum frame size')
-    }
-    while (true) {
-      const index = this.buffer.indexOf('\n')
-      if (index < 0) break
-      let line = this.buffer.slice(0, index)
-      this.buffer = this.buffer.slice(index + 1)
-      if (line.endsWith('\r')) line = line.slice(0, -1)
-      if (Buffer.byteLength(line, 'utf8') > this.maxUnframedBytes) throw new Error('RPC record exceeded the maximum frame size')
-      if (line) this.onLine(line)
-    }
-    if (Buffer.byteLength(this.buffer, 'utf8') > this.maxUnframedBytes) throw new Error('RPC record exceeded the maximum frame size')
+    const decoded = typeof chunk === 'string' ? chunk : this.decoder.write(chunk)
+    for (const line of decodedLines(decoded, this.buffer)) if (line) this.onLine(line)
   }
 
   end(): void {
-    this.buffer += this.decoder.end()
-    if (this.buffer) this.onLine(this.buffer.endsWith('\r') ? this.buffer.slice(0, -1) : this.buffer)
-    this.buffer = ''
+    this.buffer.append(this.decoder.end())
+    const finalLine = this.buffer.finish()
+    if (finalLine !== undefined) this.onLine(finalLine)
   }
 }
