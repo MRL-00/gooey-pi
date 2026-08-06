@@ -15,6 +15,7 @@ import { useExtensionUi } from '@/hooks/useExtensionUi'
 import { INSPECTOR_DEFAULT, INSPECTOR_MIN, TERMINAL_DEFAULT, TERMINAL_MIN, usePanelLayout } from '@/hooks/usePanelLayout'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
+import { useStableCallback } from '@/hooks/useStableCallback'
 import type { GitStatus, McpConnectionInput, ProjectRecord, ScheduleRecord, SessionRecord, SkillRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -317,6 +318,18 @@ export default function App() {
   const openBrowser = () => { if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false); setView('session'); settingsState.selectInspectorTab('browser'); if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true }) }
   const openChanges = () => { if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false); settingsState.selectInspectorTab('changes'); if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true }) }
 
+  // Transcript deltas rerender App on each animation frame. Keep the navigation
+  // contract referentially stable so Sidebar's memo boundary can reject them.
+  const sidebarSelectProject = useStableCallback(selectProject)
+  const sidebarSelectSession = useStableCallback(selectSession)
+  const sidebarNavigate = useStableCallback(navigate)
+  const sidebarNewSession = useStableCallback(newSession)
+  const sidebarAddProject = useStableCallback(() => { void addProject() })
+  const sidebarClose = useStableCallback(toggleSidebar)
+  const sidebarOpenPalette = useStableCallback(() => setPaletteOpen(true))
+  const sidebarRenameSession = useStableCallback(renameSession)
+  const sidebarArchiveSession = useStableCallback((session: SessionRecord) => setSessionArchived(session, true))
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (document.querySelector('.modal[role="dialog"][aria-modal="true"]')) { if (event.metaKey || event.ctrlKey) event.preventDefault(); return }
@@ -344,7 +357,7 @@ export default function App() {
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
-    {settingsState.sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} onSelectProject={selectProject} onSelectSession={selectSession} onNavigate={navigate} onNewSession={newSession} onAddProject={() => void addProject()} onClose={toggleSidebar} onOpenPalette={() => setPaletteOpen(true)} onRenameSession={renameSession} onArchiveSession={(session) => setSessionArchived(session, true)} overlay={layout.compactLayout} /> : null}
+    {settingsState.sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} onSelectProject={sidebarSelectProject} onSelectSession={sidebarSelectSession} onNavigate={sidebarNavigate} onNewSession={sidebarNewSession} onAddProject={sidebarAddProject} onClose={sidebarClose} onOpenPalette={sidebarOpenPalette} onRenameSession={sidebarRenameSession} onArchiveSession={sidebarArchiveSession} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
       <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={settingsState.terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
