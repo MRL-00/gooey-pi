@@ -709,7 +709,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toContainText('Question 2 of 2')
 
     await dialog.getByRole('option', { name: 'Other (type your own answer)' }).click()
-    await dialog.getByRole('textbox', { name: 'Other answer' }).fill('A custom priority')
+    await dialog.getByRole('textbox', { name: 'Additional context' }).fill('A custom priority')
     await page.keyboard.press('Enter')
     await expect(dialog).toContainText('Submit answers')
     await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()

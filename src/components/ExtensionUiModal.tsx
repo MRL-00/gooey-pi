@@ -19,23 +19,20 @@ function questionnaireAnswer(
   question: ExtensionUiQuestion,
   selectedIndex: number,
   contexts: Record<string, string>,
-  otherAnswers: Record<string, string>,
 ) {
   const selected = question.options[selectedIndex]
-  const context = contexts[question.id]?.trim()
+  const typed = contexts[question.id]?.trim()
   if (selected === OTHER_OPTION) {
-    const answer = otherAnswers[question.id]?.trim()
-    if (!answer) return undefined
+    if (!typed) return undefined
     return {
-      answer,
+      answer: typed,
       answerSource: 'freeform' as const,
-      ...(context ? { context } : {}),
     }
   }
   return {
     answer: selected,
     answerSource: 'option' as const,
-    ...(context ? { context } : {}),
+    ...(typed ? { context: typed } : {}),
   }
 }
 
@@ -47,8 +44,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, number>>({})
   const [answeredByQuestion, setAnsweredByQuestion] = useState<Record<string, boolean>>({})
   const [contexts, setContexts] = useState<Record<string, string>>({})
-  const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({})
-  const otherInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const contextInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const questionnaireRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -72,7 +68,6 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     setSelectedByQuestion(Object.fromEntries(request.questions.map((question) => [question.id, 0])))
     setAnsweredByQuestion({})
     setContexts({})
-    setOtherAnswers({})
   }, [request.id])
 
   useEffect(() => {
@@ -90,7 +85,6 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     ? questionnaire.questions[questionIndex]
     : undefined
   const activeSelected = activeQuestion ? selectedByQuestion[activeQuestion.id] ?? 0 : 0
-  const activeIsOther = activeQuestion?.options[activeSelected] === OTHER_OPTION
   const allAnswered = Boolean(questionnaire?.complete && questionnaire.questions.length > 0 && questionnaire.questions.every((question) => answeredByQuestion[question.id]))
 
   const selectQuestionOption = (index: number) => {
@@ -100,12 +94,21 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     setAnsweredByQuestion((current) => ({ ...current, [activeQuestion.id]: false }))
   }
 
+  const navigateQuestion = (index: number) => {
+    if (!questionnaire) return
+    if (activeQuestion) {
+      const answer = questionnaireAnswer(activeQuestion, activeSelected, contexts)
+      setAnsweredByQuestion((current) => ({ ...current, [activeQuestion.id]: Boolean(answer) }))
+    }
+    setQuestionIndex(Math.max(0, Math.min(questionnaire.questions.length, index)))
+  }
+
   const commitQuestion = (index = activeSelected) => {
     if (!activeQuestion) return
     const bounded = Math.max(0, Math.min(activeQuestion.options.length - 1, index))
-    const answer = questionnaireAnswer(activeQuestion, bounded, contexts, otherAnswers)
+    const answer = questionnaireAnswer(activeQuestion, bounded, contexts)
     if (!answer) {
-      otherInputRefs.current[activeQuestion.id]?.focus()
+      contextInputRefs.current[activeQuestion.id]?.focus()
       return
     }
     setSelectedByQuestion((current) => ({ ...current, [activeQuestion.id]: bounded }))
@@ -117,7 +120,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     if (!questionnaire || !allAnswered) return
     const values: Record<string, string> = {}
     for (const question of questionnaire.questions) {
-      const answer = questionnaireAnswer(question, selectedByQuestion[question.id] ?? 0, contexts, otherAnswers)
+      const answer = questionnaireAnswer(question, selectedByQuestion[question.id] ?? 0, contexts)
       if (!answer) return
       values[question.id] = JSON.stringify(answer)
     }
@@ -129,12 +132,17 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     const isTextInput = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
     if (event.key === 'ArrowLeft') {
       event.preventDefault()
-      setQuestionIndex((current) => Math.max(0, current - 1))
+      navigateQuestion(questionIndex - 1)
       return
     }
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      setQuestionIndex((current) => Math.min(questionnaire.questions.length, current + 1))
+      navigateQuestion(questionIndex + 1)
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      navigateQuestion(questionIndex + (event.shiftKey ? -1 : 1))
       return
     }
     if (questionIndex === questionnaire.questions.length) {
@@ -158,7 +166,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     }
     // Let text fields receive printable characters, including digits. Number
     // shortcuts apply when the question itself has focus, while a clicked
-    // context/Other field should behave like a normal text input.
+    // context field should behave like a normal text input.
     if (isTextInput && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) return
     if (/^[1-9]$/.test(event.key)) {
       const index = Number(event.key) - 1
@@ -170,14 +178,9 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
     }
     if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && event.target instanceof HTMLElement && event.target.tagName !== 'INPUT') {
       event.preventDefault()
-      if (activeIsOther) {
-        const current = otherAnswers[activeQuestion.id] ?? ''
-        setOtherAnswers((values) => ({ ...values, [activeQuestion.id]: `${current}${event.key}` }))
-        window.requestAnimationFrame(() => otherInputRefs.current[activeQuestion.id]?.focus())
-      } else {
-        const current = contexts[activeQuestion.id] ?? ''
-        setContexts((values) => ({ ...values, [activeQuestion.id]: `${current}${event.key}` }))
-      }
+      const current = contexts[activeQuestion.id] ?? ''
+      setContexts((values) => ({ ...values, [activeQuestion.id]: `${current}${event.key}` }))
+      setAnsweredByQuestion((values) => ({ ...values, [activeQuestion.id]: false }))
     }
   }
 
@@ -197,11 +200,11 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
             <>
               <div className="extension-questionnaire__progress" aria-label="Question progress">
                 {request.questions.map((question, index) => (
-                  <button type="button" key={question.id} className={questionIndex === index ? 'is-active' : ''} onClick={() => setQuestionIndex(index)}>
+                  <button type="button" key={question.id} className={questionIndex === index ? 'is-active' : ''} onClick={() => navigateQuestion(index)}>
                     {answeredByQuestion[question.id] ? '✓' : '○'} {index + 1}
                   </button>
                 ))}
-                <button type="button" className={questionIndex === request.questions.length ? 'is-active' : ''} onClick={() => setQuestionIndex(request.questions.length)}>✓ Submit</button>
+                <button type="button" className={questionIndex === request.questions.length ? 'is-active' : ''} onClick={() => navigateQuestion(request.questions.length)}>✓ Submit</button>
               </div>
               {activeQuestion ? (
                 <div className="extension-questionnaire__question">
@@ -210,50 +213,39 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
                   <div className="extension-question__options" role="listbox" aria-label={activeQuestion.title}>
                     {activeQuestion.options.map((option, index) => {
                       const isSelected = activeSelected === index
-                      const isOther = option === OTHER_OPTION
-                      return isOther && isSelected ? (
-                        <div className="extension-question__other-row is-selected" role="option" aria-selected="true" key={`${option}-${index}`}>
-                          <button type="button" onClick={() => selectQuestionOption(index)}><span className="extension-question__option-index">{index + 1}</span><span>{option}</span></button>
-                          <input
-                            ref={(element) => { otherInputRefs.current[activeQuestion.id] = element }}
-                            autoFocus
-                            value={otherAnswers[activeQuestion.id] ?? ''}
-                            placeholder="Type your answer"
-                            aria-label="Other answer"
-                            onChange={(event) => setOtherAnswers((values) => ({ ...values, [activeQuestion.id]: event.target.value }))}
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={isSelected}
-                          className={isSelected ? 'is-selected' : ''}
-                          key={`${option}-${index}`}
-                          onClick={() => selectQuestionOption(index)}
-                        >
-                          <span className="extension-question__option-index">{index + 1}</span>
-                          <span>{option}</span>
-                        </button>
-                      )
+                      return <button
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        className={isSelected ? 'is-selected' : ''}
+                        key={`${option}-${index}`}
+                        onClick={() => selectQuestionOption(index)}
+                      >
+                        <span className="extension-question__option-index">{index + 1}</span>
+                        <span>{option}</span>
+                      </button>
                     })}
                   </div>
                   <label className="field extension-questionnaire__context">
                     <span>Type to add context</span>
                     <input
+                      ref={(element) => { contextInputRefs.current[activeQuestion.id] = element }}
                       value={contexts[activeQuestion.id] ?? ''}
                       placeholder="Type to add context"
                       aria-label="Additional context"
-                      onChange={(event) => setContexts((values) => ({ ...values, [activeQuestion.id]: event.target.value }))}
+                      onChange={(event) => {
+                        setContexts((values) => ({ ...values, [activeQuestion.id]: event.target.value }))
+                        setAnsweredByQuestion((values) => ({ ...values, [activeQuestion.id]: false }))
+                      }}
                     />
                   </label>
-                  <p className="extension-questionnaire__hint">← → questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
+                  <p className="extension-questionnaire__hint">← → or Tab questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
                 </div>
               ) : (
                 <div className="extension-questionnaire__submit" role="listbox" aria-label="Submit answers">
                   <button type="button" role="option" aria-selected="true" disabled={!allAnswered} onClick={submitQuestionnaire}>✓ Submit answers</button>
                   {request.questions.map((question) => {
-                    const answer = questionnaireAnswer(question, selectedByQuestion[question.id] ?? 0, contexts, otherAnswers)
+                    const answer = questionnaireAnswer(question, selectedByQuestion[question.id] ?? 0, contexts)
                     return <p key={question.id}><strong>{question.index + 1}.</strong> {answer?.answer ?? 'Not answered'}</p>
                   })}
                 </div>
