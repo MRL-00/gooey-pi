@@ -124,4 +124,4 @@ These logs are the durable coordination record for compaction and handoff.
 
 ### Section F log — performance/DRY
 
-- Pending.
+- `361d140` stabilizes every Sidebar callback at the App shell memo boundary (`src/App.tsx`, `src/hooks/useStableCallback.ts`) and adds a streaming-parent memo assertion (`tests/frontend/streaming-performance.test.ts`). Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/streaming-performance.test.ts` (7 passed).
