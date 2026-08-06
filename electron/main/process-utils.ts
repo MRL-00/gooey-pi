@@ -7,6 +7,9 @@ import { homedir } from 'node:os'
 export interface ProcessResult { code: number; stdout: string; stderr: string; timedOut: boolean }
 
 const activeChildren = new Set<ChildProcess>()
+let processAdmissionClosed = false
+
+export function beginProcessShutdown(): void { processAdmissionClosed = true }
 
 function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
   if (child.pid && process.platform !== 'win32') {
@@ -23,6 +26,8 @@ function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<v
 }
 
 export async function stopChildProcesses(): Promise<void> {
+  // Close admission before taking the snapshot so no later one-shot child can escape cleanup.
+  beginProcessShutdown()
   const children = [...activeChildren]
   for (const child of children) terminateChild(child, 'SIGTERM')
   await waitForChildren(children, 1_000)
@@ -64,6 +69,7 @@ export function runProcess(file: string, args: readonly string[], options: {
   maxBytes?: number
   env?: NodeJS.ProcessEnv
 } = {}): Promise<ProcessResult> {
+  if (processAdmissionClosed) return Promise.reject(new Error('Process admission is closed during shutdown'))
   const timeoutMs = options.timeoutMs ?? 30_000
   const maxBytes = options.maxBytes ?? 16 * 1024 * 1024
   return new Promise((resolve, reject) => {

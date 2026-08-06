@@ -1,5 +1,6 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import * as pty from 'node-pty'
@@ -7,7 +8,18 @@ import type { TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 import { safeChildEnvironment } from './process-utils'
 import { rejectUnknownKeys, requireInteger, requireRecord, requireString } from './validation'
 
-interface OwnedTerminal { terminal: pty.IPty; owner: WebContents; ownerId: number; shell: string }
+interface OwnedTerminal {
+  terminal: pty.IPty
+  owner: WebContents
+  ownerId: number
+  shell: string
+  outputWindowStartedAt: number
+  outputWindowBytes: number
+  pendingOutput: string
+  pendingOutputBytes: number
+  flushTimer?: NodeJS.Timeout
+  terminating: boolean
+}
 
 function systemShells(): Set<string> {
   const shells = new Set<string>(['/bin/zsh', '/bin/bash', '/bin/sh'])
@@ -21,9 +33,36 @@ function systemShells(): Set<string> {
   return shells
 }
 
+const MAX_TERMINAL_OUTPUT_BYTES_PER_SECOND = 16 * 1024 * 1024
+const MAX_TOTAL_TERMINAL_OUTPUT_BYTES_PER_SECOND = 32 * 1024 * 1024
+const MAX_TERMINAL_IPC_CHUNK_BYTES = 1024 * 1024
+
+function processTree(rootPid: number): number[] {
+  let output = ''
+  try { output = execFileSync('/bin/ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024 }) } catch { return [] }
+  const children = new Map<number, number[]>()
+  for (const line of output.split('\n')) {
+    const [pidValue, parentValue] = line.trim().split(/\s+/).map(Number)
+    if (!Number.isSafeInteger(pidValue) || !Number.isSafeInteger(parentValue)) continue
+    const entries = children.get(parentValue) ?? []; entries.push(pidValue); children.set(parentValue, entries)
+  }
+  const descendants: number[] = []
+  const visit = (pid: number) => { for (const child of children.get(pid) ?? []) { visit(child); descendants.push(child) } }
+  visit(rootPid)
+  return descendants
+}
+
+function signalPids(pids: number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) { try { process.kill(pid, signal) } catch { /* already exited */ } }
+}
+
+const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+
 export class TerminalService {
   private readonly terminals = new Map<string, OwnedTerminal>()
   private readonly allowedShells = systemShells()
+  private totalOutputWindowStartedAt = Date.now()
+  private totalOutputWindowBytes = 0
 
   constructor(
     private readonly authorizeCwd: (cwd: string) => Promise<string>,
@@ -61,13 +100,14 @@ export class TerminalService {
     const terminal = pty.spawn(shell, ['-l'], { cwd, cols, rows, name: 'xterm-256color', env })
     if (owner.isDestroyed()) { try { terminal.kill() } catch { /* owner closed during spawn */ }; throw new Error('Terminal owner was closed') }
     const terminalId = randomUUID()
-    this.terminals.set(terminalId, { terminal, owner, ownerId: owner.id, shell })
-    terminal.onData((data) => {
-      if (!owner.isDestroyed()) owner.send('terminal:data', { terminalId, data } satisfies TerminalDataEvent)
-    })
+    const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, shell, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false }
+    this.terminals.set(terminalId, owned)
+    terminal.onData((data) => this.forwardOutput(terminalId, owned, data))
     terminal.onExit(({ exitCode, signal }) => {
       this.terminals.delete(terminalId)
-      if (!owner.isDestroyed()) owner.send('terminal:exit', { terminalId, exitCode, signal } satisfies TerminalExitEvent)
+      if (owned.flushTimer) clearTimeout(owned.flushTimer)
+      this.flushOutput(terminalId, owned)
+      if (!owner.isDestroyed()) { try { owner.send('terminal:exit', { terminalId, exitCode, signal } satisfies TerminalExitEvent) } catch { /* renderer exited */ } }
     })
     return { terminalId, shell }
   }
@@ -87,21 +127,58 @@ export class TerminalService {
     const id = requireString(idValue, 'terminalId', { min: 1, max: 128 })
     const owned = this.terminals.get(id)
     if (!owned || owned.ownerId !== owner.id) return false
-    this.terminals.delete(id)
-    try { owned.terminal.kill(); return true } catch { return false }
+    await this.terminate(id, owned)
+    return true
   }
 
   killOwner(ownerId: number): void {
-    for (const [id, terminal] of this.terminals) {
-      if (terminal.ownerId !== ownerId) continue
-      this.terminals.delete(id)
-      try { terminal.terminal.kill() } catch { /* already exited */ }
-    }
+    for (const [id, terminal] of this.terminals) if (terminal.ownerId === ownerId) void this.terminate(id, terminal)
   }
 
-  killAll(): void {
-    for (const terminal of this.terminals.values()) { try { terminal.terminal.kill() } catch { /* already exited */ } }
-    this.terminals.clear()
+  async killAll(): Promise<void> {
+    await Promise.all([...this.terminals].map(([id, terminal]) => this.terminate(id, terminal)))
+  }
+
+  private forwardOutput(id: string, owned: OwnedTerminal, data: string): void {
+    if (owned.terminating || owned.owner.isDestroyed()) return
+    const now = Date.now()
+    if (now - owned.outputWindowStartedAt >= 1_000) { owned.outputWindowStartedAt = now; owned.outputWindowBytes = 0 }
+    const bytes = Buffer.byteLength(data)
+    owned.outputWindowBytes += bytes
+    if (now - this.totalOutputWindowStartedAt >= 1_000) { this.totalOutputWindowStartedAt = now; this.totalOutputWindowBytes = 0 }
+    this.totalOutputWindowBytes += bytes
+    if (bytes > MAX_TERMINAL_IPC_CHUNK_BYTES || owned.outputWindowBytes > MAX_TERMINAL_OUTPUT_BYTES_PER_SECOND || this.totalOutputWindowBytes > MAX_TOTAL_TERMINAL_OUTPUT_BYTES_PER_SECOND) {
+      owned.pendingOutput += '\r\n[Prime Work stopped this terminal because output exceeded 16 MiB/s.]\r\n'
+      owned.pendingOutputBytes = Buffer.byteLength(owned.pendingOutput)
+      this.flushOutput(id, owned)
+      void this.terminate(id, owned)
+      return
+    }
+    if (owned.pendingOutputBytes + bytes > MAX_TERMINAL_IPC_CHUNK_BYTES) this.flushOutput(id, owned)
+    owned.pendingOutput += data; owned.pendingOutputBytes += bytes
+    if (!owned.flushTimer) owned.flushTimer = setTimeout(() => { owned.flushTimer = undefined; this.flushOutput(id, owned) }, 16)
+  }
+
+  private flushOutput(id: string, owned: OwnedTerminal): void {
+    if (!owned.pendingOutput || owned.owner.isDestroyed()) { owned.pendingOutput = ''; owned.pendingOutputBytes = 0; return }
+    const data = owned.pendingOutput; owned.pendingOutput = ''; owned.pendingOutputBytes = 0
+    try { owned.owner.send('terminal:data', { terminalId: id, data } satisfies TerminalDataEvent) } catch { /* renderer exited */ }
+  }
+
+  private async terminate(id: string, owned: OwnedTerminal): Promise<void> {
+    if (owned.terminating) return
+    owned.terminating = true
+    this.terminals.delete(id)
+    if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
+    this.flushOutput(id, owned)
+    const descendants = processTree(owned.terminal.pid)
+    signalPids(descendants, 'SIGHUP')
+    try { process.kill(-owned.terminal.pid, 'SIGHUP') } catch { /* no shell process group */ }
+    try { owned.terminal.kill('SIGHUP') } catch { /* already exited */ }
+    await delay(150)
+    signalPids(descendants, 'SIGTERM')
+    await delay(350)
+    signalPids(descendants, 'SIGKILL')
   }
 
   private owned(owner: WebContents, idValue: unknown): OwnedTerminal {

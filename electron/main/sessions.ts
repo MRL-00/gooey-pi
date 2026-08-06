@@ -6,7 +6,7 @@ import type { MessagePart, SessionRecord, SessionStatus, TranscriptMessage } fro
 import { strictJsonLines } from './jsonl'
 import { runProcess } from './process-utils'
 import type { JsonStateStore } from './store'
-import { isPathWithin, isRecord, requireString } from './validation'
+import { isPathWithin, isRecord, requireBoolean, requireString } from './validation'
 
 type JsonRecord = Record<string, unknown>
 
@@ -117,15 +117,18 @@ export class SessionService {
     this.renameRuntimeSession = hooks.rename
   }
 
-  async list(projectPath?: string): Promise<SessionRecord[]> {
+  async list(projectPath?: string, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
+    const includeArchived = requireBoolean(includeArchivedValue, 'includeArchived')
     let names: string[]
     try { names = (await readdir(this.sessionRoot)).filter((name) => name.endsWith('.jsonl') && !name.startsWith('.')).slice(0, 5_000) } catch { return [] }
     const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
     const project = projectPath ? resolve(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
     const catalog = await this.liveCatalog()
     const sessions = await mapLimit(names, 6, async (name) => {
-      const filePath = join(this.sessionRoot, name)
-      if (archived.has(resolve(filePath))) return null
+      let filePath: string
+      try { filePath = await realpath(join(this.sessionRoot, name)) } catch { return null }
+      const isArchived = archived.has(resolve(filePath))
+      if (isArchived && !includeArchived) return null
       try {
         const metadata = await this.readMetadata(filePath)
         if (project && resolve(metadata.projectPath) !== project) return null
@@ -134,7 +137,7 @@ export class SessionService {
         const runtime = this.runtimeForSession(filePath)
         if (runtime) metadata.status = runtime.isStreaming ? 'running' : 'idle'
         const { sessionName: _sessionName, ...record } = metadata
-        return record
+        return { ...record, archived: isArchived }
       } catch { return null }
     })
     return sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
@@ -221,11 +224,13 @@ export class SessionService {
     return result.code === 0
   }
 
-  async archive(filePath: string): Promise<boolean> {
+  async archive(filePath: string, archivedValue: unknown = true): Promise<boolean> {
     const safePath = await this.requireSessionPath(filePath)
-    await this.stopRuntimeForSession(safePath)
+    const archived = requireBoolean(archivedValue, 'archived')
+    if (archived) await this.stopRuntimeForSession(safePath)
     await this.store.update((state) => {
-      if (!state.archivedSessions.includes(safePath)) state.archivedSessions.push(safePath)
+      state.archivedSessions = state.archivedSessions.filter((path) => resolve(path) !== resolve(safePath))
+      if (archived) state.archivedSessions.push(safePath)
     })
     return true
   }

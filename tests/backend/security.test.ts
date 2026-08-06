@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AgentRpcManager } from '../../electron/main/agent-rpc'
+import { AgentEventForwarder, AgentRpcManager } from '../../electron/main/agent-rpc'
+import { runProcess, stopChildProcesses } from '../../electron/main/process-utils'
 import { PluginService } from '../../electron/main/plugins'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
@@ -11,6 +12,13 @@ import type { SessionRecord } from '../../src/types/api'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); dirs.push(dir); return dir }
+const waitUntil = async (predicate: () => boolean, timeoutMs = 2_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+  }
+}
 
 describe('security boundaries', () => {
   it('does not expose project-configured files outside the project root', async () => {
@@ -62,7 +70,7 @@ describe('security boundaries', () => {
     const executable = join(dir, 'fake-agent.cjs')
     const pidFile = join(dir, 'pid')
     writeFileSync(executable, `#!/usr/bin/env node
-const readline=require('node:readline');const fs=require('node:fs');fs.writeFileSync(process.env.PRIME_WORK_TEST_PID_FILE,String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);readline.createInterface({input:process.stdin}).on('line',(line)=>{const v=JSON.parse(line);if(v.type==='get_state')process.stdout.write(JSON.stringify({type:'response',id:v.id,success:true,data:{isStreaming:false}})+'\\n')});process.stdin.resume();`)
+const readline=require('node:readline');const fs=require('node:fs');fs.writeFileSync(process.env.PRIME_WORK_TEST_PID_FILE,String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);readline.createInterface({input:process.stdin}).on('line',(line)=>{const v=JSON.parse(line);if(v.type==='get_state')process.stdout.write(JSON.stringify({type:'response',id:v.id,command:v.type,success:true,data:{isStreaming:false}})+'\\n')});process.stdin.resume();`)
     chmodSync(executable, 0o755)
     process.env.PRIME_WORK_TEST_PID_FILE = pidFile
     const manager = new AgentRpcManager(executable, async (cwd) => cwd, async (path) => path)
@@ -74,4 +82,85 @@ const readline=require('node:readline');const fs=require('node:fs');fs.writeFile
     expect(() => process.kill(pid, 0)).toThrow()
     delete process.env.PRIME_WORK_TEST_PID_FILE
   }, 10_000)
+
+  it('bounds each outbound agent envelope and aggregate bytes while preserving normal events', () => {
+    const envelopeEvents: Array<Record<string, unknown>> = []
+    const envelopeForwarder = new AgentEventForwarder('runtime-envelope', (envelope) => envelopeEvents.push(envelope.event), {
+      maxEvents: 100,
+      maxEnvelopeBytes: 512,
+      maxWindowBytes: 2_000,
+      windowMs: 60_000,
+    })
+    envelopeForwarder.emit({ type: 'normal_event', value: 'ok' })
+    envelopeForwarder.emit({ type: 'oversized_event', value: '😀'.repeat(200) })
+
+    expect(envelopeEvents.some((event) => event.type === 'normal_event')).toBe(true)
+    expect(envelopeEvents.some((event) => event.type === 'oversized_event')).toBe(false)
+    expect(envelopeEvents.some((event) => event.type === 'transport_error' && String(event.error).includes('envelope byte limit'))).toBe(true)
+
+    const windowEnvelopes: Array<{ runtimeId: string; event: Record<string, unknown> }> = []
+    const windowForwarder = new AgentEventForwarder('runtime-window', (envelope) => windowEnvelopes.push(envelope), {
+      maxEvents: 100,
+      maxEnvelopeBytes: 512,
+      maxWindowBytes: 700,
+      windowMs: 60_000,
+    })
+    for (let index = 0; index < 10; index += 1) windowForwarder.emit({ type: 'burst_event', index, value: 'x'.repeat(120) })
+
+    const forwardedBytes = windowEnvelopes.reduce((total, envelope) => total + Buffer.byteLength(JSON.stringify(envelope), 'utf8'), 0)
+    expect(forwardedBytes).toBeLessThanOrEqual(700)
+    expect(windowEnvelopes.some((envelope) => envelope.event.type === 'burst_event')).toBe(true)
+    expect(windowEnvelopes.filter((envelope) => envelope.event.type === 'burst_event').length).toBeLessThan(10)
+  })
+
+  it('closes agent admission before stopAll snapshots in-flight starts', async () => {
+    const dir = temp('prime-work-agent-admission-')
+    const executable = join(dir, 'fake-agent.cjs')
+    const spawnMarker = join(dir, 'spawned')
+    writeFileSync(executable, `#!/usr/bin/env node
+require('node:fs').writeFileSync(${JSON.stringify(spawnMarker)}, 'spawned')
+setInterval(()=>{},1000)
+`)
+    chmodSync(executable, 0o755)
+
+    let releaseAuthorization!: () => void
+    let markAuthorizationStarted!: () => void
+    const authorizationStarted = new Promise<void>((resolveStarted) => { markAuthorizationStarted = resolveStarted })
+    let authorizationCalls = 0
+    const manager = new AgentRpcManager(executable, async (cwd) => {
+      authorizationCalls += 1
+      markAuthorizationStarted()
+      await new Promise<void>((resolveAuthorization) => { releaseAuthorization = resolveAuthorization })
+      return cwd
+    }, async (path) => path)
+
+    const starting = manager.start({ cwd: dir })
+    await authorizationStarted
+    const stopping = manager.stopAll()
+    releaseAuthorization()
+
+    await expect(starting).rejects.toThrow(/shutting down/)
+    await stopping
+    await expect(manager.start({ cwd: dir })).rejects.toThrow(/shutting down/)
+    expect(authorizationCalls).toBe(1)
+    expect(existsSync(spawnMarker)).toBe(false)
+  })
+
+  it('closes one-shot process admission before the cleanup snapshot', async () => {
+    const dir = temp('prime-work-process-admission-')
+    const runningMarker = join(dir, 'running')
+    const deniedMarker = join(dir, 'denied')
+    const running = runProcess(process.execPath, ['-e', `const fs=require('node:fs');process.on('SIGTERM',()=>{});fs.writeFileSync(process.argv.at(-1),String(process.pid));setInterval(()=>{},1000)`, runningMarker], { timeoutMs: 30_000 })
+    await waitUntil(() => existsSync(runningMarker))
+    const pid = Number(readFileSync(runningMarker, 'utf8'))
+
+    const cleanup = stopChildProcesses()
+    await expect(runProcess(process.execPath, ['-e', `require('node:fs').writeFileSync(process.argv.at(-1),'unexpected')`, deniedMarker])).rejects.toThrow(/admission is closed/)
+    await cleanup
+    await running
+
+    expect(existsSync(deniedMarker)).toBe(false)
+    expect(() => process.kill(pid, 0)).toThrow()
+  }, 10_000)
+
 })

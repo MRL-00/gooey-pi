@@ -6,7 +6,7 @@ import type { JsonStateStore } from './store'
 import { isRecord, rejectUnknownKeys, requireBoolean, requireString, requireWebUrl } from './validation'
 
 export class SettingsService {
-  constructor(private readonly store: JsonStateStore, private readonly validateShell: (shell: unknown) => string) {}
+  constructor(private readonly store: JsonStateStore, private readonly validateShell: (shell: unknown) => string, private readonly cancelBrowserDownloads: () => void = () => undefined) {}
 
   get(): AppSettings { return this.store.snapshot().settings }
 
@@ -33,6 +33,7 @@ export class SettingsService {
 
   async resetBrowserData(): Promise<boolean> {
     try {
+      this.cancelBrowserDownloads()
       const browserSession = session.fromPartition('persist:prime-work-browser')
       await Promise.all([
         browserSession.clearStorageData(), browserSession.clearCache(), browserSession.clearAuthCache(),
