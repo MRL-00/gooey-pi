@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AgentRpcManager } from '../../electron/main/agent-rpc'
+import { validateRpcCommand } from '../../electron/main/agent-rpc/command-schema'
+import { MAX_RPC_WRITE_FRAME_BYTES, rpcRequestFrameBytes } from '../../electron/main/agent-rpc/limits'
 import { PrimeProviderService } from '../../electron/main/providers'
 
 const dirs: string[] = []
@@ -55,6 +57,28 @@ const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
 const processExists = (pid: number): boolean => {
   try { process.kill(pid, 0); return true } catch { return false }
 }
+
+describe('agent RPC command frame bounds', () => {
+  it('accepts the exact image boundary that fits transport and rejects the next byte', async () => {
+    const base = {
+      type: 'prompt',
+      message: 'describe this image',
+      images: [{ type: 'image', data: '', mimeType: 'image/png' }],
+    }
+    const maxImageChars = MAX_RPC_WRITE_FRAME_BYTES - rpcRequestFrameBytes(base)
+    const boundary = {
+      ...base,
+      images: [{ ...base.images[0], data: 'a'.repeat(maxImageChars) }],
+    }
+    const accepted = await validateRpcCommand(boundary, async (path) => path)
+
+    expect(rpcRequestFrameBytes(accepted)).toBe(MAX_RPC_WRITE_FRAME_BYTES)
+    await expect(validateRpcCommand({
+      ...boundary,
+      images: [{ ...boundary.images[0], data: `${boundary.images[0].data}a` }],
+    }, async (path) => path)).rejects.toThrow('too large for the RPC transport')
+  })
+})
 
 describe('agent RPC responses', () => {
   it('rejects a negative command response with the agent error', async () => {
