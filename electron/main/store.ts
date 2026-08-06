@@ -4,7 +4,11 @@ import { dirname } from 'node:path'
 import type { AppSettings, ProjectRecord } from '../../src/types/api'
 import { isRecord } from './validation'
 
-export interface PersistedProject extends Omit<ProjectRecord, 'sessionCount' | 'gitBranch' | 'inferred'> {}
+export interface FolderIdentity { dev: string; ino: string }
+
+export interface PersistedProject extends Omit<ProjectRecord, 'sessionCount' | 'gitBranch' | 'inferred'> {
+  folderIdentities?: Record<string, FolderIdentity>
+}
 
 export interface DesktopState {
   version: 1
@@ -43,6 +47,12 @@ function parseProject(value: unknown): PersistedProject | null {
   const folders = Array.isArray(value.folders) ? value.folders.filter((item): item is string => typeof item === 'string') : [value.path]
   if (!folders.length || typeof value.primaryFolder !== 'string') return null
   const now = new Date().toISOString()
+  const folderIdentities: Record<string, FolderIdentity> = {}
+  if (isRecord(value.folderIdentities)) {
+    for (const [path, identity] of Object.entries(value.folderIdentities)) {
+      if (isRecord(identity) && typeof identity.dev === 'string' && typeof identity.ino === 'string') folderIdentities[path] = { dev: identity.dev, ino: identity.ino }
+    }
+  }
   return {
     id: value.id || randomUUID(),
     name: value.name,
@@ -52,6 +62,7 @@ function parseProject(value: unknown): PersistedProject | null {
     pinned: typeof value.pinned === 'boolean' ? value.pinned : false,
     createdAt: validDate(value.createdAt) ? value.createdAt : now,
     lastOpenedAt: validDate(value.lastOpenedAt) ? value.lastOpenedAt : now,
+    folderIdentities: Object.keys(folderIdentities).length ? folderIdentities : undefined,
   }
 }
 

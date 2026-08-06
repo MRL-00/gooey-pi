@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import { JsonStateStore } from '../../electron/main/store'
 import type { SessionRecord } from '../../src/types/api'
 
 const dirs: string[] = []
+const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => { const info = lstatSync(path, { bigint: true }); return [realpathSync(path), { dev: info.dev.toString(), ino: info.ino.toString() }] }))
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
 function fixture() {
@@ -32,7 +33,7 @@ describe('project removal', () => {
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
       id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
-      pinned: false, createdAt: now, lastOpenedAt: now,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
 
     expect(await service.remove('project-1')).toBe(true)
@@ -61,8 +62,8 @@ describe('project removal', () => {
     mkdirSync(second)
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push(
-      { id: 'project-1', name: 'First', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now },
-      { id: 'project-2', name: 'Second', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now },
+      { id: 'project-1', name: 'First', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
+      { id: 'project-2', name: 'Second', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(second) },
     ) })
     let releaseBranch!: () => void
     let markEntered!: () => void
@@ -91,7 +92,7 @@ describe('project removal', () => {
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
       id: 'project-1', name: 'Project', path: primary, folders: [primary, secondary], primaryFolder: primary,
-      pinned: false, createdAt: now, lastOpenedAt: now,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
 
     const projects = await service.list()

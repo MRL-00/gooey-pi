@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -12,6 +12,7 @@ import type { SessionRecord } from '../../src/types/api'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); dirs.push(dir); return dir }
+const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => { const info = lstatSync(path, { bigint: true }); return [realpathSync(path), { dev: info.dev.toString(), ino: info.ino.toString() }] }))
 const waitUntil = async (predicate: () => boolean, timeoutMs = 2_000) => {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -35,7 +36,7 @@ describe('security boundaries', () => {
     const dir = temp('prime-work-project-')
     const folder = join(dir, 'project'); mkdirSync(folder)
     const store = new JsonStateStore(join(dir, 'state.json'))
-    await store.update((state) => { state.projects.push({ id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() }) })
+    await store.update((state) => { state.projects.push({ id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(folder) }) })
     const service = new ProjectService(store, () => null)
     service.bindProviders({
       sessions: async () => [{ id: 'unsafe', filePath: join(dir, 'unsafe.jsonl'), projectPath: '/', title: 'unsafe', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'idle', depth: 0, pinned: false, unread: false } satisfies SessionRecord],

@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
+const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => { const info = lstatSync(path, { bigint: true }); return [realpathSync(path), { dev: info.dev.toString(), ino: info.ino.toString() }] }))
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
 function setup(): { root: string; service: ProjectService; store: JsonStateStore } {
@@ -26,7 +27,7 @@ describe('ProjectService file listing', () => {
     writeFileSync(join(root, 'node_modules', 'dependency.js'), 'generated')
     writeFileSync(join(root, 'release', 'Prime Work.dmg'), 'generated')
     symlinkSync('/etc/hosts', join(root, 'hosts-link'))
-    await store.update((state) => { state.projects.push({ id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() }) })
+    await store.update((state) => { state.projects.push({ id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root) }) })
 
     await service.list()
     expect(await service.listFiles(root)).toEqual([
@@ -40,4 +41,39 @@ describe('ProjectService file listing', () => {
     const { root, service } = setup()
     await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
   })
+  it('revokes a grant when its directory is replaced by a symlink, including after restart', async () => {
+    const { root, service, store } = setup()
+    const original = `${root}-original`
+    const unrelated = `${root}-unrelated`
+    mkdirSync(unrelated)
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root),
+    }) })
+    await service.list()
+    expect(await service.authorizeCwd(root)).toBe(realpathSync(root))
+
+    renameSync(root, original)
+    symlinkSync(unrelated, root, 'dir')
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+    await expect(service.listFiles(root)).rejects.toThrow(/identity changed/)
+
+    const restarted = new ProjectService(new JsonStateStore(resolve(root, '..', 'state.json')), () => null)
+    restarted.bindProviders({ sessions: async () => [], branch: async () => undefined })
+    await restarted.list()
+    await expect(restarted.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+  })
+
+  it('revokes a grant when a different directory is recreated at the same path', async () => {
+    const { root, service, store } = setup()
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root),
+    }) })
+    await service.list()
+    rmSync(root, { recursive: true })
+    mkdirSync(root)
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+  })
+
 })

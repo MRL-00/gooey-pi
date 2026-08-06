@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, relative, resolve } from 'node:path'
-import { readdir } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import type { ProjectFileEntry, ProjectRecord, SessionRecord } from '../../src/types/api'
-import type { JsonStateStore, PersistedProject } from './store'
+import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId } from './validation'
 
 function inferredId(path: string): string {
@@ -12,12 +12,28 @@ function inferredId(path: string): string {
 }
 
 export class ProjectService {
-  private readonly authorizedRoots = new Set<string>()
+  private readonly authorizedRoots = new Map<string, FolderIdentity>()
   private authorizationRevision = 0
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
   private branchProvider: (cwd: string) => Promise<string | undefined> = async () => undefined
 
   constructor(private readonly store: JsonStateStore, private readonly windowProvider: () => BrowserWindow | null) {}
+
+  private async captureFolderIdentity(pathValue: string): Promise<{ path: string; identity: FolderIdentity }> {
+    const configured = resolve(pathValue)
+    const path = await requireExistingDirectory(configured, 'project folder')
+    const info = await lstat(configured, { bigint: true })
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError('Project folder must be a stable directory')
+    return { path, identity: { dev: info.dev.toString(), ino: info.ino.toString() } }
+  }
+
+  private async verifyFolderIdentity(pathValue: string, expected?: FolderIdentity): Promise<string | undefined> {
+    if (!expected) return undefined
+    try {
+      const current = await this.captureFolderIdentity(pathValue)
+      return current.identity.dev === expected.dev && current.identity.ino === expected.ino ? current.path : undefined
+    } catch { return undefined }
+  }
 
   bindProviders(providers: { sessions(): Promise<SessionRecord[]>; branch(cwd: string): Promise<string | undefined> }): void {
     this.sessionProvider = providers.sessions
@@ -43,15 +59,27 @@ export class ProjectService {
     if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.clear()
 
     for (const project of persisted) {
-      const folderSet = new Set(await Promise.all(project.folders.map(async (path) => {
-        try { return await requireExistingDirectory(path, 'project folder') } catch { return resolve(path) }
-      })))
-      if (authorizationRevision === this.authorizationRevision) for (const folder of folderSet) this.authorizedRoots.add(folder)
-      for (const folder of folderSet) represented.add(folder)
+      const folderSet = new Set<string>()
+      let primaryGranted = false
+      for (const folder of project.folders) {
+        const configured = resolve(folder)
+        let canonical = configured
+        try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* Keep stale lexical path visible. */ }
+        const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
+        const verified = await this.verifyFolderIdentity(configured, expected)
+        folderSet.add(canonical)
+        represented.add(configured)
+        represented.add(canonical)
+        if (verified && expected) {
+          if (configured === resolve(project.primaryFolder)) primaryGranted = true
+          if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.set(configured, expected)
+        }
+      }
       records.push({
-        ...project,
+        id: project.id, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
+        pinned: project.pinned, createdAt: project.createdAt, lastOpenedAt: project.lastOpenedAt,
         sessionCount: sessions.filter((session) => folderSet.has(sessionProjectPaths.get(session)!)).length,
-        gitBranch: await this.branchProvider(project.primaryFolder),
+        gitBranch: primaryGranted ? await this.branchProvider(project.primaryFolder) : undefined,
       })
     }
 
@@ -87,12 +115,16 @@ export class ProjectService {
       ? await dialog.showOpenDialog(parent, { title: 'Add project folder', properties: ['openDirectory', 'createDirectory'] })
       : await dialog.showOpenDialog({ title: 'Add project folder', properties: ['openDirectory', 'createDirectory'] })
     if (result.canceled || result.filePaths.length !== 1) return null
-    const path = await requireExistingDirectory(result.filePaths[0], 'selected folder')
+    const { path, identity } = await this.captureFolderIdentity(result.filePaths[0])
     const now = new Date().toISOString()
     const project = await this.store.update((state): PersistedProject => {
       state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
       const existing = state.projects.find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
-      if (existing) { existing.lastOpenedAt = now; return existing }
+      if (existing) {
+        existing.lastOpenedAt = now
+        existing.folderIdentities = { ...existing.folderIdentities, [path]: identity }
+        return existing
+      }
       const created: PersistedProject = {
         id: randomUUID(),
         name: basename(path) || path,
@@ -102,18 +134,19 @@ export class ProjectService {
         pinned: false,
         createdAt: now,
         lastOpenedAt: now,
+        folderIdentities: { [path]: identity },
       }
       state.projects.push(created)
       return created
     })
     this.authorizationRevision += 1
-    this.authorizedRoots.add(path)
+    this.authorizedRoots.set(path, identity)
     const sessions = await this.sessionProvider()
     return { ...project, sessionCount: sessions.filter((session) => resolve(session.projectPath) === path).length, gitBranch: await this.branchProvider(path) }
   }
 
   async grantInferred(pathValue: unknown): Promise<ProjectRecord> {
-    const path = await requireExistingDirectory(pathValue, 'session project path')
+    const { path, identity } = await this.captureFolderIdentity(String(pathValue))
     if (path === resolve('/') || path === resolve(homedir())) throw new TypeError('Broad filesystem roots cannot be inferred as projects')
     const sessions = await this.sessionProvider()
     let discovered = false
@@ -127,13 +160,17 @@ export class ProjectService {
     const project = await this.store.update((state): PersistedProject => {
       state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
       const existing = state.projects.find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
-      if (existing) { existing.lastOpenedAt = now; return existing }
-      const created: PersistedProject = { id: randomUUID(), name: basename(path) || path, path, folders: [path], primaryFolder: path, pinned: false, createdAt: now, lastOpenedAt: now }
+      if (existing) {
+        existing.lastOpenedAt = now
+        existing.folderIdentities = { ...existing.folderIdentities, [path]: identity }
+        return existing
+      }
+      const created: PersistedProject = { id: randomUUID(), name: basename(path) || path, path, folders: [path], primaryFolder: path, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: { [path]: identity } }
       state.projects.push(created)
       return created
     })
     this.authorizationRevision += 1
-    this.authorizedRoots.add(path)
+    this.authorizedRoots.set(path, identity)
     return { ...project, sessionCount: sessions.filter((session) => resolve(session.projectPath) === path).length, gitBranch: await this.branchProvider(path) }
   }
 
@@ -141,9 +178,15 @@ export class ProjectService {
     const authorizationRevision = ++this.authorizationRevision
     const id = requireId(idValue, 'project id')
     const persisted = this.store.snapshot().projects.find((project) => project.id === id)
-    const persistedPaths = persisted ? await Promise.all(persisted.folders.map(async (folder) => {
-      try { return await requireExistingDirectory(folder, 'project folder') } catch { return resolve(folder) }
-    })) : []
+    const persistedPaths: string[] = []
+    if (persisted) for (const folder of persisted.folders) {
+      const configured = resolve(folder)
+      persistedPaths.push(configured)
+      try {
+        const canonical = await requireExistingDirectory(configured, 'project folder')
+        if (canonical !== configured) persistedPaths.push(canonical)
+      } catch { /* Keep the lexical path dismissed even when it is stale. */ }
+    }
     let inferredPath: string | undefined
     if (!persisted) {
       const sessions = await this.sessionProvider()
@@ -169,7 +212,12 @@ export class ProjectService {
       for (const project of this.store.snapshot().projects) {
         for (const folder of project.folders) {
           if (authorizationRevision !== this.authorizationRevision) break
-          try { this.authorizedRoots.add(await requireExistingDirectory(folder, 'project folder')) } catch { /* Missing projects are not authorized. */ }
+          const configured = resolve(folder)
+          let canonical = configured
+          try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
+          const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
+          const verified = await this.verifyFolderIdentity(configured, expected)
+          if (verified && expected) this.authorizedRoots.set(configured, expected)
         }
       }
     }
@@ -216,10 +264,12 @@ export class ProjectService {
     const path = await requireExistingPath(value)
     if (!this.authorizedRoots.size) await this.list()
     const roots: string[] = []
-    for (const configured of this.authorizedRoots) {
-      try { roots.push(await requireExistingDirectory(configured, 'project folder')) } catch { /* missing project */ }
+    for (const [configured, expected] of this.authorizedRoots) {
+      const verified = await this.verifyFolderIdentity(configured, expected)
+      if (verified) roots.push(verified)
+      else this.authorizedRoots.delete(configured)
     }
-    if (!roots.some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project')
+    if (!roots.some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
     return path
   }
 
