@@ -48,6 +48,7 @@ function createHermeticFixture(): { userData: string; home: string; project: str
 
   const executable = join(fixtureRoot, 'prime-agent-fixture.cjs')
   writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs')
 const readline = require('node:readline')
 const args = process.argv.slice(2)
 if (args.includes('--version')) { process.stdout.write('prime-agent 0.7.0\\n'); process.exit(0) }
@@ -65,6 +66,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
     send({ type: 'agent_start' })
+    send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'Reviewing the available release channels before asking for input.' } })
     send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
     send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta'] })
   } else if (command.type === 'extension_ui_response' && pendingPrompt) {
@@ -72,6 +74,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     pendingPrompt = undefined
     send({ type: 'tool_execution_end', toolCallId: 'ask-1', toolName: 'ask_user', result: { value: command.value } })
     send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The selected release channel is ' + command.value + '.' } })
+    const completedAt = new Date().toISOString()
+    fs.appendFileSync(sessionFile, [
+      JSON.stringify({ type: 'message', id: 'fixture-live-assistant', parentId: 'fixture-agent-message', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'thinking', thinking: 'Reviewing the available release channels before asking for input.' }, { type: 'toolCall', id: 'ask-1', name: 'ask_user', arguments: { question: 'Which release channel?', options: ['Stable', 'Beta'] } }] } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-result', parentId: 'fixture-live-assistant', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-1', toolName: 'ask_user', content: JSON.stringify({ value: command.value }) } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-final', parentId: 'fixture-live-result', message: { role: 'assistant', timestamp: completedAt, content: 'The selected release channel is ' + command.value + '.' } }),
+    ].join('\\n') + '\\n')
     send({ type: 'agent_end' })
     send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
   } else if (command.id) {
@@ -263,6 +271,13 @@ test.describe('Prime Work desktop smoke', () => {
 
     const dialog = page.getByRole('dialog', { name: 'Choose a release channel' })
     await expect(dialog).toBeVisible()
+    const liveReasoning = page.locator('.activity-line--reasoning')
+    await expect(liveReasoning).toContainText('Reviewing the available release channels before asking for input.')
+    await expect(liveReasoning).not.toContainText('Reasoning')
+    await expect(liveReasoning.locator('.activity-line__icon')).toHaveCount(0)
+    await expect.poll(() => liveReasoning.evaluate((node) => getComputedStyle(node).fontStyle)).toBe('normal')
+    await expect(page.locator('.thinking-dots > span')).toHaveCount(3)
+    await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
     await expect(dialog.getByRole('option', { name: 'Stable' })).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Beta' })).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
@@ -270,7 +285,15 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toHaveCount(0)
     const worked = page.locator('.work-disclosure__button')
     await expect(worked).toContainText(/^Worked for (?:\d+s|\d+m\d{2}s|\d+h\d{2}m\d{2}s)$/)
+    await expect(worked).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.activity-line--reasoning')).toHaveCount(0)
+    await expect(page.locator('.thinking-dots')).toHaveCount(0)
     await expect(page.locator('.activity-line--question')).toHaveCount(0)
+    const divider = await page.locator('.work-disclosure').evaluate((node) => {
+      const styles = getComputedStyle(node)
+      return { top: styles.borderTopStyle, bottom: styles.borderBottomStyle }
+    })
+    expect(divider).toEqual({ top: 'solid', bottom: 'none' })
     await worked.click()
     await expect(page.locator('.activity-line--question')).toContainText('Which release channel?')
     await expect(page.locator('.message--assistant .message-actions')).toBeVisible()

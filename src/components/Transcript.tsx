@@ -1,5 +1,4 @@
 import {
-  BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
@@ -13,7 +12,7 @@ import {
   TerminalSquare,
   Wrench,
 } from 'lucide-react'
-import { Fragment, memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import React, { Fragment, memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
 import { MarkdownText } from './MarkdownText'
 import { boundText, newestWindow } from '@/lib/render-bounds'
@@ -91,10 +90,16 @@ function SyntaxText({ text }: { text: string }) {
 function ReasoningPart({ part }: { part: Extract<MessagePart, { type: 'thinking' }> }) {
   return (
     <div className="activity-line activity-line--reasoning">
-      <span className="activity-line__icon"><BrainCircuit size={14} /></span>
-      <span className="activity-line__kind">Reasoning</span>
-      <span className="activity-line__reasoning"><InlineText text={boundText(part.text, 40_000, '\n… [Reasoning truncated in the desktop view.]')} /></span>
+      <MarkdownText text={boundText(part.text, 40_000, '\n… [Reasoning truncated in the desktop view.]')} />
     </div>
+  )
+}
+
+function ThinkingDots({ labelled = false }: { labelled?: boolean }) {
+  return (
+    <span className="thinking-dots" role={labelled ? 'status' : undefined} aria-label={labelled ? 'Prime is thinking' : undefined} aria-hidden={labelled ? undefined : true}>
+      <span /><span /><span />
+    </span>
   )
 }
 
@@ -144,16 +149,15 @@ function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[
 }
 
 function WorkDisclosure({ message, parts, showReasoning, showTools }: { message: TranscriptMessage; parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
-  const [open, setOpen] = useState(Boolean(message.streaming))
-  const wasStreaming = useRef(Boolean(message.streaming))
-  useEffect(() => {
-    if (message.streaming) setOpen(true)
-    else if (wasStreaming.current) setOpen(false)
-    wasStreaming.current = Boolean(message.streaming)
-  }, [message.streaming])
+  const [open, setOpen] = useState(false)
 
   if (message.streaming) {
-    return <section className="work-disclosure is-running" aria-label="Prime work activity"><div className="work-disclosure__live"><LoaderCircle className="spin" size={13} /><span>Prime is working</span></div><WorkTimeline parts={parts} showReasoning={showReasoning} showTools={showTools} /></section>
+    return (
+      <section className="work-disclosure is-running" aria-label="Prime work activity">
+        <WorkTimeline parts={parts} showReasoning={showReasoning} showTools={showTools} />
+        <div className="work-disclosure__thinking"><ThinkingDots labelled /></div>
+      </section>
+    )
   }
 
   const startedAt = timestamp(message.startedAt ?? message.timestamp) ?? 0
@@ -268,7 +272,7 @@ const AssistantMessage = memo(function AssistantMessage({ message, git, isLast, 
         {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle')}
         {renderNarrative(after, 'after')}
         {isLast && git.files.length > 0 && !message.streaming ? <ChangesCard git={git} onOpenChanges={onOpenChanges} /> : null}
-        {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><span className="streaming-cursor" /> Prime is working</div> : null}
+        {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div> : null}
         {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
       </div>
     </article>
