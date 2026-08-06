@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
+import { Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { BrowserGlobe, Modal } from '@/components/ui'
 import type { AppMeta, AppSettings, PrimeModelCatalog } from '@/types/api'
@@ -9,12 +9,14 @@ import { BrowserSettings } from './settings/BrowserSettings'
 import type { SettingsSection, SettingsUpdate } from './settings/contracts'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { PrivacySettings } from './settings/PrivacySettings'
+import { ProvidersSettings } from './settings/ProvidersSettings'
 import { TerminalSettings } from './settings/TerminalSettings'
 
 const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<{ size?: number }> }> = [
   { id: 'general', label: 'General', icon: Settings2 },
   { id: 'appearance', label: 'Appearance', icon: Sun },
   { id: 'agent', label: 'Prime Agent', icon: Bot },
+  { id: 'providers', label: 'Providers', icon: Boxes },
   { id: 'browser', label: 'Browser', icon: BrowserGlobe },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'privacy', label: 'Privacy', icon: LockKeyhole },
@@ -32,10 +34,11 @@ interface SettingsPageProps {
   onSaveProviderApiKey(providerId: string, apiKey: string): Promise<void>
   onLogoutProvider(providerId: string): Promise<void>
   onSetProviderEnabled(providerId: string, enabled: boolean): Promise<void>
+  onSetAllProvidersEnabled(): Promise<void>
   onStartProviderOAuth(providerId: string): Promise<void>
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onStartProviderOAuth }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onStartProviderOAuth }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>('general')
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -58,7 +61,8 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
     switch (section) {
       case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
-      case 'agent': return <AgentSettings settings={settings} meta={meta} providerCatalog={providerCatalog} onUpdate={onUpdate} onRefreshProviders={onRefreshProviders} onSaveProviderApiKey={onSaveProviderApiKey} onLogoutProvider={onLogoutProvider} onSetProviderEnabled={onSetProviderEnabled} onStartProviderOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
+      case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
+      case 'providers': return <ProvidersSettings catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
