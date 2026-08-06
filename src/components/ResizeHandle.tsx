@@ -44,6 +44,9 @@ export function ResizeHandle({ orientation, label, value, min, max, defaultValue
     const pointerId = event.pointerId
     const startCoordinate = readCoordinate(event.nativeEvent)
     const startValue = value
+    const workspace = target.closest<HTMLElement>('.session-workspace')
+    const cssVariable = orientation === 'vertical' ? '--inspector-width' : '--terminal-height'
+    let latestValue = startValue
     target.dataset.resizing = 'true'
     document.body.classList.add(`is-resizing-${orientation}`)
     target.setPointerCapture(pointerId)
@@ -51,22 +54,26 @@ export function ResizeHandle({ orientation, label, value, min, max, defaultValue
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return
       moveEvent.preventDefault()
-      onChange(clamp(startValue - (readCoordinate(moveEvent) - startCoordinate), min, safeMax))
+      latestValue = clamp(startValue - (readCoordinate(moveEvent) - startCoordinate), min, safeMax)
+      workspace?.style.setProperty(cssVariable, `${latestValue}px`)
     }
-    const finish = (finishEvent?: PointerEvent) => {
+    const finish = (finishEvent?: PointerEvent, commit = true) => {
       if (finishEvent && finishEvent.pointerId !== pointerId) return
       delete target.dataset.resizing
       document.body.classList.remove('is-resizing-vertical', 'is-resizing-horizontal')
       if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('pointercancel', cancel)
       cleanupRef.current = null
+      if (commit && latestValue !== startValue) onChange(latestValue)
+      else if (!commit) workspace?.style.setProperty(cssVariable, `${startValue}px`)
     }
-    cleanupRef.current = () => finish()
+    const cancel = (cancelEvent: PointerEvent) => finish(cancelEvent, false)
+    cleanupRef.current = () => finish(undefined, false)
     window.addEventListener('pointermove', move, { passive: false })
     window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
+    window.addEventListener('pointercancel', cancel)
   }
 
   return (

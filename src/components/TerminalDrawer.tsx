@@ -65,6 +65,7 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
       lineHeight: 1.45,
       scrollback: 5000,
       allowProposedApi: false,
+      screenReaderMode: true,
       theme: terminalTheme(),
     })
     const fit = new FitAddon()
@@ -79,16 +80,34 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
     let offData: (() => void) | undefined
     let offExit: (() => void) | undefined
     let cancelled = false
+    const bufferedData = new Map<string, string>()
+    const bufferedExits = new Map<string, number>()
+    const announceExit = (exitCode: number) => { terminal.writeln(`
+\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`); setConnected(false) }
     const inputDisposable = terminal.onData((data) => { const id = terminalIdRef.current; if (id && window.prime) window.prime.terminal.input(id, data) })
     const resizeDisposable = terminal.onResize(({ cols, rows }) => { const id = terminalIdRef.current; if (id && window.prime) window.prime.terminal.resize(id, cols, rows) })
 
     if (window.prime && cwd) {
+      // Subscribe before create resolves: a fast shell can emit its prompt or exit before the IPC reply.
+      offData = window.prime.terminal.onData((event) => {
+        if (event.terminalId === terminalIdRef.current) terminal.write(event.data)
+        else if (!terminalIdRef.current) {
+          const next = `${bufferedData.get(event.terminalId) ?? ''}${event.data}`
+          bufferedData.set(event.terminalId, next.slice(-256 * 1024))
+        }
+      })
+      offExit = window.prime.terminal.onExit((event) => {
+        if (event.terminalId === terminalIdRef.current) announceExit(event.exitCode)
+        else if (!terminalIdRef.current) bufferedExits.set(event.terminalId, event.exitCode)
+      })
       window.prime.terminal.create({ cwd, shell, cols: terminal.cols, rows: terminal.rows }).then(({ terminalId, shell: actualShell }) => {
         if (cancelled) { void window.prime.terminal.kill(terminalId); return }
         terminalIdRef.current = terminalId; setShellName(actualShell.split('/').at(-1) ?? actualShell); setConnected(true)
-        offData = window.prime.terminal.onData((event) => { if (event.terminalId === terminalId) terminal.write(event.data) })
-        offExit = window.prime.terminal.onExit((event) => { if (event.terminalId === terminalId) { terminal.writeln(`
-\x1b[90m[Process exited with code ${event.exitCode}]\x1b[0m`); setConnected(false) } })
+        const initialOutput = bufferedData.get(terminalId)
+        if (initialOutput) terminal.write(initialOutput)
+        const earlyExit = bufferedExits.get(terminalId)
+        bufferedData.clear(); bufferedExits.clear()
+        if (earlyExit !== undefined) announceExit(earlyExit)
       }).catch((error: unknown) => { const message = error instanceof Error ? error.message : 'Unable to start terminal'; terminal.writeln(`\x1b[31m${message}\x1b[0m`); onError?.(message) })
     } else {
       terminal.writeln('\x1b[38;5;141mPrime Work terminal\x1b[0m')
