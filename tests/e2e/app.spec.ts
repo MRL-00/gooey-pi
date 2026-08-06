@@ -167,6 +167,8 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Enter')
     await expect(composer).toHaveValue('/plan ')
     await expect(composer).toHaveAttribute('aria-expanded', 'false')
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
 
   test('round-trips an agent multiple-choice question through the desktop modal', async () => {
