@@ -44,6 +44,29 @@ describe('GitService', () => {
     expect(committed.output).toContain('test commit')
   }, 15_000)
 
+  it('reads a safe user identity and supplies it explicitly when committing', async () => {
+    const cwd = repository('prime-work-git-identity-')
+    const home = mkdtempSync(join(tmpdir(), 'prime-work-git-home-'))
+    dirs.push(home)
+    git(cwd, 'config', '--unset', 'user.name')
+    git(cwd, 'config', '--unset', 'user.email')
+    writeFileSync(join(home, '.gitconfig'), '[user]\n  name = Desktop User\n  email = desktop@example.com\n[include]\n  path = /definitely/not/read\n')
+    writeFileSync(join(cwd, 'file.txt'), 'identity\n')
+    const oldHome = process.env.HOME
+    process.env.HOME = home
+    try {
+      const service = new GitService(async () => cwd)
+      await service.stage(cwd, ['file.txt'])
+      const committed = await service.commit(cwd, 'safe identity')
+      expect(committed.ok).toBe(true)
+      const author = spawnSync('git', ['show', '-s', '--format=%an <%ae>', 'HEAD'], { cwd, encoding: 'utf8' })
+      expect(author.stdout.trim()).toBe('Desktop User <desktop@example.com>')
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME
+      else process.env.HOME = oldHome
+    }
+  })
+
   it('identifies a detached HEAD as a repository branch label', async () => {
     const cwd = repository('prime-work-git-detached-')
     git(cwd, 'checkout', '-q', '--detach')

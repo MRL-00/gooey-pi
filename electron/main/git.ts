@@ -12,6 +12,7 @@ const GIT_CONFIG_OUTPUT_LIMIT = 512 * 1024
 const GIT_ATTRIBUTE_PATH_LIMIT = 1_000
 const GIT_DIFF_OUTPUT_LIMIT = 2 * 1024 * 1024
 const GIT_ERROR_LIMIT = 2_000
+const GIT_IDENTITY_VALUE_LIMIT = 320
 const EMPTY_CONFIG_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const BASE_GIT_CONFIG = [
   'core.fsmonitor=false',
@@ -189,6 +190,54 @@ async function filterOverrides(cwd: string): Promise<string[]> {
 }
 
 
+
+function validIdentityValue(value: string): string | undefined {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > GIT_IDENTITY_VALUE_LIMIT || /[\0\r\n]/.test(trimmed)) return undefined
+  return trimmed
+}
+
+async function readConfigValue(
+  cwd: string,
+  scope: '--local' | '--global',
+  key: 'user.name' | 'user.email',
+): Promise<string | undefined> {
+  const env = restrictedGitEnvironment()
+  if (scope === '--global') {
+    delete env.GIT_CONFIG_GLOBAL
+    for (const name of process.platform === 'win32' ? ['USERPROFILE', 'HOME', 'XDG_CONFIG_HOME'] : ['HOME', 'XDG_CONFIG_HOME']) {
+      const value = process.env[name]
+      if (value !== undefined) env[name] = value
+    }
+  }
+  const result = await runProcess('git', hardenedGitArgs(['config', scope, '--no-includes', '--get', key]), {
+    cwd,
+    timeoutMs: 5_000,
+    maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
+    env,
+  })
+  if (result.code === 1 && !result.timedOut && !result.outputExceeded) return undefined
+  requireProcessSuccess(`Git ${scope.slice(2)} identity inspection`, result)
+  return validIdentityValue(result.stdout)
+}
+
+async function commitIdentityOverrides(cwd: string): Promise<string[]> {
+  const [localName, localEmail] = await Promise.all([
+    readConfigValue(cwd, '--local', 'user.name'),
+    readConfigValue(cwd, '--local', 'user.email'),
+  ])
+  const [globalName, globalEmail] = await Promise.all([
+    localName ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.name'),
+    localEmail ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.email'),
+  ])
+  const name = localName ?? globalName
+  const email = localEmail ?? globalEmail
+  return [
+    ...(name ? [`user.name=${name}`] : []),
+    ...(email ? [`user.email=${email}`] : []),
+  ]
+}
+
 function changedPathsFromStatus(output: string): string[] {
   const paths: string[] = []
   let cursor = 0
@@ -311,7 +360,7 @@ export class GitService {
   async commit(cwdValue: unknown, messageValue: unknown): Promise<{ ok: boolean; output: string }> {
     const cwd = await this.validCwd(cwdValue)
     const message = requireString(messageValue, 'commit message', { min: 1, max: 20_000, trim: true })
-    const overrides = await filterOverrides(cwd)
+    const overrides = [...await filterOverrides(cwd), ...await commitIdentityOverrides(cwd)]
     const result = await runGit(cwd, ['commit', '--no-verify', '--no-gpg-sign', '--no-status', '-m', message], { timeoutMs: 2 * 60_000, maxBytes: 64 * 1024 }, overrides)
     if (result.outputExceeded) return { ok: false, output: 'Git commit output exceeded the safety limit; the commit result is unknown. Refresh status before retrying.' }
     if (result.timedOut) return { ok: false, output: 'Git commit timed out; the commit result is unknown. Refresh status before retrying.' }
