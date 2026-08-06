@@ -24,5 +24,9 @@ describe('chat Markdown rendering', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('<img')
     expect(html).toContain('[Image: tracking]')
+
+    const relative = renderToStaticMarkup(createElement(MarkdownText, { text: '[App](src/App.tsx)' }))
+    expect(relative).not.toContain('<a')
+    expect(relative).toContain('markdown-link-unsupported')
   })
 })

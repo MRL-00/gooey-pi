@@ -1,4 +1,5 @@
-import React, { type MouseEvent } from 'react'
+import React, { memo, type MouseEvent } from 'react'
+import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -17,20 +18,15 @@ function openMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string): 
   window.open(href, '_blank', 'noopener,noreferrer')
 }
 
-/** Render model-authored Markdown without enabling raw HTML or remote images. */
-export function MarkdownText({ text }: MarkdownTextProps) {
-  return (
-    <div className="prose">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={{
-          a: ({ node: _node, href, children, ...props }) => <a {...props} href={href} rel="noreferrer" onClick={(event) => openMarkdownLink(event, href)}>{children}</a>,
-          img: ({ alt }) => <span className="markdown-image-placeholder">[Image: {alt || 'attachment'}]</span>,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
+const markdownPlugins = [remarkGfm]
+const markdownComponents: Components = {
+  a: ({ node: _node, href, children, ...props }) => href && (/^(https?:|mailto:|#)/i.test(href))
+    ? <a {...props} href={href} rel="noreferrer" onClick={(event) => openMarkdownLink(event, href)}>{children}</a>
+    : <span className="markdown-link-unsupported" title={href ? `Project-relative link: ${href}` : undefined}>{children}</span>,
+  img: ({ alt }) => <span className="markdown-image-placeholder">[Image: {alt || 'attachment'}]</span>,
 }
+
+/** Render model-authored Markdown without enabling raw HTML or remote images. */
+export const MarkdownText = memo(function MarkdownText({ text }: MarkdownTextProps) {
+  return <div className="prose"><ReactMarkdown remarkPlugins={markdownPlugins} skipHtml components={markdownComponents}>{text}</ReactMarkdown></div>
+})

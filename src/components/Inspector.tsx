@@ -105,9 +105,12 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
     if (!cwd || !window.prime) return false
     setActionError('')
     try {
-      if (kind === 'stage') await window.prime.git.stage(cwd, paths)
-      if (kind === 'unstage') await window.prime.git.unstage(cwd, paths)
-      if (kind === 'restore') await window.prime.git.restore(cwd, paths)
+      const ok = kind === 'stage'
+        ? await window.prime.git.stage(cwd, paths)
+        : kind === 'unstage'
+          ? await window.prime.git.unstage(cwd, paths)
+          : await window.prime.git.restore(cwd, paths)
+      if (!ok) throw new Error(`Git could not ${kind} the selected ${paths.length === 1 ? 'file' : 'files'}.`)
       await onRefreshGit()
       return true
     } catch (error) {
@@ -142,7 +145,7 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
           {visibleFiles.length === 0 ? <p className="file-changes__empty">No {scope} changes.</p> : null}
         </div>
         <div className="diff-pane scroll-area">
-          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{scope === 'unstaged' ? <button type="button" onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}<button type="button" className="danger-action" onClick={() => setConfirmRestore(selectedPath)}><RotateCcw size={12} /> Revert</button></div></div> : null}
+          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{scope === 'unstaged' ? <button type="button" onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}{scope === 'unstaged' ? <button type="button" className="danger-action" onClick={() => setConfirmRestore(selectedPath)}><RotateCcw size={12} /> Revert</button> : null}</div></div> : null}
           {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={15} /> Loading diff…</div> : <DiffView text={diff} />}
         </div>
       </div>
@@ -228,31 +231,48 @@ function BrowserPanel({ home, onOpenExternal }: { home: string; onOpenExternal(u
 }
 
 function FilesPanel({ project, git, onReveal }: { project?: ProjectRecord; git: GitStatus; onReveal(path: string): void }) {
+  type BrowserEntry = ProjectFileEntry & { root: string; displayPath: string; key: string }
   const [query, setQuery] = useState('')
-  const [entries, setEntries] = useState<ProjectFileEntry[]>([])
+  const [entries, setEntries] = useState<BrowserEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const loadToken = useRef(0)
 
-  useEffect(() => {
+  const load = async () => {
+    const token = ++loadToken.current
     setEntries([]); setError('')
     if (!project || !window.prime) return
-    let cancelled = false
     setLoading(true)
-    window.prime.projects.listFiles(project.primaryFolder)
-      .then((value) => { if (!cancelled) setEntries(value) })
-      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [project?.id, project?.primaryFolder])
+    try {
+      const roots = project.folders.length ? project.folders : [project.primaryFolder]
+      const groups = await Promise.all(roots.map(async (root) => ({ root, entries: await window.prime.projects.listFiles(root) })))
+      if (loadToken.current !== token) return
+      const multipleRoots = roots.length > 1
+      setEntries(groups.flatMap(({ root, entries: rootEntries }) => rootEntries.map((entry) => ({
+        ...entry,
+        root,
+        displayPath: multipleRoots ? `${basename(root)}/${entry.path}` : entry.path,
+        key: `${root}\0${entry.path}`,
+      }))))
+    } catch (reason) {
+      if (loadToken.current === token) setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (loadToken.current === token) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+    return () => { loadToken.current += 1 }
+  }, [project?.id, project?.folders.join('\0')])
 
   const changed = useMemo(() => new Map(git.files.map((file) => [file.path, file.status])), [git.files])
   const normalizedQuery = query.trim().toLowerCase()
-  const files = useMemo(() => entries.filter((entry) => !normalizedQuery || entry.path.toLowerCase().includes(normalizedQuery)), [entries, normalizedQuery])
+  const files = useMemo(() => entries.filter((entry) => !normalizedQuery || entry.displayPath.toLowerCase().includes(normalizedQuery)), [entries, normalizedQuery])
   if (!project) return <EmptyState icon={<Folder size={24} />} title="No project files">Choose a local project to inspect files.</EmptyState>
-  return <div className="files-panel"><div className="files-search"><Search size={13} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files" /></div><div className="file-tree scroll-area"><button type="button" className="tree-root" onClick={() => onReveal(project.primaryFolder)}><ChevronDown size={13} /><Folder size={14} /><strong>{basename(project.primaryFolder)}</strong></button>{loading ? <p>Loading project files…</p> : null}{error ? <p>Unable to list project files: {error}</p> : null}{!loading && !error ? files.map((entry) => {
-    const depth = entry.path.split('/').length - 1
-    const status = changed.get(entry.path)
-    return <button type="button" key={entry.path} style={{ paddingLeft: `${23 + depth * 12}px` }} onClick={() => onReveal(`${project.primaryFolder}/${entry.path}`)}>{entry.type === 'directory' ? <><ChevronRight size={12} /><Folder size={13} /></> : entry.path.endsWith('.json') ? <FileJson2 size={13} /> : /\.(tsx?|jsx?)$/.test(entry.path) ? <Code2 size={13} /> : <FileText size={13} />}<span>{entry.path.split('/').at(-1)}</span>{status ? <small>{status}</small> : null}</button>
+  return <div className="files-panel"><div className="files-search"><Search size={13} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter project paths" /><IconButton size="small" label="Refresh project files" onClick={() => void load()}><RefreshCw className={loading ? 'spin' : ''} size={13}/></IconButton></div><div className="file-tree scroll-area"><button type="button" className="tree-root" onClick={() => onReveal(project.primaryFolder)}><Folder size={14} /><strong>{project.folders.length > 1 ? `${project.folders.length} project folders` : basename(project.primaryFolder)}</strong></button>{loading ? <p>Loading project files…</p> : null}{error ? <p>Unable to list project files: {error}</p> : null}{!loading && !error ? files.map((entry) => {
+    const status = entry.root === project.primaryFolder ? changed.get(entry.path) : undefined
+    return <button type="button" key={entry.key} title={entry.displayPath} onClick={() => onReveal(`${entry.root}/${entry.path}`)}>{entry.type === 'directory' ? <Folder size={13} /> : entry.path.endsWith('.json') ? <FileJson2 size={13} /> : /\.(tsx?|jsx?)$/.test(entry.path) ? <Code2 size={13} /> : <FileText size={13} />}<span>{entry.displayPath}</span>{status ? <small>{status}</small> : null}</button>
   }) : null}{!loading && !error && files.length === 0 ? <p>{normalizedQuery ? `No files match “${query}”.` : 'No project files found.'}</p> : null}</div></div>
 }
 
