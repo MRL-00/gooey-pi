@@ -251,6 +251,19 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Escape')
   })
 
+  test('keeps transcript text from showing through the composer disclaimer', async () => {
+    const colors = await page.locator('.composer-note').evaluate((node) => {
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--canvas)'
+      document.body.append(probe)
+      const canvas = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return { note: getComputedStyle(node).backgroundColor, canvas }
+    })
+    expect(colors.note).toBe(colors.canvas)
+    expect(colors.note).not.toContain('rgba')
+  })
+
   test('applies dark appearance and restores system appearance', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()

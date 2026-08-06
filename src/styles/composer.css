@@ -15,7 +15,7 @@
 .send-button:hover { opacity: .88; }
 .send-button:disabled { color: var(--text-tertiary); background: var(--surface-selected); opacity: 1; }
 .send-button--stop { color: white; background: var(--danger); }
-.composer-note { margin: 5px 0 0; color: var(--text-tertiary); font-size: 9.5px; text-align: center; }
+.composer-note { margin: 0; padding: 5px 0 0; color: var(--text-tertiary); background: var(--canvas); box-shadow: 0 13px 0 var(--canvas); font-size: 9.5px; text-align: center; }
 .composer-menu { position: absolute; z-index: 50; left: 7px; bottom: 47px; width: min(360px, calc(100% - 14px)); max-height: 260px; padding: 5px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
 .composer-menu button { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--text-secondary); background: transparent; text-align: left; }
 .composer-menu button:hover, .composer-menu button.is-active { background: var(--surface-hover); }
