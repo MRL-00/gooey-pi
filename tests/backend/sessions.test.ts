@@ -9,12 +9,15 @@ import { JsonStateStore } from '../../electron/main/store'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function setup(maxSessionFiles?: number): { root: string; project: string; service: SessionService; store: JsonStateStore } {
+function setup(
+  maxSessionFiles?: number,
+  transcriptOptions?: ConstructorParameters<typeof SessionService>[3],
+): { root: string; project: string; service: SessionService; store: JsonStateStore } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
-  const service = new SessionService(store, null, maxSessionFiles)
+  const service = new SessionService(store, null, maxSessionFiles, transcriptOptions)
   Object.defineProperty(service, 'sessionRoot', { value: root })
   return { root, project, service, store }
 }
@@ -92,6 +95,42 @@ describe('SessionService catalog scaling', () => {
 
     const records = await service.list()
     expect(records.map((record) => record.id)).toEqual(['newest-a', 'newest-b'])
+  })
+})
+
+describe('SessionService transcript read admission', () => {
+  it('coalesces canonical paths and bounds global concurrency and pending admission', async () => {
+    let active = 0
+    let peak = 0
+    let releaseReads: (() => void) | undefined
+    const gate = new Promise<void>((resolveGate) => { releaseReads = resolveGate })
+    const reader = vi.fn(async (filePath: string) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await gate
+      active -= 1
+      return [{ id: filePath, role: 'user' as const, parts: [{ type: 'text' as const, text: filePath }] }]
+    })
+    const { root, project, service } = setup(undefined, { maxConcurrent: 2, maxPending: 3, reader })
+    const files = Array.from({ length: 5 }, (_, index) => join(root, `${index}.jsonl`))
+    for (const [index, file] of files.entries()) writeSession(file, project, String(index))
+    const alias = join(root, 'alias.jsonl')
+    symlinkSync(files[0], alias)
+
+    const first = service.read(files[0])
+    expect(service.read(files[0])).toBe(first)
+    const aliased = service.read(alias)
+    const second = service.read(files[1])
+    const third = service.read(files[2])
+    const fourth = service.read(files[3])
+    await expect(service.read(files[4])).rejects.toThrow('Too many transcript reads are pending')
+    await vi.waitFor(() => expect(reader).toHaveBeenCalledTimes(1))
+    expect(peak).toBe(1)
+
+    releaseReads?.()
+    await expect(Promise.all([first, aliased, second, third, fourth])).resolves.toHaveLength(5)
+    expect(reader).toHaveBeenCalledTimes(4)
+    expect(peak).toBeLessThanOrEqual(2)
   })
 })
 
