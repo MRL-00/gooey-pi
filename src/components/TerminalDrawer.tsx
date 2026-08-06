@@ -1,6 +1,6 @@
-import { Maximize2, Minimize2, Plus, Split, Terminal as TerminalIcon, Trash2, X } from 'lucide-react'
+import { Maximize2, Minimize2, Terminal as TerminalIcon, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { IconButton } from './ui'
@@ -18,6 +18,33 @@ interface TerminalDrawerProps {
   onError?(message: string): void
 }
 
+const terminalTheme = (): ITheme => {
+  const computed = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) => computed.getPropertyValue(name).trim() || fallback
+  return {
+    background: read('--terminal-bg', '#ffffff'),
+    foreground: read('--terminal-text', '#20201e'),
+    cursor: read('--prime', '#6b55e8'),
+    selectionBackground: read('--terminal-selection', '#c8beff99'),
+    black: read('--terminal-black', '#242423'),
+    red: read('--terminal-red', '#b42318'),
+    green: read('--terminal-green', '#18794e'),
+    yellow: read('--terminal-yellow', '#8a5a00'),
+    blue: read('--terminal-blue', '#2768b4'),
+    magenta: read('--terminal-magenta', '#7b4bb7'),
+    cyan: read('--terminal-cyan', '#197a7d'),
+    white: read('--terminal-white', '#686863'),
+    brightBlack: read('--terminal-bright-black', '#8b8b83'),
+    brightRed: read('--terminal-bright-red', '#b42318'),
+    brightGreen: read('--terminal-bright-green', '#18794e'),
+    brightYellow: read('--terminal-bright-yellow', '#8a5a00'),
+    brightBlue: read('--terminal-bright-blue', '#2768b4'),
+    brightMagenta: read('--terminal-bright-magenta', '#7046a3'),
+    brightCyan: read('--terminal-bright-cyan', '#177f83'),
+    brightWhite: read('--terminal-bright-white', '#20201e'),
+  }
+}
+
 export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError }: TerminalDrawerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -30,7 +57,6 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const computed = getComputedStyle(document.documentElement)
     const terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -39,20 +65,16 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
       lineHeight: 1.45,
       scrollback: 5000,
       allowProposedApi: false,
-      theme: {
-        background: computed.getPropertyValue('--terminal-bg').trim() || '#171716',
-        foreground: computed.getPropertyValue('--terminal-text').trim() || '#d8d8d4',
-        cursor: computed.getPropertyValue('--prime').trim() || '#a595ff',
-        selectionBackground: '#4d456c88',
-        black: '#20201f', red: '#ed8a82', green: '#75c897', yellow: '#deb967', blue: '#82b5ff', magenta: '#a595ff', cyan: '#6dc8ca', white: '#d8d8d4',
-        brightBlack: '#777772', brightRed: '#f29a93', brightGreen: '#91d6ac', brightYellow: '#e8ca87', brightBlue: '#9bc4ff', brightMagenta: '#b8adff', brightCyan: '#8ad9da', brightWhite: '#f1f1ee',
-      },
+      theme: terminalTheme(),
     })
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(container)
     terminalRef.current = terminal; fitRef.current = fit
     requestAnimationFrame(() => fit.fit())
+
+    const themeObserver = new MutationObserver(() => { terminal.options.theme = terminalTheme() })
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 
     let offData: (() => void) | undefined
     let offExit: (() => void) | undefined
@@ -77,7 +99,7 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
     const observer = new ResizeObserver(() => requestAnimationFrame(() => { try { fit.fit() } catch { /* drawer is transitioning */ } }))
     observer.observe(container)
     return () => {
-      cancelled = true; observer.disconnect(); offData?.(); offExit?.(); inputDisposable.dispose(); resizeDisposable.dispose()
+      cancelled = true; themeObserver.disconnect(); observer.disconnect(); offData?.(); offExit?.(); inputDisposable.dispose(); resizeDisposable.dispose()
       const id = terminalIdRef.current; terminalIdRef.current = null
       if (id && window.prime) void window.prime.terminal.kill(id)
       terminal.dispose(); terminalRef.current = null; fitRef.current = null
@@ -88,8 +110,8 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
     <section className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal">
       {!maximized ? <ResizeHandle orientation="horizontal" label="Resize terminal" value={height} min={minHeight} max={maxHeight} defaultValue={defaultHeight} onChange={onHeightChange} /> : null}
       <div className="terminal-toolbar">
-        <div className="terminal-tabs"><button type="button" className="is-active"><TerminalIcon size={14}/><span>{shellName}</span><span className={`terminal-live-dot ${connected ? 'is-connected' : ''}`}/><X size={11}/></button><IconButton size="small" label="New terminal (single-terminal mode)" disabled><Plus size={13}/></IconButton></div>
-        <div className="terminal-actions"><span className="terminal-cwd" title={cwd}>{cwd?.split('/').at(-1) ?? 'No project'}</span><IconButton label="Split terminal (single-terminal mode)" disabled><Split size={13}/></IconButton><IconButton label="Clear terminal" onClick={() => terminalRef.current?.clear()}><Trash2 size={13}/></IconButton><IconButton label={maximized ? 'Restore terminal' : 'Maximize terminal'} onClick={() => setMaximized((value) => !value)}>{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</IconButton><IconButton label="Close terminal" onClick={onClose}><X size={14}/></IconButton></div>
+        <div className="terminal-tabs"><div className="is-active"><TerminalIcon size={14}/><span>{shellName}</span><span className={`terminal-live-dot ${connected ? 'is-connected' : ''}`}/></div></div>
+        <div className="terminal-actions"><span className="terminal-cwd" title={cwd}>{cwd?.split('/').at(-1) ?? 'No project'}</span><IconButton label="Clear terminal" onClick={() => terminalRef.current?.clear()}><Trash2 size={13}/></IconButton><IconButton label={maximized ? 'Restore terminal' : 'Maximize terminal'} onClick={() => setMaximized((value) => !value)}>{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</IconButton><IconButton label="Close terminal" onClick={onClose}><X size={14}/></IconButton></div>
       </div>
       <div className="terminal-surface" ref={containerRef}/>
     </section>

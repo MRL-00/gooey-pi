@@ -5,7 +5,6 @@ import {
   Command,
   FolderGit2,
   Gauge,
-  Mic,
   Plus,
   ShieldCheck,
 } from 'lucide-react'
@@ -18,11 +17,9 @@ interface ComposerProps {
   disabled?: boolean
   model: string
   effort: string
-  environment: string
   skills: SkillRecord[]
   onModelChange(value: string): void
   onEffortChange(value: string): void
-  onEnvironmentChange(value: string): void
   onSend(prompt: string): Promise<void> | void
   onStop(): Promise<void> | void
 }
@@ -34,7 +31,7 @@ const commands = [
   { command: '/status', detail: 'Show runtime status' },
 ]
 
-export function Composer({ busy, disabled, model, effort, environment, skills, onModelChange, onEffortChange, onEnvironmentChange, onSend, onStop }: ComposerProps) {
+export function Composer({ busy, disabled, model, effort, skills, onModelChange, onEffortChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -66,7 +63,7 @@ export function Composer({ busy, disabled, model, effort, environment, skills, o
           value={value}
           disabled={disabled}
           rows={2}
-          placeholder={disabled ? 'Add a project to begin' : 'Ask Prime anything, @ to add files, / for commands'}
+          placeholder={disabled ? 'Add a project to begin' : 'Ask Prime anything, @ for skills, / for commands'}
           aria-label="Message Prime"
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
@@ -75,28 +72,25 @@ export function Composer({ busy, disabled, model, effort, environment, skills, o
           }}
         />
         {menu ? (
-          <div className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
+          <div className="composer-menu" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
             {menu === 'command' ? commands.filter((item) => item.command.startsWith(value)).map((item) => <button type="button" key={item.command} onClick={() => { setValue(`${item.command} `); setMenu(null); textareaRef.current?.focus() }}><Command size={14} /><span><strong>{item.command}</strong><small>{item.detail}</small></span></button>) : null}
             {menu === 'skill' ? enabledSkills.map((skill) => <button type="button" key={skill.id} onClick={() => insert(`${skill.name} `)}><AtSign size={14} /><span><strong>{skill.name}</strong><small>{skill.description}</small></span></button>) : null}
-            {menu === 'add' ? <button type="button" onClick={() => insert('@')}><AtSign size={14} /><span><strong>Add file or skill</strong><small>Mention project context</small></span></button> : null}
+            {menu === 'add' ? <button type="button" onClick={() => insert('@')}><AtSign size={14} /><span><strong>Mention a skill</strong><small>Add an enabled Prime capability</small></span></button> : null}
           </div>
         ) : null}
         <div className="composer__footer">
           <div className="composer__controls">
-            <IconButton label="Add context" onClick={() => setMenu((current) => current === 'add' ? null : 'add')}><Plus size={17} /></IconButton>
+            <IconButton label="Add skill" onClick={() => setMenu((current) => current === 'add' ? null : 'add')}><Plus size={17} /></IconButton>
             <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option><option value="gpt-5.6-sol">GPT-5.6 Sol</option><option value="gpt-5.4">GPT-5.4</option><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
             </SelectControl>
             <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value)}>
               <option value="low">Low</option><option value="medium">Standard</option><option value="high">High</option><option value="max">Max</option>
             </SelectControl>
-            <SelectControl label="Environment" compact icon={<FolderGit2 size={12} />} value={environment} onChange={(event) => onEnvironmentChange(event.target.value)}>
-              <option value="local">Local</option>
-            </SelectControl>
+            <span className="permissions-chip" title="Local environment"><FolderGit2 size={12} /><span>Local</span></span>
             <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
           </div>
           <div className="composer__actions">
-            <IconButton label="Voice input unavailable" disabled><Mic size={16} /></IconButton>
             {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={!value.trim() || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
           </div>
         </div>

@@ -302,7 +302,6 @@ export default function App() {
     try { const project = await bridge.projects.add(); if (project) { setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]); setActiveProjectId(project.id); setActiveSessionId(undefined); setMessages([]); setView('session') } } catch (error) { reportError(error) }
   }
   const removeProject = async (project: ProjectRecord) => {
-    if (!window.confirm(`Remove “${project.name}” from Prime Work? The folder and saved sessions will not be deleted.`)) return
     try {
       if (bridge && !await bridge.projects.remove(project.id)) throw new Error('This project could not be removed.')
       setProjects((items) => items.filter((item) => item.id !== project.id))

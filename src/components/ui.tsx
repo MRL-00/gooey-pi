@@ -1,5 +1,6 @@
 import { ChevronDown, X } from 'lucide-react'
-import type { ButtonHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string
@@ -86,15 +87,61 @@ export function EmptyState({ icon, title, children, action }: { icon?: ReactNode
   )
 }
 
+const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void): RefObject<T | null> {
+  const containerRef = useRef<T>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+  const escapeRef = useRef(onEscape)
+  escapeRef.current = onEscape
+  useEffect(() => {
+    if (!active || !containerRef.current) return
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const container = containerRef.current
+    const focusInitial = () => {
+      const preferred = container.querySelector<HTMLElement>('[autofocus]')
+      const first = preferred ?? container.querySelector<HTMLElement>(focusableSelector)
+      first?.focus()
+    }
+    const frame = requestAnimationFrame(focusInitial)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.target instanceof Node) || !container.contains(event.target)) return
+      if (event.key === 'Escape' && escapeRef.current) { event.preventDefault(); escapeRef.current(); return }
+      if (event.key !== 'Tab') return
+      const items = [...container.querySelectorAll<HTMLElement>(focusableSelector)].filter((item) => !item.hidden && item.getClientRects().length > 0)
+      if (!items.length) { event.preventDefault(); container.focus(); return }
+      const first = items[0]; const last = items.at(-1)!
+      if (event.shiftKey && (document.activeElement === first || !container.contains(document.activeElement))) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown, true)
+      const restore = previousFocus.current
+      requestAnimationFrame(() => { if (restore?.isConnected) restore.focus() })
+    }
+  }, [active])
+  return containerRef
+}
+
 export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
-  return (
+  const titleId = useId()
+  const modalRef = useFocusTrap<HTMLElement>(true, onClose)
+  useEffect(() => {
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    if (!shell) return
+    shell.inert = true; shell.setAttribute('aria-hidden', 'true')
+    return () => { shell.inert = false; shell.removeAttribute('aria-hidden') }
+  }, [])
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <div className="modal__header"><h2 id="modal-title">{title}</h2><IconButton label="Close" onClick={onClose}><X size={16} /></IconButton></div>
+      <section ref={modalRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+        <div className="modal__header"><h2 id={titleId}>{title}</h2><IconButton label="Close" onClick={onClose}><X size={16} /></IconButton></div>
         <div className="modal__body">{children}</div>
         {footer ? <div className="modal__footer">{footer}</div> : null}
       </section>
-    </div>
+    </div>, document.body
   )
 }
 

@@ -53,6 +53,46 @@ test.describe.serial('Prime Work desktop smoke', () => {
     await page.keyboard.press('Escape')
   })
 
+  test('applies dark appearance and restores system appearance', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.getByRole('button', { name: /Dark/ }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    await page.getByRole('button', { name: /System/ }).click()
+  })
+
+  test('traps modal focus, closes on Escape, and restores the trigger', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Browser', exact: true }).first().click()
+    const trigger = page.getByRole('button', { name: 'Clear data' })
+    await trigger.click()
+    const dialog = page.getByRole('dialog', { name: 'Clear browser data?' })
+    await expect(dialog).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Close' })).toBeFocused()
+    await expect(page.locator('.app-shell')).toHaveAttribute('inert')
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    await expect(page.locator('.app-shell')).not.toHaveAttribute('inert')
+  })
+
+  test('uses overlay panels at the compact desktop breakpoint', async () => {
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    await page.setViewportSize({ width: 960, height: 700 })
+    await expect.poll(() => page.locator('.sidebar').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
+    await expect(page.locator('.inspector')).toHaveCount(0)
+    await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
+    await page.locator('.panel-scrim--sidebar').click({ position: { x: 900, y: 300 } })
+    await page.getByRole('button', { name: 'Toggle inspector' }).click()
+    await expect.poll(() => page.locator('.inspector').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
+    await page.setViewportSize({ width: 1440, height: 920 })
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440)
+    await page.getByRole('button', { name: /Show sidebar/ }).click()
+    await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
+  })
+
   test('attaches an isolated browser guest without navigation errors', async () => {
     await page.getByRole('button', { name: /^New session/ }).first().click()
     await page.getByRole('tab', { name: 'Browser' }).click()
@@ -60,6 +100,9 @@ test.describe.serial('Prime Work desktop smoke', () => {
     await expect(guest).toHaveCount(1)
     await page.waitForTimeout(2_500)
     expect(actionableErrors.filter((error) => /ERR_ABORTED|GUEST_VIEW_MANAGER_CALL/i.test(error))).toEqual([])
+    await page.getByRole('tab', { name: 'Browser' }).focus()
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true')
   })
 
   test('resizes the inspector horizontally and terminal vertically', async () => {
@@ -114,8 +157,8 @@ test.describe.serial('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Summary' }).click()
     await page.getByLabel(/Toggle terminal/).click()
     await expect(page.locator('.terminal-drawer .xterm')).toBeVisible()
-    await expect(page.getByLabel(/New terminal/)).toBeDisabled()
-    await expect(page.getByLabel(/Split terminal/)).toBeDisabled()
+    await expect(page.getByLabel(/New terminal/)).toHaveCount(0)
+    await expect(page.getByLabel(/Split terminal/)).toHaveCount(0)
     const drawer = page.locator('.terminal-drawer')
     const before = await drawer.evaluate((node) => node.getBoundingClientRect().height)
     await page.getByLabel('Maximize terminal').click()
