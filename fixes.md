@@ -125,3 +125,4 @@ These logs are the durable coordination record for compaction and handoff.
 ### Section F log — performance/DRY
 
 - `361d140` stabilizes every Sidebar callback at the App shell memo boundary (`src/App.tsx`, `src/hooks/useStableCallback.ts`) and adds a streaming-parent memo assertion (`tests/frontend/streaming-performance.test.ts`). Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/streaming-performance.test.ts` (7 passed).
+- `3fdb896` replaces repeated full-output searches with offset/type tokens (`src/lib/syntax-text.ts`, `src/components/Transcript.tsx`); the 200k-character regression test proves exact reconstruction and zero `String#indexOf` calls (`tests/frontend/syntax-text.test.ts`). Focused validation: `npm run typecheck`; `npx vitest run tests/frontend/syntax-text.test.ts tests/frontend/transcript-rendering.test.ts` (5 passed).
