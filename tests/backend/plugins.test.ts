@@ -211,12 +211,13 @@ describe('PluginService MCP connections', () => {
     const original = internal.settingsFingerprint.bind(service)
     let substituted = false
     internal.settingsFingerprint = async (path) => {
+      const fingerprint = await original(path)
       if (!substituted) {
         substituted = true
         renameSync(projectAgentDir, displacedAgentDir)
         symlinkSync(outside, projectAgentDir, 'dir')
       }
-      return original(path)
+      return fingerprint
     }
 
     await expect(service.connectMcp({

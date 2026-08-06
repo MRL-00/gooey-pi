@@ -157,8 +157,11 @@ async function writeSettingsAtomically(
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
     await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    verify?.()
     if (await fingerprint(path) !== expectedFingerprint) return false
+    verify?.()
     await rename(temporary, path)
+    verify?.()
     return true
   } finally {
     await rm(temporary, { force: true })
