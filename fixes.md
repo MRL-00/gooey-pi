@@ -132,6 +132,8 @@ These logs are the durable coordination record for compaction and handoff.
 - `80e2164` Guard plugin catalog ownership: `src/App.tsx`, `src/hooks/useBootstrap.ts`, `src/lib/plugin-catalog.ts`, `tests/frontend/plugin-catalog.test.ts`. Centralized global/project loads under latest-request plus workspace-generation/path ownership; refresh and post-MCP reloads cannot commit across project switches. Validation: `npm run typecheck`; focused Vitest (6 tests); `npm run check`. Remaining risk: full switching behavior remains for E2E validation.
 - `825c44c` Fix queued cross-field settings rollback: `src/hooks/useAppSettings.ts`, `src/lib/settings-state.ts`, `tests/frontend/settings-page.test.ts`. Successful or rejected latest queued mutations now reconcile all independent panel state from the complete confirmed settings object. Validation: `npm run typecheck`; focused settings Vitest (12 tests); `npm run check`. Remaining risk: none known.
 
+- `7119b0e` Restore diagnostics preference control: `src/pages/settings/PrivacySettings.tsx`, `tests/e2e/app.spec.ts`. Privacy settings now exposes the persisted telemetry boolean and can disable a pre-existing true value. Validation: typecheck, focused settings Vitest, check, bundle build, and focused Playwright diagnostics E2E (1 passed). Remaining risk: diagnostics remain preference-only until an explicitly privacy-reviewed diagnostics implementation exists.
+
 
 ### Section F log — performance/DRY
 
