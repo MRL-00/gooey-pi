@@ -152,6 +152,7 @@ describe('settings field ownership', () => {
       showReasoningSummaries: 'agent',
       showToolCalls: 'agent',
       telemetry: 'privacy',
+      disabledProviders: 'agent',
     })
   })
 })
