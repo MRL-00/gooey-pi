@@ -15,7 +15,6 @@ Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/Pri
 - Project-scoped `node-pty` terminal with clear, maximize/restore, resize, and clean shutdown
 - Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
 - Project-local `ask_user` extension with multiple-choice dialogs in Prime Work and Prime Agent's native CLI UI
-- Standalone [Prime Agent Ask User package](https://github.com/am-will/prime-agent-ask-user) for users who do not use Prime Work
 - Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
 - macOS keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
 
@@ -39,15 +38,7 @@ Prime Work never stores provider API keys. Authentication remains owned by Prime
 
 ### Ask the user from an agent turn
 
-This repository includes `.prime/agent/extensions/ask-user.ts`. Prime Agent auto-discovers it when the working directory is this project, so the model can call `ask_user` from either Prime Work or the interactive Prime Agent CLI. Prime Work renders the request as a native modal; the CLI uses its terminal selector. Non-interactive modes such as print/JSON do not have a question UI.
-
-The standalone package source is visible at [`plugins/prime-agent-ask-user`](plugins/prime-agent-ask-user) and published at [am-will/prime-agent-ask-user](https://github.com/am-will/prime-agent-ask-user). Install it without Prime Work for every project with:
-
-```bash
-prime-agent package install https://github.com/am-will/prime-agent-ask-user
-```
-
-Use `--local` to install it only for the current project. The package README also documents a direct copy into `~/.prime/agent/extensions/`.
+This repository includes `.prime/agent/extensions/ask-user.ts`. Prime Agent auto-discovers it when the working directory is this project, so the model can call `ask_user` from either Prime Work or the interactive Prime Agent CLI. Prime Work renders the request as a native modal; the CLI uses its terminal selector. Non-interactive modes such as print/JSON do not have a question UI. To make the tool available in every CLI project, copy the extension to `~/.prime/agent/extensions/`.
 
 ## Develop
 
