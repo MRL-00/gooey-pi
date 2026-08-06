@@ -63,6 +63,34 @@ export function validateReleaseCredentials(env = process.env, options = {}) {
   if (hasApiKeyValue && checkApiKeyFile) accessSync(env.APPLE_API_KEY, constants.R_OK)
 }
 
+export function requireReleaseArtifacts(paths) {
+  const artifacts = { dmg: [], zip: [] }
+  for (const path of paths) {
+    if (path.endsWith('.dmg')) artifacts.dmg.push(path)
+    if (path.endsWith('.zip')) artifacts.zip.push(path)
+  }
+  for (const [extension, matches] of Object.entries(artifacts)) {
+    if (matches.length !== 1) throw new Error(`Expected exactly one ${extension.toUpperCase()} artifact, found ${matches.length}`)
+  }
+  return { dmg: artifacts.dmg[0], zip: artifacts.zip[0] }
+}
+
+export function artifactArchitectures(path) {
+  const architecture = /-(arm64|x64|universal)\.(?:dmg|zip)$/.exec(path)?.[1]
+  if (!architecture) throw new Error(`Artifact name does not declare a supported architecture: ${path}`)
+  if (architecture === 'arm64') return new Set(['arm64'])
+  if (architecture === 'x64') return new Set(['x86_64'])
+  return new Set(['arm64', 'x86_64'])
+}
+
+export function assertExactArchitectures(actual, expected, label) {
+  const missing = [...expected].filter((architecture) => !actual.has(architecture))
+  const unexpected = [...actual].filter((architecture) => !expected.has(architecture))
+  if (missing.length || unexpected.length) {
+    throw new Error(`${label} architectures do not match its artifact name (expected ${[...expected].join(', ')}, found ${[...actual].join(', ')})`)
+  }
+}
+
 export function parseTeamIdentifier(output) {
   return /^TeamIdentifier=(.+)$/m.exec(output)?.[1]?.trim()
 }

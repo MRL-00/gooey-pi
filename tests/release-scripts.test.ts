@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
+  artifactArchitectures,
   assertArchitectureCoverage,
   assertAsarLayout,
+  assertExactArchitectures,
   assertSupportedNode,
   parseArchitectures,
   parseTeamIdentifier,
+  requireReleaseArtifacts,
   validateReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
@@ -75,6 +78,17 @@ describe('post-package verification helpers', () => {
   test('parses Team IDs and architecture lists', () => {
     expect(parseTeamIdentifier('Authority=Developer ID\nTeamIdentifier=TEAM123\n')).toBe('TEAM123')
     expect(parseArchitectures('arm64 x86_64\n')).toEqual(new Set(['arm64', 'x86_64']))
+  })
+
+  test('requires exactly one DMG and ZIP and binds their declared architecture', () => {
+    expect(requireReleaseArtifacts(['/release/Prime Work-0.1.0-arm64.dmg', '/release/Prime Work-0.1.0-arm64.zip'])).toEqual({
+      dmg: '/release/Prime Work-0.1.0-arm64.dmg',
+      zip: '/release/Prime Work-0.1.0-arm64.zip',
+    })
+    expect(() => requireReleaseArtifacts(['/release/Prime Work-0.1.0-arm64.dmg'])).toThrow(/ZIP/)
+    expect(artifactArchitectures('Prime Work-0.1.0-universal.zip')).toEqual(new Set(['arm64', 'x86_64']))
+    expect(() => assertExactArchitectures(new Set(['arm64']), artifactArchitectures('Prime Work-0.1.0-arm64.dmg'), 'DMG')).not.toThrow()
+    expect(() => assertExactArchitectures(new Set(['x86_64']), artifactArchitectures('Prime Work-0.1.0-arm64.dmg'), 'DMG')).toThrow(/do not match/)
   })
 
   test('requires native modules to cover every application architecture', () => {
