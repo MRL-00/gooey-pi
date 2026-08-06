@@ -123,8 +123,28 @@ test.describe('Prime Work desktop smoke', () => {
     expect(bridge.type).toBe('object')
     expect(bridge.groups).toEqual(['agent', 'app', 'git', 'plugins', 'projects', 'schedules', 'sessions', 'settings', 'terminal'])
     await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
+    await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('keeps session options visible and starts a new session from a hovered project', async () => {
+    const sessionOptions = page.locator('.session-row__more').first()
+    await expect(sessionOptions).toBeVisible()
+    await expect.poll(() => sessionOptions.evaluate((node) => getComputedStyle(node).opacity)).toBe('1')
+
+    const projectRow = page.locator('.project-row').first()
+    const projectSession = projectRow.getByRole('button', { name: /^New session in / })
+    await expect.poll(() => projectSession.evaluate((node) => getComputedStyle(node).opacity)).toBe('0')
+    await expect.poll(async () => {
+      await projectRow.hover()
+      return projectSession.evaluate((node) => getComputedStyle(node).opacity)
+    }).toBe('1')
+    await projectSession.click()
+
+    await expect(projectRow).toHaveClass(/is-selected/)
+    await expect(page.locator('.session-row-wrap.is-selected')).toHaveCount(0)
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
 
   test('shows agent messages as collapsed, expandable Prime handoffs instead of errors', async () => {
@@ -226,6 +246,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     const completedRow = page.locator('.session-row-wrap--complete').first()
     await expect(completedRow).toHaveClass(/has-attention/)
+    await expect(page.locator('.unread-dot')).toHaveCount(0)
     await completedRow.locator('.session-row').click()
     await expect(completedRow).not.toHaveClass(/has-attention/)
   })
