@@ -136,6 +136,8 @@ These logs are the durable coordination record for compaction and handoff.
 
 - `be541a9` Correct browser download preference semantics: `electron/main/browser-downloads.ts`, `electron/main/index.ts`, `tests/backend/browser-downloads.test.ts`, `docs/security.md`. Disabling save prompts now admits otherwise-safe gesture downloads to the OS Downloads folder with a sanitized UUID-suffixed name while preserving URL/size/concurrency/budget controls. Validation: `npm run typecheck`; focused browser-download Vitest (4 tests); `npm run check`. Remaining risk: OS-level destination writability errors are handled by Electron's normal download failure path.
 
+- `9e5c940` Repair rejected-setting E2E: `tests/e2e/app.spec.ts`. The test now presses Enter, asserts inline rollback feedback and the backend validation toast, verifies persisted shell rollback, then remounts the draft to prove confirmed UI restoration. Validation: `npm run typecheck`; `npm run check`; focused Playwright rejected-setting E2E (1 passed). Remaining risk: none known.
+
 
 ### Section F log — performance/DRY
 
