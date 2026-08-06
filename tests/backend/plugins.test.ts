@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,6 +8,44 @@ import { PluginService } from '../../electron/main/plugins'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-')); dirs.push(dir); return dir }
+
+describe('PluginService discovery', () => {
+  it('coalesces duplicate refreshes while discovery is in flight', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const first = service.list()
+    const duplicate = service.refresh()
+
+    expect(duplicate).toBe(first)
+    await expect(first).resolves.toEqual(expect.any(Array))
+  })
+
+  it('keeps project-configured discovery contained while accepting in-project files', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const notes = join(project, 'notes')
+    const outside = join(root, 'outside.md')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true }); mkdirSync(notes)
+    const inside = join(notes, 'inside.md')
+    writeFileSync(inside, '# Inside\ncontained discovery')
+    writeFileSync(outside, '# Outside\nshould not be disclosed')
+    symlinkSync(outside, join(notes, 'linked-outside.md'))
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify({
+      prompts: [inside, outside, join(notes, 'linked-outside.md')],
+    }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const records = await service.list(project)
+
+    expect(records).toContainEqual(expect.objectContaining({ kind: 'prompt', location: 'project', path: realpathSync(inside) }))
+    expect(records.some((record) => record.path === outside || record.path === join(notes, 'linked-outside.md'))).toBe(false)
+  })
+})
 
 describe('PluginService MCP connections', () => {
   it('connects an HTTP MCP server without treating its URL as a package repository', async () => {
@@ -89,4 +128,55 @@ describe('PluginService MCP connections', () => {
     expect(duplicate.ok).toBe(false)
     expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')).mcpServers.existing.command).toBe('safe')
   })
+
+  it('serializes updates across service instances and rereads settings after locking', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'test/model' }))
+    const first = new PluginService(null, async (path) => resolve(path), { agentDir })
+    const second = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const responses = await Promise.all([
+      first.connectMcp({ name: 'first', scope: 'user', type: 'stdio', command: 'first-command' }),
+      second.connectMcp({ name: 'second', scope: 'user', type: 'stdio', command: 'second-command' }),
+    ])
+
+    expect(responses.every((response) => response.ok)).toBe(true)
+    const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.defaultModel).toBe('test/model')
+    expect(settings.mcpServers.first.command).toBe('first-command')
+    expect(settings.mcpServers.second.command).toBe('second-command')
+  })
+
+  it('recovers a lock only after its recorded owner has exited', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const settingsPath = join(agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    const exited = spawn(process.execPath, ['-e', 'process.exit(0)'])
+    const exitedPid = exited.pid
+    expect(exitedPid).toBeTypeOf('number')
+    await new Promise<void>((resolveExit, rejectExit) => {
+      exited.once('error', rejectExit)
+      exited.once('exit', () => resolveExit())
+    })
+    const lockPath = `${settingsPath}.lock`
+    mkdirSync(lockPath)
+    writeFileSync(join(lockPath, 'owner.json'), JSON.stringify({
+      version: 1,
+      pid: exitedPid,
+      token: 'exited-test-owner',
+      createdAt: Date.now() - 1_000,
+    }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const response = await service.connectMcp({ name: 'after-crash', scope: 'user', type: 'stdio', command: 'safe-command' })
+
+    expect(response.ok).toBe(true)
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers['after-crash'].command).toBe('safe-command')
+    expect(() => readFileSync(join(lockPath, 'owner.json'))).toThrow()
+  })
+
 })
