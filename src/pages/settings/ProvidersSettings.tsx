@@ -7,6 +7,7 @@ interface ProvidersSettingsProps {
   onSaveApiKey(providerId: string, apiKey: string): Promise<void>
   onLogout(providerId: string): Promise<void>
   onSetEnabled(providerId: string, enabled: boolean): Promise<void>
+  onSetAllEnabled(): Promise<void>
   onStartOAuth(providerId: string): Promise<void>
   onOpenDocs(): void
 }

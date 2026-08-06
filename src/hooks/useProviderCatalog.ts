@@ -120,6 +120,12 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     if (selectedProvider && disabledProviders.includes(selectedProvider)) { setModel('auto'); setFast(false) }
   }, [bridge, catalog?.models, model, syncDisabledProviders])
 
+  const setAllEnabled = useCallback(async () => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    await syncDisabledProviders([])
+    setCatalog(await bridge.providers.catalog(true))
+  }, [bridge, syncDisabledProviders])
+
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     await bridge.providers.startOAuth(providerId)
@@ -138,6 +144,6 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   return {
     model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels,
     refresh, changeModel, changeEffort, changeFast,
-    saveApiKey, logout, setEnabled, startOAuth, respondOAuth, cancelOAuth,
+    saveApiKey, logout, setEnabled, setAllEnabled, startOAuth, respondOAuth, cancelOAuth,
   }
 }
