@@ -78,12 +78,13 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
   const [commitOpen, setCommitOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null)
+  const [actionError, setActionError] = useState('')
   const cwd = project?.primaryFolder
   const visibleFiles = git.files.filter((file) => scope === 'staged' ? file.staged : !file.staged)
 
   useEffect(() => {
-    if (selectedPath && !git.files.some((file) => file.path === selectedPath)) setSelectedPath(git.files[0]?.path)
-  }, [git.files, selectedPath])
+    if (!visibleFiles.some((file) => file.path === selectedPath)) setSelectedPath(visibleFiles[0]?.path)
+  }, [git.files, scope, selectedPath])
 
   useEffect(() => {
     if (!cwd || !selectedPath || !window.prime) { setDiff(selectedPath ? `diff --git a/${selectedPath} b/${selectedPath}
@@ -100,18 +101,29 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
     return () => { cancelled = true }
   }, [cwd, selectedPath, scope])
 
-  const mutate = async (kind: 'stage' | 'unstage' | 'restore', paths: string[]) => {
-    if (!cwd || !window.prime) return
-    if (kind === 'stage') await window.prime.git.stage(cwd, paths)
-    if (kind === 'unstage') await window.prime.git.unstage(cwd, paths)
-    if (kind === 'restore') await window.prime.git.restore(cwd, paths)
-    await onRefreshGit()
+  const mutate = async (kind: 'stage' | 'unstage' | 'restore', paths: string[]): Promise<boolean> => {
+    if (!cwd || !window.prime) return false
+    setActionError('')
+    try {
+      if (kind === 'stage') await window.prime.git.stage(cwd, paths)
+      if (kind === 'unstage') await window.prime.git.unstage(cwd, paths)
+      if (kind === 'restore') await window.prime.git.restore(cwd, paths)
+      await onRefreshGit()
+      return true
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+      return false
+    }
   }
 
   const commit = async () => {
     if (!cwd || !commitMessage.trim() || !window.prime) return
-    await window.prime.git.commit(cwd, commitMessage.trim())
-    setCommitOpen(false); setCommitMessage(''); await onRefreshGit()
+    setActionError('')
+    try {
+      const result = await window.prime.git.commit(cwd, commitMessage.trim())
+      if (!result.ok) throw new Error(result.output || 'Git could not create the commit.')
+      setCommitOpen(false); setCommitMessage(''); await onRefreshGit()
+    } catch (error) { setActionError(error instanceof Error ? error.message : String(error)) }
   }
 
   if (!git.isRepo) return <EmptyState icon={<GitBranch size={24} />} title="No Git repository">{git.error ?? 'Open a project backed by Git to review, stage, and commit changes.'}</EmptyState>
@@ -121,7 +133,8 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
         <div><strong><GitBranch size={13} /> {git.branch ?? 'Repository'}</strong>{git.ahead ? <small>{git.ahead} ahead</small> : null}</div>
         <IconButton label="Refresh changes" onClick={() => void onRefreshGit()}><RefreshCw size={14} /></IconButton>
       </div>
-      <div className="changes-scopes"><Segmented value={scope} label="Diff scope" options={[{ value: 'unstaged', label: 'Unstaged' }, { value: 'staged', label: 'Staged' }]} onChange={(value) => setScope(value as 'unstaged' | 'staged') } /><button type="button" className="button button--compact" disabled={!git.files.some((file) => file.staged)} onClick={() => setCommitOpen(true)}>Commit</button></div>
+      <div className="changes-scopes"><Segmented value={scope} label="Diff scope" options={[{ value: 'unstaged', label: 'Unstaged' }, { value: 'staged', label: 'Staged' }]} onChange={(value) => { setActionError(''); setScope(value as 'unstaged' | 'staged') }} /><button type="button" className="button button--compact" disabled={!git.files.some((file) => file.staged)} onClick={() => setCommitOpen(true)}>Commit</button></div>
+      {actionError ? <p className="changes-error" role="alert">{actionError}</p> : null}
       <div className="changes-body">
         <div className="file-changes scroll-area">
           <div className="file-changes__header"><span>{visibleFiles.length} changed {visibleFiles.length === 1 ? 'file' : 'files'}</span>{visibleFiles.length ? <button type="button" onClick={() => void mutate(scope === 'staged' ? 'unstage' : 'stage', visibleFiles.map((file) => file.path))}>{scope === 'staged' ? 'Unstage all' : 'Stage all'}</button> : null}</div>
@@ -134,7 +147,7 @@ function ChangesPanel({ project, git, onRefreshGit, onGitChange }: { project?: P
         </div>
       </div>
       {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} footer={<><button className="button" type="button" onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={!commitMessage.trim()} onClick={() => void commit()}>Commit changes</button></>}><label className="field"><span>Commit message</span><input autoFocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p></Modal> : null}
-      {confirmRestore ? <Modal title="Revert file changes?" onClose={() => setConfirmRestore(null)} footer={<><button className="button" type="button" onClick={() => setConfirmRestore(null)}>Cancel</button><button className="button button--danger" type="button" onClick={() => { void mutate('restore', [confirmRestore]); setConfirmRestore(null) }}>Revert file</button></>}><p>Uncommitted changes to <code>{confirmRestore}</code> will be permanently discarded.</p></Modal> : null}
+      {confirmRestore ? <Modal title="Revert file changes?" onClose={() => setConfirmRestore(null)} footer={<><button className="button" type="button" onClick={() => setConfirmRestore(null)}>Cancel</button><button className="button button--danger" type="button" onClick={() => { const path = confirmRestore; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmRestore(null) }) }}>Revert file</button></>}><p>Uncommitted changes to <code>{confirmRestore}</code> will be permanently discarded.</p></Modal> : null}
     </div>
   )
 }
