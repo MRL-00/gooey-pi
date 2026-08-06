@@ -5,10 +5,21 @@ import { runProcess } from '../process-utils'
 import { isPathWithin, isRecord } from '../validation'
 import { applyLiveMetadata, type JsonRecord, type SessionMetadata } from './metadata'
 
+const MAX_SESSION_DISCOVERY_WORK = 20_000
+const SESSION_DISCOVERY_WORK_FACTOR = 4
+
 interface SessionFileCandidate { filePath: string; fileStat: Stats; fingerprint: string }
 
 function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+export function boundedSessionDiscoveryNames(names: readonly string[], maxSessionFiles: number): string[] {
+  const budget = Math.min(
+    MAX_SESSION_DISCOVERY_WORK,
+    Math.max(0, Math.ceil(maxSessionFiles) * SESSION_DISCOVERY_WORK_FACTOR),
+  )
+  return [...names].sort(comparePaths).slice(0, budget)
 }
 
 async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (value: T) => Promise<U | null>): Promise<U[]> {
@@ -52,7 +63,10 @@ export class SessionMetadataCatalog {
     let root: string
     try {
       [names, root] = await Promise.all([
-        readdir(this.sessionRoot()).then((items) => items.filter((name) => name.endsWith('.jsonl') && !name.startsWith('.'))),
+        readdir(this.sessionRoot()).then((items) => boundedSessionDiscoveryNames(
+          items.filter((name) => name.endsWith('.jsonl') && !name.startsWith('.')),
+          this.maxSessionFiles,
+        )),
         realpath(this.sessionRoot()),
       ])
     } catch { return [] }

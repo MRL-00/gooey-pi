@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectService } from '../../electron/main/projects'
 import { SessionService } from '../../electron/main/sessions'
+import { boundedSessionDiscoveryNames } from '../../electron/main/sessions/catalog'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
@@ -29,6 +30,17 @@ function writeSession(path: string, project: string, id: string, timestamp = '20
     '',
   ].join('\n'))
 }
+
+describe('session discovery work bounds', () => {
+  it('applies a deterministic hard budget before canonicalization and stat work', () => {
+    const hostile = Array.from({ length: 50_000 }, (_, index) => `${String(49_999 - index).padStart(5, '0')}.jsonl`)
+    const selected = boundedSessionDiscoveryNames(hostile, 5_000)
+    expect(selected).toHaveLength(20_000)
+    expect(selected[0]).toBe('00000.jsonl')
+    expect(selected.at(-1)).toBe('19999.jsonl')
+    expect(boundedSessionDiscoveryNames(hostile, 2)).toHaveLength(8)
+  })
+})
 
 describe('SessionService catalog scaling', () => {
   it('coalesces concurrent lists and reuses metadata by canonical path, mtime, and size', async () => {
