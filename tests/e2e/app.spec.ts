@@ -204,22 +204,56 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
   return env
 }
 
+
+async function closeElectron(target: ElectronApplication | undefined, timeoutMs = 5_000): Promise<void> {
+  if (!target) return
+  let timeout: NodeJS.Timeout | undefined
+  await Promise.race([
+    target.close().catch(() => undefined),
+    new Promise<void>((resolveClose) => {
+      timeout = setTimeout(() => {
+        try { target.process().kill('SIGKILL') } catch { /* The process already exited. */ }
+        resolveClose()
+      }, timeoutMs)
+    }),
+  ])
+  if (timeout) clearTimeout(timeout)
+}
+
+
 test.describe('Prime Work desktop smoke', () => {
   test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
     const activeSession = testInfo.title === 'queues a reply to a session that is active outside Prime Work'
       || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
-    const fixture = createHermeticFixture(activeSession)
-    fixtureSessionFile = fixture.sessionFile
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
-    page = await app.firstWindow()
+    let launchError: unknown
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const fixture = createHermeticFixture(activeSession)
+      fixtureSessionFile = fixture.sessionFile
+      let candidate: ElectronApplication | undefined
+      try {
+        candidate = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
+        const firstPage = await candidate.firstWindow({ timeout: 12_000 })
+        app = candidate
+        page = firstPage
+        launchError = undefined
+        break
+      } catch (error) {
+        launchError = error
+        await closeElectron(candidate, 1_000)
+        if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
+        fixtureRoot = ''
+        fixtureSessionFile = ''
+      }
+    }
+    if (launchError) throw launchError
     attachDiagnostics(page)
     await page.locator('.app-shell').waitFor()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
   })
 
   test.afterEach(async () => {
-    await app?.close().catch(() => undefined)
+    await closeElectron(app)
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
     fixtureSessionFile = ''
