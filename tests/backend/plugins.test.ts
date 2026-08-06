@@ -23,6 +23,66 @@ describe('PluginService discovery', () => {
     await expect(first).resolves.toEqual(expect.any(Array))
   })
 
+  it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const alias = join(root, 'project-alias')
+    mkdirSync(agentDir); mkdirSync(project); symlinkSync(project, alias)
+    let discoveries = 0
+    const service = new PluginService(null, async (path) => realpathSync(path), {
+      agentDir,
+      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return [] },
+    })
+
+    await Promise.all([service.list(project), service.list(alias)])
+
+    expect(discoveries).toBe(1)
+  })
+
+  it('bounds catalog work globally across distinct discovery keys', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let active = 0
+    let peak = 0
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+        active -= 1
+        return []
+      },
+    })
+
+    await Promise.all(Array.from({ length: 8 }, (_, index) => service.list(join(root, `project-${index}`))))
+
+    expect(peak).toBe(2)
+  })
+
+  it('retains reveal authorization independently for user and project catalogs', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const userPrompt = join(root, 'user-prompt.md')
+    const projectPrompt = join(project, 'project-prompt.md')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true })
+    writeFileSync(userPrompt, '# User prompt')
+    writeFileSync(projectPrompt, '# Project prompt')
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ prompts: [userPrompt] }))
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify({ prompts: [projectPrompt] }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    await service.list()
+    await service.list(project)
+
+    expect(service.authorizeReveal(userPrompt)).toBe(realpathSync(userPrompt))
+    expect(service.authorizeReveal(projectPrompt)).toBe(realpathSync(projectPrompt))
+  })
+
   it('keeps project-configured discovery contained while accepting in-project files', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
