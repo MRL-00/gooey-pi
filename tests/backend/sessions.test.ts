@@ -224,14 +224,18 @@ describe('SessionService live changes', () => {
     const unsubscribeThrowing = service.onDidChange(() => { throw new Error('listener failure') })
     const unsubscribe = service.onDidChange((event) => events.push(event))
 
-    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'append', message: { role: 'user', content: 'append' } })}\n`)
+    // Continuous writes above cover the real fs.watch path. Drive the private
+    // debounce admission directly here so parallel coverage load cannot drop the
+    // single kernel event that this deterministic coalescing assertion needs.
+    const watcherHarness = service as unknown as { queueSessionChange(filename: string): void }
+    watcherHarness.queueSessionChange('watched.jsonl')
+    watcherHarness.queueSessionChange('watched.jsonl')
     await waitUntil(() => events.some((event) => event.filePath === realpathSync(file)), 4_000)
     expect(events.filter((event) => event.filePath === realpathSync(file))).toHaveLength(1)
 
     const outside = join(root, '..', 'outside.jsonl')
     writeSession(outside, project, 'outside')
     symlinkSync(outside, join(root, 'outside-alias.jsonl'))
-    const watcherHarness = service as unknown as { queueSessionChange(filename: string): void }
     watcherHarness.queueSessionChange('outside-alias.jsonl')
     await waitUntil(() => events.some((event) => event.filePath === undefined), 4_000)
     expect(events.some((event) => event.filePath === realpathSync(outside))).toBe(false)
