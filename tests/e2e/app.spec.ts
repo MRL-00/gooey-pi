@@ -400,8 +400,15 @@ test.describe('Prime Work desktop smoke', () => {
     const shell = page.locator('.settings-content input.mono')
     await expect(shell).toHaveValue('/bin/zsh')
     await shell.fill('/definitely/not-an-executable')
+    await shell.press('Enter')
+    await expect(page.getByRole('alert')).toContainText(/could not be saved/i)
     await expect(page.locator('.toast')).toContainText(/shell is not executable/i)
-    await expect(shell).toHaveValue('/bin/zsh')
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).terminalShell)).toBe('/bin/zsh')
+    await expect(shell).toHaveValue('/definitely/not-an-executable')
+
+    await page.getByRole('button', { name: 'General', exact: true }).click()
+    await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
+    await expect(page.locator('.settings-content input.mono')).toHaveValue('/bin/zsh')
   })
 
   test('uses overlay panels at the compact desktop breakpoint', async () => {
