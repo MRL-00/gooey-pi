@@ -23,7 +23,7 @@ const noop = async () => undefined
 
 describe('provider settings', () => {
   it('renders Prime provider state and the correct authentication actions', () => {
-    const html = renderToStaticMarkup(<ProviderSettings catalog={{ ...catalog, models: [{ key: 'openai-codex/gpt-5.6', provider: 'openai-codex', id: 'gpt-5.6', name: 'GPT-5.6', reasoning: true, input: ['text'], contextWindow: 400_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'medium', 'high'], fastModeSupported: true, available: true }] }} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    const html = renderToStaticMarkup(<ProviderSettings catalog={{ ...catalog, models: [{ key: 'openai-codex/gpt-5.6', provider: 'openai-codex', id: 'gpt-5.6', name: 'GPT-5.6', reasoning: true, input: ['text'], contextWindow: 400_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'medium', 'high'], fastModeSupported: true, available: true }] }} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     expect(html).toContain('ChatGPT Plus/Pro')
     expect(html).toContain('Anthropic')
