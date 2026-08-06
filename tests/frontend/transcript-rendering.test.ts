@@ -60,4 +60,19 @@ describe('transcript rendering', () => {
     expect(html).not.toContain('This stays collapsed until requested.')
     expect(html).not.toContain('thinking-dots')
   })
+
+  it('renders goal summaries as collapsed disclosures rather than system errors', () => {
+    const html = render([{
+      id: 'goal',
+      role: 'goal',
+      timestamp: 1_000,
+      parts: [{ type: 'text', text: 'Ship the blue goal summary.' }],
+    }])
+
+    expect(html).toContain('message--goal')
+    expect(html).toContain('aria-label="Goal summary"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Ship the blue goal summary.')
+    expect(html).not.toContain('message--system')
+  })
 })

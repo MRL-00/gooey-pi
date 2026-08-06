@@ -9,6 +9,7 @@ import {
   Globe2,
   LoaderCircle,
   MessageCircleQuestion,
+  Target,
   TerminalSquare,
   Wrench,
 } from 'lucide-react'
@@ -301,6 +302,22 @@ const AgentMessage = memo(function AgentMessage({ message }: { message: Transcri
   )
 })
 
+const GoalMessage = memo(function GoalMessage({ message }: { message: TranscriptMessage }) {
+  const [open, setOpen] = useState(false)
+  const contentId = useId()
+  const text = messageText(message)
+  return (
+    <article className={`message message--goal ${open ? 'is-open' : ''}`}>
+      <button type="button" className="goal-message__summary" aria-expanded={open} aria-controls={contentId} aria-label="Goal summary" onClick={() => setOpen((value) => !value)}>
+        <span className="goal-message__icon"><Target size={15} /></span>
+        <span className="goal-message__label">Goal summary</span>
+        {open ? <ChevronDown className="goal-message__chevron" size={13} /> : <ChevronRight className="goal-message__chevron" size={13} />}
+      </button>
+      {open ? <div className="goal-message__content" id={contentId}><MarkdownText text={boundText(text, 40_000, '\n… [Goal summary truncated in the desktop view.]')} /></div> : null}
+    </article>
+  )
+})
+
 interface TranscriptProps {
   messages: TranscriptMessage[]
   git: GitStatus
@@ -367,6 +384,8 @@ export function Transcript({ messages, git, loading, showReasoning = true, showT
           <AssistantMessage key={message.id} message={message} git={git} isLast={message.id === lastAssistantId} showReasoning={showReasoning} showTools={showTools} onOpenChanges={onOpenChanges} />
         ) : message.role === 'agent' ? (
           <AgentMessage key={message.id} message={message} />
+        ) : message.role === 'goal' ? (
+          <GoalMessage key={message.id} message={message} />
         ) : (
           <div className={`message message--${message.role}`} key={message.id}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>
         ))}

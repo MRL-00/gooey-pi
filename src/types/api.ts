@@ -52,7 +52,7 @@ export type MessagePart =
 
 export interface TranscriptMessage {
   id: string
-  role: 'user' | 'assistant' | 'agent' | 'tool' | 'system'
+  role: 'user' | 'assistant' | 'agent' | 'goal' | 'tool' | 'system'
   timestamp?: string | number
   agentName?: string
   startedAt?: string | number

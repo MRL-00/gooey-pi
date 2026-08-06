@@ -217,12 +217,15 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       const details = isRecord(entry.details) ? entry.details : undefined
       const from = isRecord(details?.from) ? details.from : undefined
       const isAgentMessage = entry.customType === 'agent_message'
+      const isGoalSummary = entry.customType === 'goal_context'
       const detailMessage = typeof details?.message === 'string' ? details.message : undefined
+      const goalObjective = typeof details?.objective === 'string' ? details.objective : undefined
       const agentName = typeof from?.sessionName === 'string' ? boundedString(from.sessionName, 200) : undefined
-      const text = boundedString(detailMessage ?? textFromContent(entry.content), MAX_PART_TEXT_CHARS)
+      const readableText = isGoalSummary ? goalObjective ?? detailMessage : detailMessage
+      const text = boundedString(readableText ?? textFromContent(entry.content), MAX_PART_TEXT_CHARS)
       transcript.push({
         id: safeId,
-        role: isAgentMessage ? 'agent' : 'system',
+        role: isAgentMessage ? 'agent' : isGoalSummary ? 'goal' : 'system',
         timestamp: typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined,
         agentName: isAgentMessage ? agentName : undefined,
         parts: [{ type: 'text', text }],

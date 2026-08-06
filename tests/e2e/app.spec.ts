@@ -36,6 +36,12 @@ function createHermeticFixture(): { userData: string; home: string; project: str
       details: { message: 'Fixture review complete. The readable agent response is available here.', from: { sessionName: 'fixture-reviewer', runtimeKind: 'subagent' } },
       timestamp: '2026-01-01T00:00:01.000Z',
     }),
+    JSON.stringify({
+      type: 'custom_message', id: 'fixture-goal-summary', parentId: 'fixture-agent-message', customType: 'goal_context', display: true,
+      content: '<goal_context>Fixture control envelope that should stay hidden.</goal_context>',
+      details: { kind: 'created', goalId: 'fixture-goal', objective: 'Verify the readable blue goal summary.', status: 'active', continuationsUsed: 0 },
+      timestamp: '2026-01-01T00:00:02.000Z',
+    }),
     '',
   ].join('\n'))
   writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
@@ -76,7 +82,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The selected release channel is ' + command.value + '.' } })
     const completedAt = new Date().toISOString()
     fs.appendFileSync(sessionFile, [
-      JSON.stringify({ type: 'message', id: 'fixture-live-assistant', parentId: 'fixture-agent-message', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'thinking', thinking: 'Reviewing the available release channels before asking for input.' }, { type: 'toolCall', id: 'ask-1', name: 'ask_user', arguments: { question: 'Which release channel?', options: ['Stable', 'Beta'] } }] } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-assistant', parentId: 'fixture-goal-summary', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'thinking', thinking: 'Reviewing the available release channels before asking for input.' }, { type: 'toolCall', id: 'ask-1', name: 'ask_user', arguments: { question: 'Which release channel?', options: ['Stable', 'Beta'] } }] } }),
       JSON.stringify({ type: 'message', id: 'fixture-live-result', parentId: 'fixture-live-assistant', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-1', toolName: 'ask_user', content: JSON.stringify({ value: command.value }) } }),
       JSON.stringify({ type: 'message', id: 'fixture-live-final', parentId: 'fixture-live-result', message: { role: 'assistant', timestamp: completedAt, content: 'The selected release channel is ' + command.value + '.' } }),
     ].join('\\n') + '\\n')
@@ -175,6 +181,29 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
     await expect(content).toContainText('Fixture review complete. The readable agent response is available here.')
     await expect(page.getByText('Envelope metadata that should stay hidden.')).toHaveCount(0)
+  })
+
+  test('shows goal summaries in collapsed blue disclosures', async () => {
+    const disclosure = page.getByRole('button', { name: 'Goal summary' })
+    await expect(disclosure).toBeVisible()
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.goal-message__content')).toHaveCount(0)
+    const colors = await page.locator('.message--goal').evaluate((node) => {
+      const styles = getComputedStyle(node)
+      const icon = node.querySelector('.goal-message__icon')
+      const probe = document.createElement('div')
+      probe.style.color = 'var(--annotation)'
+      document.body.append(probe)
+      const annotation = getComputedStyle(probe).color
+      probe.remove()
+      return { border: styles.borderColor, icon: icon ? getComputedStyle(icon).color : '', annotation }
+    })
+    expect(colors.border).not.toBe('rgba(0, 0, 0, 0)')
+    expect(colors.icon).toBe(colors.annotation)
+    await disclosure.click()
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.goal-message__content')).toContainText('Verify the readable blue goal summary.')
+    await expect(page.getByText('Fixture control envelope that should stay hidden.')).toHaveCount(0)
   })
 
   test('copies a specific user or agent message from the action directly below it', async () => {

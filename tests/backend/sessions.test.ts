@@ -152,6 +152,35 @@ describe('SessionService transcript bounds', () => {
     })
   })
 
+  it('preserves goal summaries as a distinct readable transcript role', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'goal-summary.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'goal-summary', cwd: project }),
+      JSON.stringify({ type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Start a goal' } }),
+      JSON.stringify({
+        type: 'custom_message', id: 'goal', parentId: 'root', customType: 'goal_context', display: true,
+        content: '<goal_context>Internal control envelope that should stay hidden.</goal_context>',
+        details: {
+          kind: 'created',
+          goalId: 'goal-1',
+          objective: 'Ship the transcript activity refinements.',
+          status: 'active',
+          continuationsUsed: 0,
+        },
+      }),
+      '',
+    ].join('\n'))
+
+    const transcript = await service.read(file)
+    expect(transcript.at(-1)).toMatchObject({
+      id: 'goal',
+      role: 'goal',
+      parts: [{ type: 'text', text: 'Ship the transcript activity refinements.' }],
+    })
+    expect(JSON.stringify(transcript)).not.toContain('<goal_context>')
+  })
+
   it('reconstructs only the final parent branch and merges assistant tool activity', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'branch.jsonl')
