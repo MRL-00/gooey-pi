@@ -9,10 +9,20 @@ import type { RuntimeInfo } from '../../src/types/api'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const runtime = (runtimeId: string): RuntimeInfo => ({ runtimeId, cwd: '/tmp', isStreaming: false })
-const job = (id: string) => ({ id, prompt: `Prompt ${id}`, label: `Job ${id}`, status: 'active', schedule: { type: 'cron', expression: '0 9 * * *' } })
+const job = (id: string, label = `Job ${id}`) => ({ id, prompt: `Prompt ${id}`, label, status: 'active', schedule: { type: 'cron', expression: '0 9 * * *' } })
 
-function agents(ids: string[], command: (runtimeId: string) => Promise<Record<string, unknown>>): AgentRpcManager {
+function agents(ids: string[], command: (runtimeId: string, request: Record<string, unknown>) => Promise<Record<string, unknown>>): AgentRpcManager {
   return { list: () => ids.map(runtime), command } as unknown as AgentRpcManager
+}
+
+function catalogExecutable(jobs: unknown[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'prime-work-schedules-')); dirs.push(dir)
+  const executable = join(dir, 'prime-agent.cjs')
+  writeFileSync(executable, `#!/usr/bin/env node
+process.stdout.write(${JSON.stringify(JSON.stringify({ jobs }))} + '\\n')
+`)
+  chmodSync(executable, 0o755)
+  return executable
 }
 
 describe('ScheduleService catalog completeness', () => {
@@ -30,13 +40,41 @@ describe('ScheduleService catalog completeness', () => {
   })
 
   it('uses a successful CLI catalog to recover from a runtime failure', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prime-work-schedules-')); dirs.push(dir)
-    const executable = join(dir, 'prime-agent.cjs')
-    writeFileSync(executable, `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ jobs: [${JSON.stringify(job('fallback'))}] }) + '\\n')
-`)
-    chmodSync(executable, 0o755)
+    const executable = catalogExecutable([job('fallback')])
     const service = new ScheduleService(agents(['broken'], async () => { throw new Error('runtime unavailable') }), executable)
     expect((await service.list()).map((item) => item.id)).toEqual(['fallback'])
+  })
+
+  it('keeps deterministic runtime ownership when fallback IDs and names overlap', async () => {
+    const executable = catalogExecutable([
+      job('shared', 'Fallback duplicate'),
+      job('fallback-named', 'Same name'),
+    ])
+    const calls: Array<{ runtimeId: string, request: Record<string, unknown> }> = []
+    const service = new ScheduleService(agents(['owner', 'duplicate', 'broken'], async (runtimeId, request) => {
+      calls.push({ runtimeId, request })
+      if (request.type === 'cancel_schedule') return {}
+      if (runtimeId === 'broken') throw new Error('runtime unavailable')
+      if (runtimeId === 'duplicate') {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return { data: { jobs: [job('shared', 'Later runtime duplicate')] } }
+      }
+      return { data: { jobs: [job('shared', 'Owned job'), job('runtime-named', 'Same name')] } }
+    }), executable)
+
+    const catalog = await service.list()
+    expect(catalog.map((item) => [item.id, item.title, item.runtimeId])).toEqual([
+      ['shared', 'Owned job', 'owner'],
+      ['runtime-named', 'Same name', 'owner'],
+      ['fallback-named', 'Same name', undefined],
+    ])
+
+    const shared = catalog.find((item) => item.id === 'shared')
+    expect(shared).toBeDefined()
+    await service.cancel(shared?.runtimeId, shared?.id)
+    expect(calls.at(-1)).toEqual({
+      runtimeId: 'owner',
+      request: { type: 'cancel_schedule', jobId: 'shared' },
+    })
   })
 })

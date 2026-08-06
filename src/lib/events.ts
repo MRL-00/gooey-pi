@@ -46,8 +46,207 @@ function finishTool(parts: MessagePart[], id: string | undefined, name: string, 
   return [...parts.slice(0, callIndex + 1), resultPart, ...parts.slice(callIndex + 1)]
 }
 
-export function replayPrimeEvents(messages: TranscriptMessage[], events: Record<string, unknown>[]): TranscriptMessage[] {
-  return events.reduce((current, event) => applyPrimeEvent(current, event), messages)
+export interface PrimeEventReplayStats {
+  messageScans: number
+  eventScans: number
+  partScans: number
+  transcriptCopies: number
+}
+
+interface PartNode {
+  part: MessagePart
+  previous?: PartNode
+  next?: PartNode
+}
+
+interface PartDraft {
+  head?: PartNode
+  tail?: PartNode
+  length: number
+  firstToolById: Map<string | undefined, PartNode>
+}
+
+/** Applies a frame batch with one transcript scan and one scan of each drafted part list. */
+export function replayPrimeEvents(
+  messages: TranscriptMessage[],
+  events: Record<string, unknown>[],
+  stats?: PrimeEventReplayStats,
+): TranscriptMessage[] {
+  if (!events.length) return messages
+  let next = messages
+  let copiedMessages = false
+  let lastStreamingAssistant = -1
+  const streaming = new Set<number>()
+  const draftedMessages = new Set<number>()
+  const partDrafts = new Map<number, PartDraft>()
+
+  for (let index = 0; index < messages.length; index += 1) {
+    if (stats) stats.messageScans += 1
+    const message = messages[index]
+    if (!message.streaming) continue
+    streaming.add(index)
+    if (message.role === 'assistant') lastStreamingAssistant = index
+  }
+
+  const copyTranscript = () => {
+    if (copiedMessages) return
+    next = messages.slice()
+    copiedMessages = true
+    if (stats) stats.transcriptCopies += 1
+  }
+  const draftMessage = (index: number): TranscriptMessage => {
+    copyTranscript()
+    if (!draftedMessages.has(index)) {
+      next[index] = { ...next[index] }
+      draftedMessages.add(index)
+    }
+    return next[index]
+  }
+  const appendNode = (draft: PartDraft, part: MessagePart): PartNode => {
+    const node: PartNode = { part, previous: draft.tail }
+    if (draft.tail) draft.tail.next = node
+    else draft.head = node
+    draft.tail = node
+    draft.length += 1
+    if (part.type === 'toolCall' && !draft.firstToolById.has(part.id)) draft.firstToolById.set(part.id, node)
+    return node
+  }
+  const draftParts = (index: number): PartDraft => {
+    const existing = partDrafts.get(index)
+    if (existing) return existing
+    const message = draftMessage(index)
+    const draft: PartDraft = { length: 0, firstToolById: new Map() }
+    for (const part of message.parts) {
+      if (stats) stats.partScans += 1
+      appendNode(draft, part)
+    }
+    partDrafts.set(index, draft)
+    return draft
+  }
+  const insertAfter = (draft: PartDraft, node: PartNode, part: MessagePart): PartNode => {
+    const inserted: PartNode = { part, previous: node, next: node.next }
+    if (node.next) node.next.previous = inserted
+    else draft.tail = inserted
+    node.next = inserted
+    draft.length += 1
+    return inserted
+  }
+  const appendAssistant = (prefix: 'assistant' | 'stream'): number => {
+    copyTranscript()
+    const now = Date.now()
+    const index = next.length
+    next.push({ id: `${prefix}-${now}`, role: 'assistant', timestamp: now, startedAt: now, streaming: true, parts: [] })
+    draftedMessages.add(index)
+    streaming.add(index)
+    lastStreamingAssistant = index
+    return index
+  }
+  const assistantIndex = () => lastStreamingAssistant >= 0 ? lastStreamingAssistant : appendAssistant('stream')
+  const upsertToolDraft = (index: number, id: string | undefined, name: string, args: unknown): PartNode => {
+    const draft = draftParts(index)
+    const existing = id ? draft.firstToolById.get(id) : undefined
+    const tool: MessagePart = { type: 'toolCall', id, name, args }
+    if (existing) {
+      existing.part = tool
+      return existing
+    }
+    return appendNode(draft, tool)
+  }
+  const setToolResult = (draft: PartDraft, call: PartNode, result: MessagePart) => {
+    if (call.next?.part.type === 'toolResult') call.next.part = result
+    else insertAfter(draft, call, result)
+  }
+  const finalizeStreaming = (completedAt: number, addFallback: boolean) => {
+    for (const index of streaming) {
+      const message = draftMessage(index)
+      message.streaming = false
+      message.completedAt = completedAt
+      const parts = partDrafts.get(index)
+      if (addFallback && (parts?.length ?? message.parts.length) === 0) {
+        appendNode(draftParts(index), { type: 'text', text: 'Completed without a text response.' })
+      }
+    }
+    streaming.clear()
+    lastStreamingAssistant = -1
+  }
+
+  for (const raw of events) {
+    if (stats) stats.eventScans += 1
+    const type = string(raw.type) ?? string(raw.event)
+    if (!type) continue
+    if (type === 'agent_start' || type === 'turn_start') {
+      if (streaming.size === 0) appendAssistant('assistant')
+      continue
+    }
+    if (type === 'message_update') {
+      const delta = record(raw.assistantMessageEvent) ?? record(raw.delta)
+      const deltaType = string(delta?.type)
+      const text = string(delta?.delta) ?? ''
+      if ((deltaType === 'text_delta' || deltaType === 'thinking_delta') && text) {
+        const draft = draftParts(assistantIndex())
+        const partType = deltaType === 'text_delta' ? 'text' : 'thinking'
+        if (draft.tail?.part.type === partType) draft.tail.part = { ...draft.tail.part, text: draft.tail.part.text + text }
+        else appendNode(draft, { type: partType, text })
+      } else if (deltaType === 'toolcall_end') {
+        const tool = record(delta?.toolCall)
+        upsertToolDraft(assistantIndex(), string(tool?.id), string(tool?.name) ?? 'Tool', tool?.arguments ?? tool?.args)
+      }
+      continue
+    }
+    if (type === 'tool_execution_start') {
+      upsertToolDraft(assistantIndex(), string(raw.toolCallId), string(raw.toolName) ?? 'Tool', raw.args)
+      continue
+    }
+    if (type === 'tool_execution_update') {
+      const index = assistantIndex()
+      const id = string(raw.toolCallId)
+      const name = string(raw.toolName) ?? 'Tool'
+      upsertToolDraft(index, id, name, raw.args)
+      const draft = draftParts(index)
+      const call = draft.firstToolById.get(id)
+      if (call) setToolResult(draft, call, { type: 'toolResult', name, text: resultText(raw.partialResult) })
+      continue
+    }
+    if (type === 'tool_execution_end') {
+      const index = assistantIndex()
+      const id = string(raw.toolCallId)
+      const name = string(raw.toolName) ?? 'Tool'
+      const draft = draftParts(index)
+      const call = id ? draft.firstToolById.get(id) : undefined
+      const resultPart: MessagePart = { type: 'toolResult', name, text: resultText(raw.result), isError: raw.isError === true }
+      if (call) setToolResult(draft, call, resultPart)
+      else {
+        appendNode(draft, { type: 'toolCall', id, name })
+        appendNode(draft, resultPart)
+      }
+      continue
+    }
+    if (type === 'agent_end') {
+      finalizeStreaming(Date.now(), true)
+      continue
+    }
+    if (type === 'extension_error' || type === 'error' || type === 'transport_error') {
+      const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
+      finalizeStreaming(Date.now(), false)
+      copyTranscript()
+      next.push({ id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] })
+      continue
+    }
+    if (type === 'runtime_exit') {
+      finalizeStreaming(Date.now(), false)
+      if (raw.expected === true || next.at(-1)?.role === 'system') continue
+      const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
+      copyTranscript()
+      next.push({ id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] })
+    }
+  }
+
+  for (const [index, draft] of partDrafts) {
+    const parts: MessagePart[] = []
+    for (let node = draft.head; node; node = node.next) parts.push(node.part)
+    draftMessage(index).parts = parts
+  }
+  return next
 }
 
 export interface PrimeEventBuffer {

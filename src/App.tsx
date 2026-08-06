@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { CSSProperties } from 'react'
 import { Sidebar } from '@/components/Sidebar'
 import { TitleToolbar } from '@/components/TitleToolbar'
-import { Transcript } from '@/components/Transcript'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, projectContainsPath, workspaceCwd } from '@/lib/workspace'
@@ -13,10 +12,13 @@ import { useAppSettings } from '@/hooks/useAppSettings'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useExtensionUi } from '@/hooks/useExtensionUi'
 import { INSPECTOR_DEFAULT, INSPECTOR_MIN, TERMINAL_DEFAULT, TERMINAL_MIN, usePanelLayout } from '@/hooks/usePanelLayout'
+import { usePluginSkills } from '@/hooks/usePluginSkills'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
+import { useSidebarActions } from '@/hooks/useSidebarActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, McpConnectionInput, ProjectRecord, ScheduleRecord, SessionRecord, SkillRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { GitStatus, McpConnectionInput, ProjectRecord, ScheduleRecord, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
+const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
 const TerminalDrawer = lazy(() => import('@/components/TerminalDrawer').then((module) => ({ default: module.TerminalDrawer })))
 const CommandPalette = lazy(() => import('@/components/CommandPalette').then((module) => ({ default: module.CommandPalette })))
@@ -37,7 +39,6 @@ export default function App() {
   const initialSession = bridge ? undefined : SAMPLE_SESSIONS[0]
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
   const [sessions, setSessions] = useState<SessionRecord[]>(() => bridge ? [] : SAMPLE_SESSIONS)
-  const [skills, setSkills] = useState<SkillRecord[]>(() => bridge ? [] : SAMPLE_SKILLS)
   const [schedules, setSchedules] = useState<ScheduleRecord[]>(() => bridge ? [] : SAMPLE_SCHEDULES)
   const [scheduleError, setScheduleError] = useState('')
   const [git, setGit] = useState<GitStatus>(() => bridge ? { isRepo: false, files: [] } : SAMPLE_GIT)
@@ -45,7 +46,6 @@ export default function App() {
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [loadingSkills, setLoadingSkills] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const gitRequestRef = useRef(0)
@@ -67,8 +67,7 @@ export default function App() {
     const next = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
     if (next && workspace.workspaceRef.current.generation === generation) workspace.attachRuntime(next, generation)
   }, [bridge, workspace.attachRuntime, workspace.workspaceRef])
-  const syncDisabledProviders = useCallback((disabledProviders: string[]) => settingsState.updateSettings({ disabledProviders }), [settingsState.updateSettings])
-  const provider = useProviderCatalog({ bridge, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, syncDisabledProviders, reportError })
+  const provider = useProviderCatalog({ bridge, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, reportError })
   const activeSession = useMemo(() => sessions.find((session) => session.id === workspace.activeSessionId), [sessions, workspace.activeSessionId])
   const activeProject = useMemo(() => findProjectForSession(projects, activeSession)
     ?? projects.find((project) => project.id === workspace.activeProjectId)
@@ -79,12 +78,12 @@ export default function App() {
     terminalOpen: settingsState.terminalOpen, view,
   })
   const { meta, initialized } = useBootstrap({
-    bridge, setProjects, setSessions, setSkills, setSchedules, setScheduleError,
+    bridge, setProjects, setSessions, setSchedules, setScheduleError,
     runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
-    activateWorkspace: workspace.activateWorkspace, reportError,
+    activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime, reportError,
   })
   const extension = useExtensionUi({
-    bridge, runtimeSessionsRef: workspace.runtimeSessionsRef, runtimeIdRef: workspace.runtimeIdRef,
+    bridge, activeRuntimeId: workspace.runtime?.runtimeId ?? null, runtimeSessionsRef: workspace.runtimeSessionsRef, runtimeIdRef: workspace.runtimeIdRef,
     setSessions, reportError,
   })
 
@@ -108,13 +107,8 @@ export default function App() {
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])
-  useEffect(() => {
-    if (!bridge) return
-    let cancelled = false
-    const projectPath = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
-    void bridge.plugins.list(projectPath).then((records) => { if (!cancelled) setSkills(records) }).catch(reportError)
-    return () => { cancelled = true }
-  }, [activeProject?.inferred, activeProject?.primaryFolder, bridge, reportError])
+  const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
+  const pluginSkills = usePluginSkills({ bridge, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
 
   const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
@@ -170,6 +164,7 @@ export default function App() {
     catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
   const newSession = (project = workspace.workspaceRef.current.project) => {
+    if (!initialized || !project) return
     if (layout.compactLayout) settingsState.setSidebarOpen(false)
     workspace.activateWorkspace(project)
     if (!bridge) workspace.setMessages([])
@@ -222,6 +217,7 @@ export default function App() {
       const generation = admitted.generation
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
+        if (!workspace.prepareForPrompt(generation)) return
         const userMessage: TranscriptMessage = { id: `user-${Date.now()}`, role: 'user', timestamp: Date.now(), parts: [{ type: 'text', text: prompt }] }
         workspace.setMessages((items) => [...items, userMessage])
         if (!bridge) {
@@ -277,12 +273,6 @@ export default function App() {
     } catch (error) { reportError(error) }
   }
 
-  const refreshSkills = async () => {
-    if (!bridge) return
-    setLoadingSkills(true)
-    try { setSkills(await bridge.plugins.list(activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined)) }
-    catch (error) { reportError(error) } finally { setLoadingSkills(false) }
-  }
   const installSkill = async (source: string) => {
     if (!bridge) return { ok: false, output: 'Package installation is available in the desktop app.' }
     try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
@@ -296,10 +286,7 @@ export default function App() {
         const project = await grantProject(activeProject); connection = { ...input, projectPath: project.primaryFolder }
       }
       const response = await bridge.plugins.connectMcp(connection)
-      if (response.ok) {
-        const path = connection.scope === 'project' ? connection.projectPath : activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
-        setSkills(await bridge.plugins.list(path))
-      }
+      if (response.ok) await pluginSkills.refresh()
       return response
     } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
   }
@@ -316,6 +303,17 @@ export default function App() {
   }
   const openBrowser = () => { if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false); setView('session'); settingsState.selectInspectorTab('browser'); if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true }) }
   const openChanges = () => { if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false); settingsState.selectInspectorTab('changes'); if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true }) }
+  const sidebarActions = useSidebarActions({
+    onSelectProject: selectProject,
+    onSelectSession: selectSession,
+    onNavigate: navigate,
+    onNewSession: newSession,
+    onAddProject: () => { void addProject() },
+    onClose: toggleSidebar,
+    onOpenPalette: () => setPaletteOpen(true),
+    onRenameSession: renameSession,
+    onArchiveSession: (session) => setSessionArchived(session, true),
+  })
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -336,7 +334,7 @@ export default function App() {
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(workspace.runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
-    : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
+    : view === 'plugins' ? <PluginsPage skills={pluginSkills.skills} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
     : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
@@ -344,15 +342,15 @@ export default function App() {
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
-    {settingsState.sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} onSelectProject={selectProject} onSelectSession={selectSession} onNavigate={navigate} onNewSession={newSession} onAddProject={() => void addProject()} onClose={toggleSidebar} onOpenPalette={() => setPaletteOpen(true)} onRenameSession={renameSession} onArchiveSession={(session) => setSessionArchived(session, true)} overlay={layout.compactLayout} /> : null}
-    {settingsState.sidebarOpen ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
+    {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} {...sidebarActions} overlay={layout.compactLayout} /> : null}
+    {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
       <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={settingsState.terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
       <div className="workbench__content">{view === 'session' ? <div ref={layout.sessionWorkspaceRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.workspaceRowRef} className="workspace-row">
           <main className="conversation-pane">
-            <Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} />
-            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} skills={skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
+            <Suspense fallback={<LoadingPanel label="transcript" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
+            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
           {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} runtime={workspace.runtime} messages={workspace.messages} git={git} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}

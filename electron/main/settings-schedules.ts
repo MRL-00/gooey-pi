@@ -85,19 +85,27 @@ export class ScheduleService {
 
   async list(runtimeIdValue?: unknown): Promise<ScheduleRecord[]> {
     const runtimeId = runtimeIdValue === undefined ? undefined : requireString(runtimeIdValue, 'runtimeId', { min: 1, max: 256 })
-    const jobs: ScheduleRecord[] = []
+    const jobsById = new Map<string, ScheduleRecord>()
     if (runtimeId) {
       const response = await this.agents.command(runtimeId, { type: 'list_schedules', includeInactive: true })
-      this.appendResponseJobs(response, runtimeId, jobs)
+      const runtimeJobs: ScheduleRecord[] = []
+      this.appendResponseJobs(response, runtimeId, runtimeJobs)
+      for (const job of runtimeJobs) { if (!jobsById.has(job.id)) jobsById.set(job.id, job) }
     } else {
       const runtimes = this.agents.list()
-      let runtimeFailure = false
-      await Promise.all(runtimes.map(async (runtime) => {
+      const runtimeCatalogs = await Promise.all(runtimes.map(async (runtime) => {
+        const jobs: ScheduleRecord[] = []
         try {
           const response = await this.agents.command(runtime.runtimeId, { type: 'list_schedules', includeInactive: true })
           this.appendResponseJobs(response, runtime.runtimeId, jobs)
-        } catch { runtimeFailure = true }
+          return { failed: false, jobs }
+        } catch { return { failed: true, jobs } }
       }))
+      const runtimeFailure = runtimeCatalogs.some((catalog) => catalog.failed)
+      // Promise.all preserves runtime list order; the first successful owner wins duplicate IDs.
+      for (const catalog of runtimeCatalogs) {
+        for (const job of catalog.jobs) { if (!jobsById.has(job.id)) jobsById.set(job.id, job) }
+      }
 
       let fallbackComplete = false
       if ((runtimes.length === 0 || runtimeFailure) && this.primeAgentPath) {
@@ -106,12 +114,15 @@ export class ScheduleService {
         let parsed: unknown
         try { parsed = JSON.parse(result.stdout) } catch { throw new Error('Prime Agent returned an incompatible schedule catalog') }
         if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) throw new Error('Prime Agent returned an incompatible schedule catalog')
-        for (const raw of parsed.jobs) { const job = normalizeJob(raw); if (job) jobs.push(job) }
+        for (const raw of parsed.jobs) {
+          const job = normalizeJob(raw)
+          if (job && !jobsById.has(job.id)) jobsById.set(job.id, job)
+        }
         fallbackComplete = true
       }
       if (runtimeFailure && !fallbackComplete) throw new Error('One or more runtimes could not return schedules; the catalog would be incomplete')
     }
-    return [...new Map(jobs.map((job) => [job.id, job])).values()].sort((a, b) => (a.nextRun ?? '').localeCompare(b.nextRun ?? ''))
+    return [...jobsById.values()].sort((a, b) => (a.nextRun ?? '').localeCompare(b.nextRun ?? ''))
   }
 
   add(runtimeId: unknown, schedule: unknown, prompt: unknown): Promise<Record<string, unknown>> {

@@ -39,13 +39,13 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     const operation = settingsQueueRef.current.catch(() => undefined).then(async () => {
       const saved = await bridge.settings.update(patch)
       confirmedSettingsRef.current = saved
-      if (settingsMutationRef.current === mutation) applySettings(saved, patch)
+      if (settingsMutationRef.current === mutation) applySettings(saved, saved)
     })
     settingsQueueRef.current = operation.catch(() => undefined)
     try {
       await operation
     } catch (error) {
-      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, patch)
+      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, confirmedSettingsRef.current)
       reportError(error)
     }
   }, [applySettings, bridge, reportError])

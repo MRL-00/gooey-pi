@@ -7,8 +7,43 @@ import { applyLiveMetadata, type JsonRecord, type SessionMetadata } from './meta
 
 interface SessionFileCandidate { filePath: string; fileStat: Stats; fingerprint: string }
 
+export interface SessionCatalogEntry {
+  name: string
+  isFile?(): boolean
+  isSymbolicLink?(): boolean
+}
+
+export interface SessionCatalogIo {
+  readDirectory(path: string): Promise<readonly SessionCatalogEntry[]>
+  canonicalize(path: string): Promise<string>
+  inspect(path: string): Promise<Stats>
+}
+
+const nodeSessionCatalogIo: SessionCatalogIo = {
+  readDirectory: (path) => readdir(path, { withFileTypes: true }),
+  canonicalize: realpath,
+  inspect: stat,
+}
+
 function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+function timestampFromSessionName(name: string): number | undefined {
+  const match = /^([0-9a-f]{8})-([0-9a-f]{4})-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jsonl$/i.exec(name)
+  if (!match) return undefined
+  return Number.parseInt(`${match[1]}${match[2]}`, 16)
+}
+
+function compareCandidateNames(left: string, right: string): number {
+  const leftTimestamp = timestampFromSessionName(left)
+  const rightTimestamp = timestampFromSessionName(right)
+  if (leftTimestamp !== undefined && rightTimestamp !== undefined && leftTimestamp !== rightTimestamp) {
+    return rightTimestamp - leftTimestamp
+  }
+  if (leftTimestamp !== undefined && rightTimestamp === undefined) return -1
+  if (leftTimestamp === undefined && rightTimestamp !== undefined) return 1
+  return comparePaths(right, left)
 }
 
 async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (value: T) => Promise<U | null>): Promise<U[]> {
@@ -36,6 +71,7 @@ export class SessionMetadataCatalog {
     private readonly primeAgentPath: string | null,
     private readonly maxSessionFiles: number,
     private readonly readMetadata: (filePath: string, knownStat?: Stats) => Promise<SessionMetadata>,
+    private readonly io: SessionCatalogIo = nodeSessionCatalogIo,
   ) {}
 
   async all(): Promise<SessionMetadata[]> {
@@ -48,20 +84,29 @@ export class SessionMetadataCatalog {
   }
 
   private async scan(): Promise<SessionMetadata[]> {
-    let names: string[]
+    let entries: readonly SessionCatalogEntry[]
     let root: string
     try {
-      [names, root] = await Promise.all([
-        readdir(this.sessionRoot()).then((items) => items.filter((name) => name.endsWith('.jsonl') && !name.startsWith('.'))),
-        realpath(this.sessionRoot()),
+      [entries, root] = await Promise.all([
+        this.io.readDirectory(this.sessionRoot()),
+        this.io.canonicalize(this.sessionRoot()),
       ])
     } catch { return [] }
 
-    const discovered = await mapLimit(names, 32, async (name): Promise<SessionFileCandidate | null> => {
+    // Prime session names are UUIDv7 values, so their embedded timestamp provides a
+    // bounded, deterministic admission signal before any per-entry filesystem I/O.
+    // Unknown legacy names use reverse lexical order as a stable fallback.
+    const admittedNames = entries
+      .filter((entry) => (entry.isFile?.() ?? true) || (entry.isSymbolicLink?.() ?? false))
+      .map((entry) => entry.name)
+      .filter((name) => name.endsWith('.jsonl') && !name.startsWith('.'))
+      .sort(compareCandidateNames)
+      .slice(0, Math.max(0, this.maxSessionFiles))
+    const discovered = await mapLimit(admittedNames, 32, async (name): Promise<SessionFileCandidate | null> => {
       try {
-        const filePath = await realpath(join(root, name))
+        const filePath = await this.io.canonicalize(join(root, name))
         if (!isPathWithin(root, filePath)) return null
-        const fileStat = await stat(filePath)
+        const fileStat = await this.io.inspect(filePath)
         if (!fileStat.isFile()) return null
         return { filePath, fileStat, fingerprint: `${filePath}\0${fileStat.mtimeMs}\0${fileStat.size}` }
       } catch { return null }
@@ -98,7 +143,7 @@ export class SessionMetadataCatalog {
     this.metadataRequests.set(candidate.fingerprint, request)
     try {
       const metadata = await request
-      const current = await stat(candidate.filePath)
+      const current = await this.io.inspect(candidate.filePath)
       if (current.mtimeMs === candidate.fileStat.mtimeMs && current.size === candidate.fileStat.size) {
         this.metadataCache.set(candidate.fingerprint, metadata)
       }

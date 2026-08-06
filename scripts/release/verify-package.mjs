@@ -4,7 +4,8 @@ import { basename, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { listPackage } from '@electron/asar'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
-import { assertArchitectureCoverage, assertAsarLayout, parseArchitectures, parseTeamIdentifier } from './lib.mjs'
+import { assertAsarLayout, assertUnpackedNativeLayout, parseArchitectures, parseTeamIdentifier } from './lib.mjs'
+import { assertPackageSizeBudgets, collectPackageSizeMetrics, describeSizeMetrics } from './size-budgets.mjs'
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' })
@@ -32,6 +33,14 @@ function findSingleApp(releaseDirectory) {
   const apps = findFiles(releaseDirectory, (path, stat) => stat.isDirectory() && path.endsWith('.app'))
   if (apps.length !== 1) throw new Error(`Expected exactly one packaged .app, found ${apps.length}`)
   return apps[0]
+}
+
+function findSingleArtifact(releaseDirectory, extension) {
+  const artifacts = readdirSync(releaseDirectory)
+    .map((name) => join(releaseDirectory, name))
+    .filter((path) => statSync(path).isFile() && path.endsWith(extension))
+  if (artifacts.length !== 1) throw new Error(`Expected exactly one packaged ${extension} artifact, found ${artifacts.length}`)
+  return artifacts[0]
 }
 
 function assertFuses(wire) {
@@ -64,16 +73,16 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
   if (existsSync(looseApp)) throw new Error('Loose Resources/app directory is forbidden')
   assertAsarLayout(listPackage(asar))
 
-  const unpacked = join(resources, 'app.asar.unpacked', 'node_modules', 'node-pty', 'build', 'Release')
-  const nativeFiles = [join(unpacked, 'pty.node'), join(unpacked, 'spawn-helper')]
-  for (const path of nativeFiles) if (!existsSync(path)) throw new Error(`Missing unpacked node-pty runtime: ${path}`)
-
+  const unpacked = join(resources, 'app.asar.unpacked')
+  if (!existsSync(unpacked)) throw new Error('Packaged application must contain Resources/app.asar.unpacked')
   const appArchitectures = parseArchitectures(run('lipo', ['-archs', executable]))
-  for (const path of nativeFiles) {
-    const nativeArchitectures = parseArchitectures(run('lipo', ['-archs', path]))
-    assertArchitectureCoverage(appArchitectures, nativeArchitectures, basename(path))
-  }
+  assertUnpackedNativeLayout(unpacked, appArchitectures, (path) => parseArchitectures(run('lipo', ['-archs', path])))
   assertFuses(await getCurrentFuseWire(executable))
+
+  const dmg = findSingleArtifact(releaseDirectory, '.dmg')
+  const zip = findSingleArtifact(releaseDirectory, '.zip')
+  const sizeMetrics = collectPackageSizeMetrics({ asar, app, dmg, zip })
+  assertPackageSizeBudgets(sizeMetrics)
 
   if (mode === 'public') {
     const expectedTeam = env.RELEASE_SIGNING_TEAM_ID?.trim()
@@ -84,13 +93,11 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
     if (actualTeam !== expectedTeam) throw new Error(`Signature Team ID ${actualTeam ?? '<missing>'} does not match ${expectedTeam}`)
     run('xcrun', ['stapler', 'validate', app])
     run('spctl', ['--assess', '--type', 'execute', '--verbose=4', app])
-    const dmgs = findFiles(releaseDirectory, (path, stat) => stat.isFile() && path.endsWith('.dmg'))
-    if (!dmgs.length) throw new Error('Public packaging did not produce a DMG')
   }
 
   const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
   console.log(
-    `Verified ${mode} package ${productName} ${packageJson.version}: ASAR, node-pty architectures, and Electron fuses${mode === 'public' ? ', signature Team ID, notarization staples, and Gatekeeper' : ''}.`,
+    `Verified ${mode} package ${productName} ${packageJson.version}: ASAR, exact native unpack allowlist and architectures, Electron fuses, and package size budgets (${describeSizeMetrics(sizeMetrics)})${mode === 'public' ? ', signature Team ID, notarization staples, and Gatekeeper' : ''}.`,
   )
 }
 

@@ -59,12 +59,15 @@ export function useAgentEvents({
             : session))
         }
       }
+      showExtensionUi(runtimeId, event)
       if (runtimeIdRef.current !== runtimeId) {
-        if (type === 'runtime_exit') runtimeSessionsRef.current.delete(runtimeId)
+        if (type === 'runtime_exit') {
+          clearExtensionUi(runtimeId)
+          runtimeSessionsRef.current.delete(runtimeId)
+        }
         return
       }
 
-      showExtensionUi(runtimeId, event)
       queueAgentEvent(event)
       reconcileTranscriptForEvent(runtimeId, event)
       if (type === 'agent_start') {

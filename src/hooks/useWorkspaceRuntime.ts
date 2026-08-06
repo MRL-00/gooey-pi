@@ -10,7 +10,7 @@ import {
   type TranscriptReconciliationMarker,
 } from '@/app/agent-events'
 import type { WorkspaceSnapshot } from '@/app/workspace'
-import { applyPrimeEvent, createPrimeEventBuffer } from '@/lib/events'
+import { createPrimeEventBuffer, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
 import { findRuntimeForWorkspace, workspaceCwd } from '@/lib/workspace'
 import type { PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, TranscriptMessage } from '@/types/api'
@@ -21,11 +21,6 @@ interface TranscriptLoad {
   eventBuffer: PrimeEventBuffer
   runtimeId?: string
   reconciliation: boolean
-}
-
-interface SessionFileMarker {
-  generation: number
-  sessionFile: string
 }
 
 interface UseWorkspaceRuntimeOptions {
@@ -66,8 +61,8 @@ export function useWorkspaceRuntime({
   const transcriptLoadRef = useRef<TranscriptLoad | null>(null)
   const reconciliationNeededRef = useRef<TranscriptReconciliationMarker | null>(null)
   const deferredReconciliationRef = useRef<TranscriptReconciliationMarker | null>(null)
-  const deferredFileRefreshRef = useRef<SessionFileMarker | null>(null)
   const pendingAgentEventsRef = useRef<PendingAgentEvent[]>([])
+  const promptAdmissionGenerationRef = useRef<number | null>(null)
   const agentEventFrameRef = useRef<number | null>(null)
 
   const flushAgentEvents = useCallback(() => {
@@ -77,10 +72,7 @@ export function useWorkspaceRuntime({
     pendingAgentEventsRef.current = []
     const admitted = eventsForWorkspace(pending, generation)
     if (admitted.length) {
-      setMessages((current) => admitted.reduce(
-        (currentMessages, event) => applyPrimeEvent(currentMessages, event),
-        current,
-      ))
+      setMessages((current) => replayPrimeEvents(current, admitted))
     }
   }, [])
 
@@ -105,7 +97,7 @@ export function useWorkspaceRuntime({
     pendingAgentEventsRef.current = []
     reconciliationNeededRef.current = null
     deferredReconciliationRef.current = null
-    deferredFileRefreshRef.current = null
+    promptAdmissionGenerationRef.current = null
     if (agentEventFrameRef.current !== null) {
       cancelAnimationFrame(agentEventFrameRef.current)
       agentEventFrameRef.current = null
@@ -151,13 +143,20 @@ export function useWorkspaceRuntime({
     runtimeId?: string,
   ) => {
     if (!bridge || !selected.sessionFile) return
-    const pendingLoad: TranscriptLoad = {
-      generation: selected.generation,
-      sessionFile: selected.sessionFile,
-      eventBuffer: createPrimeEventBuffer(),
-      runtimeId,
-      reconciliation,
-    }
+    const installed = transcriptLoadRef.current
+    const pendingLoad = installed
+      && installed.generation === selected.generation
+      && installed.sessionFile === selected.sessionFile
+      && installed.reconciliation === reconciliation
+      && installed.runtimeId === runtimeId
+      ? installed
+      : {
+          generation: selected.generation,
+          sessionFile: selected.sessionFile,
+          eventBuffer: createPrimeEventBuffer(),
+          runtimeId,
+          reconciliation,
+        }
     transcriptLoadRef.current = pendingLoad
     if (!reconciliation) setLoadingSession(true)
 
@@ -183,7 +182,8 @@ export function useWorkspaceRuntime({
       setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
       reportError(error)
     }).finally(() => {
-      if (transcriptLoadRef.current === pendingLoad) transcriptLoadRef.current = null
+      if (transcriptLoadRef.current !== pendingLoad) return
+      transcriptLoadRef.current = null
       if (workspaceRef.current.generation === pendingLoad.generation && !pendingLoad.reconciliation) {
         setLoadingSession(false)
       }
@@ -198,20 +198,16 @@ export function useWorkspaceRuntime({
           return
         }
       }
-      const fileRefresh = deferredFileRefreshRef.current
-      if (!fileRefresh) return
-      deferredFileRefreshRef.current = null
-      if (runtimeIdRef.current === null
-        && fileRefresh.generation === current.generation
-        && fileRefresh.sessionFile === current.sessionFile) {
-        flushAgentEvents()
-        startTranscriptRead(current, true)
-      }
     })
   }, [bridge, flushAgentEvents, reportError])
 
   const reconcileTranscriptForEvent = useCallback((runtimeId: string, event: Record<string, unknown>) => {
     const selected = workspaceRef.current
+    const type = typeof event.type === 'string' ? event.type : ''
+    if (promptAdmissionGenerationRef.current === selected.generation) {
+      if (type === 'agent_start' || type === 'turn_start') promptAdmissionGenerationRef.current = null
+      else if (needsTranscriptReconciliation(event) || isTranscriptTerminalEvent(event)) return
+    }
     if (!selected.sessionFile) return
     const marker: TranscriptReconciliationMarker = {
       generation: selected.generation,
@@ -235,6 +231,20 @@ export function useWorkspaceRuntime({
     startTranscriptRead(selected, true, runtimeId)
   }, [flushAgentEvents, startTranscriptRead])
 
+  const prepareForPrompt = useCallback((generation: number): boolean => {
+    if (workspaceRef.current.generation !== generation) return false
+    promptAdmissionGenerationRef.current = generation
+    reconciliationNeededRef.current = null
+    const load = transcriptLoadRef.current
+    if (load?.generation === generation && load.reconciliation) {
+      transcriptLoadRef.current = null
+      reconciliationNeededRef.current = null
+      deferredReconciliationRef.current = null
+      setMessages((current) => load.eventBuffer.replay(current))
+    }
+    return true
+  }, [])
+
   const activeSession = sessions.find((session) => session.id === activeSessionId)
 
   useEffect(() => {
@@ -245,71 +255,12 @@ export function useWorkspaceRuntime({
     }
     const selected = workspaceRef.current
     if (selected.generation !== workspaceGeneration || selected.sessionFile !== activeSession.filePath) return
-    const currentLoad = transcriptLoadRef.current
-    if (currentLoad?.generation === workspaceGeneration && currentLoad.sessionFile === activeSession.filePath) {
-      if (!currentLoad.reconciliation) {
-        // activateWorkspace synchronously installs the buffer before this effect can run.
-        void bridge.sessions.read(activeSession.filePath).then((value) => {
-          if (transcriptLoadRef.current !== currentLoad || workspaceRef.current.generation !== currentLoad.generation) return
-          transcriptLoadRef.current = null
-          setMessages(currentLoad.eventBuffer.replay(value))
-        }).catch((error) => {
-          if (transcriptLoadRef.current === currentLoad && workspaceRef.current.generation === currentLoad.generation) {
-            transcriptLoadRef.current = null
-            setMessages((messages) => currentLoad.eventBuffer.replay(messages))
-            reportError(error)
-          }
-        }).finally(() => {
-          if (workspaceRef.current.generation === currentLoad.generation) setLoadingSession(false)
-          if (transcriptLoadRef.current) return
-          const current = workspaceRef.current
-          const deferred = deferredReconciliationRef.current
-          if (deferred) {
-            deferredReconciliationRef.current = null
-            if (reconciliationMatches(deferred, current.generation, deferred.runtimeId, current.sessionFile)) {
-              flushAgentEvents()
-              startTranscriptRead(current, true, deferred.runtimeId)
-              return
-            }
-          }
-          const fileRefresh = deferredFileRefreshRef.current
-          if (!fileRefresh) return
-          deferredFileRefreshRef.current = null
-          if (runtimeIdRef.current === null
-            && fileRefresh.generation === current.generation
-            && fileRefresh.sessionFile === current.sessionFile) {
-            flushAgentEvents()
-            startTranscriptRead(current, true)
-          }
-        })
-      }
-      return
-    }
     startTranscriptRead(selected, false)
     return () => {
       const load = transcriptLoadRef.current
       if (load?.generation === selected.generation && !load.reconciliation) transcriptLoadRef.current = null
     }
-  }, [activeSession?.filePath, bridge, flushAgentEvents, reportError, startTranscriptRead, workspaceGeneration])
-
-  useEffect(() => {
-    if (!bridge) return
-    return bridge.sessions.onChanged(({ filePath }) => {
-      if (!filePath || runtimeIdRef.current !== null) return
-      const selected = workspaceRef.current
-      if (selected.sessionFile !== filePath) return
-      const marker: SessionFileMarker = {
-        generation: selected.generation,
-        sessionFile: filePath,
-      }
-      if (transcriptLoadRef.current) {
-        deferredFileRefreshRef.current = marker
-        return
-      }
-      flushAgentEvents()
-      startTranscriptRead(selected, true)
-    })
-  }, [bridge, flushAgentEvents, startTranscriptRead])
+  }, [activeSession?.filePath, bridge, startTranscriptRead, workspaceGeneration])
 
   useEffect(() => () => {
     if (agentEventFrameRef.current !== null) cancelAnimationFrame(agentEventFrameRef.current)
@@ -331,6 +282,7 @@ export function useWorkspaceRuntime({
     activateWorkspace,
     attachRuntime,
     reconcileRuntime,
+    prepareForPrompt,
     queueAgentEvent,
     reconcileTranscriptForEvent,
   }

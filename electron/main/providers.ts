@@ -50,13 +50,13 @@ export function resolveAvailableModelKeys(
   configuredProviders: ReadonlySet<string>,
 ): { keys: Set<string>; fallbackProviders: string[] } {
   const keys = new Set(executableModels.map((model) => modelKey(model.provider, model.id)))
-  const executableProviders = new Set(executableModels.map((model) => model.provider))
   const fallbackProviders: string[] = []
-  // Codex subscription discovery is an entitlement refinement, not the runtime's
-  // source of truth. Prime Agent can still execute its built-in models when this
-  // optional network request fails, so an empty result must not disable the lot.
-  if (configuredProviders.has('openai-codex') && !executableProviders.has('openai-codex')) {
-    fallbackProviders.push('openai-codex')
+  // Codex subscription discovery is an optional entitlement refinement, not the
+  // runtime's source of truth. A configured Prime Agent account can still execute
+  // its built-in catalogue when that network result is empty or partial.
+  if (configuredProviders.has('openai-codex')) {
+    const missingConfiguredModel = models.some((model) => model.provider === 'openai-codex' && !keys.has(modelKey(model.provider, model.id)))
+    if (missingConfiguredModel) fallbackProviders.push('openai-codex')
     for (const model of models) if (model.provider === 'openai-codex') keys.add(modelKey(model.provider, model.id))
   }
   return { keys, fallbackProviders }
@@ -101,7 +101,10 @@ export class PrimeProviderService {
     }
 
     const snapshot = await this.registry.refreshModelCatalog()
-    const executableModels = await this.registry.getExecutableModels()
+    let executableModels: Model<Api>[] = []
+    let executableDiscoveryWarning: string | undefined
+    try { executableModels = await this.registry.getExecutableModels() }
+    catch { executableDiscoveryWarning = 'Executable model discovery failed; availability may be incomplete.' }
     const oauthProviders = new Map(this.authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]))
     const eligibleModels = snapshot.models.filter((model) => safeProviderId(model.provider) && safeModelId(model.id))
     const providerIds = new Set([...eligibleModels.map((model) => model.provider), ...oauthProviders.keys()])
@@ -131,8 +134,9 @@ export class PrimeProviderService {
         ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; Prime Work loaded the first ${models.length.toLocaleString()} valid entries.`
         : undefined,
       fallbackProviders.includes('openai-codex')
-        ? 'ChatGPT subscription model discovery was unavailable; Prime Work is showing Prime Agent’s configured Codex catalogue.'
+        ? 'ChatGPT subscription model discovery was unavailable or incomplete; Prime Work is showing Prime Agent’s configured Codex catalogue.'
         : undefined,
+      executableDiscoveryWarning,
       this.registry.getError()?.slice(0, 4_000),
     ].filter((warning): warning is string => Boolean(warning))
 

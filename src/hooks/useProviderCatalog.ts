@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
 
 type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
@@ -7,16 +7,54 @@ interface UseProviderCatalogOptions {
   bridge: PrimeWorkApi | null
   runtime: RuntimeInfo | null
   syncRuntime(runtimeId: string): Promise<void>
-  syncDisabledProviders(providerIds: string[]): Promise<void> | void
   reportError(error: unknown): void
 }
 
-export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledProviders, reportError }: UseProviderCatalogOptions) {
+export function useProviderCatalog({ bridge, runtime, syncRuntime, reportError }: UseProviderCatalogOptions) {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
   const [catalog, setCatalog] = useState<PrimeModelCatalog | null>(null)
   const [authEvent, setAuthEvent] = useState<ActiveProviderAuthEvent | null>(null)
+  const modelRef = useRef(model)
+  const effortRef = useRef(effort)
+  const fastRef = useRef(fast)
+  const mutationRevisionRef = useRef(0)
+  const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const runtimeIdRef = useRef(runtime?.runtimeId)
+  runtimeIdRef.current = runtime?.runtimeId
+
+  const updateModel = useCallback((value: string) => { modelRef.current = value; setModel(value) }, [])
+  const updateEffort = useCallback((value: PrimeThinkingLevel) => { effortRef.current = value; setEffort(value) }, [])
+  const updateFast = useCallback((value: boolean) => { fastRef.current = value; setFast(value) }, [])
+
+  const queueRuntimeMutation = useCallback((
+    runtimeId: string,
+    command: () => Promise<void>,
+    rollback: () => void,
+  ) => {
+    const revision = ++mutationRevisionRef.current
+    mutationQueueRef.current = mutationQueueRef.current.then(async () => {
+      try {
+        await command()
+      } catch (error) {
+        if (mutationRevisionRef.current === revision && runtimeIdRef.current === runtimeId) {
+          rollback()
+          try { await syncRuntime(runtimeId) } catch (syncError) { reportError(syncError) }
+        }
+        reportError(error)
+        return
+      }
+      if (mutationRevisionRef.current === revision && runtimeIdRef.current === runtimeId) {
+        try { await syncRuntime(runtimeId) } catch (error) { reportError(error) }
+      }
+    })
+  }, [reportError, syncRuntime])
+
+  useEffect(() => () => {
+    mutationRevisionRef.current += 1
+    runtimeIdRef.current = undefined
+  }, [])
 
   const refresh = useCallback(async (force = false) => {
     if (!bridge) return
@@ -31,8 +69,8 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
 
   useEffect(() => {
     if (reasoningLevels.includes(effort)) return
-    setEffort(reasoningLevels.includes('medium') ? 'medium' : reasoningLevels[0] ?? 'off')
-  }, [effort, reasoningLevels])
+    updateEffort(reasoningLevels.includes('medium') ? 'medium' : reasoningLevels[0] ?? 'off')
+  }, [effort, reasoningLevels, updateEffort])
 
   useEffect(() => {
     if (!bridge) return
@@ -61,44 +99,52 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   useEffect(() => {
     if (!runtime?.model?.provider || !runtime.model.id || !catalog) return
     const effectiveModel = catalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id)
-    if (effectiveModel) setModel(effectiveModel.key)
-    if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) setEffort(runtime.thinkingLevel as PrimeThinkingLevel)
-    setFast(runtime.serviceTier === 'priority')
-  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.serviceTier, runtime?.thinkingLevel])
+    if (effectiveModel) updateModel(effectiveModel.key)
+    if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) updateEffort(runtime.thinkingLevel as PrimeThinkingLevel)
+    updateFast(runtime.serviceTier === 'priority')
+  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.serviceTier, runtime?.thinkingLevel, updateEffort, updateFast, updateModel])
 
   const changeModel = useCallback((nextModelKey: string) => {
-    setModel(nextModelKey)
+    const previous = { model: modelRef.current, effort: effortRef.current, fast: fastRef.current }
     const nextModel = catalog?.models.find((candidate) => candidate.key === nextModelKey)
-    const nextEffort = nextModel && !nextModel.availableThinkingLevels.includes(effort)
+    const nextEffort = nextModel && !nextModel.availableThinkingLevels.includes(effortRef.current)
       ? nextModel.availableThinkingLevels.includes('medium') ? 'medium' : nextModel.availableThinkingLevels[0] ?? 'off'
-      : effort
-    setEffort(nextEffort)
-    if (!nextModel?.fastModeSupported) setFast(false)
+      : effortRef.current
+    updateModel(nextModelKey)
+    updateEffort(nextEffort)
+    if (!nextModel?.fastModeSupported) updateFast(false)
     if (!bridge || !runtime || !nextModel) return
-    void (async () => {
-      try {
+    queueRuntimeMutation(
+      runtime.runtimeId,
+      async () => {
         await bridge.agent.command(runtime.runtimeId, { type: 'set_model', provider: nextModel.provider, modelId: nextModel.id })
         await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
-        await syncRuntime(runtime.runtimeId)
-      } catch (error) { reportError(error) }
-    })()
-  }, [bridge, catalog?.models, effort, reportError, runtime, syncRuntime])
+      },
+      () => { updateModel(previous.model); updateEffort(previous.effort); updateFast(previous.fast) },
+    )
+  }, [bridge, catalog?.models, queueRuntimeMutation, runtime, updateEffort, updateFast, updateModel])
 
   const changeEffort = useCallback((nextEffort: PrimeThinkingLevel) => {
-    setEffort(nextEffort)
+    const previous = effortRef.current
+    updateEffort(nextEffort)
     if (!bridge || !runtime) return
-    void bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
-      .then(() => syncRuntime(runtime.runtimeId))
-      .catch(reportError)
-  }, [bridge, reportError, runtime, syncRuntime])
+    queueRuntimeMutation(
+      runtime.runtimeId,
+      async () => { await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort }) },
+      () => updateEffort(previous),
+    )
+  }, [bridge, queueRuntimeMutation, runtime, updateEffort])
 
   const changeFast = useCallback((enabled: boolean) => {
-    setFast(enabled)
+    const previous = fastRef.current
+    updateFast(enabled)
     if (!bridge || !runtime) return
-    void bridge.agent.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: enabled ? 'priority' : 'default' })
-      .then(() => syncRuntime(runtime.runtimeId))
-      .catch((error) => { setFast(false); void syncRuntime(runtime.runtimeId); reportError(error) })
-  }, [bridge, reportError, runtime, syncRuntime])
+    queueRuntimeMutation(
+      runtime.runtimeId,
+      async () => { await bridge.agent.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: enabled ? 'priority' : 'default' }) },
+      () => updateFast(previous),
+    )
+  }, [bridge, queueRuntimeMutation, runtime, updateFast])
 
   const saveApiKey = useCallback(async (providerId: string, apiKey: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
@@ -115,10 +161,9 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     const next = await bridge.providers.setEnabled(providerId, enabled)
     setCatalog(next)
     const disabledProviders = next.providers.filter((provider) => !provider.enabled).map((provider) => provider.id)
-    await syncDisabledProviders(disabledProviders)
-    const selectedProvider = catalog?.models.find((candidate) => candidate.key === model)?.provider
-    if (selectedProvider && disabledProviders.includes(selectedProvider)) { setModel('auto'); setFast(false) }
-  }, [bridge, catalog?.models, model, syncDisabledProviders])
+    const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
+    if (selectedProvider && disabledProviders.includes(selectedProvider)) { updateModel('auto'); updateFast(false) }
+  }, [bridge, catalog?.models, updateFast, updateModel])
 
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')

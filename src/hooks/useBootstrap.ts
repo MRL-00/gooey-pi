@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { selectStartupWorkspace } from '@/lib/workspace'
+import { findRuntimeForWorkspace, selectStartupWorkspace } from '@/lib/workspace'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import type {
   AppMeta,
@@ -8,19 +8,18 @@ import type {
   RuntimeInfo,
   ScheduleRecord,
   SessionRecord,
-  SkillRecord,
 } from '@/types/api'
 
 interface UseBootstrapOptions {
   bridge: PrimeWorkApi | null
   setProjects: React.Dispatch<React.SetStateAction<ProjectRecord[]>>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
-  setSkills: React.Dispatch<React.SetStateAction<SkillRecord[]>>
   setSchedules: React.Dispatch<React.SetStateAction<ScheduleRecord[]>>
   setScheduleError(value: string): void
   runtimeSessionsRef: React.RefObject<Map<string, string>>
   workspaceRef: React.RefObject<WorkspaceSnapshot>
   activateWorkspace(project?: ProjectRecord, session?: SessionRecord, runtime?: RuntimeInfo): number
+  attachRuntime(runtime: RuntimeInfo | undefined, generation: number): void
   reportError(error: unknown): void
 }
 
@@ -28,12 +27,12 @@ export function useBootstrap({
   bridge,
   setProjects,
   setSessions,
-  setSkills,
   setSchedules,
   setScheduleError,
   runtimeSessionsRef,
   workspaceRef,
   activateWorkspace,
+  attachRuntime,
   reportError,
 }: UseBootstrapOptions) {
   const [meta, setMeta] = useState<AppMeta | null>(null)
@@ -45,14 +44,20 @@ export function useBootstrap({
     const startupGeneration = workspaceRef.current.generation
     const projectsRequest = bridge.projects.list()
     const sessionsRequest = bridge.sessions.list(undefined, true)
-    const runtimesRequest = bridge.agent.list()
+    const runtimesRequest = bridge.agent.list().then((value) => {
+      if (!cancelled) {
+        runtimeSessionsRef.current = new Map(value.flatMap((runtime) => runtime.sessionFile
+          ? [[runtime.runtimeId, runtime.sessionFile] as const]
+          : []))
+      }
+      return value
+    }).catch((error) => {
+      if (!cancelled) reportError(error)
+      return [] as RuntimeInfo[]
+    })
 
     void bridge.app.getMeta().then((value) => {
       if (!cancelled) setMeta(value)
-    }).catch((error) => { if (!cancelled) reportError(error) })
-
-    void bridge.plugins.list().then((value) => {
-      if (!cancelled) setSkills(value)
     }).catch((error) => { if (!cancelled) reportError(error) })
 
     void bridge.schedules.list().then((value) => {
@@ -67,41 +72,39 @@ export function useBootstrap({
       }
     })
 
-    void projectsRequest.then((value) => {
-      if (!cancelled) setProjects(value)
-    }).catch((error) => { if (!cancelled) reportError(error) })
-
-    void sessionsRequest.then((value) => {
-      if (!cancelled) {
-        setSessions(value.map((session) => session.status === 'waiting'
-          ? { ...session, unread: true }
-          : session))
-      }
-    }).catch((error) => { if (!cancelled) reportError(error) })
-
-    void runtimesRequest.then((value) => {
-      if (!cancelled) {
-        runtimeSessionsRef.current = new Map(value.flatMap((runtime) => runtime.sessionFile
-          ? [[runtime.runtimeId, runtime.sessionFile] as const]
-          : []))
-      }
-    }).catch((error) => { if (!cancelled) reportError(error) })
-
-    void Promise.allSettled([projectsRequest, sessionsRequest, runtimesRequest]).then((results) => {
+    void Promise.allSettled([projectsRequest, sessionsRequest]).then((results) => {
       if (cancelled) return
-      const [projectResult, sessionResult, runtimeResult] = results
+      const [projectResult, sessionResult] = results
+      if (projectResult.status === 'rejected') reportError(projectResult.reason)
+      if (sessionResult.status === 'rejected') reportError(sessionResult.reason)
       const nextProjects = projectResult.status === 'fulfilled' ? projectResult.value : []
-      const nextSessions = sessionResult.status === 'fulfilled' ? sessionResult.value : []
-      const nextRuntimes = runtimeResult.status === 'fulfilled' ? runtimeResult.value : []
+      const nextSessions = (sessionResult.status === 'fulfilled' ? sessionResult.value : []).map((session) => session.status === 'waiting'
+        ? { ...session, unread: true }
+        : session)
+      setProjects(nextProjects)
+      setSessions(nextSessions)
+
+      let selectedGeneration: number | undefined
       if (projectResult.status === 'fulfilled' && workspaceRef.current.generation === startupGeneration) {
-        const selected = selectStartupWorkspace(nextProjects, nextSessions, nextRuntimes)
-        activateWorkspace(selected.project, selected.session, selected.runtime)
+        const selected = selectStartupWorkspace(nextProjects, nextSessions, [])
+        selectedGeneration = activateWorkspace(selected.project, selected.session)
       }
       setInitialized(true)
+
+      // Runtime discovery is intentionally not on the critical path. It may
+      // only attach to the exact startup generation/session it was selected for.
+      void runtimesRequest.then((runtimes) => {
+        if (cancelled || selectedGeneration === undefined) return
+        const current = workspaceRef.current
+        if (current.generation !== selectedGeneration) return
+        const matching = findRuntimeForWorkspace(runtimes, current.cwd, current.sessionFile)
+        if (matching) attachRuntime(matching, selectedGeneration)
+      })
     })
     return () => { cancelled = true }
   }, [
     activateWorkspace,
+    attachRuntime,
     bridge,
     reportError,
     runtimeSessionsRef,
@@ -109,7 +112,6 @@ export function useBootstrap({
     setScheduleError,
     setSchedules,
     setSessions,
-    setSkills,
     workspaceRef,
   ])
 

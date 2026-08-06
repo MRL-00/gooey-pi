@@ -21,7 +21,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "npm run build && npm run test:e2e:hermetic",
     "test:e2e:hermetic": "playwright test",
-    "release:verify": "npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run test:e2e:hermetic",
+    "release:verify": "npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run release:bundle-size && npm run test:e2e:hermetic",
+    "release:bundle-size": "node scripts/release/verify-bundle-size.mjs",
     "package:mac": "node scripts/release/package.mjs --public",
     "package:mac:local-qa": "node scripts/release/package.mjs --qa",
     "release:preflight": "node scripts/release/preflight.mjs",
@@ -47,6 +48,7 @@
     "electron": "^43.2.0",
     "electron-builder": "^26.15.7",
     "electron-vite": "^5.0.0",
+    "jsdom": "^26.1.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -65,7 +67,7 @@
     "asarUnpack": [
       "**/node_modules/node-pty/build/Release/pty.node",
       "**/node_modules/node-pty/build/Release/spawn-helper",
-      "**/node_modules/zeromq/build/**/*.node"
+      "**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node"
     ],
     "files": [
       "out/**/*",

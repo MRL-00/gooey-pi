@@ -32,14 +32,33 @@ describe('Prime provider adapter', () => {
     expect(result.fallbackProviders).toEqual(['openai-codex'])
   })
 
-  it('honors exact ChatGPT subscription discovery results when they are available', () => {
+  it('keeps configured ChatGPT subscription models selectable when discovery is partial', () => {
     const result = resolveAvailableModelKeys(
       [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'openai-codex', id: 'gpt-5.6-terra' }],
       [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }],
       new Set(['openai-codex']),
     )
 
-    expect(result.keys).toEqual(new Set(['openai-codex/gpt-5.6-sol']))
+    expect(result.keys).toEqual(new Set(['openai-codex/gpt-5.6-sol', 'openai-codex/gpt-5.6-terra']))
+    expect(result.fallbackProviders).toEqual(['openai-codex'])
+  })
+
+  it('does not warn when configured ChatGPT discovery contains the complete catalogue', () => {
+    const models = [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'openai-codex', id: 'gpt-5.6-terra' }]
+    const result = resolveAvailableModelKeys(models, models, new Set(['openai-codex']))
+
+    expect(result.keys).toEqual(new Set(['openai-codex/gpt-5.6-sol', 'openai-codex/gpt-5.6-terra']))
+    expect(result.fallbackProviders).toEqual([])
+  })
+
+  it('does not make subscription models available for an unconfigured provider', () => {
+    const result = resolveAvailableModelKeys(
+      [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'anthropic', id: 'claude-sonnet-5' }],
+      [{ provider: 'anthropic', id: 'claude-sonnet-5' }],
+      new Set(['anthropic']),
+    )
+
+    expect(result.keys).toEqual(new Set(['anthropic/claude-sonnet-5']))
     expect(result.fallbackProviders).toEqual([])
   })
 

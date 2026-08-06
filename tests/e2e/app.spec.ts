@@ -3,16 +3,34 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-let app: ElectronApplication
+let app: ElectronApplication | undefined
 let page: Page
 let fixtureRoot = ''
 let actionableErrors: string[] = []
 
+const instrumentedPages = new WeakSet<Page>()
+
 const attachDiagnostics = (target: Page) => {
+  if (instrumentedPages.has(target)) return
+  instrumentedPages.add(target)
   target.on('pageerror', (error) => actionableErrors.push(error.message))
   target.on('console', (message) => {
     if (message.type() === 'error') actionableErrors.push(message.text())
   })
+}
+
+async function closeHermeticApp(target: ElectronApplication | undefined): Promise<void> {
+  if (!target) return
+  const child = target.process()
+  const closeEvent = target.waitForEvent('close', { timeout: 15_000 }).then(() => undefined, () => undefined)
+  const gracefulClose = target.close().then(() => true, () => false)
+  const closedGracefully = await Promise.race([
+    gracefulClose,
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 10_000)),
+  ])
+  if (closedGracefully) return
+  if (child.exitCode === null) child.kill('SIGKILL')
+  await closeEvent
 }
 
 function createHermeticFixture(): { userData: string; home: string; project: string; executable: string } {
@@ -115,16 +133,35 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
 test.describe('Prime Work desktop smoke', () => {
   test.beforeEach(async () => {
     actionableErrors = []
+    app = undefined
     const fixture = createHermeticFixture()
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
-    page = await app.firstWindow()
-    attachDiagnostics(page)
-    await page.locator('.app-shell').waitFor()
-    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
+    let startupError: unknown
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      app = await electron.launch({
+        args: ['.', `--user-data-dir=${fixture.userData}`],
+        cwd: process.cwd(),
+        env: hermeticEnvironment(fixture.home, fixture.executable),
+        timeout: 20_000,
+      })
+      app.context().on('page', attachDiagnostics)
+      for (const target of app.windows()) attachDiagnostics(target)
+      try {
+        page = await app.firstWindow({ timeout: 15_000 })
+        attachDiagnostics(page)
+        await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true', { timeout: 20_000 })
+        return
+      } catch (error) {
+        startupError = error
+        await closeHermeticApp(app)
+        app = undefined
+      }
+    }
+    throw startupError ?? new Error('Prime Work did not create its initial window')
   })
 
   test.afterEach(async () => {
-    await app?.close().catch(() => undefined)
+    await closeHermeticApp(app)
+    app = undefined
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
   })
@@ -140,6 +177,48 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('enforces the live preload and IPC frame boundaries', async () => {
+    const initialMeta = await page.evaluate(() => window.prime.app.getMeta())
+    expect(initialMeta.version).toBeTruthy()
+
+    await page.evaluate(() => { window.location.hash = 'cfr-11-safe-fragment' })
+    await expect(page).toHaveURL(/#cfr-11-safe-fragment$/)
+    const fragmentMeta = await page.evaluate(() => window.prime.app.getMeta())
+    expect(fragmentMeta).toEqual(initialMeta)
+
+    await page.evaluate(() => {
+      const iframe = document.createElement('iframe')
+      iframe.name = 'untrusted-subframe'
+      iframe.srcdoc = '<!doctype html><title>Untrusted subframe</title>'
+      document.body.append(iframe)
+    })
+    await expect.poll(() => Boolean(page.frame({ name: 'untrusted-subframe' }))).toBe(true)
+    const subframe = page.frame({ name: 'untrusted-subframe' })
+    expect(subframe).not.toBeNull()
+    await subframe!.waitForLoadState()
+    expect(await subframe!.evaluate(() => typeof (window as Window & { prime?: unknown }).prime)).toBe('undefined')
+
+    const deniedUrl = 'data:text/html,<title>Untrusted renderer</title><main>untrusted</main>'
+    await app!.evaluate(async ({ BrowserWindow }, url) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (!window) throw new Error('Expected the Prime Work window')
+      await window.loadURL(url)
+    }, deniedUrl)
+    await expect(page).toHaveURL(/^data:text\/html,/)
+    const deniedAccess = await page.evaluate(async () => {
+      const prime = (window as Window & { prime?: typeof window.prime }).prime
+      if (!prime) return { bridge: 'undefined', result: 'unavailable' }
+      try {
+        await prime.app.getMeta()
+        return { bridge: 'object', result: 'resolved' }
+      } catch (error) {
+        return { bridge: 'object', result: error instanceof Error ? error.message : String(error) }
+      }
+    })
+    expect(deniedAccess.bridge).toBe('object')
+    expect(deniedAccess.result).toMatch(/IPC sender is not authorized/i)
   })
 
   test('keeps session options visible and starts a new session from a hovered project', async () => {
@@ -353,14 +432,26 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(completedRow).not.toHaveClass(/has-attention/)
   })
 
-  test('rolls back a rejected optimistic setting', async () => {
+  test('preserves a rejected shell draft while rolling back the committed setting', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Terminal', exact: true }).first().click()
-    const shell = page.locator('.settings-content input.mono')
+    const shell = page.getByLabel('Shell executable')
+    const rejectedDraft = '/definitely/not-an-executable'
     await expect(shell).toHaveValue('/bin/zsh')
-    await shell.fill('/definitely/not-an-executable')
+    await shell.fill(rejectedDraft)
+    await expect(shell).toHaveValue(rejectedDraft)
+    await expect(page.getByRole('alert')).toHaveCount(0)
+
+    await shell.press('Enter')
+
+    const inlineError = page.getByRole('alert').filter({ hasText: /setting could not be saved/i })
+    await expect(inlineError).toBeVisible()
+    await expect(shell).toHaveAttribute('aria-invalid', 'true')
+    await expect(shell).toHaveAttribute('aria-describedby', await inlineError.getAttribute('id') ?? '')
     await expect(page.locator('.toast')).toContainText(/shell is not executable/i)
-    await expect(shell).toHaveValue('/bin/zsh')
+    await expect(shell).toHaveValue(rejectedDraft)
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+    await expect.poll(() => page.evaluate(() => window.prime.settings.get().then((settings) => settings.terminalShell))).toBe('/bin/zsh')
   })
 
   test('uses overlay panels at the compact desktop breakpoint', async () => {
@@ -368,9 +459,15 @@ test.describe('Prime Work desktop smoke', () => {
     await page.setViewportSize({ width: 960, height: 700 })
     await expect.poll(() => page.locator('.sidebar').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
     await expect(page.locator('.inspector')).toHaveCount(0)
-    await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
-    await page.locator('.panel-scrim--sidebar').click({ position: { x: 900, y: 300 } })
-    await page.getByRole('button', { name: 'Toggle inspector' }).click()
+    const sidebarScrim = page.getByRole('button', { name: 'Close sidebar' })
+    await expect(sidebarScrim).toBeVisible()
+    await sidebarScrim.click({ position: { x: 900, y: 300 } })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
+    await expect(page.locator('.title-toolbar')).not.toHaveAttribute('inert')
+    const inspectorToggle = page.getByRole('button', { name: 'Toggle inspector' })
+    await inspectorToggle.focus()
+    await inspectorToggle.press('Enter')
     await expect.poll(() => page.locator('.inspector').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
@@ -385,6 +482,10 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Browser' }).click()
     const guest = page.locator('webview[partition="persist:prime-work-browser"]')
     await expect(guest).toHaveCount(1)
+    await expect.poll(() => guest.evaluate(async (node) => {
+      const webview = node as HTMLElement & { executeJavaScript(script: string): Promise<unknown> }
+      return webview.executeJavaScript('typeof window.prime')
+    })).toBe('undefined')
     await page.waitForTimeout(2_500)
     expect(actionableErrors.filter((error) => /ERR_ABORTED|GUEST_VIEW_MANAGER_CALL/i.test(error))).toEqual([])
     await page.getByRole('tab', { name: 'Browser' }).focus()
@@ -418,12 +519,19 @@ test.describe('Prime Work desktop smoke', () => {
     const terminalHandle = page.getByRole('separator', { name: 'Resize terminal' })
     await expect(terminalHandle).toBeVisible()
     const terminalBefore = await drawer.boundingBox()
-    const terminalHandleBox = await terminalHandle.boundingBox()
     expect(terminalBefore).not.toBeNull()
+    await expect.poll(async () => Number(await terminalHandle.getAttribute('aria-valuemax'))).toBeGreaterThan(terminalBefore!.height + 44)
+    await terminalHandle.hover()
+    const terminalHandleBox = await terminalHandle.boundingBox()
     expect(terminalHandleBox).not.toBeNull()
-    await page.mouse.move(terminalHandleBox!.x + 120, terminalHandleBox!.y + terminalHandleBox!.height / 2)
+    const terminalHandleCenter = {
+      x: terminalHandleBox!.x + terminalHandleBox!.width / 2,
+      y: terminalHandleBox!.y + terminalHandleBox!.height / 2,
+    }
+    await page.mouse.move(terminalHandleCenter.x, terminalHandleCenter.y)
     await page.mouse.down()
-    await page.mouse.move(terminalHandleBox!.x + 120, terminalHandleBox!.y - 64, { steps: 5 })
+    await expect(terminalHandle).toHaveAttribute('data-resizing', 'true')
+    await page.mouse.move(terminalHandleCenter.x, terminalHandleCenter.y - 64, { steps: 5 })
     await page.mouse.up()
     const terminalAfter = await drawer.boundingBox()
     expect(terminalAfter!.height).toBeGreaterThan(terminalBefore!.height + 44)
@@ -457,8 +565,8 @@ test.describe('Prime Work desktop smoke', () => {
 
   test('closes and recreates the last macOS window cleanly', async () => {
     await page.close()
-    await app.evaluate(({ app: electronApp }) => electronApp.emit('activate'))
-    page = await app.firstWindow()
+    await app!.evaluate(({ app: electronApp }) => electronApp.emit('activate'))
+    page = await app!.firstWindow({ timeout: 45_000 })
     attachDiagnostics(page)
     await expect(page.locator('.app-shell')).toBeVisible()
   })

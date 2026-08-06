@@ -1,19 +1,20 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SessionService } from '../../electron/main/sessions'
+import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
+import { SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function setup(maxSessionFiles?: number): { root: string; project: string; service: SessionService } {
+function setup(maxSessionFiles?: number, options?: SessionServiceOptions): { root: string; project: string; service: SessionService } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
-  const service = new SessionService(store, null, maxSessionFiles)
+  const service = new SessionService(store, null, maxSessionFiles, options)
   Object.defineProperty(service, 'sessionRoot', { value: root })
   return { root, project, service }
 }
@@ -52,9 +53,9 @@ describe('SessionService catalog scaling', () => {
 
   it('selects the newest files before parsing with a deterministic canonical-path tie break', async () => {
     const { root, project, service } = setup(2)
-    const oldest = join(root, 'c-oldest.jsonl')
-    const tiedA = join(root, 'a-newest.jsonl')
-    const tiedB = join(root, 'b-newest.jsonl')
+    const oldest = join(root, '01800000-0000-7000-8000-000000000000.jsonl')
+    const tiedA = join(root, '01900000-0001-7000-8000-000000000000.jsonl')
+    const tiedB = join(root, '01900000-0002-7000-8000-000000000000.jsonl')
     writeSession(oldest, project, 'oldest')
     writeSession(tiedA, project, 'newest-a')
     writeSession(tiedB, project, 'newest-b')
@@ -67,9 +68,124 @@ describe('SessionService catalog scaling', () => {
     const records = await service.list()
     expect(records.map((record) => record.id)).toEqual(['newest-a', 'newest-b'])
   })
+
+  it('bounds canonicalize and stat work before scanning a huge directory', async () => {
+    const root = '/sessions'
+    const maxSessionFiles = 3
+    const sessionName = (timestamp: number): string => {
+      const prefix = timestamp.toString(16).padStart(12, '0')
+      return `${prefix.slice(0, 8)}-${prefix.slice(8)}-7000-8000-${timestamp.toString(16).padStart(12, '0')}.jsonl`
+    }
+    const names = Array.from({ length: 50_000 }, (_, index) => sessionName(index))
+    const canonicalize = vi.fn(async (path: string) => path)
+    const inspect = vi.fn(async (path: string) => {
+      const name = path.slice(path.lastIndexOf('/') + 1)
+      const timestamp = Number.parseInt(name.slice(0, 8) + name.slice(9, 13), 16)
+      return { isFile: () => true, mtimeMs: timestamp, size: 100 } as Stats
+    })
+    const io: SessionCatalogIo = {
+      readDirectory: vi.fn(async () => names.map((name) => ({ name }))),
+      canonicalize,
+      inspect,
+    }
+    const readMetadata = vi.fn(async (filePath: string) => ({
+      id: filePath.slice(filePath.lastIndexOf('/') + 1, -'.jsonl'.length),
+      filePath,
+      projectPath: '/project',
+      title: 'Session',
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:00.000Z',
+      status: 'idle' as const,
+      depth: 0,
+      pinned: false,
+      unread: false,
+      preview: '',
+    }))
+    const catalog = new SessionMetadataCatalog(() => root, null, maxSessionFiles, readMetadata, io)
+
+    const records = await catalog.all()
+
+    const selectedIds = [49_999, 49_998, 49_997].map((value) => sessionName(value).slice(0, -'.jsonl'.length))
+    expect(records.map((record) => record.id).sort()).toEqual(selectedIds.sort())
+    expect(canonicalize).toHaveBeenCalledTimes(1 + maxSessionFiles)
+    expect(inspect).toHaveBeenCalledTimes(2 * maxSessionFiles)
+    expect(readMetadata).toHaveBeenCalledTimes(maxSessionFiles)
+    expect(inspect.mock.calls.flat().join(' ')).not.toContain(sessionName(0))
+  })
 })
 
 describe('SessionService transcript bounds', () => {
+  it('authorizes each caller, coalesces in-flight reads per session, and returns deep clones', async () => {
+    let releaseRead: (() => void) | undefined
+    let markStarted: (() => void) | undefined
+    const started = new Promise<void>((resolveStarted) => { markStarted = resolveStarted })
+    const transcriptReader = vi.fn(async () => {
+      markStarted?.()
+      await new Promise<void>((resolveRead) => { releaseRead = resolveRead })
+      return [{ id: 'message', role: 'user' as const, parts: [{ type: 'text' as const, text: 'original' }] }]
+    })
+    const { root, project, service } = setup(undefined, { transcriptReader })
+    const file = join(root, 'coalesced.jsonl')
+    writeSession(file, project, 'coalesced')
+    const authorize = vi.spyOn(service, 'requireSessionPath').mockResolvedValue(file)
+
+    const firstRequest = service.read(file)
+    const secondRequest = service.read(file)
+    await started
+    expect(authorize).toHaveBeenCalledTimes(2)
+    releaseRead?.()
+    const [first, second] = await Promise.all([firstRequest, secondRequest])
+
+    expect(transcriptReader).toHaveBeenCalledTimes(1)
+    expect(first).not.toBe(second)
+    expect(first[0]).not.toBe(second[0])
+    expect(first[0]?.parts).not.toBe(second[0]?.parts)
+    const firstPart = first[0]?.parts[0]
+    if (firstPart?.type === 'text') firstPart.text = 'mutated'
+    expect(second[0]?.parts).toEqual([{ type: 'text', text: 'original' }])
+  })
+
+  it('admits only a bounded number of transcript scans across sessions', async () => {
+    let active = 0
+    let maximumActive = 0
+    let startedCount = 0
+    let markTwoStarted: (() => void) | undefined
+    let markThreeStarted: (() => void) | undefined
+    const twoStarted = new Promise<void>((resolveStarted) => { markTwoStarted = resolveStarted })
+    const threeStarted = new Promise<void>((resolveStarted) => { markThreeStarted = resolveStarted })
+    const releases: Array<() => void> = []
+    const transcriptReader = vi.fn(async () => {
+      active += 1
+      maximumActive = Math.max(maximumActive, active)
+      await new Promise<void>((resolveRead) => {
+        releases.push(resolveRead)
+        startedCount += 1
+        if (startedCount === 2) markTwoStarted?.()
+        if (startedCount === 3) markThreeStarted?.()
+      })
+      active -= 1
+      return []
+    })
+    const { root, project, service } = setup(undefined, {
+      transcriptReader,
+      maxConcurrentTranscriptReads: 2,
+    })
+    const files = ['one.jsonl', 'two.jsonl', 'three.jsonl'].map((name, index) => {
+      const file = join(root, name)
+      writeSession(file, project, `session-${index}`)
+      return file
+    })
+
+    const requests = files.map((file) => service.read(file))
+    await twoStarted
+    expect(transcriptReader).toHaveBeenCalledTimes(2)
+    releases.shift()?.()
+    await threeStarted
+    expect(maximumActive).toBe(2)
+    for (const release of releases.splice(0)) release()
+    await expect(Promise.all(requests)).resolves.toEqual([[], [], []])
+  })
+
   it('returns a bounded recent suffix of long conversations', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'long.jsonl')

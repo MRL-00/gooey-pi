@@ -44,6 +44,40 @@ const statusLabel: Record<SessionRecord['status'], string> = {
   idle: 'Idle', running: 'Running', waiting: 'Waiting for input', complete: 'Finished', failed: 'Failed', unknown: 'Unknown',
 }
 
+export const SIDEBAR_SESSION_LIMIT = 7
+
+export interface SidebarIndexStats {
+  projectPaths: number
+  sessionScans: number
+}
+
+export function indexSidebarSessions(
+  projects: ProjectRecord[],
+  sessions: SessionRecord[],
+  stats?: SidebarIndexStats,
+): { activeSessions: SessionRecord[]; sessionsByProject: Map<string, SessionRecord[]> } {
+  const activeSessions: SessionRecord[] = []
+  const owners = new Map<string, string[]>()
+  const sessionsByProject = new Map(projects.map((project) => [project.id, [] as SessionRecord[]]))
+  for (const project of projects) for (const path of new Set([project.path, ...project.folders])) {
+    if (stats) stats.projectPaths += 1
+    const entries = owners.get(path) ?? []
+    entries.push(project.id)
+    owners.set(path, entries)
+  }
+  for (const session of sessions) {
+    if (stats) stats.sessionScans += 1
+    if (session.archived) continue
+    activeSessions.push(session)
+    for (const projectId of owners.get(session.projectPath) ?? []) sessionsByProject.get(projectId)?.push(session)
+  }
+  return { activeSessions, sessionsByProject }
+}
+
+export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord[] {
+  return sessions.slice(0, SIDEBAR_SESSION_LIMIT)
+}
+
 
 const attentionSignature = (session: SessionRecord): string | undefined => {
   if (session.status === 'waiting') return `waiting:${session.updatedAt}`
@@ -73,7 +107,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
   const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(readClearedAttention)
-  const activeSessions = useMemo(() => sessions.filter((session) => !session.archived), [sessions])
+  const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
     const signature = attentionSignature(session)
     return Boolean(signature && clearedAttention[session.id] !== signature)
@@ -84,15 +118,6 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
     setClearedAttention((current) => ({ ...current, [session.id]: signature }))
   }
   useEffect(() => { window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention)) }, [clearedAttention])
-  const sessionsByProject = useMemo(() => {
-    const owners = new Map<string, string[]>()
-    const grouped = new Map(projects.map((project) => [project.id, [] as SessionRecord[]]))
-    for (const project of projects) for (const path of new Set([project.path, ...project.folders])) {
-      const entries = owners.get(path) ?? []; entries.push(project.id); owners.set(path, entries)
-    }
-    for (const session of activeSessions) for (const projectId of owners.get(session.projectPath) ?? []) grouped.get(projectId)?.push(session)
-    return grouped
-  }, [activeSessions, projects])
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   useEffect(() => {
     if (!sessionMenu) return
@@ -156,7 +181,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
               </div>
               {!isCollapsed ? (
                 <div className="session-list">
-                  {projectSessions.slice(0, 7).map((session) => (
+                  {boundedSidebarSessions(projectSessions).map((session) => (
                     <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
                       <button type="button" className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
                         <SessionStatusMark status={session.status} />
