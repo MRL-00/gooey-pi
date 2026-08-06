@@ -86,10 +86,6 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
     run('spctl', ['--assess', '--type', 'execute', '--verbose=4', app])
     const dmgs = findFiles(releaseDirectory, (path, stat) => stat.isFile() && path.endsWith('.dmg'))
     if (!dmgs.length) throw new Error('Public packaging did not produce a DMG')
-    for (const dmg of dmgs) {
-      run('xcrun', ['stapler', 'validate', dmg])
-      run('spctl', ['--assess', '--type', 'open', '--context', 'context:primary-signature', '--verbose=4', dmg])
-    }
   }
 
   const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))

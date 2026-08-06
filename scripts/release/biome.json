@@ -19,15 +19,22 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "suspicious": {
-        "noDuplicateObjectKeys": "error",
-        "noDuplicateCase": "error"
+      "preset": "none",
+      "security": {
+        "preset": "all",
+        "noSecrets": "off"
       },
       "correctness": {
         "noConstAssign": "error",
-        "noSelfAssign": "error"
+        "noSelfAssign": "error",
+        "noUnreachable": "error"
       },
-      "preset": "none"
+      "suspicious": {
+        "noDuplicateObjectKeys": "error",
+        "noDuplicateCase": "error",
+        "noDoubleEquals": "error",
+        "noDebugger": "error"
+      }
     }
   },
   "root": false
