@@ -8,7 +8,7 @@ import { SessionMetadataCatalog } from './sessions/catalog'
 import { readSessionMetadata, type SessionMetadata } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
 import type { JsonStateStore } from './store'
-import { isPathWithin, requireBoolean, requireString } from './validation'
+import { isPathWithin, requireBoolean, requireExistingDirectory, requireString } from './validation'
 
 interface RuntimeSessionState { isStreaming: boolean }
 
@@ -50,7 +50,11 @@ export class SessionService {
 
   async list(projectPath?: string, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
     const includeArchived = requireBoolean(includeArchivedValue, 'includeArchived')
-    const project = projectPath ? resolve(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
+    const requestedProject = projectPath ? requireString(projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
+    let project = requestedProject ? resolve(requestedProject) : undefined
+    if (requestedProject) {
+      try { project = await requireExistingDirectory(requestedProject, 'projectPath') } catch { /* Preserve stale lexical filtering. */ }
+    }
     const sessions = await this.catalog.all()
     const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
     const records: SessionRecord[] = []
@@ -107,6 +111,11 @@ export class SessionService {
   }
 
   private async readMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
-    return readSessionMetadata(filePath, knownStat)
+    const metadata = await readSessionMetadata(filePath, knownStat)
+    if (metadata.projectPath) {
+      try { metadata.projectPath = await requireExistingDirectory(metadata.projectPath, 'session project path') }
+      catch { if (metadata.projectPath.startsWith('/')) metadata.projectPath = resolve(metadata.projectPath) }
+    }
+    return metadata
   }
 }

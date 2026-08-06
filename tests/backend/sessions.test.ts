@@ -1,21 +1,22 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ProjectService } from '../../electron/main/projects'
 import { SessionService } from '../../electron/main/sessions'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function setup(maxSessionFiles?: number): { root: string; project: string; service: SessionService } {
+function setup(maxSessionFiles?: number): { root: string; project: string; service: SessionService; store: JsonStateStore } {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-')); dirs.push(dir)
   const root = join(dir, 'sessions'); mkdirSync(root)
   const project = join(dir, 'project'); mkdirSync(project)
   const store = new JsonStateStore(join(dir, 'state.json'))
   const service = new SessionService(store, null, maxSessionFiles)
   Object.defineProperty(service, 'sessionRoot', { value: root })
-  return { root, project, service }
+  return { root, project, service, store }
 }
 
 function writeSession(path: string, project: string, id: string, timestamp = '2025-01-01T00:00:00.000Z'): void {
@@ -48,6 +49,31 @@ describe('SessionService catalog scaling', () => {
     writeSession(file, project, 'one-expanded', '2025-02-01T00:00:00.000Z')
     expect((await service.list())[0]?.id).toBe('one-expanded')
     expect(readMetadata).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns canonical ownership for sessions created through a project alias', async () => {
+    const { root, project, service, store } = setup()
+    const alias = join(project, '..', 'project-alias')
+    symlinkSync(project, alias, 'dir')
+    const file = join(root, 'aliased.jsonl')
+    writeSession(file, `${alias}/.`, 'aliased')
+
+    const records = await service.list(alias)
+
+    expect(records).toHaveLength(1)
+    expect(records[0].projectPath).toBe(realpathSync(project))
+    expect(await service.projectPaths()).toEqual([realpathSync(project)])
+
+    const info = lstatSync(project, { bigint: true })
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project,
+      pinned: false, createdAt: now, lastOpenedAt: now,
+      folderIdentities: { [project]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projects = new ProjectService(store, () => null)
+    projects.bindProviders({ sessions: () => service.list(), branch: async () => undefined })
+    expect(await projects.list()).toEqual([expect.objectContaining({ id: 'project', sessionCount: 1 })])
   })
 
   it('selects the newest files before parsing with a deterministic canonical-path tie break', async () => {
