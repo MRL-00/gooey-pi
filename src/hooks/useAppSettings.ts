@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DEFAULT_SETTINGS } from '@/lib/data'
-import { confirmedPanelSettings } from '@/lib/settings-state'
+import {
+  confirmedPanelSettings,
+  PANEL_SETTING_KEYS,
+  type PanelSettingKey,
+} from '@/lib/settings-state'
 import type { AppSettings, InspectorTab, PrimeWorkApi } from '@/types/api'
 
 interface UseAppSettingsOptions {
@@ -19,38 +23,46 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
   const confirmedSettingsRef = useRef(settings)
   const settingsMutationRef = useRef(0)
   const settingsQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const pendingPanelKeysRef = useRef<Set<PanelSettingKey>>(new Set())
   const inspectorTabTouchedRef = useRef(false)
 
-  const applySettings = useCallback((next: AppSettings, panelPatch: Partial<AppSettings>, reconcilePanels = false) => {
+  const applySettings = useCallback((next: AppSettings, panelPatch: Partial<AppSettings>) => {
     settingsRef.current = next
     setSettings(next)
-    const panels = reconcilePanels ? confirmedPanelSettings(next) : next
-    if (reconcilePanels || 'sidebarOpen' in panelPatch) setSidebarOpen(panels.sidebarOpen)
-    if (reconcilePanels || 'inspectorOpen' in panelPatch) setInspectorOpen(panels.inspectorOpen)
-    if (reconcilePanels || 'terminalOpen' in panelPatch) setTerminalOpen(panels.terminalOpen)
+    if ('sidebarOpen' in panelPatch) setSidebarOpen(next.sidebarOpen)
+    if ('inspectorOpen' in panelPatch) setInspectorOpen(next.inspectorOpen)
+    if ('terminalOpen' in panelPatch) setTerminalOpen(next.terminalOpen)
+  }, [])
+
+  const takePendingPanelPatch = useCallback((next: AppSettings) => {
+    const patch = confirmedPanelSettings(next, pendingPanelKeysRef.current)
+    pendingPanelKeysRef.current.clear()
+    return patch
   }, [])
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
     const mutation = ++settingsMutationRef.current
     const previous = settingsRef.current
+    for (const key of PANEL_SETTING_KEYS) if (key in patch) pendingPanelKeysRef.current.add(key)
     applySettings({ ...previous, ...patch }, patch)
     if (!bridge) {
       confirmedSettingsRef.current = settingsRef.current
+      pendingPanelKeysRef.current.clear()
       return
     }
     const operation = settingsQueueRef.current.catch(() => undefined).then(async () => {
       const saved = await bridge.settings.update(patch)
       confirmedSettingsRef.current = saved
-      if (settingsMutationRef.current === mutation) applySettings(saved, patch, true)
+      if (settingsMutationRef.current === mutation) applySettings(saved, takePendingPanelPatch(saved))
     })
     settingsQueueRef.current = operation.catch(() => undefined)
     try {
       await operation
     } catch (error) {
-      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, patch, true)
+      if (settingsMutationRef.current === mutation) applySettings(confirmedSettingsRef.current, takePendingPanelPatch(confirmedSettingsRef.current))
       reportError(error)
     }
-  }, [applySettings, bridge, reportError])
+  }, [applySettings, bridge, reportError, takePendingPanelPatch])
 
   useEffect(() => {
     if (!bridge) return

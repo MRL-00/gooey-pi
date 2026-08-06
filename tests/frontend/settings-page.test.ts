@@ -98,19 +98,22 @@ describe('settings draft synchronization', () => {
 
 
 describe('queued settings reconciliation', () => {
-  it('restores every panel field after an older patch fails and a newer patch succeeds', () => {
-    const optimisticPanels = { sidebarOpen: false, inspectorOpen: true, terminalOpen: true }
+  it('restores every pending panel field without replacing unrelated transient panel state', () => {
+    const optimisticPanels = { sidebarOpen: false, inspectorOpen: true, terminalOpen: false }
     const savedAfterQueue = {
       ...DEFAULT_SETTINGS,
       sidebarOpen: true,
       inspectorOpen: false,
       terminalOpen: true,
     }
+    const reconciledPanels = {
+      ...optimisticPanels,
+      ...confirmedPanelSettings(savedAfterQueue, ['sidebarOpen', 'terminalOpen']),
+    }
 
-    expect(optimisticPanels.sidebarOpen).toBe(false)
-    expect(confirmedPanelSettings(savedAfterQueue)).toEqual({
+    expect(reconciledPanels).toEqual({
       sidebarOpen: true,
-      inspectorOpen: false,
+      inspectorOpen: true,
       terminalOpen: true,
     })
   })

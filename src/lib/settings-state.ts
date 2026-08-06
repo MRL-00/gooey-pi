@@ -6,10 +6,15 @@ export interface PanelSettings {
   terminalOpen: boolean
 }
 
-export function confirmedPanelSettings(settings: AppSettings): PanelSettings {
-  return {
-    sidebarOpen: settings.sidebarOpen,
-    inspectorOpen: settings.inspectorOpen,
-    terminalOpen: settings.terminalOpen,
-  }
+export type PanelSettingKey = keyof PanelSettings
+
+export const PANEL_SETTING_KEYS: PanelSettingKey[] = ['sidebarOpen', 'inspectorOpen', 'terminalOpen']
+
+export function confirmedPanelSettings(
+  settings: AppSettings,
+  keys: Iterable<PanelSettingKey> = PANEL_SETTING_KEYS,
+): Partial<PanelSettings> {
+  const panels: Partial<PanelSettings> = {}
+  for (const key of keys) panels[key] = settings[key]
+  return panels
 }
