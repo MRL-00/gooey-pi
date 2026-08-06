@@ -62,11 +62,21 @@ describe('authoritative transcript reconciliation', () => {
       sessionFile: '/sessions/current.jsonl',
       admissionRevision: 2,
     }, 'runtime-current')).toBe(true)
-    expect(authoritativeTranscriptReadIsCurrent({ ...marker, admissionRevision: 2 }, {
+    const afterAdmission = {
       generation: 7,
       sessionFile: '/sessions/current.jsonl',
       admissionRevision: 3,
-    }, 'runtime-current')).toBe(false)
+    }
+    expect(authoritativeTranscriptReadIsCurrent(
+      { ...marker, admissionRevision: 2 },
+      afterAdmission,
+      'runtime-current',
+    )).toBe(false)
+    expect(authoritativeTranscriptReadIsCurrent(
+      { ...marker, admissionRevision: 2 },
+      afterAdmission,
+      null,
+    )).toBe(false)
   })
 
 })

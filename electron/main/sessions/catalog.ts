@@ -19,7 +19,8 @@ export function boundedSessionDiscoveryNames(names: readonly string[], maxSessio
     MAX_SESSION_DISCOVERY_WORK,
     Math.max(0, Math.ceil(maxSessionFiles) * SESSION_DISCOVERY_WORK_FACTOR),
   )
-  return [...names].sort(comparePaths).slice(0, budget)
+  const sorted = [...names].sort(comparePaths)
+  return sorted.slice(Math.max(0, sorted.length - budget))
 }
 
 async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (value: T) => Promise<U | null>): Promise<U[]> {

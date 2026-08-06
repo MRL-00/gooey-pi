@@ -229,8 +229,7 @@ export function useWorkspaceRuntime({
     startTranscriptRead(selected, true, runtimeId)
   }, [flushAgentEvents, startTranscriptRead])
 
-  const admitPromptForRuntime = useCallback((runtimeId: string | null) => {
-    if (!runtimeId || runtimeIdRef.current !== runtimeId) return
+  const admitPrompt = useCallback(() => {
     promptAdmissionRevisionRef.current += 1
   }, [])
 
@@ -278,6 +277,6 @@ export function useWorkspaceRuntime({
     reconcileRuntime,
     queueAgentEvent,
     reconcileTranscriptForEvent,
-    admitPromptForRuntime,
+    admitPrompt,
   }
 }

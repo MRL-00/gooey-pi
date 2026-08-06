@@ -37,9 +37,12 @@ describe('session discovery work bounds', () => {
     const hostile = Array.from({ length: 50_000 }, (_, index) => `${String(49_999 - index).padStart(5, '0')}.jsonl`)
     const selected = boundedSessionDiscoveryNames(hostile, 5_000)
     expect(selected).toHaveLength(20_000)
-    expect(selected[0]).toBe('00000.jsonl')
-    expect(selected.at(-1)).toBe('19999.jsonl')
-    expect(boundedSessionDiscoveryNames(hostile, 2)).toHaveLength(8)
+    expect(selected[0]).toBe('30000.jsonl')
+    expect(selected.at(-1)).toBe('49999.jsonl')
+    expect(boundedSessionDiscoveryNames(hostile, 2)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `${49_992 + index}.jsonl`),
+    )
+    expect(boundedSessionDiscoveryNames(hostile, 0)).toEqual([])
   })
 })
 
