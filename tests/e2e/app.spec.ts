@@ -173,6 +173,7 @@ if (args[0] === 'status') {
 }
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
+let pendingQuestionnaire
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
@@ -181,12 +182,43 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
+    const isQuestionnaire = typeof command.message === 'string' && command.message.includes('two questions')
+    pendingQuestionnaire = isQuestionnaire ? { expected: 2, values: {} } : undefined
     fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
     send({ type: 'agent_start' })
     send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: '**Reviewing the available release channels before asking for input.**' } })
-    send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
-    send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta', 'Other (type your own answer)'] })
+    if (isQuestionnaire) {
+      send({ type: 'tool_execution_start', toolCallId: 'ask-2', toolName: 'ask_user', args: { questions: [
+        { question: 'Which release channel?', options: ['Stable', 'Beta'] },
+        { question: 'What should I optimize for?', options: ['Speed', 'Safety'] },
+      ] } })
+      send({ type: 'extension_ui_request', id: 'fixture-question-1', method: 'select', title: 'Which release channel?', options: ['__prime_ask_user__fixture-group:0:2', 'Stable', 'Beta', 'Other (type your own answer)'] })
+      send({ type: 'extension_ui_request', id: 'fixture-question-2', method: 'select', title: 'What should I optimize for?', options: ['__prime_ask_user__fixture-group:1:2', 'Speed', 'Safety', 'Other (type your own answer)'] })
+    } else {
+      send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
+      send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta', 'Other (type your own answer)'] })
+    }
   } else if (command.type === 'extension_ui_response' && pendingPrompt) {
+    if (pendingQuestionnaire) {
+      pendingQuestionnaire.values[command.id] = command.value
+      if (Object.keys(pendingQuestionnaire.values).length < pendingQuestionnaire.expected) return
+      const prompt = pendingPrompt
+      const values = pendingQuestionnaire.values
+      pendingPrompt = undefined
+      pendingQuestionnaire = undefined
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'questionnaire-values.json'))}, JSON.stringify(values))
+      send({ type: 'tool_execution_end', toolCallId: 'ask-2', toolName: 'ask_user', result: { values } })
+      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The questionnaire answers are ready.' } })
+      const completedAt = new Date().toISOString()
+      fs.appendFileSync(sessionFile, [
+        JSON.stringify({ type: 'message', id: 'fixture-live-assistant-multi', parentId: 'fixture-goal-summary', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'toolCall', id: 'ask-2', name: 'ask_user', arguments: { questions: [{ question: 'Which release channel?', options: ['Stable', 'Beta'] }, { question: 'What should I optimize for?', options: ['Speed', 'Safety'] }] } }] } }),
+        JSON.stringify({ type: 'message', id: 'fixture-live-result-multi', parentId: 'fixture-live-assistant-multi', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-2', toolName: 'ask_user', content: JSON.stringify({ values }) } }),
+        JSON.stringify({ type: 'message', id: 'fixture-live-final-multi', parentId: 'fixture-live-result-multi', message: { role: 'assistant', timestamp: completedAt, content: 'The questionnaire answers are ready.' } }),
+      ].join('\\n') + '\\n')
+      send({ type: 'agent_end' })
+      send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
+      return
+    }
     const prompt = pendingPrompt
     pendingPrompt = undefined
     send({ type: 'tool_execution_end', toolCallId: 'ask-1', toolName: 'ask_user', result: { value: command.value } })
@@ -630,6 +662,10 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
     await dialog.getByRole('option', { name: 'Beta' }).click()
     await expect(dialog).toHaveCount(0)
+    await expect.poll(() => existsSync(join(fixtureRoot, 'questionnaire-values.json'))).toBe(true)
+    const values = JSON.parse(readFileSync(join(fixtureRoot, 'questionnaire-values.json'), 'utf8')) as Record<string, string>
+    expect(JSON.parse(values['fixture-question-1'])).toMatchObject({ answer: 'Beta', answerSource: 'option', context: 'For the pilot' })
+    expect(JSON.parse(values['fixture-question-2'])).toMatchObject({ answer: 'A custom priority', answerSource: 'freeform' })
     const worked = page.locator('.work-disclosure__button')
     await expect(worked).toContainText(/^Worked for (?:\d+s|\d+m\d{2}s|\d+h\d{2}m\d{2}s)$/)
     await expect(worked).toHaveAttribute('aria-expanded', 'false')
@@ -649,6 +685,40 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
     await expect(page.locator('.unread-dot')).toHaveCount(0)
+  })
+
+  test('answers a grouped ask_user questionnaire with context and back navigation', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Ask me two questions')
+    await composer.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Answer 2 questions' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('Question 1 of 2')
+    const context = dialog.getByRole('textbox', { name: 'Additional context' })
+    await context.fill('For the pilot')
+    await dialog.getByRole('option', { name: 'Beta' }).click()
+    await page.keyboard.press('Enter')
+    await expect(dialog).toContainText('Question 2 of 2')
+
+    await dialog.getByRole('option', { name: 'Safety' }).click()
+    await page.keyboard.press('ArrowLeft')
+    await expect(dialog).toContainText('Question 1 of 2')
+    await expect(dialog.getByRole('textbox', { name: 'Additional context' })).toHaveValue('For the pilot')
+    await page.keyboard.press('ArrowRight')
+    await expect(dialog).toContainText('Question 2 of 2')
+
+    await dialog.getByRole('option', { name: 'Other (type your own answer)' }).click()
+    await dialog.getByRole('textbox', { name: 'Other answer' }).fill('A custom priority')
+    await page.keyboard.press('Enter')
+    await expect(dialog).toContainText('Submit answers')
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await expect(dialog).toHaveCount(0)
+    const worked = page.locator('.work-disclosure__button')
+    await expect(worked).toContainText(/^Worked for /)
+    await worked.click()
+    await expect(page.locator('.activity-line--question')).toContainText('What should I optimize for?')
+    await expect(page.locator('.app-shell')).not.toHaveAttribute('data-ready', 'false')
   })
 
   test('preserves a rejected shell draft while rolling back the committed setting', async () => {

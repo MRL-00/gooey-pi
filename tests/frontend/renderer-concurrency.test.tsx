@@ -234,6 +234,45 @@ describe('extension UI runtime ownership', () => {
     expect(state.extensionUi?.request.id).toBe('background-question')
     expect(bridge.agent.command).not.toHaveBeenCalled()
   })
+
+  it('groups ask_user question requests and responds to every pending question', async () => {
+    const command = vi.fn().mockResolvedValue({})
+    const bridge = { agent: { command } } as unknown as PrimeWorkApi
+    const runtimeIdRef = { current: 'runtime' as string | null }
+    const runtimeSessionsRef = { current: new Map<string, string>() }
+    const setSessions = vi.fn()
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useExtensionUi>
+    function ExtensionProbe() {
+      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeIdRef, runtimeSessionsRef, setSessions, reportError })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<ExtensionProbe />) })
+    await act(async () => {
+      state.showExtensionUi('runtime', {
+        type: 'extension_ui_request', id: 'question-1', method: 'select', title: 'First question',
+        options: ['__prime_ask_user__group-1:0:2', 'A', 'B'],
+      })
+      state.showExtensionUi('runtime', {
+        type: 'extension_ui_request', id: 'question-2', method: 'select', title: 'Second question',
+        options: ['__prime_ask_user__group-1:1:2', 'C', 'D'],
+      })
+    })
+
+    expect(state.extensionUi?.request.method).toBe('questionnaire')
+    expect(state.extensionUi?.request.method === 'questionnaire' ? state.extensionUi.request.questions : []).toHaveLength(2)
+
+    await act(async () => {
+      await state.respondToExtensionUi({ values: {
+        'question-1': JSON.stringify({ answer: 'B', answerSource: 'option' }),
+        'question-2': JSON.stringify({ answer: 'D', answerSource: 'option', context: 'Because it is safer.' }),
+      } })
+    })
+
+    expect(command).toHaveBeenNthCalledWith(1, 'runtime', { type: 'extension_ui_response', id: 'question-1', value: JSON.stringify({ answer: 'B', answerSource: 'option' }) })
+    expect(command).toHaveBeenNthCalledWith(2, 'runtime', { type: 'extension_ui_response', id: 'question-2', value: JSON.stringify({ answer: 'D', answerSource: 'option', context: 'Because it is safer.' }) })
+  })
 })
 
 

@@ -11,9 +11,12 @@ interface UseExtensionUiOptions {
   reportError(error: unknown): void
 }
 
+type QuestionnaireSelectRequest = Extract<ExtensionUiRequest, { method: 'select' }>
+
 export interface PendingExtensionUi {
   runtimeId: string
   request: ExtensionUiRequest
+  requests?: QuestionnaireSelectRequest[]
 }
 
 export function pendingExtensionUiForRuntime(
@@ -21,6 +24,12 @@ export function pendingExtensionUiForRuntime(
   runtimeId?: string,
 ): PendingExtensionUi | null {
   return runtimeId ? pending.get(runtimeId) ?? null : null
+}
+
+function requestIds(pending: PendingExtensionUi): string[] {
+  return pending.request.method === 'questionnaire'
+    ? (pending.requests ?? []).map((request) => request.id)
+    : [pending.request.id]
 }
 
 export function useExtensionUi({
@@ -56,6 +65,17 @@ export function useExtensionUi({
     }
   }, [])
 
+  const cancelPending = useCallback((pending: PendingExtensionUi) => {
+    if (!bridge) return
+    for (const id of requestIds(pending)) {
+      void bridge.agent.command(pending.runtimeId, {
+        type: 'extension_ui_response',
+        id,
+        cancelled: true,
+      }).catch(() => undefined)
+    }
+  }, [bridge])
+
   const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
     const pending = extensionUiRef.current
     if (!pending) return
@@ -68,6 +88,26 @@ export function useExtensionUi({
     }
     if (!bridge) return
     try {
+      if (pending.request.method === 'questionnaire') {
+        if ('values' in response) {
+          for (const request of pending.requests ?? []) {
+            await bridge.agent.command(pending.runtimeId, {
+              type: 'extension_ui_response',
+              id: request.id,
+              value: response.values[request.id] ?? '',
+            })
+          }
+        } else {
+          for (const id of requestIds(pending)) {
+            await bridge.agent.command(pending.runtimeId, {
+              type: 'extension_ui_response',
+              id,
+              cancelled: true,
+            })
+          }
+        }
+        return
+      }
       await bridge.agent.command(pending.runtimeId, {
         type: 'extension_ui_response',
         id: pending.request.id,
@@ -81,13 +121,51 @@ export function useExtensionUi({
   const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(rawEvent)
     if (!request || !bridge) return
+
+    if (request.method === 'select' && request.questionnaire) {
+      const previous = pendingByRuntimeRef.current.get(runtimeId)
+      const sameQuestionnaire = previous?.request.method === 'questionnaire' && previous.request.id === request.questionnaire.groupId
+      if (previous && !sameQuestionnaire) {
+        cancelPending(previous)
+        clearExtensionUi(runtimeId)
+      }
+
+      const existing = sameQuestionnaire ? previous?.requests ?? [] : []
+      const requests = existing.some((item) => item.id === request.id)
+        ? existing
+        : [...existing, request]
+      const questions = requests
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          options: item.options,
+          index: item.questionnaire?.index ?? 0,
+        }))
+        .sort((a, b) => a.index - b.index)
+      const total = request.questionnaire.total
+      const pending: PendingExtensionUi = {
+        runtimeId,
+        request: {
+          method: 'questionnaire',
+          id: request.questionnaire.groupId,
+          title: `Answer ${total} question${total === 1 ? '' : 's'}`,
+          questions,
+          total,
+          complete: questions.length >= total,
+        },
+        requests,
+      }
+      pendingByRuntimeRef.current.set(runtimeId, pending)
+      if (activeRuntimeIdRef.current === runtimeId) {
+        extensionUiRef.current = pending
+        setExtensionUi(pending)
+      }
+      return
+    }
+
     const previous = pendingByRuntimeRef.current.get(runtimeId)
     if (previous) {
-      void bridge.agent.command(runtimeId, {
-        type: 'extension_ui_response',
-        id: previous.request.id,
-        cancelled: true,
-      }).catch(() => undefined)
+      cancelPending(previous)
       clearExtensionUi(runtimeId)
     }
     const pending = { runtimeId, request }
@@ -98,31 +176,22 @@ export function useExtensionUi({
     }
     if ('timeout' in request && request.timeout !== undefined) {
       timerByRuntimeRef.current.set(runtimeId, window.setTimeout(() => {
-        if (pendingByRuntimeRef.current.get(runtimeId)?.request.id !== request.id) return
-        void bridge.agent.command(runtimeId, {
-          type: 'extension_ui_response',
-          id: request.id,
-          cancelled: true,
-        }).catch(() => undefined)
+        const current = pendingByRuntimeRef.current.get(runtimeId)
+        if (!current || current.request.id !== request.id) return
+        cancelPending(current)
         clearExtensionUi(runtimeId)
       }, request.timeout))
     }
-  }, [bridge, clearExtensionUi])
+  }, [bridge, cancelPending, clearExtensionUi])
 
   useEffect(() => { showPendingForActiveRuntime() }, [activeRuntimeId, showPendingForActiveRuntime])
 
   useEffect(() => () => {
     for (const timer of timerByRuntimeRef.current.values()) window.clearTimeout(timer)
-    for (const pending of pendingByRuntimeRef.current.values()) {
-      void bridge?.agent.command(pending.runtimeId, {
-        type: 'extension_ui_response',
-        id: pending.request.id,
-        cancelled: true,
-      }).catch(() => undefined)
-    }
+    for (const pending of pendingByRuntimeRef.current.values()) cancelPending(pending)
     timerByRuntimeRef.current.clear()
     pendingByRuntimeRef.current.clear()
-  }, [bridge])
+  }, [cancelPending])
 
   return { extensionUi, clearExtensionUi, respondToExtensionUi, showExtensionUi }
 }

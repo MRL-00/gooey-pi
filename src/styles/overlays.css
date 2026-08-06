@@ -19,6 +19,21 @@
 .extension-question__options button.is-selected .extension-question__option-index { color: var(--surface-raised); border-color: var(--warning); background: var(--warning); }
 .extension-question__message { margin: 0; white-space: pre-wrap; }
 .extension-question__field { margin-top: 0; }
+.extension-questionnaire__progress { display: flex; gap: 5px; margin-bottom: 14px; }
+.extension-questionnaire__progress button { min-height: 27px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-tertiary); background: var(--surface-subtle); font-size: 10px; }
+.extension-questionnaire__progress button:hover, .extension-questionnaire__progress button:focus-visible, .extension-questionnaire__progress button.is-active { color: var(--text); border-color: var(--warning); background: var(--warning-soft); }
+.extension-questionnaire__question h3 { margin: 5px 0 0; color: var(--text); font-size: 13px; font-weight: 560; line-height: 1.45; }
+.extension-questionnaire__context { margin-top: 14px; }
+.extension-questionnaire__hint { margin: 12px 0 0; color: var(--text-tertiary); font-size: 10px; }
+.extension-question__other-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 1fr); align-items: center; gap: 7px; min-height: 43px; padding: 5px 7px 5px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); }
+.extension-question__other-row > button { min-height: 31px; display: flex; align-items: center; gap: 9px; padding: 0; color: inherit; background: transparent; text-align: left; }
+.extension-question__other-row > input { min-width: 0; padding: 6px 7px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-raised); }
+.extension-question__other-row:hover, .extension-question__other-row:focus-within, .extension-question__other-row.is-selected { color: var(--text); border-color: var(--warning); background: var(--warning-soft); }
+.extension-questionnaire__submit { display: grid; gap: 8px; }
+.extension-questionnaire__submit > button { min-height: 43px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); text-align: left; }
+.extension-questionnaire__submit > button:not(:disabled):hover, .extension-questionnaire__submit > button:not(:disabled):focus-visible { color: var(--text); border-color: var(--success); background: var(--success-soft); }
+.extension-questionnaire__submit > button:disabled { cursor: not-allowed; opacity: .55; }
+.extension-questionnaire__submit p { margin: 0; color: var(--text-secondary); font-size: 11px; }
 .command-palette { width: min(100%, 580px); align-self: flex-start; margin-top: min(14vh, 110px); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-popover); animation: palette-in 150ms ease-out; }
 .command-search { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }
 .command-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 13px; }

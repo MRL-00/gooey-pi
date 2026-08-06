@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import askUser, { OTHER_OPTION } from '../../.prime/agent/extensions/ask-user'
+import askUser, { ASK_USER_RPC_MARKER, OTHER_OPTION } from '../../.prime/agent/extensions/ask-user'
 
 function registeredAskUserTool(): any {
   let tool: any
@@ -8,64 +8,68 @@ function registeredAskUserTool(): any {
 }
 
 describe('ask_user extension', () => {
-  it('adds a freeform option and returns the typed answer with its source', async () => {
+  it('asks multiple questions through the RPC fallback and returns context with each answer', async () => {
     const tool = registeredAskUserTool()
-    let presentedOptions: string[] = []
-    let presentedQuestion = ''
-    const inputTitles: string[] = []
-    const inputValues = ['Canary for a small pilot', 'The pilot needs a cautious rollout.']
+    const calls: Array<{ title: string; options: string[] }> = []
+    const responses = [
+      JSON.stringify({ answer: 'Beta', answerSource: 'option', context: 'Use it for the pilot.' }),
+      JSON.stringify({ answer: 'A cautious rollout', answerSource: 'freeform' }),
+    ]
     const result = await tool.execute('call-1', {
-      question: 'Which release channel?',
-      options: ['Stable', 'Beta'],
+      questions: [
+        { question: 'Which release channel?', options: ['Stable', 'Beta'] },
+        { question: 'What should I optimize for?', options: ['Speed', 'Safety'] },
+      ],
     }, new AbortController().signal, undefined, {
       hasUI: true,
       ui: {
-        select: async (title: string, options: string[]) => { presentedQuestion = title; presentedOptions = options; return OTHER_OPTION },
-        input: async (title: string) => { inputTitles.push(title); return inputValues.shift() },
+        custom: async () => undefined,
+        select: async (title: string, options: string[]) => {
+          calls.push({ title, options })
+          return responses.shift()
+        },
       },
     })
 
-    expect(presentedQuestion).toBe('Which release channel?')
-    expect(presentedOptions).toEqual(['Stable', 'Beta', OTHER_OPTION])
-    expect(inputTitles).toEqual(['Type your answer', 'Add context (optional)'])
-    expect(result.details).toMatchObject({ answer: 'Canary for a small pilot', answerSource: 'freeform', context: 'The pilot needs a cautious rollout.' })
-    expect(result.content[0].text).toContain('Additional context: The pilot needs a cautious rollout.')
+    expect(calls).toHaveLength(2)
+    expect(calls[0].options[0]).toContain(ASK_USER_RPC_MARKER)
+    expect(calls[0].options).toContain(OTHER_OPTION)
+    expect(result.details.answers).toEqual([
+      { question: 'Which release channel?', answer: 'Beta', answerSource: 'option', context: 'Use it for the pilot.' },
+      { question: 'What should I optimize for?', answer: 'A cautious rollout', answerSource: 'freeform' },
+    ])
+    expect(result.content[0].text).toContain('Additional context: Use it for the pilot.')
   })
 
-  it('returns a listed choice and collects optional context', async () => {
+  it('returns a cancellation when any question is cancelled', async () => {
     const tool = registeredAskUserTool()
-    const inputTitles: string[] = []
     const result = await tool.execute('call-2', {
-      question: 'Which release channel?',
-      options: ['Stable', 'Beta'],
+      questions: [
+        { question: 'Which release channel?', options: ['Stable', 'Beta'] },
+        { question: 'What should I optimize for?', options: ['Speed', 'Safety'] },
+      ],
     }, new AbortController().signal, undefined, {
       hasUI: true,
       ui: {
-        select: async () => 'Beta',
-        input: async (title: string) => { inputTitles.push(title); return 'Because the pilot needs a cautious rollout.' },
+        custom: async () => undefined,
+        select: async (_title: string, options: string[]) => options.length > 0 ? undefined : 'unexpected',
       },
     })
 
-    expect(inputTitles).toEqual(['Add context (optional)'])
-    expect(result.details).toMatchObject({ answer: 'Beta', answerSource: 'option', context: 'Because the pilot needs a cautious rollout.' })
-    expect(result.content[0].text).toContain('Additional context: Because the pilot needs a cautious rollout.')
+    expect(result.details).toMatchObject({ answers: [], cancelled: true })
+    expect(result.content[0].text).toBe('The user cancelled the questionnaire.')
   })
 
-  it('omits context when the optional field is blank', async () => {
+  it('reports unavailable UI without attempting a question', async () => {
     const tool = registeredAskUserTool()
     const result = await tool.execute('call-3', {
-      question: 'Which release channel?',
-      options: ['Stable', 'Beta'],
+      questions: [{ question: 'Which release channel?', options: ['Stable', 'Beta'] }],
     }, new AbortController().signal, undefined, {
-      hasUI: true,
-      ui: {
-        select: async () => 'Beta',
-        input: async () => '   ',
-      },
+      hasUI: false,
+      ui: {},
     })
 
-    expect(result.details).toMatchObject({ answer: 'Beta', answerSource: 'option' })
-    expect(result.details).not.toHaveProperty('context')
-    expect(result.content[0].text).toBe('The user selected: Beta')
+    expect(result.details).toMatchObject({ answers: [], cancelled: true })
+    expect(result.content[0].text).toContain('not available')
   })
 })

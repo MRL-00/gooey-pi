@@ -20,6 +20,22 @@ describe('extension UI request parsing', () => {
     })
   })
 
+  it('unwraps a grouped ask_user question marker for the questionnaire UI', () => {
+    expect(parseExtensionUiRequest({
+      type: 'extension_ui_request',
+      id: 'question-1',
+      method: 'select',
+      title: 'Choose a release channel',
+      options: ['__prime_ask_user__group-1:0:2', 'Stable', 'Beta', 'Other (type your own answer)'],
+    })).toEqual({
+      method: 'select',
+      id: 'question-1',
+      title: 'Choose a release channel',
+      options: ['Stable', 'Beta', 'Other (type your own answer)'],
+      questionnaire: { groupId: 'group-1', index: 0, total: 2 },
+    })
+  })
+
   it('rejects malformed or oversized options', () => {
     expect(parseExtensionUiRequest({ type: 'extension_ui_request', id: 'x', method: 'select', title: 'Pick', options: [] })).toBeUndefined()
     expect(parseExtensionUiRequest({ type: 'extension_ui_request', id: 'x', method: 'select', title: 'Pick', options: ['ok', 42] })).toBeUndefined()
