@@ -1,0 +1,61 @@
+import { describe, expect, test } from 'vitest'
+import { assertArchitectureCoverage, assertAsarLayout, assertSupportedNode, parseArchitectures, parseTeamIdentifier, validateReleaseCredentials } from '../scripts/release/lib.mjs'
+
+const baseEnvironment = {
+  RELEASE_SIGNING_TEAM_ID: 'TEAM123',
+  CSC_LINK: 'base64-certificate',
+  CSC_KEY_PASSWORD: 'certificate-password',
+  APPLE_ID: 'release@example.com',
+  APPLE_APP_SPECIFIC_PASSWORD: 'app-password',
+  APPLE_TEAM_ID: 'TEAM123',
+}
+
+describe('release preflight', () => {
+  test('requires the Electron 43 Node.js baseline', () => {
+    expect(() => assertSupportedNode('v22.11.0')).toThrow(/>=22\.12\.0/)
+    expect(() => assertSupportedNode('v22.12.0')).not.toThrow()
+    expect(() => assertSupportedNode('v24.0.0')).not.toThrow()
+  })
+
+  test('fails closed without Developer ID credentials', () => {
+    expect(() => validateReleaseCredentials({}, { checkApiKeyFile: false })).toThrow(/RELEASE_SIGNING_TEAM_ID/)
+    expect(() => validateReleaseCredentials({ ...baseEnvironment, CSC_LINK: '' }, { checkApiKeyFile: false })).toThrow(/CSC_LINK/)
+  })
+
+  test('accepts exactly one complete notarization credential set', () => {
+    expect(() => validateReleaseCredentials(baseEnvironment, { checkApiKeyFile: false })).not.toThrow()
+    const apiEnvironment = {
+      RELEASE_SIGNING_TEAM_ID: 'TEAM123',
+      CSC_LINK: 'certificate',
+      CSC_KEY_PASSWORD: 'password',
+      APPLE_API_KEY: '/tmp/AuthKey.p8',
+      APPLE_API_KEY_ID: 'KEY123',
+      APPLE_API_ISSUER: 'issuer-id',
+    }
+    expect(() => validateReleaseCredentials(apiEnvironment, { checkApiKeyFile: false })).not.toThrow()
+    expect(() => validateReleaseCredentials({ ...baseEnvironment, ...apiEnvironment }, { checkApiKeyFile: false })).toThrow(/exactly one/)
+  })
+
+  test('binds Apple ID notarization to the signing Team ID', () => {
+    expect(() => validateReleaseCredentials({ ...baseEnvironment, APPLE_TEAM_ID: 'OTHER' }, { checkApiKeyFile: false })).toThrow(/must match/)
+  })
+})
+
+describe('post-package verification helpers', () => {
+  test('parses Team IDs and architecture lists', () => {
+    expect(parseTeamIdentifier('Authority=Developer ID\nTeamIdentifier=TEAM123\n')).toBe('TEAM123')
+    expect(parseArchitectures('arm64 x86_64\n')).toEqual(new Set(['arm64', 'x86_64']))
+  })
+
+  test('requires native modules to cover every application architecture', () => {
+    expect(() => assertArchitectureCoverage(new Set(['arm64']), new Set(['arm64']), 'pty.node')).not.toThrow()
+    expect(() => assertArchitectureCoverage(new Set(['arm64', 'x86_64']), new Set(['arm64']), 'pty.node')).toThrow(/x86_64/)
+  })
+
+  test('requires the ASAR and rejects duplicated renderer dependencies', () => {
+    const entries = ['/out/main/index.js', '/out/preload/index.js', '/out/renderer/index.html', '/node_modules/node-pty/lib/index.js']
+    expect(() => assertAsarLayout(entries)).not.toThrow()
+    expect(() => assertAsarLayout([...entries, '/node_modules/react/index.js'])).toThrow(/duplicated/)
+    expect(() => assertAsarLayout(entries.filter((entry) => !entry.includes('node-pty')))).toThrow(/missing required/)
+  })
+})
