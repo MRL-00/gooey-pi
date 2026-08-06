@@ -1,0 +1,135 @@
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+let app: ElectronApplication
+let page: Page
+let userData = ''
+let actionableErrors: string[] = []
+
+const attachDiagnostics = (target: Page) => {
+  target.on('pageerror', (error) => actionableErrors.push(error.message))
+  target.on('console', (message) => {
+    if (message.type() === 'error') actionableErrors.push(message.text())
+  })
+}
+
+test.describe.serial('Prime Work desktop smoke', () => {
+  test.beforeAll(async () => {
+    userData = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
+    app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: process.cwd(), env: { ...process.env, PRIME_WORK_E2E: '1' } })
+    page = await app.firstWindow()
+    attachDiagnostics(page)
+    await page.locator('.app-shell').waitFor()
+  })
+
+  test.afterAll(async () => {
+    await app?.close().catch(() => undefined)
+    if (userData) rmSync(userData, { recursive: true, force: true })
+  })
+
+  test('loads the sandboxed preload bridge and real service data', async () => {
+    const bridge = await page.evaluate(() => {
+      const prime = (window as typeof window & { prime?: Record<string, unknown> }).prime
+      return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
+    })
+    expect(bridge.type).toBe('object')
+    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'plugins', 'projects', 'schedules', 'sessions', 'settings', 'terminal'])
+    await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
+    await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
+    await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('navigates all primary workspace pages and command palette', async () => {
+    for (const destination of ['Projects', 'Activity', 'Scheduled', 'Plugins & skills']) {
+      await page.getByRole('button', { name: destination, exact: true }).click()
+      await expect(page.locator('.page')).toBeVisible()
+    }
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()
+    await page.keyboard.press('Meta+K')
+    await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
+    await page.keyboard.press('Escape')
+  })
+
+  test('attaches an isolated browser guest without navigation errors', async () => {
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    await page.getByRole('tab', { name: 'Browser' }).click()
+    const guest = page.locator('webview[partition="persist:prime-work-browser"]')
+    await expect(guest).toHaveCount(1)
+    await page.waitForTimeout(2_500)
+    expect(actionableErrors.filter((error) => /ERR_ABORTED|GUEST_VIEW_MANAGER_CALL/i.test(error))).toEqual([])
+  })
+
+  test('resizes the inspector horizontally and terminal vertically', async () => {
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    await page.getByRole('tab', { name: 'Summary' }).click()
+
+    const inspector = page.locator('.inspector')
+    const inspectorHandle = page.getByRole('separator', { name: 'Resize inspector' })
+    await expect(inspectorHandle).toBeVisible()
+    const inspectorBefore = await inspector.boundingBox()
+    const inspectorHandleBox = await inspectorHandle.boundingBox()
+    expect(inspectorBefore).not.toBeNull()
+    expect(inspectorHandleBox).not.toBeNull()
+    await page.mouse.move(inspectorHandleBox!.x + inspectorHandleBox!.width / 2, inspectorHandleBox!.y + 80)
+    await page.mouse.down()
+    await page.mouse.move(inspectorHandleBox!.x - 72, inspectorHandleBox!.y + 80, { steps: 5 })
+    await page.mouse.up()
+    const inspectorAfter = await inspector.boundingBox()
+    expect(inspectorAfter!.width).toBeGreaterThan(inspectorBefore!.width + 50)
+    await inspectorHandle.focus()
+    await page.keyboard.press('ArrowRight')
+    expect((await inspector.boundingBox())!.width).toBeLessThan(inspectorAfter!.width)
+
+    await page.getByLabel(/Toggle terminal/).click()
+    const drawer = page.locator('.terminal-drawer')
+    const terminalHandle = page.getByRole('separator', { name: 'Resize terminal' })
+    await expect(terminalHandle).toBeVisible()
+    const terminalBefore = await drawer.boundingBox()
+    const terminalHandleBox = await terminalHandle.boundingBox()
+    expect(terminalBefore).not.toBeNull()
+    expect(terminalHandleBox).not.toBeNull()
+    await page.mouse.move(terminalHandleBox!.x + 120, terminalHandleBox!.y + terminalHandleBox!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(terminalHandleBox!.x + 120, terminalHandleBox!.y - 64, { steps: 5 })
+    await page.mouse.up()
+    const terminalAfter = await drawer.boundingBox()
+    expect(terminalAfter!.height).toBeGreaterThan(terminalBefore!.height + 44)
+    await terminalHandle.focus()
+    await page.keyboard.press('ArrowDown')
+    expect((await drawer.boundingBox())!.height).toBeLessThan(terminalAfter!.height)
+    await page.getByLabel('Close terminal').click()
+  })
+
+  test('opens a real PTY and exposes only functional terminal controls', async () => {
+    const project = await page.evaluate(async () => {
+      const projects = await window.prime.projects.list()
+      const selected = projects[0]
+      if (!selected) return null
+      return selected.inferred ? window.prime.projects.grantInferred(selected.primaryFolder) : selected
+    })
+    test.skip(!project, 'No local Prime project is available for PTY authorization')
+    await page.getByRole('tab', { name: 'Summary' }).click()
+    await page.getByLabel(/Toggle terminal/).click()
+    await expect(page.locator('.terminal-drawer .xterm')).toBeVisible()
+    await expect(page.getByLabel(/New terminal/)).toBeDisabled()
+    await expect(page.getByLabel(/Split terminal/)).toBeDisabled()
+    const drawer = page.locator('.terminal-drawer')
+    const before = await drawer.evaluate((node) => node.getBoundingClientRect().height)
+    await page.getByLabel('Maximize terminal').click()
+    await expect(drawer).toHaveClass(/is-maximized/)
+    expect(await drawer.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThan(before)
+    await page.getByLabel('Restore terminal').click()
+    await page.getByLabel('Close terminal').click()
+  })
+
+  test('closes and recreates the last macOS window cleanly', async () => {
+    await page.close()
+    await app.evaluate(({ app: electronApp }) => electronApp.emit('activate'))
+    page = await app.firstWindow()
+    attachDiagnostics(page)
+    await expect(page.locator('.app-shell')).toBeVisible()
+  })
+})
