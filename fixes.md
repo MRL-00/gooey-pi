@@ -134,6 +134,8 @@ These logs are the durable coordination record for compaction and handoff.
 
 - `7119b0e` Restore diagnostics preference control: `src/pages/settings/PrivacySettings.tsx`, `tests/e2e/app.spec.ts`. Privacy settings now exposes the persisted telemetry boolean and can disable a pre-existing true value. Validation: typecheck, focused settings Vitest, check, bundle build, and focused Playwright diagnostics E2E (1 passed). Remaining risk: diagnostics remain preference-only until an explicitly privacy-reviewed diagnostics implementation exists.
 
+- `be541a9` Correct browser download preference semantics: `electron/main/browser-downloads.ts`, `electron/main/index.ts`, `tests/backend/browser-downloads.test.ts`, `docs/security.md`. Disabling save prompts now admits otherwise-safe gesture downloads to the OS Downloads folder with a sanitized UUID-suffixed name while preserving URL/size/concurrency/budget controls. Validation: `npm run typecheck`; focused browser-download Vitest (4 tests); `npm run check`. Remaining risk: OS-level destination writability errors are handled by Electron's normal download failure path.
+
 
 ### Section F log — performance/DRY
 
