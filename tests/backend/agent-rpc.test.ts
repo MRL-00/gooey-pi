@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -41,6 +41,18 @@ function managerFor(executable: string): AgentRpcManager {
   return manager
 }
 
+const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+  }
+}
+
+const processExists = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
+
 describe('agent RPC responses', () => {
   it('rejects a negative command response with the agent error', async () => {
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: false, error: 'No model credentials are configured' }")
@@ -65,4 +77,36 @@ describe('agent RPC responses', () => {
     await expect(manager.start({ cwd: fake.cwd })).rejects.toThrow('Unable to initialize session')
     expect(manager.list()).toEqual([])
   })
+  it('terminates a process group that keeps writing after an oversized frame', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-overflow-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'overflow-agent.cjs')
+    const pidFile = join(cwd, 'pid')
+    writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const readline = require('node:readline')
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))
+process.on('SIGTERM', () => {})
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'overflow', isStreaming: false } }) + '\\n')
+    setTimeout(() => process.stdout.write('x'.repeat(17 * 1024 * 1024)), 25)
+  }
+})
+setInterval(() => {}, 1000)
+`)
+    chmodSync(executable, 0o755)
+    const manager = managerFor(executable)
+    const events: Array<{ event: { type?: unknown; error?: unknown } }> = []
+    manager.setEventSink((event) => events.push(event))
+    await manager.start({ cwd })
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+
+    await waitUntil(() => manager.list().length === 0)
+    expect(events.filter((envelope) => envelope.event.type === 'transport_error')).toHaveLength(1)
+    expect(String(events.find((envelope) => envelope.event.type === 'transport_error')?.event.error)).toMatch(/maximum frame size/i)
+    expect(processExists(pid)).toBe(false)
+  }, 12_000)
+
 })

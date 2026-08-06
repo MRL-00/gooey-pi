@@ -224,6 +224,9 @@ class RpcRuntime {
   readonly runtimeId = randomUUID()
   private readonly pending = new Map<string, PendingRequest>()
   private pendingBytes = 0
+  private writeQueue: Promise<void> = Promise.resolve()
+  private queuedWriteBytes = 0
+  private transportFailed = false
   private readonly child: ChildProcessWithoutNullStreams
   private readonly decoder: StrictJsonlDecoder
   private readonly exited: Promise<void>
@@ -246,12 +249,12 @@ class RpcRuntime {
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.decoder = new StrictJsonlDecoder((line) => this.handleLine(line), 16 * 1024 * 1024)
     this.child.stdout.on('data', (chunk: Buffer) => {
-      try { this.decoder.push(chunk) } catch (error) {
-        this.emit({ type: 'transport_error', error: errorMessage(error) })
-        this.child.kill('SIGTERM')
-      }
+      try { this.decoder.push(chunk) } catch (error) { this.failTransport(error) }
     })
-    this.child.stdout.on('end', () => { try { this.decoder.end() } catch { /* exit cleanup reports failure */ } })
+    this.child.stdout.on('end', () => {
+      if (this.transportFailed) return
+      try { this.decoder.end() } catch (error) { this.failTransport(error) }
+    })
     this.child.stderr.on('data', () => { /* stderr can contain secrets; never forward it to the renderer */ })
     this.child.stdin.on('error', (error) => this.fail(error))
     this.child.once('error', (error) => this.fail(error))
@@ -273,8 +276,7 @@ class RpcRuntime {
 
   async command(command: RpcObject): Promise<RpcObject> {
     if (command.type === 'extension_ui_response') {
-      if (this.stopped || !this.child.stdin.writable) throw new Error('Runtime is not available')
-      this.child.stdin.write(`${JSON.stringify(command)}\n`)
+      await this.enqueueWrite(`${JSON.stringify(command)}\n`)
       return { type: 'response', command: 'extension_ui_response', success: true }
     }
     const timeout = command.type === 'compact' ? 10 * 60_000 : 60_000
@@ -322,6 +324,47 @@ class RpcRuntime {
     })
   }
 
+  private failTransport(reason: unknown): void {
+    if (this.transportFailed) return
+    this.transportFailed = true
+    const error = reason instanceof Error ? reason : new Error(errorMessage(reason))
+    this.emit({ type: 'transport_error', error: errorMessage(error) })
+    this.child.stdout.pause()
+    this.fail(error)
+    this.stopPromise ??= this.performTransportStop()
+  }
+
+  private async performTransportStop(): Promise<boolean> {
+    this.stopped = true
+    this.child.stdin.destroy()
+    this.terminate('SIGTERM')
+    if (await this.waitForExit(2_000)) return true
+    this.terminate('SIGKILL')
+    return this.waitForExit(1_500)
+  }
+
+  private enqueueWrite(line: string): Promise<void> {
+    if (this.stopped || !this.child.stdin.writable) return Promise.reject(new Error('Runtime is not available'))
+    const bytes = Buffer.byteLength(line)
+    if (bytes > 2 * 1024 * 1024) return Promise.reject(new Error('RPC write exceeded the per-message byte limit'))
+    if (this.queuedWriteBytes + bytes > 32 * 1024 * 1024) return Promise.reject(new Error('RPC write queue byte budget exceeded'))
+    this.queuedWriteBytes += bytes
+    const operation = this.writeQueue.catch(() => undefined).then(() => new Promise<void>((resolveWrite, rejectWrite) => {
+      if (this.stopped || !this.child.stdin.writable) { rejectWrite(new Error('Runtime is not available')); return }
+      let settled = false
+      const finish = (error?: Error | null) => {
+        if (settled) return
+        settled = true
+        if (error) rejectWrite(error)
+        else resolveWrite()
+      }
+      try { this.child.stdin.write(line, finish) } catch (error) { finish(error instanceof Error ? error : new Error(errorMessage(error))) }
+    }))
+    const tracked = operation.finally(() => { this.queuedWriteBytes = Math.max(0, this.queuedWriteBytes - bytes) })
+    this.writeQueue = tracked.catch(() => undefined)
+    return tracked
+  }
+
   private request(command: RpcObject, timeoutMs: number): Promise<RpcObject> {
     if (this.stopped || !this.child.stdin.writable) return Promise.reject(new Error('Runtime is not available'))
     if (this.pending.size >= 32) return Promise.reject(new Error('Too many pending RPC requests'))
@@ -349,7 +392,7 @@ class RpcRuntime {
         this.pending.delete(id)
         pending.reject(error instanceof Error ? error : new Error(errorMessage(error)))
       }
-      try { this.child.stdin.write(line, (error) => { if (error) failWrite(error) }) } catch (error) { failWrite(error) }
+      void this.enqueueWrite(line).catch(failWrite)
     })
   }
 
