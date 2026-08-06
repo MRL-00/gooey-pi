@@ -4,7 +4,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TitleToolbar } from '@/components/TitleToolbar'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
-import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, projectContainsPath, workspaceCwd } from '@/lib/workspace'
+import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import { DEFAULT_SETTINGS, SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { requestFailureMessage } from '@/app/workspace'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
@@ -175,7 +175,9 @@ export default function App() {
     try { await grantProject(project); await workspace.reconcileRuntime(generation) }
     catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
-  const newSession = (project = workspace.workspaceRef.current.project) => {
+  const newSession = (requestedProject?: ProjectRecord) => {
+    const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
+    if (!project) return
     if (layout.compactLayout) settingsState.setSidebarOpen(false)
     workspace.activateWorkspace(project)
     if (!bridge) workspace.setMessages([])

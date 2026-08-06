@@ -3,6 +3,7 @@ import {
   createSingleFlightAdmission,
   findRuntimeForWorkspace,
   gitStatusForWorkspace,
+  newSessionProject,
   selectStartupWorkspace,
 } from '../../src/lib/workspace'
 import type { ProjectRecord, RuntimeInfo, SessionRecord } from '../../src/types/api'
@@ -65,6 +66,13 @@ describe('workspace and runtime ownership', () => {
     expect(gitStatusForWorkspace(snapshot, '/project-a')).toBe(projectAStatus)
     expect(gitStatusForWorkspace(snapshot, '/project-b')).toEqual({ isRepo: false, files: [] })
     expect(gitStatusForWorkspace(snapshot, undefined)).toEqual({ isRepo: false, files: [] })
+  })
+
+  it('uses the displayed bootstrap project for New Session without clearing workspace ownership', () => {
+    const displayedProject = project('loaded-during-bootstrap', ['/project'])
+
+    expect(newSessionProject(undefined, undefined, displayedProject)).toBe(displayedProject)
+    expect(newSessionProject(undefined, undefined, undefined)).toBeUndefined()
   })
 
   it('does not attach a runtime from another cwd or session', () => {

@@ -35,6 +35,14 @@ export function workspaceCwd(project?: ProjectRecord, session?: SessionRecord): 
   return session && projectContainsPath(project, session.projectPath) ? session.projectPath : project.primaryFolder
 }
 
+export function newSessionProject(
+  requestedProject?: ProjectRecord,
+  workspaceProject?: ProjectRecord,
+  displayedProject?: ProjectRecord,
+): ProjectRecord | undefined {
+  return requestedProject ?? workspaceProject ?? displayedProject
+}
+
 export function runtimeMatchesWorkspace(runtime: RuntimeInfo, cwd: string, sessionFile: string): boolean {
   return runtime.cwd === cwd && runtime.sessionFile === sessionFile
 }
