@@ -60,6 +60,8 @@ const requestFailureMessage = (error: unknown) => {
   return detail ? `Request failed: ${detail.slice(0, 1_000)}` : 'Prime could not process the request.'
 }
 
+const projectContainsPath = (project: ProjectRecord, path?: string) => Boolean(path && (project.path === path || project.folders.includes(path)))
+
 export default function App() {
   const bridge = hasBridge() ? window.prime : null
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
@@ -91,6 +93,7 @@ export default function App() {
   const [effort, setEffort] = useState('medium')
   const [toast, setToast] = useState<string | null>(null)
   const runtimeIdRef = useRef<string | null>(null)
+  const gitRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
   const workspaceRowRef = useRef<HTMLDivElement>(null)
   const sessionWorkspaceRef = useRef<HTMLDivElement>(null)
@@ -114,7 +117,10 @@ export default function App() {
     return () => { for (const target of targets) target.inert = false }
   }, [compactLayout, inspectorOpen, terminalOpen])
 
-  const activeProject = useMemo(() => projects.find((project) => project.id === activeProjectId) ?? projects.find((project) => project.path === sessions.find((session) => session.id === activeSessionId)?.projectPath) ?? projects[0], [projects, sessions, activeProjectId, activeSessionId])
+  const activeProject = useMemo(() => {
+    const sessionPath = sessions.find((session) => session.id === activeSessionId)?.projectPath
+    return projects.find((project) => project.id === activeProjectId) ?? projects.find((project) => projectContainsPath(project, sessionPath)) ?? projects[0]
+  }, [projects, sessions, activeProjectId, activeSessionId])
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId), [sessions, activeSessionId])
   const busy = Boolean(runtime?.isStreaming || messages.some((message) => message.streaming))
 
@@ -166,7 +172,8 @@ export default function App() {
       if (skillsResult.status === 'fulfilled') setSkills(skillsResult.value)
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value)
       if (runtimesResult.status === 'fulfilled') {
-        const matching = runtimesResult.value.find((item) => item.sessionFile && item.sessionFile === sessions.find((session) => session.id === activeSessionId)?.filePath) ?? runtimesResult.value.find((item) => item.isStreaming)
+        const selectedSession = sessionsResult.status === 'fulfilled' ? sessionsResult.value.find((session) => !session.archived) : undefined
+        const matching = runtimesResult.value.find((item) => item.sessionFile && item.sessionFile === selectedSession?.filePath) ?? runtimesResult.value.find((item) => item.isStreaming)
         if (matching) { setRuntime(matching); runtimeIdRef.current = matching.runtimeId }
       }
       const failure = [metaResult, projectsResult, sessionsResult, settingsResult].find((result) => result.status === 'rejected')
@@ -217,11 +224,22 @@ export default function App() {
   }, [bridge, activeSession?.filePath, reportError])
 
   const refreshGit = useCallback(async () => {
-    if (!bridge || !activeProject?.primaryFolder) return
-    try { setGit(await bridge.git.status(activeProject.primaryFolder)) } catch (error) { reportError(error) }
+    const requestId = ++gitRequestRef.current
+    const cwd = activeProject?.primaryFolder
+    if (!bridge || !cwd) {
+      setGit({ isRepo: false, files: [] })
+      return
+    }
+    try {
+      const next = await bridge.git.status(cwd)
+      if (gitRequestRef.current === requestId) setGit(next)
+    } catch (error) { if (gitRequestRef.current === requestId) reportError(error) }
   }, [bridge, activeProject?.primaryFolder, reportError])
 
-  useEffect(() => { if (bridge && activeProject?.primaryFolder) void refreshGit() }, [bridge, activeProject?.primaryFolder, refreshGit])
+  useEffect(() => {
+    void refreshGit()
+    return () => { gitRequestRef.current += 1 }
+  }, [refreshGit])
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
     setSettings((current) => ({ ...current, ...patch }))
@@ -260,13 +278,13 @@ export default function App() {
 
   const selectProject = async (project: ProjectRecord) => {
     if (compactLayout) setSidebarOpen(false)
-    setActiveProjectId(project.id); setActiveSessionId(sessions.find((session) => !session.archived && session.projectPath === project.path)?.id); setView('session')
+    setActiveProjectId(project.id); setActiveSessionId(sessions.find((session) => !session.archived && projectContainsPath(project, session.projectPath))?.id); setView('session')
     try { const granted = await grantProject(project); if (bridge && !granted.inferred) await bridge.projects.touch(granted.id) } catch (error) { reportError(error) }
   }
   const selectSession = async (session: SessionRecord) => {
     if (compactLayout) setSidebarOpen(false)
     setActiveSessionId(session.id)
-    const project = projects.find((item) => item.path === session.projectPath)
+    const project = projects.find((item) => projectContainsPath(item, session.projectPath))
     if (project) { setActiveProjectId(project.id); try { await grantProject(project) } catch (error) { reportError(error) } }
     setView('session')
     const matchingRuntime = runtime?.sessionFile === session.filePath ? runtime : null
@@ -347,11 +365,12 @@ export default function App() {
       const failure = requestFailureMessage(error)
       setRuntime((current) => current ? { ...current, isStreaming: false } : current)
       setMessages((items) => {
-        const finalized = items.map((item) => item.streaming ? { ...item, streaming: false } : item)
+        const finalized = items.flatMap((item) => item.streaming && item.role === 'assistant' && item.parts.length === 0
+          ? []
+          : [{ ...item, streaming: false }])
         if (finalized.at(-1)?.role === 'system') return finalized
         return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
       })
-      reportError(error)
     }
 
   }
