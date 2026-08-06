@@ -78,10 +78,10 @@ export function DraftSettingField({
 
   return (
     <div className="settings-row settings-row--stack">
-      <label htmlFor={id}>
-        <strong>{label}</strong>
+      <span>
+        <label htmlFor={id}><strong>{label}</strong></label>
         <small>{description}</small>
-      </label>
+      </span>
       <input
         id={id}
         className={className}

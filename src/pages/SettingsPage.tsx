@@ -1,22 +1,93 @@
-import { Bot, Check, ChevronRight, CircleHelp, Code2, Info, Keyboard, Laptop, LockKeyhole, Moon, RotateCcw, Settings2, ShieldCheck, Sun, Terminal } from 'lucide-react'
+import { Bot, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
-import type { AppMeta, AppSettings, ThemeMode } from '@/types/api'
-import { BrowserGlobe, Modal, PrimeMark, Segmented } from '@/components/ui'
+import { BrowserGlobe, Modal } from '@/components/ui'
+import type { AppMeta, AppSettings } from '@/types/api'
+import { AboutSettings } from './settings/AboutSettings'
+import { AgentSettings } from './settings/AgentSettings'
+import { AppearanceSettings } from './settings/AppearanceSettings'
+import { BrowserSettings } from './settings/BrowserSettings'
+import type { SettingsSection, SettingsUpdate } from './settings/contracts'
+import { GeneralSettings } from './settings/GeneralSettings'
+import { PrivacySettings } from './settings/PrivacySettings'
+import { TerminalSettings } from './settings/TerminalSettings'
 
-type SettingsSection = 'general'|'appearance'|'agent'|'browser'|'terminal'|'privacy'|'about'
+const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<{ size?: number }> }> = [
+  { id: 'general', label: 'General', icon: Settings2 },
+  { id: 'appearance', label: 'Appearance', icon: Sun },
+  { id: 'agent', label: 'Prime Agent', icon: Bot },
+  { id: 'browser', label: 'Browser', icon: BrowserGlobe },
+  { id: 'terminal', label: 'Terminal', icon: Terminal },
+  { id: 'privacy', label: 'Privacy', icon: LockKeyhole },
+  { id: 'about', label: 'About', icon: Info },
+]
 
-function Toggle({ checked, onChange, label, description }: { checked: boolean; onChange(value:boolean):void; label:string; description?:string }) { return <label className="settings-toggle"><span><strong>{label}</strong>{description?<small>{description}</small>:null}</span><input type="checkbox" checked={checked} onChange={(event)=>onChange(event.target.checked)}/><i aria-hidden="true"><span/></i></label> }
+interface SettingsPageProps {
+  settings: AppSettings
+  meta?: AppMeta | null
+  onUpdate: SettingsUpdate
+  onResetBrowser(): Promise<void> | void
+  onOpenDocs(): void
+}
 
-const sections: Array<{id:SettingsSection;label:string;icon:ComponentType<{size?:number}>}>=[{id:'general',label:'General',icon:Settings2},{id:'appearance',label:'Appearance',icon:Sun},{id:'agent',label:'Prime Agent',icon:Bot},{id:'browser',label:'Browser',icon:BrowserGlobe},{id:'terminal',label:'Terminal',icon:Terminal},{id:'privacy',label:'Privacy',icon:LockKeyhole},{id:'about',label:'About',icon:Info}]
+export function SettingsPage({ settings, meta, onUpdate, onResetBrowser, onOpenDocs }: SettingsPageProps) {
+  const [section, setSection] = useState<SettingsSection>('general')
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState('')
 
-export function SettingsPage({ settings, meta, onUpdate, onResetBrowser, onOpenDocs }: { settings: AppSettings; meta?: AppMeta|null; onUpdate(patch:Partial<AppSettings>):Promise<void>|void; onResetBrowser():Promise<void>|void; onOpenDocs():void }) {
-  const [section,setSection]=useState<SettingsSection>('general')
-  const [confirmReset,setConfirmReset]=useState(false)
-  const [resetting,setResetting]=useState(false)
-  const [resetError,setResetError]=useState('')
-  const resetBrowser=async()=>{
-    setResetting(true);setResetError('')
-    try{await onResetBrowser();setConfirmReset(false)}catch(error){setResetError(error instanceof Error?error.message:String(error))}finally{setResetting(false)}
+  const resetBrowser = async () => {
+    setResetting(true)
+    setResetError('')
+    try {
+      await onResetBrowser()
+      setConfirmReset(false)
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setResetting(false)
+    }
   }
-  return <div className="settings-page"><nav className="settings-nav" aria-label="Settings sections">{sections.map((item)=>{const Icon=item.icon;return <button type="button" key={item.id} className={section===item.id?'is-active':''} onClick={()=>setSection(item.id)}><Icon size={14}/><span>{item.label}</span><ChevronRight size={12}/></button>})}</nav><div className="settings-content scroll-area"><div className="settings-content__inner">{section==='general'?<><header><h1>General</h1><p>Choose how Prime Work behaves across projects.</p></header><section className="settings-group"><h2>Window</h2><Toggle checked={settings.sidebarOpen} onChange={(sidebarOpen)=>void onUpdate({sidebarOpen})} label="Show project sidebar" description="Keep projects and sessions visible when the app opens."/><Toggle checked={settings.inspectorOpen} onChange={(inspectorOpen)=>void onUpdate({inspectorOpen})} label="Open session inspector" description="Show the summary pane for newly opened sessions."/></section><section className="settings-group"><h2>Session defaults</h2><label className="settings-row"><span><strong>Default inspector tab</strong><small>The first detail surface shown in a session.</small></span><select value={settings.defaultInspectorTab} onChange={(event)=>void onUpdate({defaultInspectorTab:event.target.value as AppSettings['defaultInspectorTab']})}><option value="summary">Summary</option><option value="changes">Changes</option><option value="browser">Browser</option><option value="files">Files</option></select></label></section></>:null}{section==='appearance'?<><header><h1>Appearance</h1><p>Keep the workspace comfortable in any environment.</p></header><section className="settings-group"><h2>Theme</h2><div className="theme-options">{([{id:'system',label:'System',icon:Laptop},{id:'light',label:'Light',icon:Sun},{id:'dark',label:'Dark',icon:Moon}] as Array<{id:ThemeMode;label:string;icon:typeof Sun}>).map((item)=>{const Icon=item.icon;return <button type="button" key={item.id} className={settings.theme===item.id?'is-active':''} onClick={()=>void onUpdate({theme:item.id})}><span><Icon size={17}/></span><strong>{item.label}</strong>{settings.theme===item.id?<Check size={13}/>:null}</button>})}</div></section><section className="settings-group"><h2>Motion</h2><Toggle checked={settings.reduceMotion} onChange={(reduceMotion)=>void onUpdate({reduceMotion})} label="Reduce interface motion" description="Minimize panel transitions and animated status indicators."/></section></>:null}{section==='agent'?<><header><h1>Prime Agent</h1><p>Runtime discovery and workspace permissions.</p></header><section className="settings-group"><h2>Runtime</h2><div className="runtime-card"><span className={meta?.primeAgentPath?'is-online':''}><Bot size={17}/></span><div><strong>{meta?.primeAgentPath?'Prime Agent is ready':'Prime Agent not detected'}</strong><small>{meta?.primeAgentPath??'Install Prime Agent and restart the app.'}</small></div>{meta?.primeAgentVersion?<code>v{meta.primeAgentVersion}</code>:null}</div></section><section className="settings-group"><h2>Transcript</h2><Toggle checked={settings.showReasoningSummaries} onChange={(showReasoningSummaries)=>void onUpdate({showReasoningSummaries})} label="Show reasoning summaries" description="Display reasoning summaries and traces while Prime works. Completed work stays collapsed."/><Toggle checked={settings.showToolCalls} onChange={(showToolCalls)=>void onUpdate({showToolCalls})} label="Show tool calls" description="Display compact tool activity, arguments, and expandable results."/></section><section className="settings-group"><h2>Permissions</h2><div className="info-row"><ShieldCheck size={15}/><div><strong>Workspace access</strong><small>Prime only receives the project folders attached to a session.</small></div></div></section></>:null}{section==='browser'?<><header><h1>Browser</h1><p>Manage the isolated profile used inside Prime Work.</p></header><section className="settings-group"><h2>Startup</h2><label className="settings-row settings-row--stack"><span><strong>Home page</strong><small>Opened when you create a browser tab.</small></span><input value={settings.browserHome} onChange={(event)=>void onUpdate({browserHome:event.target.value})}/></label><Toggle checked={settings.browserAskForDownloads} onChange={(browserAskForDownloads)=>void onUpdate({browserAskForDownloads})} label="Ask where to save downloads" description="Choose a location before every browser download."/></section><section className="settings-group"><h2>Browser data</h2><div className="danger-row"><span><strong>Clear browsing data</strong><small>Remove cookies, cache, permissions, and browsing history.</small></span><button type="button" className="button" onClick={()=>{setResetError('');setConfirmReset(true)}}><RotateCcw size={13}/> Clear data</button></div></section></>:null}{section==='terminal'?<><header><h1>Terminal</h1><p>Configure the interactive shell used for local projects.</p></header><section className="settings-group"><h2>Shell</h2><label className="settings-row settings-row--stack"><span><strong>Shell executable</strong><small>Restart open terminals after changing this value.</small></span><input className="mono" value={settings.terminalShell} onChange={(event)=>void onUpdate({terminalShell:event.target.value})}/></label><Toggle checked={settings.terminalOpen} onChange={(terminalOpen)=>void onUpdate({terminalOpen})} label="Open terminal with new sessions" description="Show the terminal drawer when a new project session starts."/></section><section className="settings-group"><h2>Keyboard shortcut</h2><div className="shortcut-row"><span><Keyboard size={14}/>Toggle terminal</span><kbd>⌘ J</kbd></div></section></>:null}{section==='privacy'?<><header><h1>Privacy</h1><p>Control optional diagnostics and local data.</p></header><section className="settings-group"><h2>Diagnostics</h2><div className="info-row"><LockKeyhole size={15}/><div><strong>Diagnostics are off</strong><small>Prime Work does not send prompts, files, terminal output, or usage telemetry.</small></div></div></section><section className="settings-group"><h2>Local-first</h2><div className="info-row"><LockKeyhole size={15}/><div><strong>Your work stays on this Mac</strong><small>Project metadata and interface settings are stored locally. Provider requests follow your Prime Agent configuration.</small></div></div></section></>:null}{section==='about'?<><header><h1>About Prime Work</h1><p>A focused desktop workspace for Prime Agent.</p></header><section className="about-card"><PrimeMark size={42}/><div><h2>Prime Work</h2><p>Prime Agent workspace · Version {meta?.version??'0.1.0'}</p></div></section><section className="settings-group"><div className="settings-row"><span><strong>Platform</strong><small>{meta?.platform??'macOS'}</small></span></div><div className="settings-row"><span><strong>Home directory</strong><small className="mono">{meta?.homeDir??'—'}</small></span></div><div className="settings-row"><span><strong>Help and documentation</strong></span><button className="button" type="button" onClick={onOpenDocs}><CircleHelp size={13}/> Open docs</button></div></section></>:null}</div></div>{confirmReset?<Modal title="Clear browser data?" onClose={()=>{if(!resetting)setConfirmReset(false)}} footer={<><button type="button" className="button" disabled={resetting} onClick={()=>setConfirmReset(false)}>Cancel</button><button type="button" className="button button--danger" disabled={resetting} onClick={()=>void resetBrowser()}>{resetting?'Clearing…':'Clear browsing data'}</button></>}><p>This signs you out of websites opened in Prime Work and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>{resetError?<p className="settings-error" role="alert">{resetError}</p>:null}</Modal>:null}</div>
+
+  const content = (() => {
+    switch (section) {
+      case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
+      case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
+      case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
+      case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
+      case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
+      case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
+      case 'about': return <AboutSettings meta={meta} onOpenDocs={onOpenDocs} />
+    }
+  })()
+
+  return (
+    <div className="settings-page">
+      <nav className="settings-nav" aria-label="Settings sections">
+        {sections.map((item) => {
+          const Icon = item.icon
+          return (
+            <button type="button" key={item.id} className={section === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
+              <Icon size={14} /><span>{item.label}</span><ChevronRight size={12} />
+            </button>
+          )
+        })}
+      </nav>
+      <div className="settings-content scroll-area"><div className="settings-content__inner">{content}</div></div>
+      {confirmReset ? (
+        <Modal
+          title="Clear browser data?"
+          onClose={() => { if (!resetting) setConfirmReset(false) }}
+          footer={(
+            <>
+              <button type="button" className="button" disabled={resetting} onClick={() => setConfirmReset(false)}>Cancel</button>
+              <button type="button" className="button button--danger" disabled={resetting} onClick={() => { void resetBrowser() }}>{resetting ? 'Clearing…' : 'Clear browsing data'}</button>
+            </>
+          )}
+        >
+          <p>This signs you out of websites opened in Prime Work and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>
+          {resetError ? <p className="settings-error" role="alert">{resetError}</p> : null}
+        </Modal>
+      ) : null}
+    </div>
+  )
 }
