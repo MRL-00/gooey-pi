@@ -49,7 +49,9 @@ export class GitService {
     try {
       const safeCwd = await this.authorizeCwd(cwd)
       const result = await runProcess('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: safeCwd, timeoutMs: 5_000, maxBytes: 64 * 1024 })
-      return result.code === 0 ? result.stdout.trim() || undefined : undefined
+      if (result.code === 0) return result.stdout.trim() || undefined
+      const detached = await runProcess('git', ['rev-parse', '--verify', '--short', 'HEAD'], { cwd: safeCwd, timeoutMs: 5_000, maxBytes: 64 * 1024 })
+      return detached.code === 0 ? `HEAD (${detached.stdout.trim()})` : undefined
     } catch { return undefined }
   }
 

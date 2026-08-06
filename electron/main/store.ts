@@ -11,6 +11,7 @@ export interface DesktopState {
   projects: PersistedProject[]
   settings: AppSettings
   archivedSessions: string[]
+  dismissedProjectPaths: string[]
 }
 
 export function defaultSettings(): AppSettings {
@@ -29,7 +30,7 @@ export function defaultSettings(): AppSettings {
 }
 
 function defaultState(): DesktopState {
-  return { version: 1, projects: [], settings: defaultSettings(), archivedSessions: [] }
+  return { version: 1, projects: [], settings: defaultSettings(), archivedSessions: [], dismissedProjectPaths: [] }
 }
 
 function validDate(value: unknown): value is string {
@@ -78,6 +79,7 @@ function parseState(value: unknown): DesktopState {
     projects: Array.isArray(value.projects) ? value.projects.map(parseProject).filter((item): item is PersistedProject => item !== null) : [],
     settings: parseSettings(value.settings),
     archivedSessions: Array.isArray(value.archivedSessions) ? value.archivedSessions.filter((item): item is string => typeof item === 'string') : [],
+    dismissedProjectPaths: Array.isArray(value.dismissedProjectPaths) ? value.dismissedProjectPaths.filter((item): item is string => typeof item === 'string') : [],
   }
 }
 

@@ -38,4 +38,15 @@ describe('GitService', () => {
     expect(committed.ok).toBe(true)
     expect(committed.output).toContain('test commit')
   }, 15_000)
+
+  it('identifies a detached HEAD as a repository branch label', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-detached-')); dirs.push(cwd)
+    git(cwd, 'init', '-q'); git(cwd, 'config', 'user.name', 'Prime Work Test'); git(cwd, 'config', 'user.email', 'test@example.com')
+    writeFileSync(join(cwd, 'file.txt'), 'base\n'); git(cwd, 'add', 'file.txt'); git(cwd, 'commit', '-qm', 'base'); git(cwd, 'checkout', '-q', '--detach')
+    const service = new GitService(async () => cwd)
+
+    expect(await service.branch(cwd)).toMatch(/^HEAD \([0-9a-f]+\)$/)
+    expect((await service.status(cwd)).isRepo).toBe(true)
+  })
+
 })
