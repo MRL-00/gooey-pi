@@ -1,11 +1,11 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 let app: ElectronApplication
 let page: Page
-let userData = ''
+let fixtureRoot = ''
 let actionableErrors: string[] = []
 
 const attachDiagnostics = (target: Page) => {
@@ -15,21 +15,86 @@ const attachDiagnostics = (target: Page) => {
   })
 }
 
-test.describe.serial('Prime Work desktop smoke', () => {
-  test.beforeAll(async () => {
-    userData = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: process.cwd(), env: { ...process.env, PRIME_WORK_E2E: '1' } })
+function createHermeticFixture(): { userData: string; home: string; project: string; executable: string } {
+  fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
+  const userData = join(fixtureRoot, 'user-data')
+  const home = join(fixtureRoot, 'home')
+  const project = join(fixtureRoot, 'project')
+  const sessions = join(home, '.prime', 'agent', 'sessions')
+  mkdirSync(userData, { recursive: true })
+  mkdirSync(project, { recursive: true })
+  mkdirSync(sessions, { recursive: true })
+  writeFileSync(join(project, 'README.md'), '# Hermetic Prime Work fixture\n')
+  const sessionFile = join(sessions, 'fixture.jsonl')
+  writeFileSync(sessionFile, [
+    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: project, timestamp: '2026-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: 'Hermetic desktop fixture', timestamp: '2026-01-01T00:00:00.000Z' } }),
+    '',
+  ].join('\n'))
+  writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
+    version: 1,
+    projects: [],
+    settings: { browserHome: 'about:blank' },
+    archivedSessions: [],
+    dismissedProjectPaths: [],
+  }))
+
+  const executable = join(fixtureRoot, 'prime-agent-fixture.cjs')
+  writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+const args = process.argv.slice(2)
+if (args.includes('--version')) { process.stdout.write('prime-agent 0.7.0\\n'); process.exit(0) }
+if (args[0] === 'schedule') { process.stdout.write(JSON.stringify({ jobs: [] }) + '\\n'); process.exit(0) }
+const resumeIndex = args.indexOf('--resume')
+const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(sessionFile)}
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ type: 'response', id: command.id, command: command.type, success: true, data: { sessionId: 'fixture-session', sessionFile, isStreaming: false, thinkingLevel: 'medium', model: { provider: 'fixture', id: 'fixture-model', name: 'Fixture Model' } } })
+  } else if (command.type === 'list_schedules') {
+    send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
+  } else if (command.id) {
+    send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+  }
+})
+`)
+  chmodSync(executable, 0o755)
+  return { userData, home, project, executable }
+}
+
+function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    HOME: home,
+    PATH: process.env.PATH,
+    TMPDIR: fixtureRoot,
+    SHELL: '/bin/zsh',
+    LANG: 'C',
+    LC_ALL: 'C',
+    NO_COLOR: '1',
+    PRIME_AGENT_BINARY: executable,
+  }
+  for (const key of ['USER', 'LOGNAME', '__CF_USER_TEXT_ENCODING']) if (process.env[key]) env[key] = process.env[key]
+  return env
+}
+
+test.describe('Prime Work desktop smoke', () => {
+  test.beforeEach(async () => {
+    actionableErrors = []
+    const fixture = createHermeticFixture()
+    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture.userData}`], cwd: process.cwd(), env: hermeticEnvironment(fixture.home, fixture.executable) })
     page = await app.firstWindow()
     attachDiagnostics(page)
     await page.locator('.app-shell').waitFor()
   })
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await app?.close().catch(() => undefined)
-    if (userData) rmSync(userData, { recursive: true, force: true })
+    if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
+    fixtureRoot = ''
   })
 
-  test('loads the sandboxed preload bridge and real service data', async () => {
+  test('loads the sandboxed preload bridge and hermetic service data', async () => {
     const bridge = await page.evaluate(() => {
       const prime = (window as typeof window & { prime?: Record<string, unknown> }).prime
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
@@ -153,7 +218,7 @@ test.describe.serial('Prime Work desktop smoke', () => {
       if (!selected) return null
       return selected.inferred ? window.prime.projects.grantInferred(selected.primaryFolder) : selected
     })
-    test.skip(!project, 'No local Prime project is available for PTY authorization')
+    expect(project).not.toBeNull()
     await page.getByRole('tab', { name: 'Summary' }).click()
     await page.getByLabel(/Toggle terminal/).click()
     await expect(page.locator('.terminal-drawer .xterm')).toBeVisible()
