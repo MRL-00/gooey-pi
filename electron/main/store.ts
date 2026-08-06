@@ -34,6 +34,7 @@ export function defaultSettings(): AppSettings {
     showReasoningSummaries: true,
     showToolCalls: true,
     telemetry: false,
+    disabledProviders: [],
   }
 }
 
@@ -86,6 +87,9 @@ function parseSettings(value: unknown): AppSettings {
     showReasoningSummaries: typeof value.showReasoningSummaries === 'boolean' ? value.showReasoningSummaries : defaults.showReasoningSummaries,
     showToolCalls: typeof value.showToolCalls === 'boolean' ? value.showToolCalls : defaults.showToolCalls,
     telemetry: typeof value.telemetry === 'boolean' ? value.telemetry : defaults.telemetry,
+    disabledProviders: Array.isArray(value.disabledProviders)
+      ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
+      : defaults.disabledProviders,
   }
 }
 

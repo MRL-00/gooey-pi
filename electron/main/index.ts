@@ -10,6 +10,7 @@ import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService } from './plugins'
+import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
 import { ScheduleService, SettingsService } from './settings-schedules'
 import { SessionService } from './sessions'
@@ -239,6 +240,7 @@ async function bootstrap(): Promise<void> {
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const plugins = new PluginService(executable, (path) => projects.authorizeCwd(path))
+  const providers = new PrimeProviderService()
   const schedules = new ScheduleService(agents, executable)
   const detectedPrimeVersion = await primeVersion(executable)
   if (shutdownStarted) return
@@ -250,7 +252,7 @@ async function bootstrap(): Promise<void> {
     primeAgentVersion: detectedPrimeVersion,
   }
   trustedRendererUrl = resolveRendererUrl()
-  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, settings, schedules }, trustedRendererUrl)
+  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, schedules }, trustedRendererUrl)
   agents.setEventSink((envelope) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()

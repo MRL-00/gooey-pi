@@ -174,6 +174,7 @@ export interface AppSettings {
   showReasoningSummaries: boolean
   showToolCalls: boolean
   telemetry: boolean
+  disabledProviders: string[]
 }
 
 export interface ScheduleRecord {
@@ -197,6 +198,12 @@ export interface PrimeWorkApi {
     stop(runtimeId: string): Promise<boolean>
     list(): Promise<RuntimeInfo[]>
     onEvent(callback: (envelope: PrimeEventEnvelope) => void): () => void
+  }
+  providers: {
+    catalog(force?: boolean): Promise<PrimeModelCatalog>
+    saveApiKey(providerId: string, apiKey: string): Promise<PrimeModelCatalog>
+    logout(providerId: string): Promise<PrimeModelCatalog>
+    setEnabled(providerId: string, enabled: boolean): Promise<PrimeModelCatalog>
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>

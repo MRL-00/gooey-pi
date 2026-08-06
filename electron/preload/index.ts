@@ -37,6 +37,12 @@ const api: PrimeWorkApi = {
     list: () => ipcRenderer.invoke('agent:list'),
     onEvent: (callback) => subscribe<PrimeEventEnvelope>('agent:event', callback),
   },
+  providers: {
+    catalog: (force) => ipcRenderer.invoke('providers:catalog', force),
+    saveApiKey: (providerId, apiKey) => ipcRenderer.invoke('providers:save-api-key', providerId, apiKey),
+    logout: (providerId) => ipcRenderer.invoke('providers:logout', providerId),
+    setEnabled: (providerId, enabled) => ipcRenderer.invoke('providers:set-enabled', providerId, enabled),
+  },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),
     input: (terminalId, data) => { ipcRenderer.send('terminal:input', terminalId, data) },

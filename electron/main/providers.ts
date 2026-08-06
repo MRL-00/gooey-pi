@@ -79,21 +79,19 @@ export class PrimeProviderService {
     return this.withEnabledState(this.cachedCatalog, disabledProviders)
   }
 
-  async saveApiKey(rawProviderId: unknown, rawKey: unknown): Promise<PrimeModelCatalog> {
+  async saveApiKey(rawProviderId: unknown, rawKey: unknown): Promise<void> {
     const providerId = requireString(rawProviderId, 'providerId', { min: 1, max: 128, trim: true })
     const key = requireString(rawKey, 'apiKey', { min: 1, max: 16_384, trim: true })
     await this.requireProvider(providerId, 'api_key')
     this.authStorage.set(providerId, { type: 'api_key', key })
     this.invalidate()
-    return this.catalog(true)
   }
 
-  async logout(rawProviderId: unknown): Promise<PrimeModelCatalog> {
+  async logout(rawProviderId: unknown): Promise<void> {
     const providerId = requireString(rawProviderId, 'providerId', { min: 1, max: 128, trim: true })
     await this.requireProvider(providerId)
     this.authStorage.logout(providerId)
     this.invalidate()
-    return this.catalog(true)
   }
 
   invalidate(): void {
