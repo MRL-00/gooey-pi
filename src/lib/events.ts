@@ -46,6 +46,25 @@ function finishTool(parts: MessagePart[], id: string | undefined, name: string, 
   return [...parts.slice(0, callIndex + 1), resultPart, ...parts.slice(callIndex + 1)]
 }
 
+export function replayPrimeEvents(messages: TranscriptMessage[], events: Record<string, unknown>[]): TranscriptMessage[] {
+  return events.reduce((current, event) => applyPrimeEvent(current, event), messages)
+}
+
+export interface PrimeEventBuffer {
+  readonly size: number
+  push(event: Record<string, unknown>): void
+  replay(messages: TranscriptMessage[]): TranscriptMessage[]
+}
+
+export function createPrimeEventBuffer(): PrimeEventBuffer {
+  const events: Record<string, unknown>[] = []
+  return {
+    get size() { return events.length },
+    push(event) { events.push(event) },
+    replay(messages) { return replayPrimeEvents(messages, events) },
+  }
+}
+
 export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<string, unknown>): TranscriptMessage[] {
   const type = string(raw.type) ?? string(raw.event)
   if (!type) return messages

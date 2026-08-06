@@ -13,7 +13,9 @@ import { ActivityPage } from '@/pages/ActivityPage'
 import { ScheduledPage } from '@/pages/ScheduledPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
-import { applyPrimeEvent } from '@/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer } from '@/lib/events'
+import type { PrimeEventBuffer } from '@/lib/events'
+import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, projectContainsPath, selectStartupWorkspace, workspaceCwd } from '@/lib/workspace'
 import {
   DEFAULT_SETTINGS,
   SAMPLE_GIT,
@@ -60,10 +62,24 @@ const requestFailureMessage = (error: unknown) => {
   return detail ? `Request failed: ${detail.slice(0, 1_000)}` : 'Prime could not process the request.'
 }
 
-const projectContainsPath = (project: ProjectRecord, path?: string) => Boolean(path && (project.path === path || project.folders.includes(path)))
+interface WorkspaceSnapshot {
+  generation: number
+  project?: ProjectRecord
+  session?: SessionRecord
+  cwd?: string
+  sessionFile?: string
+}
+
+interface TranscriptLoad {
+  generation: number
+  sessionFile: string
+  eventBuffer: PrimeEventBuffer
+}
 
 export default function App() {
   const bridge = hasBridge() ? window.prime : null
+  const initialProject = bridge ? undefined : SAMPLE_PROJECTS[0]
+  const initialSession = bridge ? undefined : SAMPLE_SESSIONS[0]
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
   const [sessions, setSessions] = useState<SessionRecord[]>(() => bridge ? [] : SAMPLE_SESSIONS)
   const [messages, setMessages] = useState<TranscriptMessage[]>(() => bridge ? [] : SAMPLE_TRANSCRIPT)
@@ -86,13 +102,25 @@ export default function App() {
   const [inspectorMax, setInspectorMax] = useState(660)
   const [terminalMax, setTerminalMax] = useState(520)
   const [browserGeneration, setBrowserGeneration] = useState(0)
+  const [workspaceGeneration, setWorkspaceGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [loadingSession, setLoadingSession] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState('medium')
   const [toast, setToast] = useState<string | null>(null)
   const runtimeIdRef = useRef<string | null>(null)
+  const runtimeOwnerRef = useRef<{ runtimeId: string; generation: number } | null>(null)
+  const workspaceRef = useRef<WorkspaceSnapshot>({
+    generation: 0,
+    project: initialProject,
+    session: initialSession,
+    cwd: workspaceCwd(initialProject, initialSession),
+    sessionFile: initialSession?.filePath,
+  })
+  const transcriptLoadRef = useRef<TranscriptLoad | null>(null)
+  const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const gitRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
   const workspaceRowRef = useRef<HTMLDivElement>(null)
@@ -117,11 +145,11 @@ export default function App() {
     return () => { for (const target of targets) target.inert = false }
   }, [compactLayout, inspectorOpen, terminalOpen])
 
-  const activeProject = useMemo(() => {
-    const sessionPath = sessions.find((session) => session.id === activeSessionId)?.projectPath
-    return projects.find((project) => project.id === activeProjectId) ?? projects.find((project) => projectContainsPath(project, sessionPath)) ?? projects[0]
-  }, [projects, sessions, activeProjectId, activeSessionId])
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId), [sessions, activeSessionId])
+  const activeProject = useMemo(() => {
+    const containingProject = findProjectForSession(projects, activeSession)
+    return containingProject ?? projects.find((project) => project.id === activeProjectId) ?? projects[0]
+  }, [projects, activeProjectId, activeSession])
   const busy = Boolean(runtime?.isStreaming || messages.some((message) => message.streaming))
 
   useEffect(() => {
@@ -150,6 +178,48 @@ export default function App() {
     window.setTimeout(() => setToast((current) => current === message ? null : current), 4800)
   }, [])
 
+  const attachRuntime = useCallback((nextRuntime: RuntimeInfo | undefined, generation: number) => {
+    if (workspaceRef.current.generation !== generation) return
+    const next = nextRuntime ?? null
+    runtimeIdRef.current = next?.runtimeId ?? null
+    runtimeOwnerRef.current = next ? { runtimeId: next.runtimeId, generation } : null
+    setRuntime(next)
+  }, [])
+
+  const activateWorkspace = useCallback((project?: ProjectRecord, session?: SessionRecord, nextRuntime?: RuntimeInfo) => {
+    const generation = workspaceRef.current.generation + 1
+    workspaceRef.current = {
+      generation,
+      project,
+      session,
+      cwd: workspaceCwd(project, session),
+      sessionFile: session?.filePath,
+    }
+    transcriptLoadRef.current = null
+    setWorkspaceGeneration(generation)
+    setActiveProjectId(project?.id)
+    setActiveSessionId(session?.id)
+    attachRuntime(nextRuntime, generation)
+    if (bridge) {
+      setMessages([])
+      setLoadingSession(Boolean(session?.filePath))
+    }
+    return generation
+  }, [attachRuntime, bridge])
+
+  const reconcileRuntime = useCallback(async (generation: number) => {
+    if (!bridge) return
+    const selected = workspaceRef.current
+    if (selected.generation !== generation || !selected.sessionFile) return
+    try {
+      const runtimes = await bridge.agent.list()
+      if (workspaceRef.current.generation !== generation) return
+      attachRuntime(findRuntimeForWorkspace(runtimes, selected.cwd, selected.sessionFile), generation)
+    } catch (error) {
+      if (workspaceRef.current.generation === generation) reportError(error)
+    }
+  }, [attachRuntime, bridge, reportError])
+
   useEffect(() => {
     if (!bridge) return
     let cancelled = false
@@ -166,21 +236,23 @@ export default function App() {
     ]).then(([metaResult, projectsResult, sessionsResult, settingsResult, skillsResult, schedulesResult, runtimesResult]) => {
       if (cancelled) return
       if (metaResult.status === 'fulfilled') setMeta(metaResult.value)
-      if (projectsResult.status === 'fulfilled') { setProjects(projectsResult.value); setActiveProjectId((current) => current ?? projectsResult.value[0]?.id) }
-      if (sessionsResult.status === 'fulfilled') { setSessions(sessionsResult.value); setActiveSessionId((current) => current ?? sessionsResult.value.find((session) => !session.archived)?.id) }
+      const nextProjects = projectsResult.status === 'fulfilled' ? projectsResult.value : []
+      const nextSessions = sessionsResult.status === 'fulfilled' ? sessionsResult.value : []
+      const nextRuntimes = runtimesResult.status === 'fulfilled' ? runtimesResult.value : []
+      if (projectsResult.status === 'fulfilled') setProjects(nextProjects)
+      if (sessionsResult.status === 'fulfilled') setSessions(nextSessions)
+      if (projectsResult.status === 'fulfilled') {
+        const selected = selectStartupWorkspace(nextProjects, nextSessions, nextRuntimes)
+        activateWorkspace(selected.project, selected.session, selected.runtime)
+      }
       if (settingsResult.status === 'fulfilled') { setSettings(settingsResult.value); setSidebarOpen(settingsResult.value.sidebarOpen); setInspectorOpen(settingsResult.value.inspectorOpen); setTerminalOpen(settingsResult.value.terminalOpen); setInspectorTab(settingsResult.value.defaultInspectorTab) }
       if (skillsResult.status === 'fulfilled') setSkills(skillsResult.value)
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value)
-      if (runtimesResult.status === 'fulfilled') {
-        const selectedSession = sessionsResult.status === 'fulfilled' ? sessionsResult.value.find((session) => !session.archived) : undefined
-        const matching = runtimesResult.value.find((item) => item.sessionFile && item.sessionFile === selectedSession?.filePath) ?? runtimesResult.value.find((item) => item.isStreaming)
-        if (matching) { setRuntime(matching); runtimeIdRef.current = matching.runtimeId }
-      }
       const failure = [metaResult, projectsResult, sessionsResult, settingsResult].find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') reportError(failure.reason)
     })
     return () => { cancelled = true }
-  }, [bridge, reportError])
+  }, [activateWorkspace, bridge, reportError])
 
   useEffect(() => {
     const theme = settings.theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : settings.theme
@@ -196,14 +268,17 @@ export default function App() {
     if (!bridge) return
     const off = bridge.agent.onEvent(({ runtimeId, event }) => {
       if (runtimeIdRef.current !== runtimeId) return
+      const pendingLoad = transcriptLoadRef.current
+      if (pendingLoad && pendingLoad.generation === workspaceRef.current.generation) pendingLoad.eventBuffer.push(event)
       setMessages((current) => applyPrimeEvent(current, event))
       const type = typeof event.type === 'string' ? event.type : ''
-      if (type === 'agent_start') setRuntime((current) => current ? { ...current, isStreaming: true } : current)
+      if (type === 'agent_start') setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true } : current)
       if (type === 'runtime_exit') {
         runtimeIdRef.current = null
+        runtimeOwnerRef.current = null
         setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
       } else if (type === 'agent_end' || type === 'extension_error' || type === 'error' || type === 'transport_error') {
-        setRuntime((current) => current ? { ...current, isStreaming: false } : current)
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false } : current)
         if (activeProject?.primaryFolder) window.setTimeout(() => void refreshGit(), 160)
       }
     })
@@ -215,13 +290,28 @@ export default function App() {
   useEffect(() => {
     if (!bridge || !activeSession?.filePath) {
       if (bridge && !activeSession) setMessages([])
+      setLoadingSession(false)
       return
     }
-    let cancelled = false
+    const selected = workspaceRef.current
+    if (selected.generation !== workspaceGeneration || selected.sessionFile !== activeSession.filePath) return
+    const pendingLoad: TranscriptLoad = { generation: workspaceGeneration, sessionFile: activeSession.filePath, eventBuffer: createPrimeEventBuffer() }
+    transcriptLoadRef.current = pendingLoad
     setLoadingSession(true)
-    bridge.sessions.read(activeSession.filePath).then((value) => { if (!cancelled) setMessages(value) }).catch(reportError).finally(() => { if (!cancelled) setLoadingSession(false) })
-    return () => { cancelled = true }
-  }, [bridge, activeSession?.filePath, reportError])
+    bridge.sessions.read(activeSession.filePath).then((value) => {
+      if (transcriptLoadRef.current !== pendingLoad || workspaceRef.current.generation !== pendingLoad.generation) return
+      transcriptLoadRef.current = null
+      setMessages(pendingLoad.eventBuffer.replay(value))
+    }).catch((error) => {
+      if (transcriptLoadRef.current === pendingLoad) {
+        transcriptLoadRef.current = null
+        reportError(error)
+      }
+    }).finally(() => {
+      if (workspaceRef.current.generation === pendingLoad.generation) setLoadingSession(false)
+    })
+    return () => { if (transcriptLoadRef.current === pendingLoad) transcriptLoadRef.current = null }
+  }, [bridge, activeSession?.filePath, workspaceGeneration, reportError])
 
   const refreshGit = useCallback(async () => {
     const requestId = ++gitRequestRef.current
@@ -253,8 +343,13 @@ export default function App() {
     if (!bridge || !project.inferred) return project
     const granted = await bridge.projects.grantInferred(project.primaryFolder)
     setProjects((items) => items.map((item) => item.id === project.id ? granted : item))
+    const selected = workspaceRef.current
+    if (selected.project?.id !== project.id) return granted
+    workspaceRef.current = { ...selected, project: granted, cwd: workspaceCwd(granted, selected.session) }
     setActiveProjectId(granted.id)
-    setGit(await bridge.git.status(granted.primaryFolder))
+    const requestId = ++gitRequestRef.current
+    const nextGit = await bridge.git.status(granted.primaryFolder)
+    if (gitRequestRef.current === requestId && workspaceRef.current.generation === selected.generation) setGit(nextGit)
     return granted
   }
 
@@ -278,21 +373,31 @@ export default function App() {
 
   const selectProject = async (project: ProjectRecord) => {
     if (compactLayout) setSidebarOpen(false)
-    setActiveProjectId(project.id); setActiveSessionId(sessions.find((session) => !session.archived && projectContainsPath(project, session.projectPath))?.id); setView('session')
-    try { const granted = await grantProject(project); if (bridge && !granted.inferred) await bridge.projects.touch(granted.id) } catch (error) { reportError(error) }
+    const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
+    const generation = activateWorkspace(project, session)
+    setView('session')
+    try {
+      const granted = await grantProject(project)
+      if (bridge && !granted.inferred) await bridge.projects.touch(granted.id)
+      await reconcileRuntime(generation)
+    } catch (error) { if (workspaceRef.current.generation === generation) reportError(error) }
   }
   const selectSession = async (session: SessionRecord) => {
     if (compactLayout) setSidebarOpen(false)
-    setActiveSessionId(session.id)
-    const project = projects.find((item) => projectContainsPath(item, session.projectPath))
-    if (project) { setActiveProjectId(project.id); try { await grantProject(project) } catch (error) { reportError(error) } }
+    const project = findProjectForSession(projects, session)
+    if (!project) { reportError('This session is not contained by an available project.'); return }
+    const generation = activateWorkspace(project, session)
     setView('session')
-    const matchingRuntime = runtime?.sessionFile === session.filePath ? runtime : null
-    setRuntime(matchingRuntime); runtimeIdRef.current = matchingRuntime?.runtimeId ?? null
+    try {
+      await grantProject(project)
+      await reconcileRuntime(generation)
+    } catch (error) { if (workspaceRef.current.generation === generation) reportError(error) }
   }
   const newSession = () => {
     if (compactLayout) setSidebarOpen(false)
-    setView('session'); setActiveSessionId(undefined); setMessages([]); setRuntime(null); runtimeIdRef.current = null; setPaletteOpen(false)
+    activateWorkspace(workspaceRef.current.project)
+    if (!bridge) setMessages([])
+    setView('session'); setPaletteOpen(false)
   }
   const navigate = (nextView: WorkspaceView) => { if (compactLayout) setSidebarOpen(false); setView(nextView); setPaletteOpen(false) }
 
@@ -310,69 +415,109 @@ export default function App() {
     try {
       await bridge.sessions.archive(session.filePath, archived)
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived } : item))
-      if (archived && activeSessionId === session.id) newSession()
+      if (archived && workspaceRef.current.session?.id === session.id) newSession()
       setToast(archived ? 'Session archived. Restore it from Activity.' : 'Session restored.')
     } catch (error) { reportError(error) }
   }
 
   const addProject = async () => {
     if (!bridge) { setToast('Project picker is available in the desktop app.'); return }
-    try { const project = await bridge.projects.add(); if (project) { setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]); setActiveProjectId(project.id); setActiveSessionId(undefined); setMessages([]); setView('session') } } catch (error) { reportError(error) }
+    try {
+      const project = await bridge.projects.add()
+      if (project) {
+        setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)])
+        activateWorkspace(project)
+        setView('session')
+      }
+    } catch (error) { reportError(error) }
   }
   const removeProject = async (project: ProjectRecord) => {
     try {
       if (bridge && !await bridge.projects.remove(project.id)) throw new Error('This project could not be removed.')
       setProjects((items) => items.filter((item) => item.id !== project.id))
-      if (activeProjectId === project.id) {
-        setActiveProjectId(projects.find((item) => item.id !== project.id)?.id)
-        setActiveSessionId(undefined)
+      if (workspaceRef.current.project?.id === project.id) {
+        const fallback = projects.find((item) => item.id !== project.id)
+        const session = fallback ? sessions.find((candidate) => !candidate.archived && projectContainsPath(fallback, candidate.projectPath)) : undefined
+        activateWorkspace(fallback, session)
       }
       setToast('Project removed. Files and saved sessions were kept.')
     } catch (error) { reportError(error) }
   }
 
   const sendPrompt = async (prompt: string) => {
-    const userMessage: TranscriptMessage = { id: `user-${Date.now()}`, role: 'user', timestamp: Date.now(), parts: [{ type: 'text', text: prompt }] }
-    setMessages((items) => [...items, userMessage])
-    if (!bridge) {
-      const assistantId = `assistant-${Date.now()}`
-      setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
-      demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, parts: [...item.parts, { type: 'toolCall', id: 'demo-tool', name: 'Inspect project', args: { cwd: activeProject?.primaryFolder } }] } : item)), 450))
-      demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1250))
-      return
-    }
-    if (!activeProject?.primaryFolder) { reportError('Add a project before starting a Prime session.'); return }
-    try {
-      const workspaceProject = await grantProject(activeProject)
-      let activeRuntime = runtime
-      if (activeRuntime) {
-        const liveRuntime = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === activeRuntime?.runtimeId)
-        if (liveRuntime) activeRuntime = liveRuntime
-        else {
-          activeRuntime = null
-          setRuntime(null)
-          runtimeIdRef.current = null
+    await submissionAdmissionRef.current.run(async () => {
+      setSubmitting(true)
+      const admittedWorkspace = workspaceRef.current
+      const generation = admittedWorkspace.generation
+      try {
+        if (!admittedWorkspace.project || !admittedWorkspace.cwd) {
+          reportError('Add a project before starting a Prime session.')
+          return
         }
-      }
-      if (!activeRuntime) {
-        activeRuntime = await bridge.agent.start({ cwd: workspaceProject.primaryFolder, sessionPath: activeSession?.filePath, model: model === 'auto' ? undefined : model, thinking: effort })
-        setRuntime(activeRuntime); runtimeIdRef.current = activeRuntime.runtimeId
-      }
-      setRuntime({ ...activeRuntime, isStreaming: true })
-      setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
-      await bridge.agent.command(activeRuntime.runtimeId, { type: activeRuntime.isStreaming ? 'follow_up' : 'prompt', message: prompt })
-    } catch (error) {
-      const failure = requestFailureMessage(error)
-      setRuntime((current) => current ? { ...current, isStreaming: false } : current)
-      setMessages((items) => {
-        const finalized = items.flatMap((item) => item.streaming && item.role === 'assistant' && item.parts.length === 0
-          ? []
-          : [{ ...item, streaming: false }])
-        if (finalized.at(-1)?.role === 'system') return finalized
-        return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
-      })
-    }
+        const userMessage: TranscriptMessage = { id: `user-${Date.now()}`, role: 'user', timestamp: Date.now(), parts: [{ type: 'text', text: prompt }] }
+        setMessages((items) => [...items, userMessage])
+        if (!bridge) {
+          const assistantId = `assistant-${Date.now()}`
+          setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
+          demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, parts: [...item.parts, { type: 'toolCall', id: 'demo-tool', name: 'Inspect project', args: { cwd: admittedWorkspace.cwd } }] } : item)), 450))
+          demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1250))
+          return
+        }
 
+        await grantProject(admittedWorkspace.project)
+        if (workspaceRef.current.generation !== generation) return
+        const selected = workspaceRef.current
+        if (!selected.cwd) throw new Error('The selected workspace has no working directory.')
+        const liveRuntimes = await bridge.agent.list()
+        if (workspaceRef.current.generation !== generation) return
+
+        const owner = runtimeOwnerRef.current
+        const tracked = runtimeIdRef.current ? liveRuntimes.find((candidate) => candidate.runtimeId === runtimeIdRef.current) : undefined
+        const trackedBelongsHere = Boolean(tracked
+          && owner?.runtimeId === tracked.runtimeId
+          && owner.generation === generation
+          && tracked.cwd === selected.cwd
+          && (!selected.sessionFile || tracked.sessionFile === selected.sessionFile))
+        let activeRuntime = trackedBelongsHere ? tracked : findRuntimeForWorkspace(liveRuntimes, selected.cwd, selected.sessionFile)
+        let startedRuntime = false
+        if (!activeRuntime) {
+          attachRuntime(undefined, generation)
+          activeRuntime = await bridge.agent.start({
+            cwd: selected.cwd,
+            sessionPath: selected.sessionFile,
+            model: model === 'auto' ? undefined : model,
+            thinking: effort,
+          })
+          startedRuntime = true
+          if (workspaceRef.current.generation !== generation) {
+            await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
+            return
+          }
+        }
+        if (activeRuntime.cwd !== selected.cwd || (selected.sessionFile && activeRuntime.sessionFile !== selected.sessionFile)) {
+          if (startedRuntime) await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
+          throw new Error('Prime returned a runtime for a different workspace or session.')
+        }
+
+        attachRuntime(activeRuntime, generation)
+        setRuntime({ ...activeRuntime, isStreaming: true })
+        setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
+        await bridge.agent.command(activeRuntime.runtimeId, { type: activeRuntime.isStreaming ? 'follow_up' : 'prompt', message: prompt })
+      } catch (error) {
+        if (workspaceRef.current.generation !== generation) return
+        const failure = requestFailureMessage(error)
+        setRuntime((current) => current ? { ...current, isStreaming: false } : current)
+        setMessages((items) => {
+          const finalized = items.flatMap((item) => item.streaming && item.role === 'assistant' && item.parts.length === 0
+            ? []
+            : [{ ...item, streaming: false }])
+          if (finalized.at(-1)?.role === 'system') return finalized
+          return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
+        })
+      } finally {
+        setSubmitting(false)
+      }
+    })
   }
 
   const stopRuntime = async () => {
@@ -460,8 +605,8 @@ export default function App() {
             >
               <div ref={workspaceRowRef} className="workspace-row">
                 <main className="conversation-pane">
-                  <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject} />
-                  <Composer busy={busy} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
+                  <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || loadingSession || submitting} />
+                  <Composer busy={busy} submitting={submitting} loading={loadingSession} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
                 </main>
                 {inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={inspectorWidth} min={INSPECTOR_MIN} max={inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={setInspectorWidth} /> : null}
                 {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={setInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={compactLayout} /> : null}

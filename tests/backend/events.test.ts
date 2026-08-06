@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyPrimeEvent } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer } from '../../src/lib/events'
 import type { TranscriptMessage } from '../../src/types/api'
 
 const streamingMessage = (): TranscriptMessage => ({
@@ -21,5 +21,16 @@ describe('agent transport events', () => {
 
     const afterTransportError = applyPrimeEvent(exited, { type: 'runtime_exit', code: 2, expected: false })
     expect(afterTransportError).toHaveLength(exited.length)
+  })
+
+  it('replays live events over an older transcript load result', () => {
+    const pendingLoadEvents = createPrimeEventBuffer()
+    pendingLoadEvents.push({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: ' plus live output' } })
+    pendingLoadEvents.push({ type: 'agent_end' })
+
+    const loaded = pendingLoadEvents.replay([streamingMessage()])
+    expect(pendingLoadEvents.size).toBe(2)
+    expect(loaded[0].parts).toEqual([{ type: 'text', text: 'partial plus live output' }])
+    expect(loaded[0].streaming).toBe(false)
   })
 })

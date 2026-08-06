@@ -14,6 +14,8 @@ import { IconButton, PrimeMark, SelectControl } from './ui'
 
 interface ComposerProps {
   busy: boolean
+  submitting?: boolean
+  loading?: boolean
   disabled?: boolean
   model: string
   effort: string
@@ -31,10 +33,11 @@ const commands = [
   { command: '/status', detail: 'Show runtime status' },
 ]
 
-export function Composer({ busy, disabled, model, effort, skills, onModelChange, onEffortChange, onSend, onStop }: ComposerProps) {
+export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, skills, onModelChange, onEffortChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const submittingRef = useRef(false)
   const enabledSkills = skills.filter((skill) => skill.enabled).slice(0, 6)
 
   useEffect(() => {
@@ -43,10 +46,11 @@ export function Composer({ busy, disabled, model, effort, skills, onModelChange,
 
   const submit = async () => {
     const prompt = value.trim()
-    if (!prompt || disabled) return
+    if (!prompt || busy || submitting || loading || disabled || submittingRef.current) return
+    submittingRef.current = true
     setValue('')
     setMenu(null)
-    await onSend(prompt)
+    try { await onSend(prompt) } finally { submittingRef.current = false }
   }
 
   const insert = (text: string) => {
@@ -57,13 +61,13 @@ export function Composer({ busy, disabled, model, effort, skills, onModelChange,
 
   return (
     <div className="composer-wrap">
-      <div className={`composer ${busy ? 'composer--busy' : ''}`}>
+      <div className={`composer ${busy || submitting ? 'composer--busy' : ''}`}>
         <textarea
           ref={textareaRef}
           value={value}
-          disabled={disabled}
+          disabled={disabled || submitting || loading}
           rows={2}
-          placeholder={disabled ? 'Add a project to begin' : 'Ask Prime anything, @ for skills, / for commands'}
+          placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? 'Starting Prime…' : 'Ask Prime anything, @ for skills, / for commands'}
           aria-label="Message Prime"
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
@@ -91,7 +95,7 @@ export function Composer({ busy, disabled, model, effort, skills, onModelChange,
             <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
           </div>
           <div className="composer__actions">
-            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={!value.trim() || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
+            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={!value.trim() || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
           </div>
         </div>
       </div>
