@@ -71,6 +71,45 @@ export interface RuntimeInfo {
   thinkingLevel?: string
 }
 
+export type PrimeThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type PrimeServiceTier = 'auto' | 'default' | 'flex' | 'scale' | 'priority' | null
+export type ProviderAuthMethod = 'oauth' | 'api_key' | 'external'
+export type ProviderAuthSource = 'stored' | 'runtime' | 'environment' | 'prime_cli' | 'fallback' | 'models_json_key' | 'models_json_command' | 'stale'
+
+export interface PrimeModelDescriptor {
+  key: string
+  provider: string
+  id: string
+  name: string
+  reasoning: boolean
+  input: Array<'text' | 'image'>
+  contextWindow: number
+  maxTokens: number
+  availableThinkingLevels: PrimeThinkingLevel[]
+  fastModeSupported: boolean
+  available: boolean
+}
+
+export interface PrimeProviderDescriptor {
+  id: string
+  name: string
+  authMethod: ProviderAuthMethod
+  configured: boolean
+  authSource?: ProviderAuthSource
+  authLabel?: string
+  modelCount: number
+  availableModelCount: number
+  enabled: boolean
+}
+
+export interface PrimeModelCatalog {
+  primeVersion: string
+  refreshedAt: string
+  models: PrimeModelDescriptor[]
+  providers: PrimeProviderDescriptor[]
+  warning?: string
+}
+
 export interface PrimeEventEnvelope {
   runtimeId: string
   event: Record<string, unknown>

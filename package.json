@@ -28,7 +28,9 @@
     "postinstall": "PYTHON=/usr/bin/python3 electron-builder install-app-deps"
   },
   "dependencies": {
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "prime-agent": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-0.7.0.tgz",
+    "prime-agent-ai": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-ai-0.7.0.tgz"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
