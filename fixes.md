@@ -78,3 +78,38 @@ Acceptance: streaming tests assert Sidebar render stability and linear large-out
 - [ ] Run `npm run build`.
 - [ ] Run `npm run test:e2e`.
 - [ ] Record final bundle sizes, package/release checks that can run locally, and any platform/credential-gated checks.
+
+## Working protocol and implementation log
+
+Every remediation worker must:
+
+1. Re-read this document before editing.
+2. Work only in its assigned section/worktree.
+3. Update that section's log below with the commit SHA, files changed, focused validation, and any remaining risk before reporting completion.
+4. Commit implementation, tests, and the log update together. The orchestrator updates the checkboxes only after review/cherry-pick.
+
+These logs are the durable coordination record for compaction and handoff.
+
+### Section A log — release/CI
+
+- Pending.
+
+### Section B log — authorization/lifecycle
+
+- Pending.
+
+### Section C log — Git/multi-folder
+
+- Pending.
+
+### Section D log — runtime/transcripts/schedules
+
+- Pending.
+
+### Section E log — renderer/settings
+
+- Pending.
+
+### Section F log — performance/DRY
+
+- Pending.
