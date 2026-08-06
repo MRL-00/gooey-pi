@@ -14,7 +14,7 @@ Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/Pri
 - Isolated in-app browser with navigation, history, annotations, and external-browser handoff
 - Project-scoped `node-pty` terminal with clear, maximize/restore, resize, and clean shutdown
 - Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
-- Project-local `ask_user` extension with multiple-choice dialogs and freeform answers in Prime Work and Prime Agent's native CLI UI
+- Extension-driven question dialogs through the separately installable [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins) package
 - Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
 - macOS keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
 
@@ -38,11 +38,13 @@ Prime Work never stores provider API keys. Authentication remains owned by Prime
 
 ### Ask the user from an agent turn
 
-This repository includes `.prime/agent/extensions/ask-user.ts`. Prime Agent auto-discovers it when the working directory is this project, so the model can call `ask_user` from either Prime Work or the interactive Prime Agent CLI. The tool accepts a `question`, optional `context`, and two to twelve `options`, then always adds `Other (type your own answer)` so the user can provide a freeform response. Context is returned with the answer metadata but is not shown in the question UI. The result records whether the answer came from a listed option or freeform input. Non-interactive modes such as print/JSON do not have a question UI. To make the tool available in every CLI project, copy the extension to `~/.prime/agent/extensions/` or install the [Prime Plugins collection](https://github.com/am-will/prime-plugins):
+The `ask_user` tool is distributed separately in [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins), so it can be installed for Prime Agent with or without Prime Work. Install the collection (or configure an individual package entry) once:
 
 ```bash
-prime-agent package install https://github.com/am-will/prime-plugins
+prime-agent package install https://github.com/am-will/prime-agent-plugins
 ```
+
+Prime Work's project settings exclude its legacy workspace copy of this extension when the package is installed, preventing the same `ask_user` tool from being loaded twice. The package supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/RPC questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
 
 ## Develop
 
