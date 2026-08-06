@@ -181,10 +181,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
+    fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
     send({ type: 'agent_start' })
-    send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'Reviewing the available release channels before asking for input.' } })
+    send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: '**Reviewing the available release channels before asking for input.**' } })
     send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
-    send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta'] })
+    send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta', 'Other (type your own answer)'] })
   } else if (command.type === 'extension_ui_response' && pendingPrompt) {
     const prompt = pendingPrompt
     pendingPrompt = undefined
@@ -277,6 +278,32 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
+    const titles = page.locator('.session-row__title')
+    await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
+    await expect(titles.nth(1)).toHaveText('Primary workspace fixture')
+    const primaryFile = join(fixtureSessionFile, '..', 'primary.jsonl')
+    appendFileSync(primaryFile, `${JSON.stringify({
+      type: 'message', id: 'primary-background-assistant', parentId: 'primary-message', timestamp: '2027-01-01T00:00:00.000Z',
+      message: { role: 'assistant', content: 'Background work finished.' },
+    })}\n`)
+
+    const primaryRow = page.locator('.session-row-wrap').filter({ hasText: 'Primary workspace fixture' })
+    await expect(primaryRow).toHaveClass(/has-attention/)
+    await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
+    const attentionColor = await primaryRow.evaluate((node) => getComputedStyle(node).backgroundColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [])
+    expect(attentionColor.length).toBeGreaterThanOrEqual(3)
+    expect(attentionColor[2]).toBeGreaterThan(attentionColor[1])
+
+    await primaryRow.locator('.session-row').click()
+    await expect(primaryRow).not.toHaveClass(/has-attention/)
+    appendFileSync(primaryFile, `${JSON.stringify({
+      type: 'message', id: 'primary-new-user', parentId: 'primary-background-assistant', timestamp: '2028-01-01T00:00:00.000Z',
+      message: { role: 'user', content: 'Move this thread now.' },
+    })}\n`)
+    await expect(titles.nth(0)).toHaveText('Primary workspace fixture')
   })
 
   test('enforces the live preload and IPC frame boundaries', async () => {
@@ -554,6 +581,29 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
 
+  test('pastes an image into the composer and forwards it with the prompt', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.evaluate((node) => {
+      const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+      const transfer = new DataTransfer()
+      transfer.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }))
+      node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }))
+    })
+    await expect(page.locator('.composer-attachment')).toContainText('pasted.png')
+    await composer.fill('Describe this image')
+    await composer.press('Enter')
+    await expect(page.getByRole('dialog', { name: 'Choose a release channel' })).toBeVisible()
+    await expect(page.locator('.composer-attachment')).toHaveCount(0)
+
+    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
+    const prompt = JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8')) as { message: string; images: Array<{ type: string; mimeType: string; data: string }> }
+    expect(prompt).toMatchObject({
+      message: 'Describe this image',
+      images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }],
+    })
+    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
+  })
+
   test('round-trips an agent multiple-choice question through the desktop modal', async () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Ask me which release channel to use')
@@ -566,10 +616,17 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(liveReasoning).not.toContainText('Reasoning')
     await expect(liveReasoning.locator('.activity-line__icon')).toHaveCount(0)
     await expect.poll(() => liveReasoning.evaluate((node) => getComputedStyle(node).fontStyle)).toBe('normal')
+    const reasoningEmphasis = liveReasoning.locator('strong')
+    await expect(reasoningEmphasis).toHaveCount(1)
+    await expect.poll(() => reasoningEmphasis.evaluate((node) => Number.parseInt(getComputedStyle(node).fontWeight, 10))).toBeLessThanOrEqual(500)
     await expect(page.locator('.thinking-dots > span')).toHaveCount(3)
     await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
+    const streamingTool = page.locator('.activity-line--question')
+    await expect(streamingTool.locator('.activity-tool__summary')).toHaveAttribute('aria-expanded', 'false')
+    await expect(streamingTool.locator('.activity-tool__details')).toHaveCount(0)
     await expect(dialog.getByRole('option', { name: 'Stable' })).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Beta' })).toBeVisible()
+    await expect(dialog.getByRole('option', { name: 'Other (type your own answer)' })).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
     await dialog.getByRole('option', { name: 'Beta' }).click()
     await expect(dialog).toHaveCount(0)
