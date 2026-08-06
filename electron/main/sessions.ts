@@ -110,7 +110,7 @@ export class SessionService {
       const { sessionName: _sessionName, ...record } = metadata
       records.push({ ...record, archived: isArchived })
     }
-    return records.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || comparePaths(a.filePath, b.filePath))
+    return records.sort((a, b) => Date.parse(b.lastUserMessageAt ?? b.createdAt) - Date.parse(a.lastUserMessageAt ?? a.createdAt) || comparePaths(a.filePath, b.filePath))
   }
 
   async projectPaths(): Promise<string[]> {

@@ -32,6 +32,7 @@ export interface SessionRecord {
   title: string
   createdAt: string
   updatedAt: string
+  lastUserMessageAt?: string
   status: SessionStatus
   model?: string
   provider?: string

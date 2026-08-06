@@ -72,6 +72,12 @@ export function indexSidebarSessions(
     activeSessions.push(session)
     for (const projectId of owners.get(session.projectPath) ?? []) sessionsByProject.get(projectId)?.push(session)
   }
+  const compareByLastUserMessage = (left: SessionRecord, right: SessionRecord) => {
+    const difference = Date.parse(right.lastUserMessageAt ?? right.createdAt) - Date.parse(left.lastUserMessageAt ?? left.createdAt)
+    return difference || right.createdAt.localeCompare(left.createdAt) || left.filePath.localeCompare(right.filePath)
+  }
+  activeSessions.sort(compareByLastUserMessage)
+  for (const projectSessions of sessionsByProject.values()) projectSessions.sort(compareByLastUserMessage)
   return { activeSessions, sessionsByProject }
 }
 

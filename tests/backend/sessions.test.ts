@@ -632,3 +632,34 @@ process.exit(9)
     expect((await service.list())[0]?.archived).toBe(false)
   })
 })
+describe('SessionService user-message ordering', () => {
+  it('ignores later assistant activity until a new user message is sent', async () => {
+    const { root, project, service, store } = setup()
+    const newerUser = join(root, 'newer-user.jsonl')
+    const olderUser = join(root, 'older-user.jsonl')
+    writeFileSync(newerUser, [
+      JSON.stringify({ type: 'session', id: 'newer-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'message', id: 'newer-user-message', parentId: null, timestamp: '2025-03-01T00:00:00.000Z', message: { role: 'user', content: 'newer prompt' } }),
+      '',
+    ].join('\n'))
+    writeFileSync(olderUser, [
+      JSON.stringify({ type: 'session', id: 'older-user', cwd: project, timestamp: '2025-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'message', id: 'older-user-message', parentId: null, message: { role: 'user', content: 'older prompt', timestamp: '2025-02-01T00:00:00.000Z' } }),
+      JSON.stringify({ type: 'message', id: 'late-assistant', parentId: 'older-user-message', timestamp: '2025-04-01T00:00:00.000Z', message: { role: 'assistant', content: 'late completion' } }),
+      '',
+    ].join('\n'))
+
+    const first = await service.list()
+    expect(first.map((record) => record.id)).toEqual(['newer-user', 'older-user'])
+    expect(first.map((record) => record.lastUserMessageAt)).toEqual([
+      '2025-03-01T00:00:00.000Z',
+      '2025-02-01T00:00:00.000Z',
+    ])
+
+    appendFileSync(olderUser, `${JSON.stringify({ type: 'message', id: 'follow-up', parentId: 'late-assistant', timestamp: '2025-05-01T00:00:00.000Z', message: { role: 'user', content: 'new follow-up' } })}\n`)
+    const refreshed = new SessionService(store, null)
+    Object.defineProperty(refreshed, 'sessionRoot', { value: root })
+    expect((await refreshed.list()).map((record) => record.id)).toEqual(['older-user', 'newer-user'])
+  })
+})
+

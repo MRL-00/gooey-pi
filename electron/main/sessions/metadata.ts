@@ -58,6 +58,7 @@ export async function readSessionMetadata(filePath: string, knownStat?: Stats): 
   let projectPath = ''
   let createdAt = fallbackCreated
   let updatedAt = fallbackUpdated
+  let lastUserMessageAt: string | undefined
   let depth = 0
   let model: string | undefined
   let provider: string | undefined
@@ -96,7 +97,10 @@ export async function readSessionMetadata(filePath: string, knownStat?: Stats): 
       if (typeof message.role === 'string') lastRole = message.role
       if (typeof message.stopReason === 'string') stopReason = message.stopReason
       const text = textFromContent(message.content, 4_096)
-      if (message.role === 'user' && !firstUser && text) firstUser = text
+      if (message.role === 'user') {
+        if (!firstUser && text) firstUser = text
+        lastUserMessageAt = validTimestamp(message.timestamp, validTimestamp(value.timestamp, lastUserMessageAt ?? createdAt))
+      }
       if ((message.role === 'assistant' || message.role === 'user') && text) preview = text
     }
   }
@@ -108,6 +112,7 @@ export async function readSessionMetadata(filePath: string, knownStat?: Stats): 
     title,
     createdAt,
     updatedAt,
+    lastUserMessageAt: lastUserMessageAt ?? createdAt,
     status: statusFrom(taskState, lifecycle, lastRole, stopReason),
     model,
     provider,

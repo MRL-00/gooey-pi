@@ -33,6 +33,8 @@
 .session-list { padding-left: 20px; margin-top: 1px; }
 .session-row-wrap { position: relative; border-radius: 7px; }
 .session-row-wrap:hover, .session-row-wrap:focus-within { background: var(--surface-hover); }
+.session-row-wrap.has-attention:not(.is-selected) { background: color-mix(in srgb, var(--prime-soft) 88%, var(--sidebar)); }
+.session-row-wrap.has-attention:not(.is-selected):hover, .session-row-wrap.has-attention:not(.is-selected):focus-within { background: color-mix(in srgb, var(--prime-soft) 72%, var(--surface-hover)); }
 .session-row-wrap.is-selected { color: var(--text); background: var(--surface-selected); }
 
 .session-row-wrap > .session-row { padding-right: 55px; }
@@ -45,6 +47,7 @@
 
 .session-row { width: 100%; min-height: 37px; display: flex; align-items: flex-start; gap: 7px; padding: 5px 6px; border-radius: 7px; color: var(--text-secondary); background: transparent; text-align: left; }
 .session-row:hover { background: var(--surface-hover); }
+.session-row-wrap.has-attention:not(.is-selected) > .session-row:hover { background: transparent; }
 .session-row.is-selected { color: var(--text); background: var(--surface-selected); }
 .session-row > .session-status-mark { margin-top: 2px; }
 .session-row__text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
