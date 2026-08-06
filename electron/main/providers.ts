@@ -44,6 +44,24 @@ function boundedInteger(value: number): number {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
+export function resolveAvailableModelKeys(
+  models: ReadonlyArray<{ provider: string; id: string }>,
+  executableModels: ReadonlyArray<{ provider: string; id: string }>,
+  configuredProviders: ReadonlySet<string>,
+): { keys: Set<string>; fallbackProviders: string[] } {
+  const keys = new Set(executableModels.map((model) => modelKey(model.provider, model.id)))
+  const executableProviders = new Set(executableModels.map((model) => model.provider))
+  const fallbackProviders: string[] = []
+  // Codex subscription discovery is an entitlement refinement, not the runtime's
+  // source of truth. Prime Agent can still execute its built-in models when this
+  // optional network request fails, so an empty result must not disable the lot.
+  if (configuredProviders.has('openai-codex') && !executableProviders.has('openai-codex')) {
+    fallbackProviders.push('openai-codex')
+    for (const model of models) if (model.provider === 'openai-codex') keys.add(modelKey(model.provider, model.id))
+  }
+  return { keys, fallbackProviders }
+}
+
 function toModelDescriptor(model: Model<Api>, available: Set<string>): PrimeModelDescriptor {
   return {
     key: modelKey(model.provider, model.id),
@@ -84,13 +102,15 @@ export class PrimeProviderService {
 
     const snapshot = await this.registry.refreshModelCatalog()
     const executableModels = await this.registry.getExecutableModels()
-    const available = new Set(executableModels.map((model) => modelKey(model.provider, model.id)))
     const oauthProviders = new Map(this.authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]))
     const eligibleModels = snapshot.models.filter((model) => safeProviderId(model.provider) && safeModelId(model.id))
+    const providerIds = new Set([...eligibleModels.map((model) => model.provider), ...oauthProviders.keys()])
+    const authStatuses = new Map([...providerIds].map((id) => [id, this.registry.getProviderAuthStatus(id)]))
+    const configuredProviders = new Set([...authStatuses].filter(([, status]) => status.configured).map(([id]) => id))
+    const { keys: available, fallbackProviders } = resolveAvailableModelKeys(eligibleModels, executableModels, configuredProviders)
     const models = eligibleModels.slice(0, MAX_CATALOG_MODELS).map((model) => toModelDescriptor(model, available))
-    const providerIds = new Set([...models.map((model) => model.provider), ...oauthProviders.keys()])
     const providers = [...providerIds].filter(safeProviderId).slice(0, MAX_CATALOG_PROVIDERS).map((id): PrimeProviderDescriptor => {
-      const authStatus = this.authStorage.getAuthStatus(id)
+      const authStatus = authStatuses.get(id) ?? this.registry.getProviderAuthStatus(id)
       const providerModels = models.filter((model) => model.provider === id)
       const authMethod: ProviderAuthMethod = oauthProviders.has(id) ? 'oauth' : EXTERNAL_AUTH_PROVIDERS.has(id) ? 'external' : 'api_key'
       return {
@@ -106,14 +126,22 @@ export class PrimeProviderService {
       }
     }).sort((a, b) => a.name.localeCompare(b.name))
 
+    const warnings = [
+      snapshot.models.length > models.length
+        ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; Prime Work loaded the first ${models.length.toLocaleString()} valid entries.`
+        : undefined,
+      fallbackProviders.includes('openai-codex')
+        ? 'ChatGPT subscription model discovery was unavailable; Prime Work is showing Prime Agent’s configured Codex catalogue.'
+        : undefined,
+      this.registry.getError()?.slice(0, 4_000),
+    ].filter((warning): warning is string => Boolean(warning))
+
     this.cachedCatalog = {
       primeVersion: VERSION,
       refreshedAt: new Date().toISOString(),
       models,
       providers,
-      warning: snapshot.models.length > models.length
-        ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; Prime Work loaded the first ${models.length.toLocaleString()} valid entries.`
-        : this.registry.getError()?.slice(0, 4_000),
+      warning: warnings.length ? warnings.join(' ') : undefined,
     }
     this.cachedAt = Date.now()
     return this.withEnabledState(this.cachedCatalog, disabledProviders)

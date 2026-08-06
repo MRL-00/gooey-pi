@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PrimeProviderService } from '../../electron/main/providers'
+import { PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -21,6 +21,28 @@ function serviceWithAuthPath(): { providerService: PrimeProviderService; authPat
 }
 
 describe('Prime provider adapter', () => {
+  it('keeps configured ChatGPT subscription models selectable when discovery returns no models', () => {
+    const result = resolveAvailableModelKeys(
+      [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'anthropic', id: 'claude-sonnet-5' }],
+      [{ provider: 'anthropic', id: 'claude-sonnet-5' }],
+      new Set(['openai-codex', 'anthropic']),
+    )
+
+    expect(result.keys).toEqual(new Set(['openai-codex/gpt-5.6-sol', 'anthropic/claude-sonnet-5']))
+    expect(result.fallbackProviders).toEqual(['openai-codex'])
+  })
+
+  it('honors exact ChatGPT subscription discovery results when they are available', () => {
+    const result = resolveAvailableModelKeys(
+      [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'openai-codex', id: 'gpt-5.6-terra' }],
+      [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }],
+      new Set(['openai-codex']),
+    )
+
+    expect(result.keys).toEqual(new Set(['openai-codex/gpt-5.6-sol']))
+    expect(result.fallbackProviders).toEqual([])
+  })
+
   it('returns the Prime catalog with model-specific capability metadata', async () => {
     const catalog = await service().catalog(true)
     const gpt54 = catalog.models.find((model) => model.provider === 'openai-codex' && model.id === 'gpt-5.4')
