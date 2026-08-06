@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -284,7 +284,7 @@ describe('PluginService MCP connections', () => {
     expect(() => readFileSync(join(outside, 'agent', 'settings.json'))).toThrow()
   })
 
-  it('fails closed when the project MCP directory is substituted during an update', async () => {
+  it('fails closed when the project MCP directory is substituted at the final rename boundary', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
     const project = join(root, 'project')
@@ -294,6 +294,7 @@ describe('PluginService MCP connections', () => {
     mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true }); mkdirSync(outside)
     const settingsPath = join(projectAgentDir, 'settings.json')
     writeFileSync(settingsPath, JSON.stringify({ defaultModel: 'test/model' }))
+    writeFileSync(join(outside, 'settings.json'), JSON.stringify({ outside: 'unchanged' }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
     const internal = service as unknown as { settingsFingerprint(path: string): Promise<string> }
     const original = internal.settingsFingerprint.bind(service)
@@ -302,8 +303,14 @@ describe('PluginService MCP connections', () => {
       const fingerprint = await original(path)
       if (!substituted) {
         substituted = true
+        const temporaryName = readdirSync(projectAgentDir).find((name) => name.startsWith('settings.json.') && name.endsWith('.tmp'))
+        expect(temporaryName).toBeTypeOf('string')
+        const stagedSettings = readFileSync(join(projectAgentDir, temporaryName!), 'utf8')
         renameSync(projectAgentDir, displacedAgentDir)
         symlinkSync(outside, projectAgentDir, 'dir')
+        // Recreate the observed random staging name so the vulnerable lexical
+        // rename would overwrite settings in the substituted directory.
+        writeFileSync(join(outside, temporaryName!), stagedSettings)
       }
       return fingerprint
     }
@@ -313,7 +320,7 @@ describe('PluginService MCP connections', () => {
     })).rejects.toThrow(/configuration directory changed/)
 
     expect(substituted).toBe(true)
-    expect(() => readFileSync(join(outside, 'settings.json'))).toThrow()
+    expect(JSON.parse(readFileSync(join(outside, 'settings.json'), 'utf8')).outside).toBe('unchanged')
     expect(JSON.parse(readFileSync(join(displacedAgentDir, 'settings.json'), 'utf8')).mcpServers).toBeUndefined()
   })
 
