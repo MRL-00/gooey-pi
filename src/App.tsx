@@ -108,6 +108,7 @@ export default function App() {
     reconcileTranscriptForEvent: workspace.reconcileTranscriptForEvent,
     showExtensionUi: extension.showExtensionUi, clearExtensionUi: extension.clearExtensionUi,
     refreshGit, refreshGitOnTerminalEvent: Boolean(activeCwd),
+    activeSessionVisible: view === 'session',
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])

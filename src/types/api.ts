@@ -39,6 +39,7 @@ export interface SessionRecord {
   depth: number
   pinned?: boolean
   unread?: boolean
+  eventRevision?: number
   preview?: string
   archived?: boolean
 }
