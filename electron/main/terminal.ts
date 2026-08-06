@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import * as pty from 'node-pty'
@@ -37,9 +38,14 @@ const MAX_TERMINAL_OUTPUT_BYTES_PER_SECOND = 16 * 1024 * 1024
 const MAX_TOTAL_TERMINAL_OUTPUT_BYTES_PER_SECOND = 32 * 1024 * 1024
 const MAX_TERMINAL_IPC_CHUNK_BYTES = 1024 * 1024
 
-function processTree(rootPid: number): number[] {
+const execFileAsync = promisify(execFile)
+
+async function processTree(rootPid: number): Promise<number[]> {
   let output = ''
-  try { output = execFileSync('/bin/ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024 }) } catch { return [] }
+  try {
+    const result = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024 })
+    output = result.stdout
+  } catch { return [] }
   const children = new Map<number, number[]>()
   for (const line of output.split('\n')) {
     const [pidValue, parentValue] = line.trim().split(/\s+/).map(Number)
@@ -54,6 +60,12 @@ function processTree(rootPid: number): number[] {
 
 function signalPids(pids: number[], signal: NodeJS.Signals): void {
   for (const pid of pids) { try { process.kill(pid, signal) } catch { /* already exited */ } }
+}
+
+function signalTerminalTree(owned: OwnedTerminal, descendants: number[], signal: NodeJS.Signals): void {
+  signalPids(descendants, signal)
+  try { process.kill(-owned.terminal.pid, signal) } catch { /* no shell process group */ }
+  try { owned.terminal.kill(signal) } catch { /* already exited */ }
 }
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
@@ -171,14 +183,12 @@ export class TerminalService {
     this.terminals.delete(id)
     if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
     this.flushOutput(id, owned)
-    const descendants = processTree(owned.terminal.pid)
-    signalPids(descendants, 'SIGHUP')
-    try { process.kill(-owned.terminal.pid, 'SIGHUP') } catch { /* no shell process group */ }
-    try { owned.terminal.kill('SIGHUP') } catch { /* already exited */ }
+    const descendants = await processTree(owned.terminal.pid)
+    signalTerminalTree(owned, descendants, 'SIGHUP')
     await delay(150)
-    signalPids(descendants, 'SIGTERM')
+    signalTerminalTree(owned, descendants, 'SIGTERM')
     await delay(350)
-    signalPids(descendants, 'SIGKILL')
+    signalTerminalTree(owned, descendants, 'SIGKILL')
   }
 
   private owned(owner: WebContents, idValue: unknown): OwnedTerminal {

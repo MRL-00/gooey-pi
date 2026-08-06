@@ -28,4 +28,19 @@ describe('TerminalService', () => {
       await waitFor(() => { try { process.kill(childPid, 0); return false } catch { return true } })
     } finally { try { process.kill(childPid, 'SIGKILL') } catch { /* test cleanup */ } }
   }, 10_000)
+  it('escalates against a PTY leader that ignores HUP and TERM', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-leader-')); dirs.push(cwd)
+    const pidFile = join(cwd, 'leader.pid')
+    const owner = { id: 42, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => '/bin/zsh')
+    const created = await service.create(owner, { cwd, shell: '/bin/zsh', cols: 80, rows: 24 })
+    service.input(owner, created.terminalId, `trap '' HUP TERM; echo $$ > ${JSON.stringify(pidFile)}; while true; do sleep 1; done\r`)
+    await waitFor(() => { try { return Number(readFileSync(pidFile, 'utf8').trim()) > 0 } catch { return false } })
+    const leaderPid = Number(readFileSync(pidFile, 'utf8').trim())
+    try {
+      expect(await service.kill(owner, created.terminalId)).toBe(true)
+      await waitFor(() => { try { process.kill(leaderPid, 0); return false } catch { return true } })
+    } finally { try { process.kill(leaderPid, 'SIGKILL') } catch { /* test cleanup */ } }
+  }, 10_000)
+
 })
