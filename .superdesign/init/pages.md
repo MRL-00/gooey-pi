@@ -24,6 +24,8 @@ Dependencies:
   - `src/components/ui.tsx`
   - `src/types/api.ts`
 - `src/components/CommandPalette.tsx`
+- `src/components/ResizeHandle.tsx`
+- `src/components/MarkdownText.tsx`
   - `src/components/ui.tsx`
   - `src/types/api.ts`
 - `src/lib/events.ts`

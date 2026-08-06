@@ -1,11 +1,12 @@
 # Shared UI Primitives
 
 ## `src/components/ui.tsx`
-Custom React primitives shared throughout the desktop workspace: icon buttons, Prime mark, badges, empty states, and segmented controls.
+Shared buttons, selects, focus-contained modals, identity, empty-state, status, and segmented-control primitives.
 
 ```tsx
 import { ChevronDown, X } from 'lucide-react'
-import type { ButtonHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string
@@ -17,6 +18,27 @@ export function IconButton({ label, size = 'regular', className = '', children, 
     <button type="button" className={`icon-button icon-button--${size} ${className}`} aria-label={label} title={label} {...props}>
       {children}
     </button>
+  )
+}
+
+export function BrowserGlobe({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      className="browser-globe"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <ellipse cx="12" cy="12" rx="3.65" ry="9" />
+      <path d="M3 12h18" />
+    </svg>
   )
 }
 
@@ -71,23 +93,210 @@ export function EmptyState({ icon, title, children, action }: { icon?: ReactNode
   )
 }
 
+const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: () => void): RefObject<T | null> {
+  const containerRef = useRef<T>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+  const escapeRef = useRef(onEscape)
+  escapeRef.current = onEscape
+  useEffect(() => {
+    if (!active || !containerRef.current) return
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const container = containerRef.current
+    const focusInitial = () => {
+      const preferred = container.querySelector<HTMLElement>('[autofocus]')
+      const first = preferred ?? container.querySelector<HTMLElement>(focusableSelector)
+      first?.focus()
+    }
+    const frame = requestAnimationFrame(focusInitial)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.target instanceof Node) || !container.contains(event.target)) return
+      if (event.key === 'Escape' && escapeRef.current) { event.preventDefault(); escapeRef.current(); return }
+      if (event.key !== 'Tab') return
+      const items = [...container.querySelectorAll<HTMLElement>(focusableSelector)].filter((item) => !item.hidden && item.getClientRects().length > 0)
+      if (!items.length) { event.preventDefault(); container.focus(); return }
+      const first = items[0]; const last = items.at(-1)!
+      if (event.shiftKey && (document.activeElement === first || !container.contains(document.activeElement))) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown, true)
+      const restore = previousFocus.current
+      requestAnimationFrame(() => { if (restore?.isConnected) restore.focus() })
+    }
+  }, [active])
+  return containerRef
+}
+
 export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
-  return (
+  const titleId = useId()
+  const modalRef = useFocusTrap<HTMLElement>(true, onClose)
+  useEffect(() => {
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    if (!shell) return
+    shell.inert = true; shell.setAttribute('aria-hidden', 'true')
+    return () => { shell.inert = false; shell.removeAttribute('aria-hidden') }
+  }, [])
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <div className="modal__header"><h2 id="modal-title">{title}</h2><IconButton label="Close" onClick={onClose}><X size={16} /></IconButton></div>
+      <section ref={modalRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+        <div className="modal__header"><h2 id={titleId}>{title}</h2><IconButton label="Close" onClick={onClose}><X size={16} /></IconButton></div>
         <div className="modal__body">{children}</div>
         {footer ? <div className="modal__footer">{footer}</div> : null}
       </section>
-    </div>
+    </div>, document.body
   )
 }
 
 export function PrimeMark({ size = 24 }: { size?: number }) {
   return (
-    <span className="prime-mark" style={{ width: size, height: size }} aria-label="Prime">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.4 13.4 10.1 3.2c.5-.9 1.9-.5 1.8.5l-.4 5.5h7.3c.9 0 1.3 1.1.7 1.7L10 21c-.7.8-2-.1-1.5-1l2.3-4.6H5.3c-1 0-1.4-1.2-.9-2Z" fill="currentColor"/></svg>
+    <span className="prime-mark" style={{ width: size, height: size }} role="img" aria-label="Prime Intellect">
+      <svg viewBox="0 0 178 178" fill="none" focusable="false" aria-hidden="true">
+        <path d="m 123.322,84.092671 c -0.192,0.0065 -0.43,0.0147 -0.74,0.0147 l -0.018,-0.0247 c -0.873,0.1977 -1.958,0.1266 -3.067,0.0537 -3.29,-0.216 -6.799,-0.4465 -5.635,6.2824 0.259,1.4822 -1.538,1.8465 -2.73,1.9082 -3.384,0.1853 -6.78,0.2594 -10.171,0.1915 -0.641,-0.0106 -1.2979,-0.5506 -1.8904,-1.0388 -0.1022,-0.0844 -0.2034,-0.1673 -0.3016,-0.2457 -0.1052,-0.0865 0.2898,-1.2042 0.4942,-1.2166 3.3078,-0.1931 4.5068,-2.4361 5.7028,-4.6724 0.603,-1.1253 1.204,-2.2488 2.072,-3.1088 7.856,-7.7874 15.878,-15.4265 25.054,-21.7008 0.895,-0.6114 1.989,-1.1733 2.73,-0.1111 0.571,0.8205 0.036,1.2854 -0.512,1.7627 -0.24,0.2088 -0.482,0.4199 -0.637,0.6642 -0.554,0.8792 -1.538,1.5273 -2.514,2.1717 -1.92,1.2655 -3.82,2.5172 -2.408,5.4798 1.225,2.5651 0.129,3.0202 -1.555,3.7198 l -0.069,0.0287 c -0.72,0.3021 -1.458,0.5764 -2.194,0.8506 -1.568,0.5835 -3.134,1.1662 -4.537,2.0149 -1.408,0.8522 -2.081,2.5134 0.222,3.4954 5.033,2.1428 18.064,-1.2784 20.608,-5.9965 2.377,-4.4147 5.931,-7.6891 9.481,-10.9611 1.992,-1.836 3.984,-3.6712 5.767,-5.7067 3.844,-4.3849 8.344,-8.1939 12.846,-12.005 2.239,-1.8944 4.478,-3.78938 6.637,-5.75588 1.624,-1.48207 2.297,-3.43353 1.026,-5.56412 -1.267,-2.118215 -3.416,-2.402287 -5.435,-1.926802 -13.309,3.130982 -26.166,7.355122 -37.585,15.241302 -18.23,12.5919 -36.4911,25.1406 -54.9002,37.4669 -6.2743,4.2056 -10.0723,2.1491 -12.1657,-5.1318 -4.6502,-16.1676 -11.4681,-30.2664 -31.0569,-32.4587 -7.1574,-0.8028 -12.4066,3.6807 -11.3692,10.7949 0.5249,3.6065 0.0495,7.003 -1.6858,10.3872 -0.3827,0.7472 -0.7689,1.4947 -1.1556,2.243 -2.672,5.1706 -5.3671,10.3857 -7.0394,15.8885 -0.1399,0.4602 -0.3002,0.9444 -0.4654,1.4437 -1.4909,4.5052 -3.3862,10.2323 5.659,10.5492 0.3705,0.0123 1.0808,0.944799 0.9943,1.290699 -0.1976,0.8213 -0.5991,1.797 -1.2413,2.2725 -8.6705,6.3917 -15.79706,14.1294 -18.860151,24.5971 -1.550066,5.2865 -0.524909,10.7765 3.989391,14.8705 3.22984,2.928 7.35516,4.625 10.97396,2.162 3.3009,-2.247 6.9232,-3.754 10.538,-5.259 3.1819,-1.324 6.358,-2.646 9.3041,-4.468 0.7101,-0.439 1.5727,-0.841 2.4456,-1.248 2.4138,-1.1228 4.9063,-2.2843 4.4709,-4.3841 -0.6854,-3.2908 -4.1623,-6.3418 -7.0586,-8.7384 -2.8716,-2.3769 -10.1897,-18.3411 -9.3189,-22.176099 1.2193,-5.3704 3.9645,-10.0201 6.7125,-14.6744 2.3458,-3.9731 4.6935,-7.9497 6.0956,-12.3806 0.5804,-1.828 2.8037,-2.8284 4.9466,-2.0997 1.4543,0.4928 1.2068,1.8278 0.9762,3.0715 -0.0063,0.0344 -0.0127,0.0685 -0.019,0.1027 -0.8688,4.7802 -1.721,9.566 -2.5733,14.3517 -0.4261,2.3924 -0.8521,4.7847 -1.2803,7.1762 -0.2717,1.5316 0.2038,2.7544 1.7909,3.0631 3.0569,0.599 2.989,1.9762 1.6119,4.341499 -1.4636,2.5072 -1.6674,5.5703 -0.0309,7.8861 1.6427,2.3282 4.3908,2.8161 7.1821,1.4204 1.7415,-0.8646 3.094,-0.0927 3.0755,1.6612 -0.1112,9.3688 3.8103,7.2561 8.584,3.1681 0.439,-0.3763 1.0373,-0.5846 1.6152,-0.7857 0.1048,-0.0366 0.2091,-0.0728 0.3116,-0.1098 0.4529,-0.1616 0.9062,-0.3224 1.3595,-0.4833 8.986,-3.1884 17.9603,-6.3725 23.0334,-15.573099 0.392,-0.7187 1.6783,-1.0669 2.6795,-1.3377 0.057,-0.0154 0.113,-0.0307 0.1681,-0.0456 5.8013,-1.5766 11.7248,-1.6001 17.6438,-1.6237 4.445,-0.0176 8.888,-0.0352 13.277,-0.7107 4.329,-0.667 9.047,-3.1928 9.084,-7.3736 0.035,-3.3707 -2.546,-3.1612 -5.123,-2.9519 -1.115,0.0906 -2.231,0.1811 -3.134,-0.0185 -0.182,-0.0381 -0.375,-0.0316 -0.686,-0.0209 z" fill="currentColor" />
+        <path d="m 55.1325,131.29447 c -1.0745,7.1515 1.6551,13.2715 12.8266,13.1915 h -0.0062 c 9.5413,-0.389 20.3365,-6.164 30.8838,-13.5492 6.9653,-4.8787 12.9873,-10.0236 16.8903,-17.6253 2.872,-5.5889 1.395,-10.0723 -2.933,-13.993799 -1.908,-1.7291 -3.73,-1.9205 -5.867,0.1667 -7.5842,7.423099 -17.0261,11.474299 -26.7218,15.550099 -2.4706,1.0393 -5.2847,1.5582 -8.1187,2.0809 -7.5511,1.3924 -15.2431,2.8103 -16.954,14.1791 z" fill="currentColor" />
+      </svg>
     </span>
+  )
+}
+
+```
+
+## `src/components/ResizeHandle.tsx`
+Pointer and keyboard accessible horizontal/vertical split-pane handle.
+
+```tsx
+import { useEffect, useRef } from 'react'
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+
+type Orientation = 'vertical' | 'horizontal'
+
+interface ResizeHandleProps {
+  orientation: Orientation
+  label: string
+  value: number
+  min: number
+  max: number
+  defaultValue: number
+  onChange(value: number): void
+}
+
+const clamp = (value: number, min: number, max: number) => Math.round(Math.min(Math.max(min, max), Math.max(min, value)))
+
+export function ResizeHandle({ orientation, label, value, min, max, defaultValue, onChange }: ResizeHandleProps) {
+  const cleanupRef = useRef<(() => void) | null>(null)
+  const safeMax = Math.max(min, max)
+  const readCoordinate = (event: Pick<PointerEvent, 'clientX' | 'clientY'>) => orientation === 'vertical' ? event.clientX : event.clientY
+
+  useEffect(() => () => cleanupRef.current?.(), [])
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 48 : 12
+    let next: number | undefined
+    if (event.key === 'Home') next = min
+    if (event.key === 'End') next = safeMax
+    if (orientation === 'vertical' && event.key === 'ArrowLeft') next = value + step
+    if (orientation === 'vertical' && event.key === 'ArrowRight') next = value - step
+    if (orientation === 'horizontal' && event.key === 'ArrowUp') next = value + step
+    if (orientation === 'horizontal' && event.key === 'ArrowDown') next = value - step
+    if (next === undefined) return
+    event.preventDefault()
+    onChange(clamp(next, min, safeMax))
+  }
+
+  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    cleanupRef.current?.()
+    const target = event.currentTarget
+    const pointerId = event.pointerId
+    const startCoordinate = readCoordinate(event.nativeEvent)
+    const startValue = value
+    target.dataset.resizing = 'true'
+    document.body.classList.add(`is-resizing-${orientation}`)
+    target.setPointerCapture(pointerId)
+
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return
+      moveEvent.preventDefault()
+      onChange(clamp(startValue - (readCoordinate(moveEvent) - startCoordinate), min, safeMax))
+    }
+    const finish = (finishEvent?: PointerEvent) => {
+      if (finishEvent && finishEvent.pointerId !== pointerId) return
+      delete target.dataset.resizing
+      document.body.classList.remove('is-resizing-vertical', 'is-resizing-horizontal')
+      if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      cleanupRef.current = null
+    }
+    cleanupRef.current = () => finish()
+    window.addEventListener('pointermove', move, { passive: false })
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }
+
+  return (
+    <div
+      className={`resize-handle resize-handle--${orientation}`}
+      role="separator"
+      aria-label={label}
+      aria-orientation={orientation}
+      aria-valuemin={min}
+      aria-valuemax={safeMax}
+      aria-valuenow={Math.round(value)}
+      tabIndex={0}
+      title={`${label} · double-click to reset`}
+      onDoubleClick={() => onChange(clamp(defaultValue, min, safeMax))}
+      onKeyDown={handleKeyDown}
+      onPointerDown={beginDrag}
+    ><span aria-hidden="true" /></div>
+  )
+}
+
+```
+
+## `src/components/MarkdownText.tsx`
+Safe model-authored Markdown/GFM renderer with raw HTML and remote images disabled.
+
+```tsx
+import React, { type MouseEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+interface MarkdownTextProps {
+  text: string
+}
+
+function openMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string): void {
+  if (!href || href.startsWith('#')) return
+  event.preventDefault()
+  if (!/^(https?:|mailto:)/i.test(href)) return
+  if (window.prime) {
+    void window.prime.app.openExternal(href)
+    return
+  }
+  window.open(href, '_blank', 'noopener,noreferrer')
+}
+
+/** Render model-authored Markdown without enabling raw HTML or remote images. */
+export function MarkdownText({ text }: MarkdownTextProps) {
+  return (
+    <div className="prose">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        components={{
+          a: ({ node: _node, href, children, ...props }) => <a {...props} href={href} rel="noreferrer" onClick={(event) => openMarkdownLink(event, href)}>{children}</a>,
+          img: ({ alt }) => <span className="markdown-image-placeholder">[Image: {alt || 'attachment'}]</span>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
   )
 }
 
