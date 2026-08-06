@@ -44,6 +44,22 @@ describe('GitService', () => {
     expect(committed.output).toContain('test commit')
   }, 15_000)
 
+  it('unstages files on an unborn HEAD without changing working content', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-unborn-'))
+    dirs.push(cwd)
+    git(cwd, 'init', '-q')
+    writeFileSync(join(cwd, 'first.txt'), 'staged version\n')
+    git(cwd, 'add', 'first.txt')
+    writeFileSync(join(cwd, 'first.txt'), 'working version\n')
+    const service = new GitService(async () => cwd)
+
+    expect(await service.unstage(cwd, ['first.txt'])).toBe(true)
+    expect(spawnSync('git', ['ls-files', '--', 'first.txt'], { cwd, encoding: 'utf8' }).stdout).toBe('')
+    expect(readFileSync(join(cwd, 'first.txt'), 'utf8')).toBe('working version\n')
+    const status = await service.status(cwd)
+    expect(status.files.find((file) => file.path === 'first.txt')).toMatchObject({ staged: false, status: '??' })
+  })
+
   it('reads a safe user identity and supplies it explicitly when committing', async () => {
     const cwd = repository('prime-work-git-identity-')
     const home = mkdtempSync(join(tmpdir(), 'prime-work-git-home-'))

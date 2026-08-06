@@ -348,7 +348,12 @@ export class GitService {
     const cwd = await this.validCwd(cwdValue)
     const paths = this.validPaths(pathsValue)
     const overrides = await filterOverrides(cwd)
-    const result = await runGit(cwd, ['restore', '--staged', '--', ...paths], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
+    const head = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 }, overrides)
+    if (head.timedOut || head.outputExceeded || (head.code !== 0 && head.code !== 1)) requireProcessSuccess('Git HEAD inspection', head)
+    const args = head.code === 0
+      ? ['restore', '--staged', '--', ...paths]
+      : ['rm', '--cached', '--ignore-unmatch', '-r', '-f', '--', ...paths]
+    const result = await runGit(cwd, args, { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
     requireProcessSuccess('Git unstage', result)
     return true
   }

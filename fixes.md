@@ -118,6 +118,7 @@ These logs are the durable coordination record for compaction and handoff.
 
 - **Git filter/LFS integrity** (`fix(git): fail closed for filtered path mutations`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Hardened Git keeps filter commands disabled, inspects attributes without executing drivers, and fails filtered status/diff/stage/restore operations before content can change. Focused validation: `npm test -- --run tests/backend/git.test.ts` (7 passed). Remaining risk: trusted filter execution remains intentionally delegated to an external Git client.
 - **Safe commit identity** (`fix(git): supply a safely inspected commit identity`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Commit identity is read without config includes from repository scope and then the user global scope, validated, and passed back through fixed `-c` arguments while hooks/global config remain blocked. Focused validation: `npm test -- --run tests/backend/git.test.ts`. Remaining risk: invalid or unavailable identities still produce Git's normal explicit commit failure.
+- **Unborn-HEAD unstage** (`fix(git): support unstage before the first commit`): `electron/main/git.ts`, `tests/backend/git.test.ts`. Unstage checks `HEAD` with hardened Git and uses a cached-only forced removal fallback on unborn repositories, preserving the working file even when it changed after staging. Focused validation: `npm test -- --run tests/backend/git.test.ts`. Remaining risk: none known.
 
 ### Section D log — runtime/transcripts/schedules
 
