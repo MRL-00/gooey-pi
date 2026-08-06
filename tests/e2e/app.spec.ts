@@ -461,10 +461,9 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.message--assistant .message-actions')).toBeVisible()
 
     const completedRow = page.locator('.session-row-wrap--complete').first()
-    await expect(completedRow).toHaveClass(/has-attention/)
-    await expect(page.locator('.unread-dot')).toHaveCount(0)
-    await completedRow.locator('.session-row').click()
+    await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
+    await expect(page.locator('.unread-dot')).toHaveCount(0)
   })
 
   test('preserves a rejected settings draft with an actionable error', async () => {
@@ -491,9 +490,15 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.inspector')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
     await page.locator('.panel-scrim--sidebar').click({ position: { x: 900, y: 300 } })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
+    // The confirmed inspector preference is restored once the conflicting sidebar overlay closes.
+    await expect.poll(() => page.locator('.inspector').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
+    await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
+    await page.locator('.inspector').getByRole('button', { name: 'Close inspector' }).click()
+    await expect(page.locator('.inspector')).toHaveCount(0)
     await page.getByRole('button', { name: 'Toggle inspector' }).click()
     await expect.poll(() => page.locator('.inspector').evaluate((node) => getComputedStyle(node).position)).toBe('fixed')
-    await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
     await page.setViewportSize({ width: 1440, height: 920 })
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440)
