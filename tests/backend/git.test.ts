@@ -232,6 +232,7 @@ printf 'mutated by filter\n'
     const status = await service.status(inner)
     expect(status.isRepo).toBe(false)
     expect(status.error).toMatch(/repository root is outside the authorized folder/i)
+    await expect(service.diff(inner, 'nested.txt', false)).rejects.toThrow(/repository root is outside the authorized folder/i)
     await expect(service.stage(inner, ['nested.txt'])).rejects.toThrow(/repository root is outside the authorized folder/i)
     expect(spawnSync('git', ['ls-files', '--', 'authorized-folder/nested.txt'], { cwd: outer, encoding: 'utf8' }).stdout).toBe('')
   })

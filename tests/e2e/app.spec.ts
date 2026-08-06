@@ -522,8 +522,11 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Changes' }).click()
     await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
     await expect(page.getByRole('button', { name: /Stage$/ }).last()).toBeVisible()
+    await page.getByRole('button', { name: /Revert$/ }).last().click()
+    await expect(page.getByRole('dialog', { name: 'Revert file changes?' })).toBeVisible()
 
-    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click({ force: true })
+    await expect(page.getByRole('dialog', { name: 'Revert file changes?' })).toHaveCount(0)
     await expect(page.locator('.file-changes')).not.toContainText('secondary-change.txt')
     await expect(page.locator('.file-changes')).toContainText('README.md')
 

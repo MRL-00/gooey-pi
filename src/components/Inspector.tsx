@@ -45,7 +45,7 @@ export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runti
     </div>
     <div id={`inspector-panel-${activeTab}`} className="inspector__body" role="tabpanel" aria-labelledby={`inspector-tab-${activeTab}`} tabIndex={0}>
       {activeTab === 'summary' ? <SummaryPanel project={project} runtime={runtime} messages={messages} git={git}/> : null}
-      {activeTab === 'changes' ? <ChangesPanel cwd={cwd} git={git} onRefreshGit={onRefreshGit}/> : null}
+      {activeTab === 'changes' ? <ChangesPanel key={cwd ?? 'no-workspace'} cwd={cwd} git={git} onRefreshGit={onRefreshGit}/> : null}
       {activeTab === 'browser' ? <BrowserPanel home={browserHome} onOpenExternal={onOpenExternal}/> : null}
       {activeTab === 'files' ? <FilesPanel project={project} git={git} onReveal={onRevealPath}/> : null}
     </div>
