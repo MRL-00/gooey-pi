@@ -254,7 +254,7 @@ async function bootstrap(): Promise<void> {
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
-  const plugins = new PluginService(executable, (path) => projects.authorizeCwd(path))
+  const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path))
   const schedules = new ScheduleService(agents, executable)
   const detectedPrimeVersion = await primeVersion(executable)
   if (shutdownStarted) return

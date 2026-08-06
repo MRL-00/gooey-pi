@@ -16,19 +16,33 @@ interface PluginServiceOptions {
 }
 
 const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
+const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
 let activePluginDiscoveries = 0
 const discoveryWaiters: Array<() => void> = []
 
-async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {
-  if (activePluginDiscoveries >= MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
-    await new Promise<void>((resolve) => discoveryWaiters.push(resolve))
+async function acquirePluginDiscoverySlot(): Promise<void> {
+  if (activePluginDiscoveries < MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
+    activePluginDiscoveries += 1
+    return
   }
-  activePluginDiscoveries += 1
+  if (discoveryWaiters.length >= MAX_QUEUED_PLUGIN_DISCOVERIES) {
+    throw new TypeError('Too many plugin discoveries are pending')
+  }
+  await new Promise<void>((resolve) => discoveryWaiters.push(resolve))
+}
+
+function releasePluginDiscoverySlot(): void {
+  const next = discoveryWaiters.shift()
+  if (next) next()
+  else activePluginDiscoveries -= 1
+}
+
+async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {
+  await acquirePluginDiscoverySlot()
   try {
     return await operation()
   } finally {
-    activePluginDiscoveries -= 1
-    discoveryWaiters.shift()?.()
+    releasePluginDiscoverySlot()
   }
 }
 

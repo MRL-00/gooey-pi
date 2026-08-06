@@ -301,8 +301,7 @@ export class ProjectService {
     return entries
   }
 
-  async authorizePath(value: string): Promise<string> {
-    const path = await requireExistingPath(value)
+  private async authorizedRootFor(path: string): Promise<string> {
     if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
     if (!this.authorizedRoots.size) await this.list()
     const authorizationRevision = this.authorizationRevision
@@ -313,13 +312,25 @@ export class ProjectService {
       else this.authorizedRoots.delete(configured)
     }
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
-    if (!roots.some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
+    if (!authorizedRoot) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    return authorizedRoot
+  }
+
+  async authorizePath(value: string): Promise<string> {
+    const path = await requireExistingPath(value)
+    await this.authorizedRootFor(path)
     return path
+  }
+
+  async authorizeProjectRoot(value: string): Promise<string> {
+    const path = await requireExistingDirectory(value, 'project path')
+    return await this.authorizedRootFor(path)
   }
 
   async authorizeCwd(value: string): Promise<string> {
     const cwd = await requireExistingDirectory(value, 'cwd')
-    await this.authorizePath(cwd)
+    await this.authorizedRootFor(cwd)
     return cwd
   }
 }

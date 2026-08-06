@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginService } from '../../electron/main/plugins'
+import { ProjectService } from '../../electron/main/projects'
+import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -38,6 +40,92 @@ describe('PluginService discovery', () => {
     await Promise.all([service.list(project), service.list(alias)])
 
     expect(discoveries).toBe(1)
+  })
+
+  it('coalesces hostile concurrent nested paths to their authorized project root', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const pluginPrompt = join(project, 'project-prompt.md')
+    mkdirSync(agentDir); mkdirSync(project); writeFileSync(pluginPrompt, '# Project prompt')
+    const nestedPaths = Array.from({ length: 96 }, (_, index) => join(project, 'workspaces', String(index), 'deep'))
+    for (const path of nestedPaths) mkdirSync(path, { recursive: true })
+
+    const store = new JsonStateStore(join(root, 'state.json'))
+    const info = lstatSync(project, { bigint: true })
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
+      folderIdentities: { [realpathSync(project)]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projects = new ProjectService(store, () => null)
+    await projects.list()
+
+    let authorized = 0
+    let signalAuthorized = () => undefined
+    const allAuthorized = new Promise<void>((resolveWait) => { signalAuthorized = resolveWait })
+    let releaseDiscovery = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    let discoveries = 0
+    const discoveredRoots = new Set<string | undefined>()
+    const service = new PluginService(null, async (path) => {
+      const authorizedRoot = await projects.authorizeProjectRoot(path)
+      authorized += 1
+      if (authorized === nestedPaths.length) signalAuthorized()
+      return authorizedRoot
+    }, {
+      agentDir,
+      discover: async (_agentDir, projectPath) => {
+        discoveries += 1
+        discoveredRoots.add(projectPath)
+        await discoveryGate
+        return [{
+          id: 'project-prompt', name: 'Project prompt', description: '', kind: 'prompt',
+          location: 'project', path: realpathSync(pluginPrompt), enabled: true,
+        }]
+      },
+    })
+
+    const requests = nestedPaths.map((path) => service.list(path))
+    await allAuthorized
+    expect(discoveries).toBe(1)
+    expect(discoveredRoots).toEqual(new Set([realpathSync(project)]))
+    releaseDiscovery()
+    const results = await Promise.all(requests)
+
+    expect(new Set(results).size).toBe(1)
+    expect(service.authorizeReveal(pluginPrompt)).toBe(realpathSync(pluginPrompt))
+  })
+
+  it('rejects excess distinct discovery work instead of growing the global queue', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let releaseDiscovery = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    let active = 0
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => {
+        active += 1
+        await discoveryGate
+        active -= 1
+        return []
+      },
+    })
+
+    const outcomes = Array.from({ length: 40 }, (_, index) => service.list(join(root, `hostile-${index}`)))
+      .map((request) => request.then(() => 'fulfilled', (error: unknown) => error))
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+    const internal = service as unknown as { discoveryInFlight: Map<string, Promise<unknown>> }
+
+    expect(active).toBe(2)
+    expect(internal.discoveryInFlight.size).toBeLessThanOrEqual(34)
+    releaseDiscovery()
+    const settled = await Promise.all(outcomes)
+    const rejected = settled.filter((outcome) => outcome !== 'fulfilled')
+    expect(rejected).toHaveLength(6)
+    expect(rejected.every((error) => error instanceof TypeError && error.message.includes('Too many plugin discoveries'))).toBe(true)
   })
 
   it('bounds catalog work globally across distinct discovery keys', async () => {
