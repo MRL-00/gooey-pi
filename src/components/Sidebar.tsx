@@ -1,7 +1,6 @@
 import {
   Archive,
   Bell,
-  Bot,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -86,13 +85,6 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
   return sessions.slice(0, SIDEBAR_SESSION_LIMIT)
 }
 
-export function splitProjectSessions(sessions: SessionRecord[]): { threads: SessionRecord[]; agents: SessionRecord[] } {
-  return {
-    threads: sessions.filter((session) => session.depth === 0),
-    agents: sessions.filter((session) => session.depth > 0),
-  }
-}
-
 
 function readClearedAttention(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -109,7 +101,6 @@ function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
 function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  const [agentsCollapsed, setAgentsCollapsed] = useState<Record<string, boolean>>({})
   const [searchOpen, setSearchOpen] = useState(false)
   const sidebarRef = useFocusTrap<HTMLElement>(overlay, onClose)
   const [sessionMenu, setSessionMenu] = useState<string | null>(null)
@@ -174,22 +165,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         {visibleProjects.length === 0 ? <p className="sidebar__empty">No matching work</p> : null}
         {visibleProjects.map((project) => {
           const projectSessions = (sessionsByProject.get(project.id) ?? []).filter((session) => !normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized))
-          const { threads, agents } = splitProjectSessions(projectSessions)
           const isCollapsed = collapsed[project.id] ?? false
-          const areAgentsCollapsed = agentsCollapsed[project.id] ?? false
-          const runningAgents = agents.filter((session) => session.status === 'running' || session.status === 'waiting')
           const running = projectSessions.some((session) => session.status === 'running')
-          const renderSession = (session: SessionRecord, agent = false) => (
-            <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${agent ? 'session-row-wrap--agent' : ''} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
-              <button type="button" className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
-                <SessionStatusMark status={session.status} />
-                <span className="session-row__text"><span className="session-row__title">{agent ? <><Bot size={12} /> <span>{session.title}</span></> : session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
-              </button>
-              <IconButton size="small" className="session-row__archive" label={`Archive ${session.title}`} onClick={() => { setArchiveTarget(session); setSessionMenu(null) }}><Archive size={13}/></IconButton>
-              <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
-              {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
-            </div>
-          )
           return (
             <div className="project-group" key={project.id}>
               <div className={`project-row ${activeProjectId === project.id && activeView === 'session' ? 'is-selected' : ''}`}>
@@ -200,20 +177,23 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                   {activeProjectId === project.id ? <FolderOpen size={14} /> : <Folder size={14} />}
                   <span>{project.name}</span>
                 </button>
-                {runningAgents.length ? <span className="project-agent-count" title={`${runningAgents.length} subagent${runningAgents.length === 1 ? '' : 's'} working or waiting`}><Bot size={12} /> {runningAgents.length}</span> : null}
                 <IconButton size="small" className="project-row__new-session row-action" label={`New session in ${project.name}`} onClick={() => onNewSession(project)}><Plus size={13} /></IconButton>
                 {running ? <span className="project-working" title="Agent working"><LoaderCircle className="spin" size={13} /></span> : null}
               </div>
               {!isCollapsed ? (
                 <div className="session-list">
-                  {boundedSidebarSessions(threads).map((session) => renderSession(session))}
-                  {agents.length ? <div className="agent-session-group">
-                    <button type="button" className="agent-session-group__summary" aria-expanded={!areAgentsCollapsed} onClick={() => setAgentsCollapsed((value) => ({ ...value, [project.id]: !areAgentsCollapsed }))}>
-                      {areAgentsCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<Bot size={13} /><span>Subagents</span><small>{runningAgents.length ? `${runningAgents.length} active` : `${agents.length}`}</small>
-                    </button>
-                    {!areAgentsCollapsed ? boundedSidebarSessions(agents).map((session) => renderSession(session, true)) : null}
-                  </div> : null}
-                  {threads.length === 0 && agents.length === 0 ? <button type="button" className="session-row session-row--empty" onClick={() => onNewSession(project)}><Plus size={12} /> New session</button> : null}
+                  {boundedSidebarSessions(projectSessions).map((session) => (
+                    <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
+                      <button type="button" className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
+                        <SessionStatusMark status={session.status} />
+                        <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
+                      </button>
+                      <IconButton size="small" className="session-row__archive" label={`Archive ${session.title}`} onClick={() => { setArchiveTarget(session); setSessionMenu(null) }}><Archive size={13}/></IconButton>
+                      <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
+                      {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
+                    </div>
+                  ))}
+                  {projectSessions.length === 0 ? <button type="button" className="session-row session-row--empty" onClick={() => onNewSession(project)}><Plus size={12} /> New session</button> : null}
                 </div>
               ) : null}
             </div>
