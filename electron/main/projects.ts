@@ -58,7 +58,7 @@ export class ProjectService {
         createdAt: created[0] ?? new Date().toISOString(),
         lastOpenedAt: timestamps.at(-1) ?? new Date().toISOString(),
         sessionCount: sessions.filter((session) => resolve(session.projectPath) === canonical).length,
-        gitBranch: await this.branchProvider(canonical),
+        gitBranch: undefined,
         inferred: true,
       })
     }
