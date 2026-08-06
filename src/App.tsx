@@ -87,7 +87,7 @@ export default function App() {
     activateWorkspace: workspace.activateWorkspace, reportError,
   })
   const extension = useExtensionUi({
-    bridge, runtimeSessionsRef: workspace.runtimeSessionsRef, runtimeIdRef: workspace.runtimeIdRef,
+    bridge, activeRuntimeId: workspace.runtime?.runtimeId, runtimeSessionsRef: workspace.runtimeSessionsRef,
     setSessions, reportError,
   })
 

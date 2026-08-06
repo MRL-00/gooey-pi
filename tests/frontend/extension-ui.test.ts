@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseExtensionUiRequest } from '../../src/lib/extension-ui'
+import { pendingExtensionUiForRuntime, type PendingExtensionUi } from '../../src/hooks/useExtensionUi'
 
 describe('extension UI request parsing', () => {
   it('accepts a bounded multiple-choice request', () => {
@@ -28,5 +29,28 @@ describe('extension UI request parsing', () => {
   it('supports confirm and text input requests', () => {
     expect(parseExtensionUiRequest({ type: 'extension_ui_request', id: 'confirm-1', method: 'confirm', title: 'Continue?', message: 'This will deploy.' })).toMatchObject({ method: 'confirm', id: 'confirm-1', title: 'Continue?', message: 'This will deploy.' })
     expect(parseExtensionUiRequest({ type: 'extension_ui_request', id: 'input-1', method: 'input', title: 'Name', placeholder: 'Project name' })).toMatchObject({ method: 'input', id: 'input-1', title: 'Name', placeholder: 'Project name' })
+  })
+})
+
+
+describe('pending extension UI ownership', () => {
+  it('retains background requests until their runtime becomes active', () => {
+    const foreground: PendingExtensionUi = {
+      runtimeId: 'runtime-a',
+      request: { method: 'confirm', id: 'foreground', title: 'Continue?', message: 'Proceed' },
+    }
+    const background: PendingExtensionUi = {
+      runtimeId: 'runtime-b',
+      request: { method: 'input', id: 'background', title: 'Answer' },
+    }
+    const pending = new Map([
+      [foreground.runtimeId, foreground],
+      [background.runtimeId, background],
+    ])
+
+    expect(pendingExtensionUiForRuntime(pending, 'runtime-a')).toBe(foreground)
+    expect(pendingExtensionUiForRuntime(pending, 'runtime-b')).toBe(background)
+    expect(pendingExtensionUiForRuntime(pending, 'runtime-missing')).toBeNull()
+    expect(pendingExtensionUiForRuntime(pending)).toBeNull()
   })
 })
