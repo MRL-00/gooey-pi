@@ -480,6 +480,25 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByLabel('Close terminal').click()
   })
 
+  test('recreates the terminal in the active secondary-folder cwd', async () => {
+    await page.getByLabel(/Toggle terminal/).click()
+    const input = page.locator('.terminal-drawer .xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    await input.click()
+    await page.keyboard.type('pwd')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/secondary-project/, { timeout: 8_000 })
+
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    const restartedInput = page.locator('.terminal-drawer .xterm-helper-textarea')
+    await expect(restartedInput).toBeVisible()
+    await restartedInput.click()
+    await page.keyboard.type('pwd')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/prime-work-e2e-[^/]+\/project/, { timeout: 8_000 })
+    await expect(page.locator('.terminal-drawer .xterm-rows')).not.toContainText('secondary-project')
+  })
+
   test('opens a real PTY and exposes only functional terminal controls', async () => {
     const project = await page.evaluate(async () => {
       const projects = await window.prime.projects.list()
