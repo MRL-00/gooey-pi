@@ -20,7 +20,7 @@ function updateLastAssistant(messages: TranscriptMessage[], updater: (message: T
   for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
     if (messages[cursor].role === 'assistant' && messages[cursor].streaming) { index = cursor; break }
   }
-  if (index < 0) return [...messages, updater({ id: `stream-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] })]
+  if (index < 0) return [...messages, updater({ id: `stream-${Date.now()}`, role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [] })]
   return messages.map((message, messageIndex) => messageIndex === index ? updater(message) : message)
 }
 
@@ -70,7 +70,8 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
   if (!type) return messages
   if (type === 'agent_start' || type === 'turn_start') {
     if (messages.some((message) => message.role === 'assistant' && message.streaming)) return messages
-    return [...messages, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }]
+    const startedAt = Date.now()
+    return [...messages, { id: `assistant-${startedAt}`, role: 'assistant', timestamp: startedAt, startedAt, streaming: true, parts: [] }]
   }
   if (type === 'message_update') {
     const delta = record(raw.assistantMessageEvent) ?? record(raw.delta)
@@ -104,14 +105,19 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
     const name = string(raw.toolName) ?? 'Tool'
     return updateLastAssistant(messages, (message) => ({ ...message, parts: finishTool(message.parts, id, name, raw.result, raw.isError === true) }))
   }
-  if (type === 'agent_end') return messages.map((message) => message.streaming ? { ...message, streaming: false, parts: message.parts.length ? message.parts : [{ type: 'text', text: 'Completed without a text response.' }] } : message)
+  if (type === 'agent_end') {
+    const completedAt = Date.now()
+    return messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt, parts: message.parts.length ? message.parts : [{ type: 'text', text: 'Completed without a text response.' }] } : message)
+  }
   if (type === 'extension_error' || type === 'error' || type === 'transport_error') {
     const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
-    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false } : message)
+    const completedAt = Date.now()
+    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
     return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] }]
   }
   if (type === 'runtime_exit') {
-    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false } : message)
+    const completedAt = Date.now()
+    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
     if (raw.expected === true || finalized.at(-1)?.role === 'system') return finalized
     const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
     return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] }]

@@ -18,6 +18,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   browserAskForDownloads: true,
   terminalShell: '/bin/zsh',
   reduceMotion: false,
+  showReasoningSummaries: true,
+  showToolCalls: true,
   telemetry: false,
 }
 
@@ -102,6 +104,8 @@ export const SAMPLE_TRANSCRIPT: TranscriptMessage[] = [
     id: 'assistant-1',
     role: 'assistant',
     timestamp: Date.now() - 410000,
+    startedAt: Date.now() - 410000,
+    completedAt: Date.now() - 185000,
     parts: [
       { type: 'text', text: 'I’ll map the renderer to the preload contract first, then assemble the workspace around the session transcript.' },
       { type: 'thinking', text: 'The shell needs to preserve the conversation as the primary surface while the inspector remains contextual. I’ll keep tool output compact and expand details on demand.' },

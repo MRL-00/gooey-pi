@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,11 +24,18 @@ function createHermeticFixture(): { userData: string; home: string; project: str
   mkdirSync(userData, { recursive: true })
   mkdirSync(project, { recursive: true })
   mkdirSync(sessions, { recursive: true })
+  const canonicalProject = realpathSync(project)
   writeFileSync(join(project, 'README.md'), '# Hermetic Prime Work fixture\n')
   const sessionFile = join(sessions, 'fixture.jsonl')
   writeFileSync(sessionFile, [
-    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: project, timestamp: '2026-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalProject, timestamp: '2026-01-01T00:00:00.000Z' }),
     JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: 'Hermetic desktop fixture', timestamp: '2026-01-01T00:00:00.000Z' } }),
+    JSON.stringify({
+      type: 'custom_message', id: 'fixture-agent-message', parentId: 'fixture-message', customType: 'agent_message', display: true,
+      content: '[from child:fixture-reviewer]\nAgent-to-agent message received.\n\nEnvelope metadata that should stay hidden.',
+      details: { message: 'Fixture review complete. The readable agent response is available here.', from: { sessionName: 'fixture-reviewer', runtimeKind: 'subagent' } },
+      timestamp: '2026-01-01T00:00:01.000Z',
+    }),
     '',
   ].join('\n'))
   writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
@@ -58,10 +65,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
     send({ type: 'agent_start' })
+    send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
     send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta'] })
   } else if (command.type === 'extension_ui_response' && pendingPrompt) {
     const prompt = pendingPrompt
     pendingPrompt = undefined
+    send({ type: 'tool_execution_end', toolCallId: 'ask-1', toolName: 'ask_user', result: { value: command.value } })
+    send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The selected release channel is ' + command.value + '.' } })
     send({ type: 'agent_end' })
     send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
   } else if (command.id) {
@@ -117,6 +127,27 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
   })
 
+  test('shows agent messages as collapsed, expandable Prime handoffs instead of errors', async () => {
+    const disclosure = page.getByRole('button', { name: 'Message from agent: fixture-reviewer' })
+    await expect(disclosure).toBeVisible()
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    const tones = await page.locator('.message--agent').evaluate((node) => {
+      const styles = getComputedStyle(node)
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--danger-soft)'
+      document.body.append(probe)
+      const danger = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return { background: styles.backgroundColor, danger }
+    })
+    expect(tones.background).not.toBe(tones.danger)
+    await expect(page.getByText('Fixture review complete. The readable agent response is available here.')).toHaveCount(0)
+    await disclosure.click()
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByText('Fixture review complete. The readable agent response is available here.')).toBeVisible()
+    await expect(page.getByText('Envelope metadata that should stay hidden.')).toHaveCount(0)
+  })
+
   test('navigates all primary workspace pages and command palette', async () => {
     for (const destination of ['Projects', 'Activity', 'Scheduled', 'Plugins & skills']) {
       await page.getByRole('button', { name: destination, exact: true }).click()
@@ -124,6 +155,9 @@ test.describe('Prime Work desktop smoke', () => {
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()
+    await page.getByRole('button', { name: 'Prime Agent', exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: /Show reasoning summaries/ })).toBeChecked()
+    await expect(page.getByRole('checkbox', { name: /Show tool calls/ })).toBeChecked()
     await page.keyboard.press('Meta+K')
     await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
     await page.keyboard.press('Escape')
@@ -180,9 +214,20 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Stable' })).toBeVisible()
     await expect(dialog.getByRole('option', { name: 'Beta' })).toBeVisible()
+    await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
     await dialog.getByRole('option', { name: 'Beta' }).click()
     await expect(dialog).toHaveCount(0)
+    const worked = page.locator('.work-disclosure__button')
+    await expect(worked).toContainText(/^Worked for (?:\d+s|\d+m\d{2}s|\d+h\d{2}m\d{2}s)$/)
+    await expect(page.locator('.activity-line--question')).toHaveCount(0)
+    await worked.click()
+    await expect(page.locator('.activity-line--question')).toContainText('Which release channel?')
     await expect(page.locator('.message--assistant .message-actions')).toBeVisible()
+
+    const completedRow = page.locator('.session-row-wrap--complete').first()
+    await expect(completedRow).toHaveClass(/has-attention/)
+    await completedRow.locator('.session-row').click()
+    await expect(completedRow).not.toHaveClass(/has-attention/)
   })
 
   test('rolls back a rejected optimistic setting', async () => {

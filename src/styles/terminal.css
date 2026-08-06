@@ -1,0 +1,17 @@
+/* Terminal */
+.terminal-drawer { height: var(--terminal-height, clamp(260px, 34vh, 390px)); flex: 0 0 var(--terminal-height, clamp(260px, 34vh, 390px)); display: flex; flex-direction: column; min-height: 0; background: var(--terminal-bg); animation: drawer-in 180ms ease-out; }
+.terminal-drawer.is-maximized { position: absolute; z-index: 60; inset: 52px 0 0; height: auto; flex-basis: auto; }
+.terminal-toolbar { height: 37px; flex: 0 0 37px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; border-bottom: 1px solid var(--terminal-border); color: var(--terminal-control); background: var(--terminal-toolbar-bg); }
+.terminal-tabs, .terminal-actions { height: 100%; display: flex; align-items: center; gap: 2px; }
+.terminal-tabs > [role="tab"] { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; color: var(--terminal-control); background: transparent; font-size: 11px; }
+.terminal-tabs > button.is-active { color: var(--terminal-control-active); background: var(--terminal-control-bg); }
+.terminal-live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--terminal-control); }
+.terminal-live-dot.is-connected { background: var(--success); }
+.terminal-toolbar .icon-button { color: var(--terminal-control); }
+.terminal-toolbar .icon-button:hover { color: var(--terminal-control-active); background: var(--terminal-control-hover); }
+.terminal-cwd { max-width: 150px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 6px; font-size: 10px; }
+.terminal-surface { flex: 1; min-height: 0; padding: 8px 7px 4px; overflow: hidden; }
+.terminal-surface .xterm { height: 100%; background: var(--terminal-bg); }
+.terminal-surface .xterm .xterm-viewport { background-color: var(--terminal-bg); scrollbar-width: thin; }
+.terminal-surface .xterm .composition-view { background: var(--terminal-bg); color: var(--terminal-text); }
+

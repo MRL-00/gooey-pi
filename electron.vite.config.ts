@@ -18,6 +18,20 @@ export default defineConfig({
     root: '.',
     plugins: [react()],
     resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
-    build: { rollupOptions: { input: resolve('index.html') } },
+    build: {
+      rollupOptions: {
+        input: resolve('index.html'),
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined
+            if (id.includes('/@xterm/')) return 'terminal-vendor'
+            if (id.includes('/react-markdown/') || id.includes('/remark-') || id.includes('/unified/')) return 'markdown-vendor'
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'react-vendor'
+            if (id.includes('/lucide-react/')) return 'icons-vendor'
+            return undefined
+          },
+        },
+      },
+    },
   },
 })

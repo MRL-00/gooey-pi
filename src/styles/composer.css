@@ -1,0 +1,25 @@
+/* Composer */
+.composer-wrap { position: absolute; z-index: 10; left: 24px; right: 24px; bottom: 13px; width: min(calc(100% - 48px), 760px); margin: 0 auto; }
+.composer { position: relative; min-height: 104px; display: flex; flex-direction: column; padding: 7px; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface-raised); box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.composer:focus-within { border-color: color-mix(in srgb, var(--border-strong) 65%, var(--focus)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 30%, transparent); }
+.composer--busy { border-color: color-mix(in srgb, var(--prime) 33%, var(--border-strong)); }
+.composer > textarea { width: 100%; min-height: 55px; max-height: 150px; flex: 1; resize: none; padding: 6px 9px; border: 0; outline: 0; background: transparent; font-size: 14px; line-height: 1.5; }
+.composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.composer__controls, .composer__actions { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.select-control { height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-secondary); background: var(--surface-subtle); }
+.select-control:hover { color: var(--text); background: var(--surface-hover); }
+.select-control select { max-width: 122px; border: 0; outline: 0; color: inherit; background: transparent; appearance: none; font-size: 11px; font-weight: 520; }
+.select-control--compact { height: 26px; border-radius: 999px; }
+.permissions-chip { height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--surface-subtle); font-size: 10.5px; }
+.send-button { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border-radius: 50%; color: var(--canvas); background: var(--text); }
+.send-button:hover { opacity: .88; }
+.send-button:disabled { color: var(--text-tertiary); background: var(--surface-selected); opacity: 1; }
+.send-button--stop { color: white; background: var(--danger); }
+.composer-note { margin: 5px 0 0; color: var(--text-tertiary); font-size: 9.5px; text-align: center; }
+.composer-menu { position: absolute; z-index: 50; left: 7px; bottom: 47px; width: min(360px, calc(100% - 14px)); max-height: 260px; padding: 5px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
+.composer-menu button { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--text-secondary); background: transparent; text-align: left; }
+.composer-menu button:hover, .composer-menu button.is-active { background: var(--surface-hover); }
+.composer-menu button > span { min-width: 0; display: flex; flex-direction: column; }
+.composer-menu strong { color: var(--text); font-size: 12px; font-weight: 540; }
+.composer-menu small { overflow: hidden; color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; text-overflow: ellipsis; }
+

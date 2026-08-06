@@ -52,8 +52,11 @@ export type MessagePart =
 
 export interface TranscriptMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool' | 'system'
+  role: 'user' | 'assistant' | 'agent' | 'tool' | 'system'
   timestamp?: string | number
+  agentName?: string
+  startedAt?: string | number
+  completedAt?: string | number
   parts: MessagePart[]
   streaming?: boolean
 }
@@ -129,6 +132,8 @@ export interface AppSettings {
   browserAskForDownloads: boolean
   terminalShell: string
   reduceMotion: boolean
+  showReasoningSummaries: boolean
+  showToolCalls: boolean
   telemetry: boolean
 }
 

@@ -2,10 +2,13 @@ import {
   Archive,
   Bell,
   CalendarClock,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Folder,
   FolderOpen,
+  LoaderCircle,
+  MessageCircleQuestion,
   PackageOpen,
   PanelLeftClose,
   MoreHorizontal,
@@ -14,12 +17,12 @@ import {
   Settings,
   SquarePen,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { IconButton, Modal, PrimeMark, useFocusTrap } from './ui'
 
-interface SidebarProps {
+export interface SidebarProps {
   projects: ProjectRecord[]
   sessions: SessionRecord[]
   activeProjectId?: string
@@ -38,10 +41,29 @@ interface SidebarProps {
 }
 
 const statusLabel: Record<SessionRecord['status'], string> = {
-  idle: 'Idle', running: 'Running', waiting: 'Waiting for approval', complete: 'Complete', failed: 'Failed', unknown: 'Unknown',
+  idle: 'Idle', running: 'Running', waiting: 'Waiting for input', complete: 'Finished', failed: 'Failed', unknown: 'Unknown',
 }
 
-export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, activeView, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+
+const attentionSignature = (session: SessionRecord): string | undefined => {
+  if (session.status === 'waiting') return `waiting:${session.updatedAt}`
+  if (session.status === 'complete' && session.unread) return `complete:${session.updatedAt}`
+  return session.unread ? `unread:${session.updatedAt}` : undefined
+}
+
+function readClearedAttention(): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+  try { return JSON.parse(window.localStorage.getItem('prime-work.cleared-session-attention') ?? '{}') as Record<string, string> } catch { return {} }
+}
+
+function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
+  if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={statusLabel[status]}><LoaderCircle className="spin" size={13} /></span>
+  if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={statusLabel[status]}><MessageCircleQuestion size={12} /></span>
+  if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={statusLabel[status]}><CheckCircle2 size={12} /></span>
+  return <span className={`session-status-mark session-status-mark--${status}`} title={statusLabel[status]}><span /></span>
+}
+
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [searchOpen, setSearchOpen] = useState(false)
@@ -50,8 +72,28 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
   const [renameTarget, setRenameTarget] = useState<SessionRecord | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
+  const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(readClearedAttention)
   const activeSessions = useMemo(() => sessions.filter((session) => !session.archived), [sessions])
-  const belongsToProject = (session: SessionRecord, project: ProjectRecord) => project.path === session.projectPath || project.folders.includes(session.projectPath)
+  const needsAttention = (session: SessionRecord) => {
+    const signature = attentionSignature(session)
+    return Boolean(signature && clearedAttention[session.id] !== signature)
+  }
+  const clearAttention = (session: SessionRecord) => {
+    const signature = attentionSignature(session)
+    if (!signature) return
+    setClearedAttention((current) => ({ ...current, [session.id]: signature }))
+  }
+  useEffect(() => { window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention)) }, [clearedAttention])
+  const sessionsByProject = useMemo(() => {
+    const owners = new Map<string, string[]>()
+    const grouped = new Map(projects.map((project) => [project.id, [] as SessionRecord[]]))
+    for (const project of projects) for (const path of new Set([project.path, ...project.folders])) {
+      const entries = owners.get(path) ?? []; entries.push(project.id); owners.set(path, entries)
+    }
+    for (const session of activeSessions) for (const projectId of owners.get(session.projectPath) ?? []) grouped.get(projectId)?.push(session)
+    return grouped
+  }, [activeSessions, projects])
+  const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   useEffect(() => {
     if (!sessionMenu) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.session-row-wrap')) setSessionMenu(null) }
@@ -60,7 +102,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
     return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', escape, true) }
   }, [sessionMenu])
   const normalized = query.trim().toLowerCase()
-  const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || activeSessions.some((session) => belongsToProject(session, project) && `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, activeSessions, normalized])
+  const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || (sessionsByProject.get(project.id) ?? []).some((session) => `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, sessionsByProject, normalized])
 
   return (
     <aside ref={sidebarRef} className="sidebar" aria-label="Project and session navigation" tabIndex={overlay ? -1 : undefined}>
@@ -87,7 +129,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
           </div>
         ) : null}
         <button type="button" className={activeView === 'projects' ? 'is-active' : ''} onClick={() => onNavigate('projects')}><Folder size={15} /><span>Projects</span></button>
-        <button type="button" className={activeView === 'activity' ? 'is-active' : ''} onClick={() => onNavigate('activity')}><Bell size={15} /><span>Activity</span>{activeSessions.some((item) => item.unread) ? <span className="nav-count">{activeSessions.filter((item) => item.unread).length}</span> : null}</button>
+        <button type="button" className={activeView === 'activity' ? 'is-active' : ''} onClick={() => onNavigate('activity')}><Bell size={15} /><span>Activity</span>{unreadCount ? <span className="nav-count">{unreadCount}</span> : null}</button>
         <button type="button" className={activeView === 'scheduled' ? 'is-active' : ''} onClick={() => onNavigate('scheduled')}><CalendarClock size={15} /><span>Scheduled</span></button>
         <button type="button" className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>Plugins & skills</span></button>
       </nav>
@@ -96,7 +138,7 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
         <div className="sidebar__section-heading"><span>Projects</span><IconButton size="small" label="Add project" onClick={onAddProject}><Plus size={13} /></IconButton></div>
         {visibleProjects.length === 0 ? <p className="sidebar__empty">No matching work</p> : null}
         {visibleProjects.map((project) => {
-          const projectSessions = activeSessions.filter((session) => belongsToProject(session, project) && (!normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized)))
+          const projectSessions = (sessionsByProject.get(project.id) ?? []).filter((session) => !normalized || `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized) || project.name.toLowerCase().includes(normalized))
           const isCollapsed = collapsed[project.id] ?? false
           const running = projectSessions.some((session) => session.status === 'running')
           return (
@@ -109,16 +151,16 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
                   {activeProjectId === project.id ? <FolderOpen size={14} /> : <Folder size={14} />}
                   <span>{project.name}</span>
                 </button>
-                {running ? <span className="status-dot status-dot--running" title="Agent running" /> : null}
+                {running ? <span className="project-working" title="Agent working"><LoaderCircle className="spin" size={13} /></span> : null}
               </div>
               {!isCollapsed ? (
                 <div className="session-list">
                   {projectSessions.slice(0, 7).map((session) => (
-                    <div key={session.id} className={`session-row-wrap ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
-                      <button type="button" className="session-row" onClick={() => { setSessionMenu(null); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
-                        <span className={`status-dot status-dot--${session.status}`} title={statusLabel[session.status]} />
-                        <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : formatRelative(session.updatedAt)}</span></span>
-                        {session.unread ? <span className="unread-dot" aria-label="Unread" /> : null}
+                    <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
+                      <button type="button" className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
+                        <SessionStatusMark status={session.status} />
+                        <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
+                        {needsAttention(session) ? <span className="unread-dot" aria-label="Needs attention" /> : null}
                       </button>
                       <IconButton size="small" className="session-row__archive" label={`Archive ${session.title}`} onClick={() => { setArchiveTarget(session); setSessionMenu(null) }}><Archive size={13}/></IconButton>
                       <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
@@ -142,3 +184,23 @@ export function Sidebar({ projects, sessions, activeProjectId, activeSessionId, 
     </aside>
   )
 }
+
+export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps): boolean {
+  return previous.projects === next.projects
+    && previous.sessions === next.sessions
+    && previous.activeProjectId === next.activeProjectId
+    && previous.activeSessionId === next.activeSessionId
+    && previous.activeView === next.activeView
+    && previous.onSelectProject === next.onSelectProject
+    && previous.onSelectSession === next.onSelectSession
+    && previous.onNavigate === next.onNavigate
+    && previous.onNewSession === next.onNewSession
+    && previous.onAddProject === next.onAddProject
+    && previous.onClose === next.onClose
+    && previous.onOpenPalette === next.onOpenPalette
+    && previous.onRenameSession === next.onRenameSession
+    && previous.onArchiveSession === next.onArchiveSession
+    && previous.overlay === next.overlay
+}
+
+export const Sidebar = memo(SidebarView, areSidebarPropsEqual)

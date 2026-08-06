@@ -78,6 +78,29 @@ interface TranscriptLoad {
   eventBuffer: PrimeEventBuffer
 }
 
+export interface PendingAgentEvent {
+  generation: number
+  event: Record<string, unknown>
+}
+
+export function admitAgentEvent(
+  generation: number,
+  event: Record<string, unknown>,
+  pendingLoad: Pick<TranscriptLoad, 'generation' | 'eventBuffer'> | null,
+  frameQueue: PendingAgentEvent[],
+): 'transcript' | 'frame' {
+  if (pendingLoad?.generation === generation) {
+    pendingLoad.eventBuffer.push(event)
+    return 'transcript'
+  }
+  frameQueue.push({ generation, event })
+  return 'frame'
+}
+
+export function eventsForWorkspace(queue: PendingAgentEvent[], generation: number): Record<string, unknown>[] {
+  return queue.filter((entry) => entry.generation === generation).map((entry) => entry.event)
+}
+
 export default function App() {
   const bridge = hasBridge() ? window.prime : null
   const initialProject = bridge ? undefined : SAMPLE_PROJECTS[0]
@@ -121,9 +144,11 @@ export default function App() {
   const settingsMutationRef = useRef(0)
   const settingsQueueRef = useRef<Promise<void>>(Promise.resolve())
   const extensionUiRef = useRef<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
+  const pendingExtensionUiRequestsRef = useRef<Map<string, ExtensionUiRequest>>(new Map())
   const extensionUiTimerRef = useRef<number | null>(null)
   const inspectorTabTouchedRef = useRef(false)
   const runtimeIdRef = useRef<string | null>(null)
+  const runtimeSessionsRef = useRef<Map<string, string>>(new Map())
   const runtimeOwnerRef = useRef<{ runtimeId: string; generation: number } | null>(null)
   const workspaceRef = useRef<WorkspaceSnapshot>({
     generation: 0,
@@ -133,6 +158,8 @@ export default function App() {
     sessionFile: initialSession?.filePath,
   })
   const transcriptLoadRef = useRef<TranscriptLoad | null>(null)
+  const pendingAgentEventsRef = useRef<PendingAgentEvent[]>([])
+  const agentEventFrameRef = useRef<number | null>(null)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const gitRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
@@ -203,7 +230,10 @@ export default function App() {
   const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
     const pending = extensionUiRef.current
     if (!pending) return
+    pendingExtensionUiRequestsRef.current.delete(pending.runtimeId)
     clearExtensionUi(pending.runtimeId)
+    const pendingSession = runtimeSessionsRef.current.get(pending.runtimeId)
+    if (pendingSession) setSessions((items) => items.map((session) => session.filePath === pendingSession ? { ...session, status: 'running', unread: false } : session))
     if (!bridge) return
     try {
       await bridge.agent.command(pending.runtimeId, { type: 'extension_ui_response', id: pending.request.id, ...response })
@@ -215,6 +245,7 @@ export default function App() {
   const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(rawEvent)
     if (!request || !bridge) return
+    pendingExtensionUiRequestsRef.current.set(runtimeId, request)
     const previous = extensionUiRef.current
     if (previous) {
       void bridge.agent.command(previous.runtimeId, { type: 'extension_ui_response', id: previous.request.id, cancelled: true }).catch(() => undefined)
@@ -232,15 +263,33 @@ export default function App() {
     }
   }, [bridge, clearExtensionUi])
 
+  const flushAgentEvents = useCallback(() => {
+    agentEventFrameRef.current = null
+    const generation = workspaceRef.current.generation
+    const pending = pendingAgentEventsRef.current
+    pendingAgentEventsRef.current = []
+    const admitted = eventsForWorkspace(pending, generation)
+    if (admitted.length) setMessages((current) => admitted.reduce((messages, event) => applyPrimeEvent(messages, event), current))
+  }, [])
+
+  const queueAgentEvent = useCallback((event: Record<string, unknown>) => {
+    const generation = workspaceRef.current.generation
+    const owner = admitAgentEvent(generation, event, transcriptLoadRef.current, pendingAgentEventsRef.current)
+    if (owner === 'frame' && agentEventFrameRef.current === null) agentEventFrameRef.current = requestAnimationFrame(flushAgentEvents)
+  }, [flushAgentEvents])
+
   const attachRuntime = useCallback((nextRuntime: RuntimeInfo | undefined, generation: number) => {
     if (workspaceRef.current.generation !== generation) return
     const next = nextRuntime ?? null
+    if (next?.sessionFile) runtimeSessionsRef.current.set(next.runtimeId, next.sessionFile)
     runtimeIdRef.current = next?.runtimeId ?? null
     runtimeOwnerRef.current = next ? { runtimeId: next.runtimeId, generation } : null
     setRuntime(next)
   }, [])
 
   const activateWorkspace = useCallback((project?: ProjectRecord, session?: SessionRecord, nextRuntime?: RuntimeInfo) => {
+    pendingAgentEventsRef.current = []
+    if (agentEventFrameRef.current !== null) { cancelAnimationFrame(agentEventFrameRef.current); agentEventFrameRef.current = null }
     const generation = workspaceRef.current.generation + 1
     workspaceRef.current = {
       generation,
@@ -249,7 +298,9 @@ export default function App() {
       cwd: workspaceCwd(project, session),
       sessionFile: session?.filePath,
     }
-    transcriptLoadRef.current = null
+    transcriptLoadRef.current = bridge && session?.filePath
+      ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer() }
+      : null
     setWorkspaceGeneration(generation)
     setActiveProjectId(project?.id)
     setActiveSessionId(session?.id)
@@ -268,7 +319,14 @@ export default function App() {
     try {
       const runtimes = await bridge.agent.list()
       if (workspaceRef.current.generation !== generation) return
-      attachRuntime(findRuntimeForWorkspace(runtimes, selected.cwd, selected.sessionFile), generation)
+      const matchingRuntime = findRuntimeForWorkspace(runtimes, selected.cwd, selected.sessionFile)
+      attachRuntime(matchingRuntime, generation)
+      const pendingRequest = matchingRuntime ? pendingExtensionUiRequestsRef.current.get(matchingRuntime.runtimeId) : undefined
+      if (matchingRuntime && pendingRequest) {
+        const pending = { runtimeId: matchingRuntime.runtimeId, request: pendingRequest }
+        extensionUiRef.current = pending
+        setExtensionUi(pending)
+      }
     } catch (error) {
       if (workspaceRef.current.generation === generation) reportError(error)
     }
@@ -295,8 +353,9 @@ export default function App() {
       const nextProjects = projectsResult.status === 'fulfilled' ? projectsResult.value : []
       const nextSessions = sessionsResult.status === 'fulfilled' ? sessionsResult.value : []
       const nextRuntimes = runtimesResult.status === 'fulfilled' ? runtimesResult.value : []
+      runtimeSessionsRef.current = new Map(nextRuntimes.flatMap((candidate) => candidate.sessionFile ? [[candidate.runtimeId, candidate.sessionFile] as const] : []))
       if (projectsResult.status === 'fulfilled') setProjects(nextProjects)
-      if (sessionsResult.status === 'fulfilled') setSessions(nextSessions)
+      if (sessionsResult.status === 'fulfilled') setSessions(nextSessions.map((session) => session.status === 'waiting' ? { ...session, unread: true } : session))
       if (projectsResult.status === 'fulfilled' && workspaceRef.current.generation === startupGeneration) {
         const selected = selectStartupWorkspace(nextProjects, nextSessions, nextRuntimes)
         activateWorkspace(selected.project, selected.session, selected.runtime)
@@ -325,12 +384,28 @@ export default function App() {
   useEffect(() => {
     if (!bridge) return
     const off = bridge.agent.onEvent(({ runtimeId, event }) => {
+      const type = typeof event.type === 'string' ? event.type : ''
+      const pendingRequest = parseExtensionUiRequest(event)
+      if (pendingRequest) pendingExtensionUiRequestsRef.current.set(runtimeId, pendingRequest)
+      const sessionFile = runtimeSessionsRef.current.get(runtimeId)
+        ?? (runtimeIdRef.current === runtimeId ? workspaceRef.current.sessionFile : undefined)
+      if (sessionFile) {
+        runtimeSessionsRef.current.set(runtimeId, sessionFile)
+        const status = type === 'extension_ui_request' ? 'waiting'
+          : type === 'agent_start' || type === 'turn_start' ? 'running'
+          : type === 'agent_end' ? 'complete'
+          : type === 'extension_error' || type === 'error' || type === 'transport_error' ? 'failed'
+          : type === 'runtime_exit' ? event.expected === true ? 'complete' : 'failed'
+          : undefined
+        if (status) {
+          const updatedAt = new Date().toISOString()
+          setSessions((items) => items.map((session) => session.filePath === sessionFile ? { ...session, status, updatedAt, unread: status === 'waiting' || status === 'complete' ? true : status === 'running' ? false : session.unread } : session))
+        }
+      }
+      if (type === 'runtime_exit') { runtimeSessionsRef.current.delete(runtimeId); pendingExtensionUiRequestsRef.current.delete(runtimeId) }
       if (runtimeIdRef.current !== runtimeId) return
       showExtensionUi(runtimeId, event)
-      const pendingLoad = transcriptLoadRef.current
-      if (pendingLoad && pendingLoad.generation === workspaceRef.current.generation) pendingLoad.eventBuffer.push(event)
-      setMessages((current) => applyPrimeEvent(current, event))
-      const type = typeof event.type === 'string' ? event.type : ''
+      queueAgentEvent(event)
       if (type === 'agent_start') setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true } : current)
       if (type === 'runtime_exit') {
         clearExtensionUi(runtimeId)
@@ -343,9 +418,12 @@ export default function App() {
       }
     })
     return off
-  }, [activeProject?.primaryFolder, bridge, clearExtensionUi, showExtensionUi])
+  }, [activeProject?.primaryFolder, bridge, clearExtensionUi, queueAgentEvent, showExtensionUi])
 
-  useEffect(() => () => demoTimerRef.current.forEach(window.clearTimeout), [])
+  useEffect(() => () => {
+    demoTimerRef.current.forEach(window.clearTimeout)
+    if (agentEventFrameRef.current !== null) cancelAnimationFrame(agentEventFrameRef.current)
+  }, [])
 
   useEffect(() => {
     if (!bridge || !activeSession?.filePath) {
@@ -355,7 +433,10 @@ export default function App() {
     }
     const selected = workspaceRef.current
     if (selected.generation !== workspaceGeneration || selected.sessionFile !== activeSession.filePath) return
-    const pendingLoad: TranscriptLoad = { generation: workspaceGeneration, sessionFile: activeSession.filePath, eventBuffer: createPrimeEventBuffer() }
+    const currentLoad = transcriptLoadRef.current
+    const pendingLoad: TranscriptLoad = currentLoad?.generation === workspaceGeneration && currentLoad.sessionFile === activeSession.filePath
+      ? currentLoad
+      : { generation: workspaceGeneration, sessionFile: activeSession.filePath, eventBuffer: createPrimeEventBuffer() }
     transcriptLoadRef.current = pendingLoad
     setLoadingSession(true)
     bridge.sessions.read(activeSession.filePath).then((value) => {
@@ -363,8 +444,9 @@ export default function App() {
       transcriptLoadRef.current = null
       setMessages(pendingLoad.eventBuffer.replay(value))
     }).catch((error) => {
-      if (transcriptLoadRef.current === pendingLoad) {
+      if (transcriptLoadRef.current === pendingLoad && workspaceRef.current.generation === pendingLoad.generation) {
         transcriptLoadRef.current = null
+        setMessages((current) => pendingLoad.eventBuffer.replay(current))
         reportError(error)
       }
     }).finally(() => {
@@ -461,6 +543,7 @@ export default function App() {
   }
   const selectSession = async (session: SessionRecord) => {
     if (compactLayout) setSidebarOpen(false)
+    setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
     const project = findProjectForSession(projects, session)
     if (!project) { reportError('This session is not contained by an available project.'); return }
     const generation = activateWorkspace(project, session)
@@ -535,9 +618,9 @@ export default function App() {
         setMessages((items) => [...items, userMessage])
         if (!bridge) {
           const assistantId = `assistant-${Date.now()}`
-          setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
+          setMessages((items) => { const startedAt = Date.now(); return [...items, { id: assistantId, role: 'assistant', timestamp: startedAt, startedAt, streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }] })
           demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, parts: [...item.parts, { type: 'toolCall', id: 'demo-tool', name: 'Inspect project', args: { cwd: admittedWorkspace.cwd } }] } : item)), 450))
-          demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1250))
+          demoTimerRef.current.push(window.setTimeout(() => setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, completedAt: Date.now(), parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1250))
           return
         }
 
@@ -695,7 +778,7 @@ export default function App() {
             >
               <div ref={workspaceRowRef} className="workspace-row">
                 <main className="conversation-pane">
-                  <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || loadingSession || submitting} />
+                  <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} showReasoning={settings.showReasoningSummaries} showTools={settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || loadingSession || submitting} />
                   <Composer key={activeSessionId ? `${activeProject?.id ?? 'no-project'}:${activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspaceGeneration}`} busy={busy} submitting={submitting} loading={loadingSession} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
                 </main>
                 {inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={inspectorWidth} min={INSPECTOR_MIN} max={inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={setInspectorWidth} /> : null}
