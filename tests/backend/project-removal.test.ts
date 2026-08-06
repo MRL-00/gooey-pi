@@ -100,4 +100,28 @@ describe('project removal', () => {
     expect(projects[0].id).toBe('project-1')
     expect(projects[0].sessionCount).toBe(1)
   })
+  it('does not complete an authorization whose grant is removed during identity verification', async () => {
+    const { folder, store, service } = fixture()
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
+    }) })
+    await service.list()
+
+    const internal = service as unknown as { verifyFolderIdentity(path: string, expected?: { dev: string; ino: string }): Promise<string | undefined> }
+    const original = internal.verifyFolderIdentity.bind(service)
+    let releaseVerification!: () => void
+    let markEntered!: () => void
+    const entered = new Promise<void>((resolve) => { markEntered = resolve })
+    const release = new Promise<void>((resolve) => { releaseVerification = resolve })
+    internal.verifyFolderIdentity = async (path, expected) => { markEntered(); await release; return original(path, expected) }
+
+    const pendingAuthorization = service.authorizeCwd(folder)
+    await entered
+    expect(await service.remove('project-1')).toBe(true)
+    releaseVerification()
+    await expect(pendingAuthorization).rejects.toThrow(/authorization changed/)
+  })
+
 })

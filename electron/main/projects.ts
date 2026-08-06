@@ -263,12 +263,14 @@ export class ProjectService {
   async authorizePath(value: string): Promise<string> {
     const path = await requireExistingPath(value)
     if (!this.authorizedRoots.size) await this.list()
+    const authorizationRevision = this.authorizationRevision
     const roots: string[] = []
     for (const [configured, expected] of this.authorizedRoots) {
       const verified = await this.verifyFolderIdentity(configured, expected)
       if (verified) roots.push(verified)
       else this.authorizedRoots.delete(configured)
     }
+    if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     if (!roots.some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
     return path
   }
