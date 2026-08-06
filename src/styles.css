@@ -666,6 +666,14 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 .field > span { color: var(--text); font-size: 11px; font-weight: 540; }
 .field input, .field textarea, .field select { width: 100%; min-width: 0; }
 .field textarea { height: auto; padding: 8px; resize: vertical; }
+.extension-question__options { display: grid; gap: 7px; max-height: min(46vh, 360px); margin-top: 13px; overflow-y: auto; }
+.extension-question__options button { min-height: 43px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); text-align: left; }
+.extension-question__options button:hover, .extension-question__options button:focus-visible, .extension-question__options button.is-selected { color: var(--text); border-color: var(--prime); background: var(--prime-soft); }
+.extension-question__option-index { width: 22px; height: 22px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-tertiary); background: var(--surface-raised); font-size: 10px; }
+.extension-question__options button.is-selected .extension-question__option-index { color: var(--canvas); border-color: var(--prime); background: var(--prime); }
+.extension-question__message { margin: 0; white-space: pre-wrap; }
+.extension-question__field { margin-top: 0; }
+
 .command-palette { width: min(100%, 580px); align-self: flex-start; margin-top: min(14vh, 110px); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-popover); animation: palette-in 150ms ease-out; }
 .command-search { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }
 .command-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 13px; }

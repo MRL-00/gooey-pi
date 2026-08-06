@@ -8,6 +8,7 @@ import { Inspector } from '@/components/Inspector'
 import { TerminalDrawer } from '@/components/TerminalDrawer'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ResizeHandle } from '@/components/ResizeHandle'
+import { ExtensionUiModal, type ExtensionUiResponse } from '@/components/ExtensionUiModal'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { ActivityPage } from '@/pages/ActivityPage'
 import { ScheduledPage } from '@/pages/ScheduledPage'
@@ -15,6 +16,7 @@ import { PluginsPage } from '@/pages/PluginsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { applyPrimeEvent, createPrimeEventBuffer } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
+import { parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
 import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, projectContainsPath, selectStartupWorkspace, workspaceCwd } from '@/lib/workspace'
 import {
   DEFAULT_SETTINGS,
@@ -110,6 +112,9 @@ export default function App() {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState('medium')
   const [toast, setToast] = useState<string | null>(null)
+  const [extensionUi, setExtensionUi] = useState<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
+  const extensionUiRef = useRef<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
+  const extensionUiTimerRef = useRef<number | null>(null)
   const runtimeIdRef = useRef<string | null>(null)
   const runtimeOwnerRef = useRef<{ runtimeId: string; generation: number } | null>(null)
   const workspaceRef = useRef<WorkspaceSnapshot>({
@@ -177,6 +182,47 @@ export default function App() {
     setToast(message)
     window.setTimeout(() => setToast((current) => current === message ? null : current), 4800)
   }, [])
+
+  const clearExtensionUi = useCallback((runtimeId?: string) => {
+    const current = extensionUiRef.current
+    if (!current || (runtimeId && current.runtimeId !== runtimeId)) return
+    if (extensionUiTimerRef.current !== null) window.clearTimeout(extensionUiTimerRef.current)
+    extensionUiTimerRef.current = null
+    extensionUiRef.current = null
+    setExtensionUi(null)
+  }, [])
+
+  const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
+    const pending = extensionUiRef.current
+    if (!pending) return
+    clearExtensionUi(pending.runtimeId)
+    if (!bridge) return
+    try {
+      await bridge.agent.command(pending.runtimeId, { type: 'extension_ui_response', id: pending.request.id, ...response })
+    } catch (error) {
+      if (runtimeIdRef.current === pending.runtimeId) reportError(error)
+    }
+  }, [bridge, clearExtensionUi, reportError])
+
+  const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
+    const request = parseExtensionUiRequest(rawEvent)
+    if (!request || !bridge) return
+    const previous = extensionUiRef.current
+    if (previous) {
+      void bridge.agent.command(previous.runtimeId, { type: 'extension_ui_response', id: previous.request.id, cancelled: true }).catch(() => undefined)
+      clearExtensionUi(previous.runtimeId)
+    }
+    const pending = { runtimeId, request }
+    extensionUiRef.current = pending
+    setExtensionUi(pending)
+    if ('timeout' in request && request.timeout !== undefined) {
+      extensionUiTimerRef.current = window.setTimeout(() => {
+        if (extensionUiRef.current?.request.id !== request.id) return
+        void bridge.agent.command(runtimeId, { type: 'extension_ui_response', id: request.id, cancelled: true }).catch(() => undefined)
+        clearExtensionUi(runtimeId)
+      }, request.timeout)
+    }
+  }, [bridge, clearExtensionUi])
 
   const attachRuntime = useCallback((nextRuntime: RuntimeInfo | undefined, generation: number) => {
     if (workspaceRef.current.generation !== generation) return
@@ -268,12 +314,14 @@ export default function App() {
     if (!bridge) return
     const off = bridge.agent.onEvent(({ runtimeId, event }) => {
       if (runtimeIdRef.current !== runtimeId) return
+      showExtensionUi(runtimeId, event)
       const pendingLoad = transcriptLoadRef.current
       if (pendingLoad && pendingLoad.generation === workspaceRef.current.generation) pendingLoad.eventBuffer.push(event)
       setMessages((current) => applyPrimeEvent(current, event))
       const type = typeof event.type === 'string' ? event.type : ''
       if (type === 'agent_start') setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true } : current)
       if (type === 'runtime_exit') {
+        clearExtensionUi(runtimeId)
         runtimeIdRef.current = null
         runtimeOwnerRef.current = null
         setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
@@ -283,7 +331,7 @@ export default function App() {
       }
     })
     return off
-  }, [bridge, activeProject?.primaryFolder])
+  }, [activeProject?.primaryFolder, bridge, clearExtensionUi, showExtensionUi])
 
   useEffect(() => () => demoTimerRef.current.forEach(window.clearTimeout), [])
 
@@ -618,6 +666,7 @@ export default function App() {
         </div>
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
+      {extensionUi ? <ExtensionUiModal request={extensionUi.request} onRespond={(response) => void respondToExtensionUi(response)} /> : null}
       {toast ? <div className="toast" role="status">{toast}<button type="button" aria-label="Dismiss" onClick={() => setToast(null)}>×</button></div> : null}
     </div>
   )
