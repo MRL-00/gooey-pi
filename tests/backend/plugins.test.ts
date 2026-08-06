@@ -1,0 +1,77 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { PluginService } from '../../electron/main/plugins'
+
+const dirs: string[] = []
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-')); dirs.push(dir); return dir }
+
+describe('PluginService MCP connections', () => {
+  it('connects an HTTP MCP server without treating its URL as a package repository', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'test/model' }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const response = await service.connectMcp({
+      name: 'local-studio',
+      scope: 'user',
+      type: 'http',
+      url: 'http://127.0.0.1:3333/mcp',
+    })
+
+    expect(response.ok).toBe(true)
+    const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.defaultModel).toBe('test/model')
+    expect(settings.mcpServers['local-studio']).toEqual({ type: 'http', url: 'http://127.0.0.1:3333/mcp', enabled: true })
+    const record = (await service.list()).find((item) => item.name === 'local-studio')
+    expect(record).toMatchObject({ kind: 'mcp', location: 'user', enabled: true, source: 'http://127.0.0.1:3333' })
+    expect(record?.description).not.toContain('/mcp')
+  })
+
+  it('connects a stdio MCP server at project scope with argv kept separate', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    mkdirSync(project)
+    const service = new PluginService(null, async (path) => {
+      expect(path).toBe(project)
+      return resolve(path)
+    }, { agentDir })
+
+    const response = await service.connectMcp({
+      name: 'project-files',
+      scope: 'project',
+      projectPath: project,
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', project],
+    })
+
+    expect(response.ok).toBe(true)
+    const settings = JSON.parse(readFileSync(join(project, '.prime', 'agent', 'settings.json'), 'utf8'))
+    expect(settings.mcpServers['project-files']).toEqual({
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', project],
+      enabled: true,
+    })
+    expect((await service.list(project)).find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
+  })
+
+  it('rejects credentialed URLs and refuses to overwrite an existing server', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ mcpServers: { existing: { type: 'stdio', command: 'safe' } } }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    await expect(service.connectMcp({ name: 'secret', scope: 'user', type: 'http', url: 'https://token@example.test/mcp' })).rejects.toThrow(/credentials/)
+    const duplicate = await service.connectMcp({ name: 'existing', scope: 'user', type: 'stdio', command: 'other' })
+    expect(duplicate.ok).toBe(false)
+    expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')).mcpServers.existing.command).toBe('safe')
+  })
+})

@@ -1,14 +1,15 @@
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, readFileSync, realpathSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import type { SkillRecord } from '../../src/types/api'
+import type { McpConnectionInput, SkillRecord } from '../../src/types/api'
 import { runProcess } from './process-utils'
 import { isPathWithin, isRecord, requireString, stripAnsi } from './validation'
 
 type Kind = SkillRecord['kind']
 type Location = SkillRecord['location']
 interface Candidate { path: string; kind: Exclude<Kind, 'package' | 'mcp'>; location: Location }
+interface PluginServiceOptions { agentDir?: string }
 
 function idFor(...parts: string[]): string {
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)
@@ -118,14 +119,22 @@ function displayName(candidate: Candidate, metadata: { name?: string }): string 
 export class PluginService {
   private lastProjectPath: string | undefined
   private knownPaths = new Set<string>()
+  private settingsMutation = Promise.resolve()
+  private readonly agentDir: string
 
-  constructor(private readonly primeAgentPath: string | null, private readonly authorizeProject: (path: string) => Promise<string>) {}
+  constructor(
+    private readonly primeAgentPath: string | null,
+    private readonly authorizeProject: (path: string) => Promise<string>,
+    options: PluginServiceOptions = {},
+  ) {
+    this.agentDir = options.agentDir ?? join(homedir(), '.prime', 'agent')
+  }
 
   async list(projectPath?: string): Promise<SkillRecord[]> {
     const safeProjectPath = projectPath ? await this.authorizeProject(requireString(projectPath, 'projectPath', { min: 1, max: 4096 })) : undefined
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const candidates: Candidate[] = []
-    const agentDir = join(homedir(), '.prime', 'agent')
+    const agentDir = this.agentDir
     const globalSettings = readSettings(join(agentDir, 'settings.json'))
 
     collectDirectory(join(agentDir, 'skills'), 'skill', 'user', candidates, { skillRoot: true })
@@ -198,6 +207,42 @@ export class PluginService {
     return { ok: result.code === 0, output: stripAnsi(`${result.stdout}${result.stderr}`).trim() }
   }
 
+  async connectMcp(inputValue: unknown): Promise<{ ok: boolean; output: string }> {
+    const input = this.validateMcpConnection(inputValue)
+    let settingsPath: string
+    if (input.scope === 'project') {
+      const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
+      this.lastProjectPath = projectPath
+      settingsPath = join(projectPath, '.prime', 'agent', 'settings.json')
+    } else {
+      settingsPath = join(this.agentDir, 'settings.json')
+    }
+
+    let response = { ok: true, output: `Connected MCP server “${input.name}”. It will be available in new Prime sessions.` }
+    const mutation = this.settingsMutation.then(async () => {
+      const release = await this.acquireSettingsLock(settingsPath)
+      try {
+        const settings = this.readSettingsForUpdate(settingsPath)
+        if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
+        const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
+        if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
+          response = { ok: false, output: `An MCP server named “${input.name}” already exists in this scope.` }
+          return
+        }
+        const config = input.type === 'http'
+          ? { type: 'http', url: input.url, enabled: true }
+          : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
+        settings.mcpServers = { ...currentServers, [input.name]: config }
+        this.writeSettingsAtomically(settingsPath, settings)
+      } finally {
+        release()
+      }
+    })
+    this.settingsMutation = mutation.catch(() => undefined)
+    await mutation
+    return response
+  }
+
   refresh(): Promise<SkillRecord[]> { return this.list(this.lastProjectPath) }
 
   private bundledSkillsDirectory(): string | null {
@@ -233,6 +278,71 @@ export class PluginService {
           output.push({ id: idFor('mcp', location, name), name, description: `Local stdio MCP server (${command})`, kind: 'mcp', location, enabled, source: command })
         }
       }
+    }
+  }
+
+  private validateMcpConnection(value: unknown): McpConnectionInput {
+    if (!isRecord(value)) throw new TypeError('MCP connection must be an object')
+    const name = requireString(value.name, 'MCP server name', { min: 1, max: 64, trim: true })
+    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name) || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
+    const scope = value.scope
+    if (scope !== 'user' && scope !== 'project') throw new TypeError('MCP scope must be user or project')
+    const projectPath = scope === 'project' ? requireString(value.projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
+    if (value.type === 'http') {
+      const urlValue = requireString(value.url, 'MCP server URL', { min: 1, max: 2_048, trim: true })
+      let url: URL
+      try { url = new URL(urlValue) } catch { throw new TypeError('MCP server URL is invalid') }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('MCP server URL must use http or https')
+      if (url.username || url.password) throw new TypeError('MCP server URL credentials are not allowed')
+      return { name, scope, projectPath, type: 'http', url: url.toString() }
+    }
+    if (value.type === 'stdio') {
+      const command = requireString(value.command, 'MCP command', { min: 1, max: 2_048, trim: true })
+      if (command.startsWith('-') || /[\0\r\n\u2028\u2029]/.test(command)) throw new TypeError('MCP command is invalid')
+      if (value.args !== undefined && !Array.isArray(value.args)) throw new TypeError('MCP arguments must be a list')
+      const args = (value.args ?? []).map((arg, index) => {
+        const parsed = requireString(arg, `MCP argument ${index + 1}`, { max: 2_048 })
+        if (/[\0\r\n\u2028\u2029]/.test(parsed)) throw new TypeError(`MCP argument ${index + 1} is invalid`)
+        return parsed
+      })
+      if (args.length > 64) throw new TypeError('MCP arguments exceed the maximum count')
+      return { name, scope, projectPath, type: 'stdio', command, args }
+    }
+    throw new TypeError('MCP transport must be http or stdio')
+  }
+
+  private readSettingsForUpdate(path: string): Record<string, unknown> {
+    if (!existsSync(path)) return {}
+    let value: unknown
+    try { value = JSON.parse(readFileSync(path, 'utf8')) } catch { throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server') }
+    if (!isRecord(value)) throw new TypeError('Prime Agent settings must contain a JSON object')
+    return value
+  }
+
+  private async acquireSettingsLock(settingsPath: string): Promise<() => void> {
+    const directory = dirname(settingsPath)
+    mkdirSync(directory, { recursive: true })
+    const lockPath = `${settingsPath}.lock`
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        mkdirSync(lockPath)
+        return () => { rmSync(lockPath, { recursive: true, force: true }) }
+      } catch (error) {
+        const code = isRecord(error) && typeof error.code === 'string' ? error.code : ''
+        if (code !== 'EEXIST') throw error
+        await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+      }
+    }
+    throw new Error('Prime Agent settings are busy; try again')
+  }
+
+  private writeSettingsAtomically(path: string, settings: Record<string, unknown>): void {
+    const temporary = `${path}.${process.pid}.${Date.now()}.tmp`
+    try {
+      writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      renameSync(temporary, path)
+    } finally {
+      rmSync(temporary, { force: true })
     }
   }
 

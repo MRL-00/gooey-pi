@@ -40,6 +40,7 @@ export interface SessionRecord {
   pinned?: boolean
   unread?: boolean
   preview?: string
+  archived?: boolean
 }
 
 export type MessagePart =
@@ -83,6 +84,17 @@ export interface SkillRecord {
   icon?: string
   source?: string
 }
+
+export type McpConnectionInput = {
+  name: string
+  scope: 'user' | 'project'
+  projectPath?: string
+} & (
+  | { type: 'http'; url: string }
+  | { type: 'stdio'; command: string; args?: string[] }
+)
+
+export interface ProjectFileEntry { path: string; type: 'file' | 'directory' }
 
 export interface GitFileChange {
   path: string
@@ -132,8 +144,8 @@ export interface ScheduleRecord {
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
-  projects: { list(): Promise<ProjectRecord[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
-  sessions: { list(projectPath?: string): Promise<SessionRecord[]>; read(filePath: string): Promise<TranscriptMessage[]>; rename(filePath: string, title: string): Promise<boolean>; archive(filePath: string): Promise<boolean> }
+  projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
+  sessions: { list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>; read(filePath: string): Promise<TranscriptMessage[]>; rename(filePath: string, title: string): Promise<boolean>; archive(filePath: string, archived?: boolean): Promise<boolean> }
   agent: {
     start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string }): Promise<RuntimeInfo>
     command(runtimeId: string, command: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -150,7 +162,7 @@ export interface PrimeWorkApi {
     onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<{ ok: boolean; output: string }> }
-  plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<{ ok: boolean; output: string }>; refresh(): Promise<SkillRecord[]> }
+  plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<{ ok: boolean; output: string }>; connectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>; refresh(): Promise<SkillRecord[]> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
   schedules: { list(runtimeId?: string): Promise<ScheduleRecord[]>; add(runtimeId: string, schedule: string, prompt: string): Promise<Record<string, unknown>>; cancel(runtimeId: string, jobId: string): Promise<Record<string, unknown>> }
 }

@@ -23,6 +23,10 @@ interface Services {
 
 type IpcEvent = IpcMainInvokeEvent | IpcMainEvent
 
+export function isTrustedRendererUrl(url: string, expectedRendererUrl: string): boolean {
+  return url === expectedRendererUrl
+}
+
 export interface IpcRegistration {
   authorize(webContents: WebContents): void
   revoke(webContentsId: number): void
@@ -33,10 +37,13 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const authorized = new Set<number>()
   const invokeChannels: string[] = []
   const eventChannels: string[] = []
+  let closed = false
 
   const verify = (event: IpcEvent): void => {
-    const trustedFrame = event.senderFrame === event.sender.mainFrame && event.senderFrame.url === expectedRendererUrl && event.sender.getURL() === expectedRendererUrl
-    if (!authorized.has(event.sender.id) || event.sender.isDestroyed() || !trustedFrame) throw new Error('IPC sender is not authorized')
+    const trustedFrame = event.senderFrame === event.sender.mainFrame
+      && isTrustedRendererUrl(event.senderFrame.url, expectedRendererUrl)
+      && isTrustedRendererUrl(event.sender.getURL(), expectedRendererUrl)
+    if (closed || !authorized.has(event.sender.id) || event.sender.isDestroyed() || !trustedFrame) throw new Error('IPC sender is not authorized')
   }
   const handle = (channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>): void => {
     ipcMain.removeHandler(channel)
@@ -70,15 +77,16 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   })
 
   handle('projects:list', () => services.projects.list())
+  handle('projects:list-files', (_event, root) => services.projects.listFiles(root))
   handle('projects:add', () => services.projects.add())
   handle('projects:grant-inferred', (_event, path) => services.projects.grantInferred(path))
   handle('projects:remove', (_event, id) => services.projects.remove(id))
   handle('projects:touch', (_event, id) => services.projects.touch(id))
 
-  handle('sessions:list', (_event, projectPath) => services.sessions.list(projectPath as string | undefined))
+  handle('sessions:list', (_event, projectPath, includeArchived) => services.sessions.list(projectPath as string | undefined, includeArchived))
   handle('sessions:read', (_event, filePath) => services.sessions.read(filePath as string))
   handle('sessions:rename', (_event, filePath, title) => services.sessions.rename(filePath as string, title as string))
-  handle('sessions:archive', (_event, filePath) => services.sessions.archive(filePath as string))
+  handle('sessions:archive', (_event, filePath, archived) => services.sessions.archive(filePath as string, archived))
 
   handle('agent:start', (_event, options) => services.agents.start(options))
   handle('agent:command', (_event, runtimeId, command) => services.agents.command(runtimeId, command))
@@ -99,6 +107,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('plugins:list', (_event, projectPath) => services.plugins.list(projectPath as string | undefined))
   handle('plugins:install', (_event, source) => services.plugins.install(source))
+  handle('plugins:connect-mcp', (_event, input) => services.plugins.connectMcp(input))
   handle('plugins:refresh', () => services.plugins.refresh())
 
   handle('settings:get', () => services.settings.get())
@@ -110,13 +119,15 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('schedules:cancel', (_event, runtimeId, jobId) => services.schedules.cancel(runtimeId, jobId))
 
   return {
-    authorize(webContents) { authorized.add(webContents.id) },
+    authorize(webContents) { if (!closed) authorized.add(webContents.id) },
     revoke(webContentsId) { authorized.delete(webContentsId); services.terminals.killOwner(webContentsId) },
     dispose() {
+      if (closed) return
+      closed = true
+      authorized.clear()
       for (const channel of invokeChannels) ipcMain.removeHandler(channel)
       // Event listeners are removed wholesale only for our private fixed channels.
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)
-      authorized.clear()
     },
   }
 }

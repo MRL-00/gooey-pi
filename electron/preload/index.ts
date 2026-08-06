@@ -18,16 +18,17 @@ const api: PrimeWorkApi = {
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    listFiles: (root) => ipcRenderer.invoke('projects:list-files', root),
     add: () => ipcRenderer.invoke('projects:add'),
     grantInferred: (path) => ipcRenderer.invoke('projects:grant-inferred', path),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
     touch: (id) => ipcRenderer.invoke('projects:touch', id),
   },
   sessions: {
-    list: (projectPath) => ipcRenderer.invoke('sessions:list', projectPath),
+    list: (projectPath, includeArchived) => ipcRenderer.invoke('sessions:list', projectPath, includeArchived),
     read: (filePath) => ipcRenderer.invoke('sessions:read', filePath),
     rename: (filePath, title) => ipcRenderer.invoke('sessions:rename', filePath, title),
-    archive: (filePath) => ipcRenderer.invoke('sessions:archive', filePath),
+    archive: (filePath, archived) => ipcRenderer.invoke('sessions:archive', filePath, archived),
   },
   agent: {
     start: (options) => ipcRenderer.invoke('agent:start', options),
@@ -55,6 +56,7 @@ const api: PrimeWorkApi = {
   plugins: {
     list: (projectPath) => ipcRenderer.invoke('plugins:list', projectPath),
     install: (source) => ipcRenderer.invoke('plugins:install', source),
+    connectMcp: (input) => ipcRenderer.invoke('plugins:connect-mcp', input),
     refresh: () => ipcRenderer.invoke('plugins:refresh'),
   },
   settings: {

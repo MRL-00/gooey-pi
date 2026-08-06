@@ -28,6 +28,7 @@ import type {
   AppSettings,
   GitStatus,
   InspectorTab,
+  McpConnectionInput,
   PrimeWorkApi,
   ProjectRecord,
   RuntimeInfo,
@@ -53,6 +54,12 @@ const readPanelSize = (key: string, fallback: number) => {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
+const requestFailureMessage = (error: unknown) => {
+  const raw = error instanceof Error ? error.message : String(error)
+  const detail = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '').trim()
+  return detail ? `Request failed: ${detail.slice(0, 1_000)}` : 'Prime could not process the request.'
+}
+
 export default function App() {
   const bridge = hasBridge() ? window.prime : null
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
@@ -71,6 +78,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 980px)').matches)
   const [inspectorWidth, setInspectorWidth] = useState(() => readPanelSize('prime-work.inspector-width', INSPECTOR_DEFAULT))
   const [terminalHeight, setTerminalHeight] = useState(() => readPanelSize('prime-work.terminal-height', TERMINAL_DEFAULT))
   const [inspectorMax, setInspectorMax] = useState(660)
@@ -81,12 +89,30 @@ export default function App() {
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState('medium')
-  const [environment, setEnvironment] = useState('local')
   const [toast, setToast] = useState<string | null>(null)
   const runtimeIdRef = useRef<string | null>(null)
   const demoTimerRef = useRef<number[]>([])
   const workspaceRowRef = useRef<HTMLDivElement>(null)
   const sessionWorkspaceRef = useRef<HTMLDivElement>(null)
+  const compactRestoreRef = useRef<'inspector' | null>(null)
+
+  useEffect(() => {
+    const sync = () => setCompactLayout(window.innerWidth <= 980)
+    sync(); window.addEventListener('resize', sync)
+    return () => window.removeEventListener('resize', sync)
+  }, [])
+
+  useEffect(() => {
+    if (compactLayout && sidebarOpen && inspectorOpen) { compactRestoreRef.current = 'inspector'; setInspectorOpen(false) }
+    else if (!compactLayout && compactRestoreRef.current === 'inspector' && sidebarOpen && !inspectorOpen) { compactRestoreRef.current = null; setInspectorOpen(true) }
+  }, [compactLayout, sidebarOpen, inspectorOpen])
+
+  useEffect(() => {
+    if (!compactLayout || !inspectorOpen) return
+    const targets = [...document.querySelectorAll<HTMLElement>('.title-toolbar, .conversation-pane, .terminal-drawer, .workspace-row > .resize-handle')]
+    for (const target of targets) target.inert = true
+    return () => { for (const target of targets) target.inert = false }
+  }, [compactLayout, inspectorOpen, terminalOpen])
 
   const activeProject = useMemo(() => projects.find((project) => project.id === activeProjectId) ?? projects.find((project) => project.path === sessions.find((session) => session.id === activeSessionId)?.projectPath) ?? projects[0], [projects, sessions, activeProjectId, activeSessionId])
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId), [sessions, activeSessionId])
@@ -121,13 +147,21 @@ export default function App() {
   useEffect(() => {
     if (!bridge) return
     let cancelled = false
+    const projectPath = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
+    bridge.plugins.list(projectPath).then((records) => { if (!cancelled) setSkills(records) }).catch(reportError)
+    return () => { cancelled = true }
+  }, [bridge, activeProject?.primaryFolder, activeProject?.inferred, reportError])
+
+  useEffect(() => {
+    if (!bridge) return
+    let cancelled = false
     Promise.allSettled([
-      bridge.app.getMeta(), bridge.projects.list(), bridge.sessions.list(), bridge.settings.get(), bridge.plugins.list(), bridge.schedules.list(), bridge.agent.list(),
+      bridge.app.getMeta(), bridge.projects.list(), bridge.sessions.list(undefined, true), bridge.settings.get(), bridge.plugins.list(), bridge.schedules.list(), bridge.agent.list(),
     ]).then(([metaResult, projectsResult, sessionsResult, settingsResult, skillsResult, schedulesResult, runtimesResult]) => {
       if (cancelled) return
       if (metaResult.status === 'fulfilled') setMeta(metaResult.value)
       if (projectsResult.status === 'fulfilled') { setProjects(projectsResult.value); setActiveProjectId((current) => current ?? projectsResult.value[0]?.id) }
-      if (sessionsResult.status === 'fulfilled') { setSessions(sessionsResult.value); setActiveSessionId((current) => current ?? sessionsResult.value[0]?.id) }
+      if (sessionsResult.status === 'fulfilled') { setSessions(sessionsResult.value); setActiveSessionId((current) => current ?? sessionsResult.value.find((session) => !session.archived)?.id) }
       if (settingsResult.status === 'fulfilled') { setSettings(settingsResult.value); setSidebarOpen(settingsResult.value.sidebarOpen); setInspectorOpen(settingsResult.value.inspectorOpen); setTerminalOpen(settingsResult.value.terminalOpen); setInspectorTab(settingsResult.value.defaultInspectorTab) }
       if (skillsResult.status === 'fulfilled') setSkills(skillsResult.value)
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value)
@@ -158,7 +192,10 @@ export default function App() {
       setMessages((current) => applyPrimeEvent(current, event))
       const type = typeof event.type === 'string' ? event.type : ''
       if (type === 'agent_start') setRuntime((current) => current ? { ...current, isStreaming: true } : current)
-      if (type === 'agent_end' || type === 'extension_error' || type === 'error') {
+      if (type === 'runtime_exit') {
+        runtimeIdRef.current = null
+        setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
+      } else if (type === 'agent_end' || type === 'extension_error' || type === 'error' || type === 'transport_error') {
         setRuntime((current) => current ? { ...current, isStreaming: false } : current)
         if (activeProject?.primaryFolder) window.setTimeout(() => void refreshGit(), 160)
       }
@@ -199,22 +236,35 @@ export default function App() {
     const granted = await bridge.projects.grantInferred(project.primaryFolder)
     setProjects((items) => items.map((item) => item.id === project.id ? granted : item))
     setActiveProjectId(granted.id)
+    setGit(await bridge.git.status(granted.primaryFolder))
     return granted
   }
 
   const persistPanel = (patch: Partial<AppSettings>) => { void updateSettings(patch) }
-  const toggleSidebar = () => persistPanel({ sidebarOpen: !sidebarOpen })
-  const toggleInspector = () => persistPanel({ inspectorOpen: !inspectorOpen })
+  const toggleSidebar = () => {
+    const next = !sidebarOpen
+    compactRestoreRef.current = null
+    if (compactLayout && next && inspectorOpen) setInspectorOpen(false)
+    persistPanel({ sidebarOpen: next })
+  }
+  const toggleInspector = () => {
+    const next = !inspectorOpen
+    compactRestoreRef.current = null
+    if (compactLayout && next && sidebarOpen) setSidebarOpen(false)
+    persistPanel({ inspectorOpen: next })
+  }
   const toggleTerminal = async () => {
     if (!terminalOpen && activeProject?.inferred) { try { await grantProject(activeProject) } catch (error) { reportError(error); return } }
     persistPanel({ terminalOpen: !terminalOpen })
   }
 
   const selectProject = async (project: ProjectRecord) => {
-    setActiveProjectId(project.id); setActiveSessionId(sessions.find((session) => session.projectPath === project.path)?.id); setView('session')
+    if (compactLayout) setSidebarOpen(false)
+    setActiveProjectId(project.id); setActiveSessionId(sessions.find((session) => !session.archived && session.projectPath === project.path)?.id); setView('session')
     try { const granted = await grantProject(project); if (bridge && !granted.inferred) await bridge.projects.touch(granted.id) } catch (error) { reportError(error) }
   }
   const selectSession = async (session: SessionRecord) => {
+    if (compactLayout) setSidebarOpen(false)
     setActiveSessionId(session.id)
     const project = projects.find((item) => item.path === session.projectPath)
     if (project) { setActiveProjectId(project.id); try { await grantProject(project) } catch (error) { reportError(error) } }
@@ -223,9 +273,29 @@ export default function App() {
     setRuntime(matchingRuntime); runtimeIdRef.current = matchingRuntime?.runtimeId ?? null
   }
   const newSession = () => {
+    if (compactLayout) setSidebarOpen(false)
     setView('session'); setActiveSessionId(undefined); setMessages([]); setRuntime(null); runtimeIdRef.current = null; setPaletteOpen(false)
   }
-  const navigate = (nextView: WorkspaceView) => { setView(nextView); setPaletteOpen(false) }
+  const navigate = (nextView: WorkspaceView) => { if (compactLayout) setSidebarOpen(false); setView(nextView); setPaletteOpen(false) }
+
+  const renameSession = async (session: SessionRecord, title: string) => {
+    if (!bridge) return
+    try {
+      const renamed = await bridge.sessions.rename(session.filePath, title)
+      if (!renamed) throw new Error('Prime Agent could not rename this session.')
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, title } : item))
+      setToast('Session renamed.')
+    } catch (error) { reportError(error) }
+  }
+  const setSessionArchived = async (session: SessionRecord, archived: boolean) => {
+    if (!bridge) return
+    try {
+      await bridge.sessions.archive(session.filePath, archived)
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived } : item))
+      if (archived && activeSessionId === session.id) newSession()
+      setToast(archived ? 'Session archived. Restore it from Activity.' : 'Session restored.')
+    } catch (error) { reportError(error) }
+  }
 
   const addProject = async () => {
     if (!bridge) { setToast('Project picker is available in the desktop app.'); return }
@@ -233,7 +303,15 @@ export default function App() {
   }
   const removeProject = async (project: ProjectRecord) => {
     if (!window.confirm(`Remove “${project.name}” from Prime Work? The folder and saved sessions will not be deleted.`)) return
-    if (!bridge || await bridge.projects.remove(project.id)) { setProjects((items) => items.filter((item) => item.id !== project.id)); if (activeProjectId === project.id) { setActiveProjectId(projects.find((item) => item.id !== project.id)?.id); setActiveSessionId(undefined) } }
+    try {
+      if (bridge && !await bridge.projects.remove(project.id)) throw new Error('This project could not be removed.')
+      setProjects((items) => items.filter((item) => item.id !== project.id))
+      if (activeProjectId === project.id) {
+        setActiveProjectId(projects.find((item) => item.id !== project.id)?.id)
+        setActiveSessionId(undefined)
+      }
+      setToast('Project removed. Files and saved sessions were kept.')
+    } catch (error) { reportError(error) }
   }
 
   const sendPrompt = async (prompt: string) => {
@@ -250,6 +328,15 @@ export default function App() {
     try {
       const workspaceProject = await grantProject(activeProject)
       let activeRuntime = runtime
+      if (activeRuntime) {
+        const liveRuntime = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === activeRuntime?.runtimeId)
+        if (liveRuntime) activeRuntime = liveRuntime
+        else {
+          activeRuntime = null
+          setRuntime(null)
+          runtimeIdRef.current = null
+        }
+      }
       if (!activeRuntime) {
         activeRuntime = await bridge.agent.start({ cwd: workspaceProject.primaryFolder, sessionPath: activeSession?.filePath, model: model === 'auto' ? undefined : model, thinking: effort })
         setRuntime(activeRuntime); runtimeIdRef.current = activeRuntime.runtimeId
@@ -258,10 +345,16 @@ export default function App() {
       setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
       await bridge.agent.command(activeRuntime.runtimeId, { type: activeRuntime.isStreaming ? 'follow_up' : 'prompt', message: prompt })
     } catch (error) {
+      const failure = requestFailureMessage(error)
       setRuntime((current) => current ? { ...current, isStreaming: false } : current)
-      setMessages((items) => [...items.map((item) => item.streaming ? { ...item, streaming: false } : item), { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: 'The request could not be started.' }] }])
+      setMessages((items) => {
+        const finalized = items.map((item) => item.streaming ? { ...item, streaming: false } : item)
+        if (finalized.at(-1)?.role === 'system') return finalized
+        return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
+      })
       reportError(error)
     }
+
   }
 
   const stopRuntime = async () => {
@@ -272,11 +365,33 @@ export default function App() {
 
   const refreshSkills = async () => {
     if (!bridge) return
-    setLoadingSkills(true); try { setSkills(await bridge.plugins.refresh()) } catch (error) { reportError(error) } finally { setLoadingSkills(false) }
+    setLoadingSkills(true)
+    try {
+      setSkills(await bridge.plugins.list(activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined))
+    } catch (error) { reportError(error) } finally { setLoadingSkills(false) }
   }
   const installSkill = async (source: string) => {
-    if (!bridge) return { ok: false, output: 'Plugin installation is available in the desktop app.' }
+    if (!bridge) return { ok: false, output: 'Package installation is available in the desktop app.' }
     try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
+  }
+  const connectMcp = async (input: McpConnectionInput) => {
+    if (!bridge) return { ok: false, output: 'MCP connections are available in the desktop app.' }
+    try {
+      let connection = input
+      if (input.scope === 'project') {
+        if (!activeProject) return { ok: false, output: 'Open a project before adding a project MCP server.' }
+        const project = await grantProject(activeProject)
+        connection = { ...input, projectPath: project.primaryFolder }
+      }
+      const response = await bridge.plugins.connectMcp(connection)
+      if (response.ok) {
+        const projectPath = connection.scope === 'project'
+          ? connection.projectPath
+          : activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
+        setSkills(await bridge.plugins.list(projectPath))
+      }
+      return response
+    } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
   }
   const addSchedule = async (schedule: string, prompt: string) => {
     if (!bridge || !runtime) return
@@ -287,8 +402,8 @@ export default function App() {
     try { await bridge.schedules.cancel(schedule.runtimeId ?? runtime!.runtimeId, schedule.id); setSchedules(await bridge.schedules.list()) } catch (error) { reportError(error) }
   }
 
-  const openBrowser = () => { setView('session'); setInspectorTab('browser'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
-  const openChanges = () => { setInspectorTab('changes'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
+  const openBrowser = () => { if (compactLayout && sidebarOpen) setSidebarOpen(false); setView('session'); setInspectorTab('browser'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
+  const openChanges = () => { if (compactLayout && sidebarOpen) setSidebarOpen(false); setInspectorTab('changes'); if (!inspectorOpen) persistPanel({ inspectorOpen: true }) }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -306,18 +421,18 @@ export default function App() {
   })
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
-    : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} />
+    : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} canCreate={Boolean(runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
-    : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} onRefresh={refreshSkills} onInstall={installSkill} />
-    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => { if (bridge) await bridge.settings.resetBrowserData(); setBrowserGeneration((value) => value + 1) }} />
+    : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
+    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => { if (bridge) await bridge.settings.resetBrowserData(); setBrowserGeneration((value) => value + 1) }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} />
     : null
 
   return (
     <div className="app-shell">
-      {sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={activeSessionId} activeView={view} onSelectProject={selectProject} onSelectSession={selectSession} onNavigate={navigate} onNewSession={newSession} onAddProject={() => void addProject()} onClose={toggleSidebar} onOpenPalette={() => setPaletteOpen(true)} /> : null}
+      {sidebarOpen ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={activeSessionId} activeView={view} onSelectProject={selectProject} onSelectSession={selectSession} onNavigate={navigate} onNewSession={newSession} onAddProject={() => void addProject()} onClose={toggleSidebar} onOpenPalette={() => setPaletteOpen(true)} onRenameSession={renameSession} onArchiveSession={(session) => setSessionArchived(session, true)} overlay={compactLayout} /> : null}
       {sidebarOpen ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
-      <div className="workbench">
-        <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={sidebarOpen} inspectorOpen={inspectorOpen} terminalOpen={terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} onRun={() => { if (!terminalOpen) toggleTerminal() }} />
+      <div className="workbench" inert={compactLayout && sidebarOpen ? true : undefined}>
+        <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={sidebarOpen} inspectorOpen={inspectorOpen} terminalOpen={terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
         <div className="workbench__content">
           {view === 'session' ? (
             <div
@@ -328,10 +443,10 @@ export default function App() {
               <div ref={workspaceRowRef} className="workspace-row">
                 <main className="conversation-pane">
                   <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject} />
-                  <Composer busy={busy} disabled={!activeProject} model={model} effort={effort} environment={environment} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onEnvironmentChange={setEnvironment} onSend={sendPrompt} onStop={stopRuntime} />
+                  <Composer busy={busy} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
                 </main>
                 {inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={inspectorWidth} min={INSPECTOR_MIN} max={inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={setInspectorWidth} /> : null}
-                {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={setInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} /> : null}
+                {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={setInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={compactLayout} /> : null}
                 {inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
               </div>
               {terminalOpen ? <TerminalDrawer cwd={activeProject?.primaryFolder} shell={settings.terminalShell} height={terminalHeight} minHeight={TERMINAL_MIN} maxHeight={terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={setTerminalHeight} onClose={toggleTerminal} onError={reportError} /> : null}
