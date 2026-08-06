@@ -22,6 +22,7 @@ interface TranscriptLoad {
   eventBuffer: PrimeEventBuffer
   runtimeId?: string
   reconciliation: boolean
+  admissionRevision: number
 }
 
 interface UseWorkspaceRuntimeOptions {
@@ -60,6 +61,7 @@ export function useWorkspaceRuntime({
     sessionFile: initialSession?.filePath,
   })
   const transcriptLoadRef = useRef<TranscriptLoad | null>(null)
+  const promptAdmissionRevisionRef = useRef(0)
   const reconciliationNeededRef = useRef<TranscriptReconciliationMarker | null>(null)
   const deferredReconciliationRef = useRef<TranscriptReconciliationMarker | null>(null)
   const pendingAgentEventsRef = useRef<PendingAgentEvent[]>([])
@@ -98,6 +100,7 @@ export function useWorkspaceRuntime({
 
   const activateWorkspace = useCallback((project?: ProjectRecord, session?: SessionRecord, nextRuntime?: RuntimeInfo) => {
     pendingAgentEventsRef.current = []
+    promptAdmissionRevisionRef.current = 0
     reconciliationNeededRef.current = null
     deferredReconciliationRef.current = null
     if (agentEventFrameRef.current !== null) {
@@ -113,7 +116,7 @@ export function useWorkspaceRuntime({
       sessionFile: session?.filePath,
     }
     transcriptLoadRef.current = bridge && session?.filePath
-      ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer(), reconciliation: false }
+      ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer(), reconciliation: false, admissionRevision: 0 }
       : null
     setWorkspaceGeneration(generation)
     setActiveProjectId(project?.id)
@@ -152,6 +155,7 @@ export function useWorkspaceRuntime({
       eventBuffer: createPrimeEventBuffer(),
       runtimeId,
       reconciliation,
+      admissionRevision: promptAdmissionRevisionRef.current,
     }
     transcriptLoadRef.current = pendingLoad
     if (!reconciliation) setLoadingSession(true)
@@ -167,9 +171,13 @@ export function useWorkspaceRuntime({
           generation: pendingLoad.generation,
           runtimeId: pendingLoad.runtimeId,
           sessionFile: pendingLoad.sessionFile,
+          admissionRevision: pendingLoad.admissionRevision,
         } : null
         if (pendingLoad.reconciliation && readMarker
-          && !authoritativeTranscriptReadIsCurrent(readMarker, current, runtimeIdRef.current)) {
+          && !authoritativeTranscriptReadIsCurrent(readMarker, {
+            ...current,
+            admissionRevision: promptAdmissionRevisionRef.current,
+          }, runtimeIdRef.current)) {
           setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
           return
         }
@@ -221,6 +229,11 @@ export function useWorkspaceRuntime({
     startTranscriptRead(selected, true, runtimeId)
   }, [flushAgentEvents, startTranscriptRead])
 
+  const admitPromptForRuntime = useCallback((runtimeId: string | null) => {
+    if (!runtimeId || runtimeIdRef.current !== runtimeId) return
+    promptAdmissionRevisionRef.current += 1
+  }, [])
+
   const activeSession = sessions.find((session) => session.id === activeSessionId)
 
   useEffect(() => {
@@ -265,5 +278,6 @@ export function useWorkspaceRuntime({
     reconcileRuntime,
     queueAgentEvent,
     reconcileTranscriptForEvent,
+    admitPromptForRuntime,
   }
 }

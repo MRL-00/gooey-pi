@@ -55,4 +55,18 @@ describe('authoritative transcript reconciliation', () => {
       sessionFile: '/sessions/current.jsonl',
     }, null)).toBe(true)
   })
+
+  it('rejects a reconciliation result after a new same-runtime prompt is admitted', () => {
+    expect(authoritativeTranscriptReadIsCurrent({ ...marker, admissionRevision: 2 }, {
+      generation: 7,
+      sessionFile: '/sessions/current.jsonl',
+      admissionRevision: 2,
+    }, 'runtime-current')).toBe(true)
+    expect(authoritativeTranscriptReadIsCurrent({ ...marker, admissionRevision: 2 }, {
+      generation: 7,
+      sessionFile: '/sessions/current.jsonl',
+      admissionRevision: 3,
+    }, 'runtime-current')).toBe(false)
+  })
+
 })

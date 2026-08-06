@@ -229,6 +229,7 @@ export default function App() {
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
         const userMessage: TranscriptMessage = { id: `user-${Date.now()}`, role: 'user', timestamp: Date.now(), parts: [{ type: 'text', text: prompt }] }
+        workspace.admitPromptForRuntime(workspace.runtimeIdRef.current)
         workspace.setMessages((items) => [...items, userMessage])
         if (!bridge) {
           const assistantId = `assistant-${Date.now()}`
