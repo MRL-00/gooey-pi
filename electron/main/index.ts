@@ -250,7 +250,7 @@ async function bootstrap(): Promise<void> {
     branch: (cwd) => git.branch(cwd),
     stopProjectProcesses: async (roots) => { await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)]) },
   })
-  downloads = new BrowserDownloadGuard(isAllowedBrowserUrl)
+  downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
