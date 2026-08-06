@@ -31,7 +31,7 @@ export interface SidebarProps {
   onSelectProject(project: ProjectRecord): void
   onSelectSession(session: SessionRecord): void
   onNavigate(view: WorkspaceView): void
-  onNewSession(): void
+  onNewSession(project?: ProjectRecord): void
   onAddProject(): void
   onClose(): void
   onOpenPalette(): void
@@ -110,16 +110,16 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         <div className="traffic-light-clearance" aria-hidden="true" />
         <div className="sidebar__brand" aria-label="Prime Work by Prime Intellect">
           <PrimeMark size={24} />
-          <span><strong>Prime</strong><small>Workspace</small></span>
+          <span><strong>Prime</strong><small>Work</small></span>
         </div>
         <div className="sidebar__title-actions no-drag">
-          <IconButton label="New session (⌘N)" onClick={onNewSession}><SquarePen size={16} /></IconButton>
+          <IconButton label="New session (⌘N)" onClick={() => onNewSession()}><SquarePen size={16} /></IconButton>
           <IconButton label="Hide sidebar (⌘B)" onClick={onClose}><PanelLeftClose size={16} /></IconButton>
         </div>
       </div>
 
       <nav className="sidebar__primary" aria-label="Primary">
-        <button type="button" onClick={onNewSession}><Plus size={15} /><span>New session</span><kbd>⌘N</kbd></button>
+        <button type="button" onClick={() => onNewSession()}><Plus size={15} /><span>New session</span><kbd>⌘N</kbd></button>
         <button type="button" onClick={() => { setSearchOpen((open) => !open); window.setTimeout(() => document.getElementById('session-search')?.focus(), 0) }} className={searchOpen ? 'is-active' : ''}><Search size={15} /><span>Search</span></button>
         {searchOpen ? (
           <div className="sidebar-search">
@@ -151,6 +151,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                   {activeProjectId === project.id ? <FolderOpen size={14} /> : <Folder size={14} />}
                   <span>{project.name}</span>
                 </button>
+                <IconButton size="small" className="project-row__new-session row-action" label={`New session in ${project.name}`} onClick={() => onNewSession(project)}><Plus size={13} /></IconButton>
                 {running ? <span className="project-working" title="Agent working"><LoaderCircle className="spin" size={13} /></span> : null}
               </div>
               {!isCollapsed ? (
@@ -160,14 +161,13 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                       <button type="button" className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
                         <SessionStatusMark status={session.status} />
                         <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
-                        {needsAttention(session) ? <span className="unread-dot" aria-label="Needs attention" /> : null}
                       </button>
                       <IconButton size="small" className="session-row__archive" label={`Archive ${session.title}`} onClick={() => { setArchiveTarget(session); setSessionMenu(null) }}><Archive size={13}/></IconButton>
                       <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
                       {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
                     </div>
                   ))}
-                  {projectSessions.length === 0 ? <button type="button" className="session-row session-row--empty" onClick={onNewSession}><Plus size={12} /> New session</button> : null}
+                  {projectSessions.length === 0 ? <button type="button" className="session-row session-row--empty" onClick={() => onNewSession(project)}><Plus size={12} /> New session</button> : null}
                 </div>
               ) : null}
             </div>
