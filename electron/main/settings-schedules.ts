@@ -80,6 +80,15 @@ function normalizeJob(raw: unknown, desktopRuntimeId?: string): ScheduleRecord |
   }
 }
 
+export function deduplicateScheduleJobs(jobs: readonly ScheduleRecord[]): ScheduleRecord[] {
+  const unique = new Map<string, ScheduleRecord>()
+  for (const job of jobs) {
+    const existing = unique.get(job.id)
+    if (!existing || (!existing.runtimeId && job.runtimeId)) unique.set(job.id, job)
+  }
+  return [...unique.values()]
+}
+
 export class ScheduleService {
   constructor(private readonly agents: AgentRpcManager, private readonly primeAgentPath: string | null) {}
 
@@ -111,7 +120,7 @@ export class ScheduleService {
       }
       if (runtimeFailure && !fallbackComplete) throw new Error('One or more runtimes could not return schedules; the catalog would be incomplete')
     }
-    return [...new Map(jobs.map((job) => [job.id, job])).values()].sort((a, b) => (a.nextRun ?? '').localeCompare(b.nextRun ?? ''))
+    return deduplicateScheduleJobs(jobs).sort((a, b) => (a.nextRun ?? '').localeCompare(b.nextRun ?? ''))
   }
 
   add(runtimeId: unknown, schedule: unknown, prompt: unknown): Promise<Record<string, unknown>> {
