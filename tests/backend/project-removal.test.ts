@@ -55,6 +55,33 @@ describe('project removal', () => {
     expect(await service.list()).toHaveLength(1)
   })
 
+  it('does not reauthorize a removed project when an older list finishes later', async () => {
+    const { folder, store, service } = fixture()
+    const second = join(folder, '..', 'second-project')
+    mkdirSync(second)
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push(
+      { id: 'project-1', name: 'First', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now },
+      { id: 'project-2', name: 'Second', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now },
+    ) })
+    let releaseBranch!: () => void
+    let markEntered!: () => void
+    const entered = new Promise<void>((resolve) => { markEntered = resolve })
+    const release = new Promise<void>((resolve) => { releaseBranch = resolve })
+    service.bindProviders({ sessions: async () => [], branch: async (cwd) => {
+      if (cwd === folder) { markEntered(); await release }
+      return undefined
+    } })
+
+    const staleList = service.list()
+    await entered
+    expect(await service.remove('project-2')).toBe(true)
+    releaseBranch()
+    await staleList
+
+    await expect(service.authorizeCwd(second)).rejects.toThrow(/not inside/)
+  })
+
   it('does not duplicate a persisted multi-folder project as an inferred project', async () => {
     const { folder, store, session, service } = fixture()
     const primary = join(folder, 'primary')
