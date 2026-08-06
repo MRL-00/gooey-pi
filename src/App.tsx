@@ -34,6 +34,9 @@ import type {
   InspectorTab,
   McpConnectionInput,
   PrimeWorkApi,
+  PrimeModelCatalog,
+  PrimeModelDescriptor,
+  PrimeThinkingLevel,
   ProjectRecord,
   RuntimeInfo,
   ScheduleRecord,
@@ -135,7 +138,9 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [model, setModel] = useState('auto')
-  const [effort, setEffort] = useState('medium')
+  const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
+  const [fast, setFast] = useState(false)
+  const [modelCatalog, setModelCatalog] = useState<PrimeModelCatalog | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [extensionUi, setExtensionUi] = useState<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
   const settingsRef = useRef(settings)
@@ -217,6 +222,34 @@ export default function App() {
     setToast(message)
     window.setTimeout(() => setToast((current) => current === message ? null : current), 4800)
   }, [])
+
+  const selectedModel = useMemo<PrimeModelDescriptor | undefined>(() => {
+    if (model !== 'auto') return modelCatalog?.models.find((candidate) => candidate.key === model)
+    const runtimeProvider = runtime?.model?.provider
+    const runtimeModel = runtime?.model?.id
+    return modelCatalog?.models.find((candidate) => candidate.provider === runtimeProvider && candidate.id === runtimeModel)
+  }, [model, modelCatalog, runtime?.model?.provider, runtime?.model?.id])
+  const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+  useEffect(() => {
+    if (reasoningLevels.includes(effort as PrimeThinkingLevel)) return
+    setEffort(reasoningLevels.includes('medium') ? 'medium' : reasoningLevels[0] ?? 'off')
+  }, [effort, reasoningLevels])
+
+  useEffect(() => {
+    if (!bridge) return
+    let cancelled = false
+    bridge.providers.catalog().then((catalog) => { if (!cancelled) setModelCatalog(catalog) }).catch(reportError)
+    return () => { cancelled = true }
+  }, [bridge, reportError])
+
+  useEffect(() => {
+    if (!runtime?.model?.provider || !runtime.model.id || !modelCatalog) return
+    const effectiveModel = modelCatalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id)
+    if (effectiveModel) setModel(effectiveModel.key)
+    if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) setEffort(runtime.thinkingLevel as PrimeThinkingLevel)
+    setFast(runtime.serviceTier === 'priority')
+  }, [modelCatalog, runtime?.model?.provider, runtime?.model?.id, runtime?.thinkingLevel, runtime?.serviceTier])
 
   const clearExtensionUi = useCallback((runtimeId?: string) => {
     const current = extensionUiRef.current
@@ -647,6 +680,7 @@ export default function App() {
             sessionPath: selected.sessionFile,
             model: model === 'auto' ? undefined : model,
             thinking: effort,
+            fast,
           })
           startedRuntime = true
           if (workspaceRef.current.generation !== generation) {
@@ -678,6 +712,49 @@ export default function App() {
         setSubmitting(false)
       }
     })
+  }
+
+  const syncRuntimeSelection = async (runtimeId: string, generation: number) => {
+    if (!bridge) return
+    const nextRuntime = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
+    if (workspaceRef.current.generation === generation && nextRuntime) attachRuntime(nextRuntime, generation)
+  }
+
+  const changeModel = (nextModelKey: string) => {
+    setModel(nextModelKey)
+    const nextModel = modelCatalog?.models.find((candidate) => candidate.key === nextModelKey)
+    const nextEffort = nextModel && !nextModel.availableThinkingLevels.includes(effort)
+      ? nextModel.availableThinkingLevels.includes('medium') ? 'medium' : nextModel.availableThinkingLevels[0] ?? 'off'
+      : effort
+    setEffort(nextEffort)
+    if (!nextModel?.fastModeSupported) setFast(false)
+    if (!bridge || !runtime || !nextModel) return
+    const generation = workspaceRef.current.generation
+    void (async () => {
+      try {
+        await bridge.agent.command(runtime.runtimeId, { type: 'set_model', provider: nextModel.provider, modelId: nextModel.id })
+        await bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
+        await syncRuntimeSelection(runtime.runtimeId, generation)
+      } catch (error) { reportError(error) }
+    })()
+  }
+
+  const changeEffort = (nextEffort: PrimeThinkingLevel) => {
+    setEffort(nextEffort)
+    if (!bridge || !runtime) return
+    const generation = workspaceRef.current.generation
+    void bridge.agent.command(runtime.runtimeId, { type: 'set_thinking_level', level: nextEffort })
+      .then(() => syncRuntimeSelection(runtime.runtimeId, generation))
+      .catch(reportError)
+  }
+
+  const changeFast = (enabled: boolean) => {
+    setFast(enabled)
+    if (!bridge || !runtime) return
+    const generation = workspaceRef.current.generation
+    void bridge.agent.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: enabled ? 'priority' : 'default' })
+      .then(() => syncRuntimeSelection(runtime.runtimeId, generation))
+      .catch((error) => { setFast(false); void syncRuntimeSelection(runtime.runtimeId, generation); reportError(error) })
   }
 
   const stopRuntime = async () => {
@@ -779,7 +856,7 @@ export default function App() {
               <div ref={workspaceRowRef} className="workspace-row">
                 <main className="conversation-pane">
                   <Transcript key={activeSessionId ?? 'new-session'} messages={messages} git={git} loading={loadingSession} showReasoning={settings.showReasoningSummaries} showTools={settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => void sendPrompt(prompt)} suggestionsDisabled={!activeProject || loadingSession || submitting} />
-                  <Composer key={activeSessionId ? `${activeProject?.id ?? 'no-project'}:${activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspaceGeneration}`} busy={busy} submitting={submitting} loading={loadingSession} disabled={!activeProject} model={model} effort={effort} skills={skills} onModelChange={setModel} onEffortChange={setEffort} onSend={sendPrompt} onStop={stopRuntime} />
+                  <Composer key={activeSessionId ? `${activeProject?.id ?? 'no-project'}:${activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspaceGeneration}`} busy={busy} submitting={submitting} loading={loadingSession} disabled={!activeProject} model={model} effort={effort} models={modelCatalog?.models ?? []} providers={modelCatalog?.providers ?? []} reasoningLevels={reasoningLevels} fast={fast} fastSupported={selectedModel?.fastModeSupported ?? false} fastAvailable={!runtime || runtime.fastModeAvailable !== false} skills={skills} onModelChange={changeModel} onEffortChange={changeEffort} onFastChange={changeFast} onSend={sendPrompt} onStop={stopRuntime} />
                 </main>
                 {inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={inspectorWidth} min={INSPECTOR_MIN} max={inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={setInspectorWidth} /> : null}
                 {inspectorOpen ? <Inspector key={`inspector-${browserGeneration}`} activeTab={inspectorTab} onTabChange={selectInspectorTab} onClose={toggleInspector} project={activeProject} runtime={runtime} messages={messages} git={git} browserHome={settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={compactLayout} /> : null}

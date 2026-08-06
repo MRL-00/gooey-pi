@@ -69,6 +69,10 @@ export interface RuntimeInfo {
   isStreaming: boolean
   model?: { provider?: string; id?: string; name?: string } | null
   thinkingLevel?: string
+  availableThinkingLevels?: PrimeThinkingLevel[]
+  fastModeSupported?: boolean
+  fastModeAvailable?: boolean
+  serviceTier?: PrimeServiceTier
 }
 
 export type PrimeThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -193,7 +197,7 @@ export interface PrimeWorkApi {
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
   sessions: { list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>; read(filePath: string): Promise<TranscriptMessage[]>; rename(filePath: string, title: string): Promise<boolean>; archive(filePath: string, archived?: boolean): Promise<boolean> }
   agent: {
-    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string }): Promise<RuntimeInfo>
+    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string; fast?: boolean }): Promise<RuntimeInfo>
     command(runtimeId: string, command: Record<string, unknown>): Promise<Record<string, unknown>>
     stop(runtimeId: string): Promise<boolean>
     list(): Promise<RuntimeInfo[]>

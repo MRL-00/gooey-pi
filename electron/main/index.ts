@@ -228,7 +228,14 @@ async function bootstrap(): Promise<void> {
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
   projects.bindProviders({ sessions: listCatalogSessions, branch: (cwd) => git.branch(cwd) })
 
-  agents = new AgentRpcManager(executable, (cwd) => projects.authorizeCwd(cwd), (path) => sessions.requireSessionPath(path))
+  const providers = new PrimeProviderService()
+  agents = new AgentRpcManager(
+    executable,
+    (cwd) => projects.authorizeCwd(cwd),
+    (path) => sessions.requireSessionPath(path),
+    providers,
+    () => new Set(store.snapshot().settings.disabledProviders),
+  )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     stop: async (path) => { await agents?.stopForSession(path) },
@@ -240,7 +247,6 @@ async function bootstrap(): Promise<void> {
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const plugins = new PluginService(executable, (path) => projects.authorizeCwd(path))
-  const providers = new PrimeProviderService()
   const schedules = new ScheduleService(agents, executable)
   const detectedPrimeVersion = await primeVersion(executable)
   if (shutdownStarted) return

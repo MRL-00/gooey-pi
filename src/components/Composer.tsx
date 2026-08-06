@@ -7,9 +7,10 @@ import {
   Gauge,
   Plus,
   ShieldCheck,
+  Zap,
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { SkillRecord } from '@/types/api'
+import type { PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, SkillRecord } from '@/types/api'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
 interface ComposerProps {
@@ -18,10 +19,17 @@ interface ComposerProps {
   loading?: boolean
   disabled?: boolean
   model: string
-  effort: string
+  effort: PrimeThinkingLevel
+  models: PrimeModelDescriptor[]
+  providers: PrimeProviderDescriptor[]
+  reasoningLevels: PrimeThinkingLevel[]
+  fast: boolean
+  fastSupported: boolean
+  fastAvailable: boolean
   skills: SkillRecord[]
   onModelChange(value: string): void
-  onEffortChange(value: string): void
+  onEffortChange(value: PrimeThinkingLevel): void
+  onFastChange(value: boolean): void
   onSend(prompt: string): Promise<void> | void
   onStop(): Promise<void> | void
 }
@@ -33,7 +41,11 @@ const commands = [
   { command: '/status', detail: 'Show runtime status' },
 ]
 
-export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, skills, onModelChange, onEffortChange, onSend, onStop }: ComposerProps) {
+const reasoningLabels: Record<PrimeThinkingLevel, string> = {
+  off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Standard', high: 'High', xhigh: 'Extra high', max: 'Max',
+}
+
+export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -124,11 +136,19 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
           <div className="composer__controls">
             <IconButton label="Add skill" aria-expanded={menu === 'add'} aria-controls={menu === 'add' ? menuId : undefined} onClick={() => { setMenu((current) => current === 'add' ? null : 'add'); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Plus size={17} /></IconButton>
             <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
-              <option value="auto">Auto</option><option value="gpt-5.6-sol">GPT-5.6 Sol</option><option value="gpt-5.4">GPT-5.4</option><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+              <option value="auto">Auto</option>
+              {providers.filter((provider) => provider.enabled && provider.modelCount > 0).map((provider) => (
+                <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
+                  {models.filter((candidate) => candidate.provider === provider.id).map((candidate) => (
+                    <option key={candidate.key} value={candidate.key} disabled={!candidate.available}>{candidate.name}{candidate.available ? '' : ' · connect provider'}</option>
+                  ))}
+                </optgroup>
+              ))}
             </SelectControl>
-            <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value)}>
-              <option value="low">Low</option><option value="medium">Standard</option><option value="high">High</option><option value="max">Max</option>
+            <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value as PrimeThinkingLevel)}>
+              {reasoningLevels.map((level) => <option key={level} value={level}>{reasoningLabels[level]}</option>)}
             </SelectControl>
+            {fastSupported ? <button type="button" className={`fast-mode-toggle ${fast ? 'is-active' : ''}`} aria-pressed={fast} disabled={!fastAvailable} title={fastAvailable ? 'Use Prime Agent priority service tier' : 'The installed Prime Agent RPC runtime does not expose fast mode'} onClick={() => onFastChange(!fast)}><Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast</button> : null}
             <span className="permissions-chip" title="Local environment"><FolderGit2 size={12} /><span>Local</span></span>
             <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
           </div>

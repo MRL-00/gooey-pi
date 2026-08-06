@@ -79,6 +79,22 @@ export class PrimeProviderService {
     return this.withEnabledState(this.cachedCatalog, disabledProviders)
   }
 
+  async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
+    const key = requireString(rawKey, 'model', { min: 3, max: 512, trim: true })
+    const catalog = await this.catalog(false, disabledProviders)
+    const model = catalog.models.find((candidate) => candidate.key === key)
+    if (!model) throw new Error('Model was not found in the Prime Agent catalog')
+    const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
+    if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled in Prime Work`)
+    if (!model.available) throw new Error(`Provider ${model.provider} is not configured for ${model.name}`)
+    return model
+  }
+
+  async capabilities(provider: string | undefined, modelId: string | undefined): Promise<PrimeModelDescriptor | undefined> {
+    if (!provider || !modelId) return undefined
+    return (await this.catalog()).models.find((model) => model.provider === provider && model.id === modelId)
+  }
+
   async saveApiKey(rawProviderId: unknown, rawKey: unknown): Promise<void> {
     const providerId = requireString(rawProviderId, 'providerId', { min: 1, max: 128, trim: true })
     const key = requireString(rawKey, 'apiKey', { min: 1, max: 16_384, trim: true })

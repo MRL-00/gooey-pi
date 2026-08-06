@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AgentRpcManager } from '../../electron/main/agent-rpc'
+import { PrimeProviderService } from '../../electron/main/providers'
 
 const dirs: string[] = []
 const managers: AgentRpcManager[] = []
@@ -28,6 +29,8 @@ input.on('line', (line) => {
     send(${promptResponse})
   } else if (command.type === 'abort') {
     send({ id: command.id, type: 'response', command: 'abort', success: true })
+  } else if (command.type === 'set_service_tier') {
+    send({ id: command.id, type: 'response', command: 'set_service_tier', success: true })
   }
 })
 `)
@@ -76,6 +79,22 @@ describe('agent RPC responses', () => {
 
     await expect(manager.start({ cwd: fake.cwd })).rejects.toThrow('Unable to initialize session')
     expect(manager.list()).toEqual([])
+  })
+
+  it('decorates runtime reasoning and fast-mode capabilities from the Prime catalog', async () => {
+    const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'session-1', thinkingLevel: 'high', isStreaming: false, model: { provider: 'openai-codex', id: 'gpt-5.4', name: 'GPT-5.4' } } }"
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)
+    const providers = new PrimeProviderService({ authPath: join(fake.cwd, 'auth.json'), modelsPath: join(fake.cwd, 'models.json') })
+    const manager = new AgentRpcManager(fake.executable, async (cwd) => cwd, async (path) => path, providers)
+    managers.push(manager)
+
+    const runtime = await manager.start({ cwd: fake.cwd, fast: true })
+
+    expect(runtime.fastModeSupported).toBe(true)
+    expect(runtime.fastModeAvailable).toBe(true)
+    expect(runtime.serviceTier).toBe('priority')
+    expect(runtime.availableThinkingLevels).toContain('xhigh')
+    expect(runtime.availableThinkingLevels).not.toContain('max')
   })
   it('terminates a process group that keeps writing after an oversized frame', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-overflow-'))
