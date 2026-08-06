@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { PrimeEventEnvelope, PrimeWorkApi, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -42,6 +42,10 @@ const api: PrimeWorkApi = {
     saveApiKey: (providerId, apiKey) => ipcRenderer.invoke('providers:save-api-key', providerId, apiKey),
     logout: (providerId) => ipcRenderer.invoke('providers:logout', providerId),
     setEnabled: (providerId, enabled) => ipcRenderer.invoke('providers:set-enabled', providerId, enabled),
+    startOAuth: (providerId) => ipcRenderer.invoke('providers:start-oauth', providerId),
+    respondOAuth: (flowId, promptId, value) => ipcRenderer.invoke('providers:respond-oauth', flowId, promptId, value),
+    cancelOAuth: (flowId) => ipcRenderer.invoke('providers:cancel-oauth', flowId),
+    onAuthEvent: (callback) => subscribe<ProviderAuthEvent>('providers:auth-event', callback),
   },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

@@ -1,9 +1,9 @@
-import { app, BrowserWindow, protocol, session } from 'electron'
+import { app, BrowserWindow, protocol, session, shell } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import type { AppMeta } from '../../src/types/api'
+import type { AppMeta, ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { GitService } from './git'
@@ -24,6 +24,7 @@ let ipc: IpcRegistration | null = null
 let agents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
+let providerService: PrimeProviderService | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -228,7 +229,8 @@ async function bootstrap(): Promise<void> {
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
   projects.bindProviders({ sessions: listCatalogSessions, branch: (cwd) => git.branch(cwd) })
 
-  const providers = new PrimeProviderService()
+  const providers = new PrimeProviderService({ openExternal: async (url) => { await shell.openExternal(url, { activate: true }) } })
+  providerService = providers
   agents = new AgentRpcManager(
     executable,
     (cwd) => projects.authorizeCwd(cwd),
@@ -265,6 +267,14 @@ async function bootstrap(): Promise<void> {
       && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
       && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
       renderer.send('agent:event', envelope)
+    }
+  })
+  providers.setEventSink((event: ProviderAuthEvent) => {
+    const renderer = mainWindow?.webContents
+    if (!shutdownStarted && renderer && !renderer.isDestroyed()
+      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
+      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
+      renderer.send('providers:auth-event', event)
     }
   })
   await ensureWindow()
@@ -320,5 +330,6 @@ app.on('before-quit', (event) => {
   beginProcessShutdown()
   downloads?.cancelAll()
 
+  providerService?.cancelAll()
   void Promise.all([terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses()]).finally(() => app.quit())
 })

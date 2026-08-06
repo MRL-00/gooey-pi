@@ -64,7 +64,8 @@
     },
     "asarUnpack": [
       "**/node_modules/node-pty/build/Release/pty.node",
-      "**/node_modules/node-pty/build/Release/spawn-helper"
+      "**/node_modules/node-pty/build/Release/spawn-helper",
+      "**/node_modules/zeromq/build/**/*.node"
     ],
     "files": [
       "out/**/*",

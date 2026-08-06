@@ -9,6 +9,7 @@ import { TerminalDrawer } from '@/components/TerminalDrawer'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { ExtensionUiModal, type ExtensionUiResponse } from '@/components/ExtensionUiModal'
+import { ProviderAuthModal } from '@/components/ProviderAuthModal'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { ActivityPage } from '@/pages/ActivityPage'
 import { ScheduledPage } from '@/pages/ScheduledPage'
@@ -37,6 +38,7 @@ import type {
   PrimeModelCatalog,
   PrimeModelDescriptor,
   PrimeThinkingLevel,
+  ProviderAuthEvent,
   ProjectRecord,
   RuntimeInfo,
   ScheduleRecord,
@@ -80,6 +82,8 @@ interface TranscriptLoad {
   sessionFile: string
   eventBuffer: PrimeEventBuffer
 }
+
+type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
 
 export interface PendingAgentEvent {
   generation: number
@@ -141,6 +145,7 @@ export default function App() {
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
   const [modelCatalog, setModelCatalog] = useState<PrimeModelCatalog | null>(null)
+  const [providerAuthEvent, setProviderAuthEvent] = useState<ActiveProviderAuthEvent | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [extensionUi, setExtensionUi] = useState<{ runtimeId: string; request: ExtensionUiRequest } | null>(null)
   const settingsRef = useRef(settings)
@@ -223,6 +228,11 @@ export default function App() {
     window.setTimeout(() => setToast((current) => current === message ? null : current), 4800)
   }, [])
 
+  const refreshProviderCatalog = useCallback(async (force = false) => {
+    if (!bridge) return
+    setModelCatalog(await bridge.providers.catalog(force))
+  }, [bridge])
+
   const selectedModel = useMemo<PrimeModelDescriptor | undefined>(() => {
     if (model !== 'auto') return modelCatalog?.models.find((candidate) => candidate.key === model)
     const runtimeProvider = runtime?.model?.provider
@@ -242,6 +252,23 @@ export default function App() {
     bridge.providers.catalog().then((catalog) => { if (!cancelled) setModelCatalog(catalog) }).catch(reportError)
     return () => { cancelled = true }
   }, [bridge, reportError])
+
+  useEffect(() => {
+    if (!bridge) return
+    return bridge.providers.onAuthEvent((event) => {
+      if (event.type === 'complete') {
+        setProviderAuthEvent(null)
+        void refreshProviderCatalog(true).catch(reportError)
+      } else if (event.type === 'cancelled') {
+        setProviderAuthEvent(null)
+      } else if (event.type === 'error') {
+        setProviderAuthEvent(null)
+        reportError(event.error)
+      } else if (event.type === 'auth' || event.type === 'progress' || event.type === 'prompt' || event.type === 'select') {
+        setProviderAuthEvent(event)
+      }
+    })
+  }, [bridge, refreshProviderCatalog, reportError])
 
   useEffect(() => {
     if (!runtime?.model?.provider || !runtime.model.id || !modelCatalog) return
@@ -530,6 +557,38 @@ export default function App() {
       reportError(error)
     }
   }, [applySettings, bridge, reportError])
+
+  const applyProviderCatalog = useCallback((catalog: PrimeModelCatalog, syncSettings = false) => {
+    setModelCatalog(catalog)
+    if (!syncSettings) return
+    const disabledProviders = catalog.providers.filter((provider) => !provider.enabled).map((provider) => provider.id)
+    const next = { ...settingsRef.current, disabledProviders }
+    settingsRef.current = next
+    confirmedSettingsRef.current = next
+    setSettings(next)
+    const selectedProvider = modelCatalog?.models.find((candidate) => candidate.key === model)?.provider
+    if (selectedProvider && disabledProviders.includes(selectedProvider)) { setModel('auto'); setFast(false) }
+  }, [model, modelCatalog?.models])
+
+  const saveProviderApiKey = useCallback(async (providerId: string, apiKey: string) => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    applyProviderCatalog(await bridge.providers.saveApiKey(providerId, apiKey))
+  }, [applyProviderCatalog, bridge])
+
+  const logoutProvider = useCallback(async (providerId: string) => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    applyProviderCatalog(await bridge.providers.logout(providerId))
+  }, [applyProviderCatalog, bridge])
+
+  const setProviderEnabled = useCallback(async (providerId: string, enabled: boolean) => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    applyProviderCatalog(await bridge.providers.setEnabled(providerId, enabled), true)
+  }, [applyProviderCatalog, bridge])
+
+  const startProviderOAuth = useCallback(async (providerId: string) => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    await bridge.providers.startOAuth(providerId)
+  }, [bridge])
 
   const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
     if (!bridge || !project.inferred) return project
@@ -832,7 +891,7 @@ export default function App() {
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />
     : view === 'plugins' ? <PluginsPage skills={skills} loading={loadingSkills} activeProjectPath={activeProject?.primaryFolder} onRefresh={refreshSkills} onInstall={installSkill} onConnectMcp={connectMcp} />
-    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} onUpdate={updateSettings} onResetBrowser={async () => {
+    : view === 'settings' ? <SettingsPage settings={settings} meta={meta} providerCatalog={modelCatalog} onUpdate={updateSettings} onRefreshProviders={() => refreshProviderCatalog(true)} onSaveProviderApiKey={saveProviderApiKey} onLogoutProvider={logoutProvider} onSetProviderEnabled={setProviderEnabled} onStartProviderOAuth={startProviderOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         const cleared = await bridge.settings.resetBrowserData()
         if (!cleared) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
@@ -869,6 +928,7 @@ export default function App() {
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
       {extensionUi ? <ExtensionUiModal request={extensionUi.request} onRespond={(response) => void respondToExtensionUi(response)} /> : null}
+      {providerAuthEvent ? <ProviderAuthModal event={providerAuthEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={(promptId, value) => { if (bridge) void bridge.providers.respondOAuth(providerAuthEvent.flowId, promptId, value).catch(reportError) }} onCancel={() => { if (bridge) void bridge.providers.cancelOAuth(providerAuthEvent.flowId).catch(reportError); setProviderAuthEvent(null) }} /> : null}
       {toast ? <div className="toast" role="status">{toast}<button type="button" aria-label="Dismiss" onClick={() => setToast(null)}>×</button></div> : null}
     </div>
   )

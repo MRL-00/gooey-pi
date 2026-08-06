@@ -121,7 +121,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'plugins', 'projects', 'schedules', 'sessions', 'settings', 'terminal'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
     await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
@@ -156,6 +156,8 @@ test.describe('Prime Work desktop smoke', () => {
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()
     await page.getByRole('button', { name: 'Prime Agent', exact: true }).click()
+    await expect(page.getByLabel('Search providers')).toBeVisible()
+    await expect(page.locator('.provider-row')).not.toHaveCount(0)
     await expect(page.getByRole('checkbox', { name: /Show reasoning summaries/ })).toBeChecked()
     await expect(page.getByRole('checkbox', { name: /Show tool calls/ })).toBeChecked()
     await page.keyboard.press('Meta+K')

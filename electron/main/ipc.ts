@@ -123,6 +123,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     await services.settings.update({ disabledProviders: [...disabled].sort() })
     return providerCatalog()
   })
+  handle('providers:start-oauth', (_event, providerId) => services.providers.startOAuth(providerId))
+  handle('providers:respond-oauth', (_event, flowId, promptId, value) => services.providers.respondOAuth(flowId, promptId, value))
+  handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
   on('terminal:input', (event, terminalId, data) => services.terminals.input(event.sender, terminalId, data))

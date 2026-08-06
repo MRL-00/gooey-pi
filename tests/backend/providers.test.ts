@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -11,6 +11,13 @@ function service(): PrimeProviderService {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-providers-'))
   dirs.push(dir)
   return new PrimeProviderService({ authPath: join(dir, 'auth.json'), modelsPath: join(dir, 'models.json') })
+}
+
+function serviceWithAuthPath(): { providerService: PrimeProviderService; authPath: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'prime-work-provider-auth-'))
+  dirs.push(dir)
+  const authPath = join(dir, 'auth.json')
+  return { providerService: new PrimeProviderService({ authPath, modelsPath: join(dir, 'models.json') }), authPath }
 }
 
 describe('Prime provider adapter', () => {
@@ -33,5 +40,27 @@ describe('Prime provider adapter', () => {
 
     expect(anthropic?.enabled).toBe(false)
     expect(typeof anthropic?.configured).toBe('boolean')
+  })
+
+  it('stores API keys through Prime auth storage without exposing them in the catalog', async () => {
+    const { providerService, authPath } = serviceWithAuthPath()
+    const secret = 'test-provider-secret-that-must-not-cross-back'
+
+    await providerService.saveApiKey('openai', secret)
+    const catalog = await providerService.catalog(true)
+    const openai = catalog.providers.find((provider) => provider.id === 'openai')
+
+    expect(openai?.configured).toBe(true)
+    expect(openai?.authSource).toBe('stored')
+    expect(JSON.stringify(catalog)).not.toContain(secret)
+    expect(readFileSync(authPath, 'utf8')).toContain(secret)
+    expect(statSync(authPath).mode & 0o777).toBe(0o600)
+
+    await providerService.logout('openai')
+    expect((await providerService.catalog(true)).providers.find((provider) => provider.id === 'openai')?.configured).toBe(false)
+  })
+
+  it('rejects OAuth for providers that do not own an OAuth flow', async () => {
+    await expect(service().startOAuth('openai')).rejects.toThrow('requires api_key authentication')
   })
 })

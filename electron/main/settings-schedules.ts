@@ -30,7 +30,11 @@ export class SettingsService {
     if (raw.terminalShell !== undefined) patch.terminalShell = this.validateShell(raw.terminalShell)
     if (raw.disabledProviders !== undefined) {
       if (!Array.isArray(raw.disabledProviders) || raw.disabledProviders.length > 128) throw new TypeError('disabledProviders must be a bounded array')
-      patch.disabledProviders = [...new Set(raw.disabledProviders.map((value, index) => requireString(value, `disabledProviders[${index}]`, { min: 1, max: 128, trim: true })))]
+      patch.disabledProviders = [...new Set(raw.disabledProviders.map((value, index) => {
+        const id = requireString(value, `disabledProviders[${index}]`, { min: 1, max: 128, trim: true })
+        if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(id)) throw new TypeError(`disabledProviders[${index}] is not a valid provider ID`)
+        return id
+      }))]
     }
     return this.store.update((state) => Object.assign(state.settings, patch))
   }

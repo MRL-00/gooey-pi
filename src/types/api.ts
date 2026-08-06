@@ -114,6 +114,14 @@ export interface PrimeModelCatalog {
   warning?: string
 }
 
+export type ProviderAuthEvent =
+  | { flowId: string; providerId: string; type: 'auth'; url: string; instructions?: string }
+  | { flowId: string; providerId: string; type: 'progress'; message: string }
+  | { flowId: string; providerId: string; type: 'prompt'; promptId: string; message: string; placeholder?: string; allowEmpty?: boolean }
+  | { flowId: string; providerId: string; type: 'select'; promptId: string; message: string; options: Array<{ id: string; label: string }> }
+  | { flowId: string; providerId: string; type: 'complete' | 'cancelled' }
+  | { flowId: string; providerId: string; type: 'error'; error: string }
+
 export interface PrimeEventEnvelope {
   runtimeId: string
   event: Record<string, unknown>
@@ -208,6 +216,10 @@ export interface PrimeWorkApi {
     saveApiKey(providerId: string, apiKey: string): Promise<PrimeModelCatalog>
     logout(providerId: string): Promise<PrimeModelCatalog>
     setEnabled(providerId: string, enabled: boolean): Promise<PrimeModelCatalog>
+    startOAuth(providerId: string): Promise<{ flowId: string }>
+    respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
+    cancelOAuth(flowId: string): Promise<boolean>
+    onAuthEvent(callback: (event: ProviderAuthEvent) => void): () => void
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>
