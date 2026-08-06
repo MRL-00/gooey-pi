@@ -13,6 +13,7 @@ function inferredId(path: string): string {
 
 export class ProjectService {
   private readonly authorizedRoots = new Set<string>()
+  private authorizationRevision = 0
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
   private branchProvider: (cwd: string) => Promise<string | undefined> = async () => undefined
 
@@ -24,6 +25,7 @@ export class ProjectService {
   }
 
   async list(): Promise<ProjectRecord[]> {
+    const authorizationRevision = this.authorizationRevision
     const sessions = await this.sessionProvider()
     const canonicalSessionPaths = new Map<string, string>()
     await Promise.all([...new Set(sessions.map((session) => session.projectPath))].map(async (path) => {
@@ -38,13 +40,13 @@ export class ProjectService {
     })))
     const records: ProjectRecord[] = []
     const represented = new Set<string>()
-    this.authorizedRoots.clear()
+    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.clear()
 
     for (const project of persisted) {
       const folderSet = new Set(await Promise.all(project.folders.map(async (path) => {
         try { return await requireExistingDirectory(path, 'project folder') } catch { return resolve(path) }
       })))
-      for (const folder of folderSet) this.authorizedRoots.add(folder)
+      if (authorizationRevision === this.authorizationRevision) for (const folder of folderSet) this.authorizedRoots.add(folder)
       for (const folder of folderSet) represented.add(folder)
       records.push({
         ...project,
@@ -104,6 +106,7 @@ export class ProjectService {
       state.projects.push(created)
       return created
     })
+    this.authorizationRevision += 1
     this.authorizedRoots.add(path)
     const sessions = await this.sessionProvider()
     return { ...project, sessionCount: sessions.filter((session) => resolve(session.projectPath) === path).length, gitBranch: await this.branchProvider(path) }
@@ -129,11 +132,13 @@ export class ProjectService {
       state.projects.push(created)
       return created
     })
+    this.authorizationRevision += 1
     this.authorizedRoots.add(path)
     return { ...project, sessionCount: sessions.filter((session) => resolve(session.projectPath) === path).length, gitBranch: await this.branchProvider(path) }
   }
 
   async remove(idValue: unknown): Promise<boolean> {
+    const authorizationRevision = ++this.authorizationRevision
     const id = requireId(idValue, 'project id')
     const persisted = this.store.snapshot().projects.find((project) => project.id === id)
     const persistedPaths = persisted ? await Promise.all(persisted.folders.map(async (folder) => {
@@ -159,10 +164,11 @@ export class ProjectService {
       state.dismissedProjectPaths = [...dismissed]
       return true
     })
-    if (removed) {
+    if (removed && authorizationRevision === this.authorizationRevision) {
       this.authorizedRoots.clear()
       for (const project of this.store.snapshot().projects) {
         for (const folder of project.folders) {
+          if (authorizationRevision !== this.authorizationRevision) break
           try { this.authorizedRoots.add(await requireExistingDirectory(folder, 'project folder')) } catch { /* Missing projects are not authorized. */ }
         }
       }

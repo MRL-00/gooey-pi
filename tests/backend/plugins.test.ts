@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -60,6 +60,21 @@ describe('PluginService MCP connections', () => {
       enabled: true,
     })
     expect((await service.list(project)).find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
+  })
+
+  it('rejects project MCP settings paths that traverse repository symlinks', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const outside = join(root, 'outside')
+    mkdirSync(project); mkdirSync(outside)
+    symlinkSync(outside, join(project, '.prime'))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    await expect(service.connectMcp({
+      name: 'escaped', scope: 'project', projectPath: project, type: 'http', url: 'http://127.0.0.1:3333/mcp',
+    })).rejects.toThrow(/real directory/)
+    expect(() => readFileSync(join(outside, 'agent', 'settings.json'))).toThrow()
   })
 
   it('rejects credentialed URLs and refuses to overwrite an existing server', async () => {
