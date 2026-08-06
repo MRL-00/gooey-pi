@@ -246,6 +246,8 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 /* Transcript */
 .transcript { position: absolute; inset: 0; overflow-y: auto; padding: 30px 0 170px; }
 .transcript__inner { width: min(100%, 760px); min-height: 100%; margin: 0 auto; padding: 0 24px; }
+.transcript__show-earlier { min-height: 30px; display: block; margin: 16px auto 26px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-secondary); background: var(--surface-raised); font-size: 11px; }
+.transcript__show-earlier:hover { color: var(--text); background: var(--surface-hover); }
 .transcript-loading { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 40px; color: var(--text-tertiary); }
 .session-welcome { max-width: 520px; margin: min(18vh, 140px) auto 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
 .session-welcome h1 { margin: 17px 0 7px; font-size: 24px; line-height: 1.2; font-weight: 560; letter-spacing: -.018em; }
@@ -415,6 +417,7 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 .diff-line--add { background: var(--diff-add); box-shadow: inset 2px 0 var(--diff-add-line); }
 .diff-line--remove { background: var(--diff-remove); box-shadow: inset 2px 0 var(--diff-remove-line); }
 .diff-line--hunk { color: var(--text-secondary); background: var(--surface-subtle); }
+.diff-line--truncated { color: var(--text-secondary); border-top: 1px solid var(--border); background: var(--surface-raised); font-style: normal; }
 .diff-placeholder, .diff-loading { min-height: 180px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 9px; color: var(--text-tertiary); font-size: 11.5px; }
 
 /* Browser */
@@ -460,6 +463,7 @@ body.is-resizing-horizontal, body.is-resizing-horizontal * { cursor: row-resize 
 .file-tree > button small { color: var(--text-tertiary); font-size: 9.5px; }
 .tree-section { margin: 10px 7px 4px; color: var(--text-tertiary); font-size: 10px; font-weight: 550; }
 .file-tree > p { padding: 20px; color: var(--text-tertiary); text-align: center; font-size: 11px; }
+.file-tree > .file-tree__show-more { justify-content: center; padding-left: 7px; border: 1px solid var(--border); margin-top: 6px; }
 
 /* Terminal */
 .terminal-drawer { height: var(--terminal-height, clamp(260px, 34vh, 390px)); flex: 0 0 var(--terminal-height, clamp(260px, 34vh, 390px)); display: flex; flex-direction: column; min-height: 0; background: var(--terminal-bg); animation: drawer-in 180ms ease-out; }

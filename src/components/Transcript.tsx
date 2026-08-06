@@ -11,9 +11,10 @@ import {
   TerminalSquare,
   Wrench,
 } from 'lucide-react'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
 import { MarkdownText } from './MarkdownText'
+import { boundText, newestWindow } from '@/lib/render-bounds'
 import { PrimeMark } from './ui'
 
 function InlineText({ text }: { text: string }) {
@@ -41,6 +42,8 @@ function ToolPart({ part, next }: { part: Extract<MessagePart, { type: 'toolCall
   const failed = result?.isError
   const args = part.args === undefined ? '' : typeof part.args === 'string' ? part.args : JSON.stringify(part.args, null, 2)
   const isTerminal = /shell|command|bash|terminal/i.test(part.name)
+  const output = `${args}${args && result?.text ? '\n\n' : ''}${result?.text ?? ''}`
+  const visibleOutput = boundText(output, 200_000, '\n\n[Output truncated in the desktop view.]')
   return (
     <div className={`tool-card ${failed ? 'tool-card--error' : ''}`}>
       <button type="button" className="tool-card__summary" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
@@ -52,7 +55,7 @@ function ToolPart({ part, next }: { part: Extract<MessagePart, { type: 'toolCall
         <span className="tool-card__duration">{result ? 'done' : 'running'}</span>
         {(args || result?.text) ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}
       </button>
-      {open && (args || result?.text) ? <pre className="tool-card__output">{args}{args && result?.text ? '\n\n' : ''}{result?.text}</pre> : null}
+      {open && visibleOutput ? <pre className="tool-card__output">{visibleOutput}</pre> : null}
     </div>
   )
 }
@@ -69,7 +72,7 @@ function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): 
   )
 }
 
-function AssistantMessage({ message, git, isLast, onOpenChanges }: { message: TranscriptMessage; git: GitStatus; isLast: boolean; onOpenChanges(): void }) {
+const AssistantMessage = memo(function AssistantMessage({ message, git, isLast, onOpenChanges }: { message: TranscriptMessage; git: GitStatus; isLast: boolean; onOpenChanges(): void }) {
   const visibleToolResultIds = new Set<number>()
   return (
     <article className="message message--assistant">
@@ -94,7 +97,11 @@ function AssistantMessage({ message, git, isLast, onOpenChanges }: { message: Tr
       </div>
     </article>
   )
-}
+}, (previous, next) => previous.message === next.message && previous.isLast === next.isLast && (!next.isLast || previous.git === next.git && previous.onOpenChanges === next.onOpenChanges))
+
+const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
+  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, partIndex) => part.type === 'text' ? <InlineText key={partIndex} text={part.text} /> : null)}</div></article>
+})
 
 interface TranscriptProps {
   messages: TranscriptMessage[]
@@ -108,18 +115,41 @@ interface TranscriptProps {
 export function Transcript({ messages, git, loading, onOpenChanges, onSuggestion, suggestionsDisabled }: TranscriptProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const previousCountRef = useRef(0)
+  const previousStreamingRef = useRef(false)
+  const pinnedToBottomRef = useRef(true)
+  const [visibleLimit, setVisibleLimit] = useState(250)
+  const [announcement, setAnnouncement] = useState('')
   const streaming = messages.some((message) => message.streaming)
+  const visibleMessages = useMemo(() => newestWindow(messages, visibleLimit), [messages, visibleLimit])
+  const hiddenCount = messages.length - visibleMessages.length
+  const lastAssistantId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === 'assistant') return messages[index].id
+    return undefined
+  }, [messages])
+
   useEffect(() => {
     const firstLoadedTranscript = previousCountRef.current === 0 && messages.length > 0
-    if (firstLoadedTranscript || streaming) {
-      const scroller = scrollRef.current
-      scroller?.scrollTo({ top: scroller.scrollHeight, behavior: streaming ? 'smooth' : 'auto' })
+    const scroller = scrollRef.current
+    if (firstLoadedTranscript) {
+      requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
+      pinnedToBottomRef.current = true
+    } else if (streaming && pinnedToBottomRef.current) {
+      requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
     }
+    if (previousStreamingRef.current && !streaming) setAnnouncement('Prime response complete.')
+    else if (!previousStreamingRef.current && streaming) setAnnouncement('Prime is working.')
+    previousStreamingRef.current = streaming
     previousCountRef.current = messages.length
   }, [messages, streaming])
 
+  const updatePinnedState = () => {
+    const scroller = scrollRef.current
+    if (scroller) pinnedToBottomRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120
+  }
+
   return (
-    <div ref={scrollRef} className="transcript scroll-area" aria-busy={loading}>
+    <div ref={scrollRef} className="transcript scroll-area" aria-busy={loading} onScroll={updatePinnedState}>
+      <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       <div className="transcript__inner">
         {loading ? <div className="transcript-loading"><LoaderCircle className="spin" size={16} /> Loading session…</div> : null}
         {!loading && messages.length === 0 ? (
@@ -130,10 +160,11 @@ export function Transcript({ messages, git, loading, onOpenChanges, onSuggestion
             <div className="prompt-suggestions"><button type="button" disabled={suggestionsDisabled} onClick={() => onSuggestion('Summarize this project')}>Summarize this project</button><button type="button" disabled={suggestionsDisabled} onClick={() => onSuggestion('Find a useful next task')}>Find a useful next task</button><button type="button" disabled={suggestionsDisabled} onClick={() => onSuggestion('Run the test suite')}>Run the test suite</button></div>
           </div>
         ) : null}
-        {messages.map((message, index) => message.role === 'user' ? (
-          <article className="message message--user" key={message.id}><div className="user-bubble">{message.parts.map((part, partIndex) => part.type === 'text' ? <InlineText key={partIndex} text={part.text} /> : null)}</div></article>
+        {hiddenCount > 0 ? <button type="button" className="transcript__show-earlier" onClick={() => setVisibleLimit((limit) => Math.min(messages.length, limit + 250))}>Show {Math.min(250, hiddenCount)} earlier messages</button> : null}
+        {visibleMessages.map((message) => message.role === 'user' ? (
+          <UserMessage key={message.id} message={message} />
         ) : message.role === 'assistant' ? (
-          <AssistantMessage key={message.id} message={message} git={git} isLast={!messages.slice(index + 1).some((item) => item.role === 'assistant')} onOpenChanges={onOpenChanges} />
+          <AssistantMessage key={message.id} message={message} git={git} isLast={message.id === lastAssistantId} onOpenChanges={onOpenChanges} />
         ) : (
           <div className={`message message--${message.role}`} key={message.id}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>
         ))}
