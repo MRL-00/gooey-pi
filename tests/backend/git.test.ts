@@ -194,6 +194,37 @@ exit 1
     }
   }, 20_000)
 
+  it('inspects filtered changes beyond the status display cap', async () => {
+    const cwd = repository('prime-work-git-filter-cap-')
+    for (let index = 0; index < GIT_STATUS_ENTRY_LIMIT; index += 1) {
+      writeFileSync(join(cwd, `bulk-${String(index).padStart(4, '0')}.txt`), 'base\n')
+    }
+    writeFileSync(join(cwd, 'zz-filtered.bin'), 'base\n')
+    git(cwd, 'add', '.')
+    git(cwd, 'commit', '-qm', 'many paths')
+
+    git(cwd, 'config', 'filter.late.clean', 'cat')
+    git(cwd, 'config', 'filter.late.smudge', 'cat')
+    git(cwd, 'config', 'filter.late.required', 'true')
+    writeFileSync(join(cwd, '.gitattributes'), 'zz-filtered.bin filter=late\n')
+    for (let index = 0; index < GIT_STATUS_ENTRY_LIMIT; index += 1) {
+      writeFileSync(join(cwd, `bulk-${String(index).padStart(4, '0')}.txt`), 'changed\n')
+    }
+    writeFileSync(join(cwd, 'zz-filtered.bin'), 'changed\n')
+
+    const rawStatus = spawnSync('git', ['status', '--porcelain=v1', '--untracked-files=all', '-z'], { cwd, encoding: 'utf8' }).stdout
+    const filteredIndex = rawStatus.split('\0').filter(Boolean).findIndex((record) => record.endsWith('zz-filtered.bin'))
+    expect(filteredIndex).toBeGreaterThanOrEqual(GIT_STATUS_ENTRY_LIMIT)
+
+    const service = new GitService(async () => cwd)
+    const status = await service.status(cwd)
+    expect(status.isRepo).toBe(false)
+    expect(status.error).toMatch(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
+    await expect(service.diff(cwd, undefined, false)).rejects.toThrow(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
+    await expect(service.stage(cwd, ['zz-filtered.bin'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
+    await expect(service.restore(cwd, ['zz-filtered.bin'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
+  }, 30_000)
+
   it('fails closed for LFS-style filtered content without changing the index or worktree', async () => {
     const cwd = repository('prime-work-git-lfs-')
     const marker = join(cwd, 'lfs-filter-ran')

@@ -9,7 +9,6 @@ export const GIT_STATUS_ENTRY_LIMIT = 1_000
 export const GIT_DIFF_LINE_LIMIT = 5_000
 const GIT_STATUS_OUTPUT_LIMIT = 4 * 1024 * 1024
 const GIT_CONFIG_OUTPUT_LIMIT = 512 * 1024
-const GIT_ATTRIBUTE_PATH_LIMIT = 1_000
 const GIT_DIFF_OUTPUT_LIMIT = 2 * 1024 * 1024
 const GIT_ERROR_LIMIT = 2_000
 const GIT_IDENTITY_VALUE_LIMIT = 320
@@ -30,7 +29,7 @@ function hardenedGitArgs(args: readonly string[], extraConfig: readonly string[]
   return [...result, ...args]
 }
 
-function runGit(cwd: string, args: readonly string[], options: { timeoutMs: number; maxBytes: number }, extraConfig: readonly string[] = []): Promise<ProcessResult> {
+function runGit(cwd: string, args: readonly string[], options: { timeoutMs: number; maxBytes: number; input?: string }, extraConfig: readonly string[] = []): Promise<ProcessResult> {
   return runProcess('git', hardenedGitArgs(args, extraConfig), { cwd, ...options, env: restrictedGitEnvironment() })
 }
 
@@ -250,31 +249,30 @@ function changedPathsFromStatus(output: string): string[] {
     const path = record.slice(3)
     if (path) paths.push(path)
     if (code.includes('R') || code.includes('C')) cursor = nextNulField(output, cursor).cursor
-    if (paths.length >= GIT_ATTRIBUTE_PATH_LIMIT) break
   }
   return paths
 }
 
 async function rejectFilteredPaths(cwd: string, paths: readonly string[], overrides: readonly string[]): Promise<void> {
   if (!paths.length) return
+  // Feed the paths to one bounded process. Status output and direct mutation inputs
+  // are capped, so this inspects every path without an attacker causing an
+  // unbounded sequence of check-attr subprocesses.
+  const result = await runGit(cwd, ['check-attr', '-z', '--stdin', 'filter'], {
+    timeoutMs: 10_000,
+    maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
+    input: `${paths.join('\0')}\0`,
+  }, overrides)
+  requireProcessSuccess('Git filter attribute inspection', result)
   const affected: string[] = []
-  for (let offset = 0; offset < paths.length; offset += 200) {
-    const chunk = paths.slice(offset, offset + 200)
-    const result = await runGit(cwd, ['check-attr', '-z', 'filter', '--', ...chunk], {
-      timeoutMs: 10_000,
-      maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
-    }, overrides)
-    requireProcessSuccess('Git filter attribute inspection', result)
-    let cursor = 0
-    while (cursor < result.stdout.length) {
-      const path = nextNulField(result.stdout, cursor)
-      const attribute = nextNulField(result.stdout, path.cursor)
-      const value = nextNulField(result.stdout, attribute.cursor)
-      cursor = value.cursor
-      if (attribute.value !== 'filter' || value.value === 'unspecified' || value.value === 'unset' || !path.value) continue
-      affected.push(path.value)
-      if (affected.length >= 5) break
-    }
+  let cursor = 0
+  while (cursor < result.stdout.length) {
+    const path = nextNulField(result.stdout, cursor)
+    const attribute = nextNulField(result.stdout, path.cursor)
+    const value = nextNulField(result.stdout, attribute.cursor)
+    cursor = value.cursor
+    if (attribute.value !== 'filter' || value.value === 'unspecified' || value.value === 'unset' || !path.value) continue
+    affected.push(path.value)
     if (affected.length >= 5) break
   }
   if (!affected.length) return
