@@ -9,3 +9,6 @@ test-results
 .env
 .env.*
 .superdesign/tmp/
+research/*.log
+research/prime-list.json
+research/prime-list.stderr
