@@ -49,4 +49,3 @@
 @keyframes modal-in { from { opacity: 0; transform: translateY(5px) scale(.99); } }
 @keyframes palette-in { from { opacity: 0; transform: translateY(-5px) scale(.995); } }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
-

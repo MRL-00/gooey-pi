@@ -14,7 +14,7 @@ Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/Pri
 - Isolated in-app browser with navigation, history, annotations, and external-browser handoff
 - Project-scoped `node-pty` terminal with clear, maximize/restore, resize, and clean shutdown
 - Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
-- Project-local `ask_user` extension with multiple-choice dialogs in Prime Work and Prime Agent's native CLI UI
+- Project-local `ask_user` extension with multiple-choice dialogs and freeform answers in Prime Work and Prime Agent's native CLI UI
 - Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
 - macOS keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
 
@@ -38,7 +38,11 @@ Prime Work never stores provider API keys. Authentication remains owned by Prime
 
 ### Ask the user from an agent turn
 
-This repository includes `.prime/agent/extensions/ask-user.ts`. Prime Agent auto-discovers it when the working directory is this project, so the model can call `ask_user` from either Prime Work or the interactive Prime Agent CLI. Prime Work renders the request as a native modal; the CLI uses its terminal selector. Non-interactive modes such as print/JSON do not have a question UI. To make the tool available in every CLI project, copy the extension to `~/.prime/agent/extensions/`.
+This repository includes `.prime/agent/extensions/ask-user.ts`. Prime Agent auto-discovers it when the working directory is this project, so the model can call `ask_user` from either Prime Work or the interactive Prime Agent CLI. The tool accepts a `question`, optional `context`, and two to twelve `options`, then always adds `Other (type your own answer)` so the user can provide a freeform response. Context is returned with the answer metadata but is not shown in the question UI. The result records whether the answer came from a listed option or freeform input. Non-interactive modes such as print/JSON do not have a question UI. To make the tool available in every CLI project, copy the extension to `~/.prime/agent/extensions/` or install the [Prime Plugins collection](https://github.com/am-will/prime-plugins):
+
+```bash
+prime-agent package install https://github.com/am-will/prime-plugins
+```
 
 ## Develop
 
