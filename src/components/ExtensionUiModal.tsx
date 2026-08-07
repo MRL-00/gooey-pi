@@ -130,19 +130,18 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
   const handleQuestionnaireKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!questionnaire || !questionnaire.complete) return
     const isTextInput = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
-    if (event.key === 'ArrowLeft') {
+    const modifiedArrow = event.ctrlKey || event.metaKey
+    // Question navigation is bound to explicit keys only. Tab is intentionally
+    // not handled here so the focus trap can reach the footer buttons, and bare
+    // arrow keys keep their native caret behavior inside text fields.
+    if (event.key === 'PageUp' || (modifiedArrow && event.key === 'ArrowLeft')) {
       event.preventDefault()
       navigateQuestion(questionIndex - 1)
       return
     }
-    if (event.key === 'ArrowRight') {
+    if (event.key === 'PageDown' || (modifiedArrow && event.key === 'ArrowRight')) {
       event.preventDefault()
       navigateQuestion(questionIndex + 1)
-      return
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault()
-      navigateQuestion(questionIndex + (event.shiftKey ? -1 : 1))
       return
     }
     if (questionIndex === questionnaire.questions.length) {
@@ -174,14 +173,9 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
         event.preventDefault()
         selectQuestionOption(index)
       }
-      return
     }
-    if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && event.target instanceof HTMLElement && event.target.tagName !== 'INPUT') {
-      event.preventDefault()
-      const current = contexts[activeQuestion.id] ?? ''
-      setContexts((values) => ({ ...values, [activeQuestion.id]: `${current}${event.key}` }))
-      setAnsweredByQuestion((values) => ({ ...values, [activeQuestion.id]: false }))
-    }
+    // Other printable keys are never hijacked: a focused button keeps its
+    // native key handling and typing context happens in the context field.
   }
 
   return (
@@ -239,7 +233,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
                       }}
                     />
                   </label>
-                  <p className="extension-questionnaire__hint">← → or Tab questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
+                  <p className="extension-questionnaire__hint">Ctrl+← → or PgUp/PgDn questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
                 </div>
               ) : (
                 <div className="extension-questionnaire__submit" role="listbox" aria-label="Submit answers">
