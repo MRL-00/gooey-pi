@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { ChevronRight, FileCode2, LoaderCircle } from 'lucide-react'
 import type { GitStatus, TranscriptMessage } from '@/types/api'
+import { ErrorBoundary } from './ErrorBoundary'
 import { MarkdownText } from './MarkdownText'
 import { PrimeMark } from './ui'
 import { ActivityMessage, AgentMessage, AssistantMessage, GoalMessage, UserMessage } from './transcript/messages'
@@ -93,14 +94,16 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
           </div>
         </div> : null}
         {hiddenCount > 0 ? <button type="button" className="transcript__show-earlier" onClick={showEarlier}>Show {Math.min(250, hiddenCount)} earlier messages</button> : null}
-        {visibleMessages.map((message) => message.role === 'user' ? <UserMessage key={message.id} message={message} />
-          : message.role === 'assistant' ? message.streaming || message.id === activeAssistantId
-            ? <ActiveAssistantMessage key={message.id} message={message} showReasoning={showReasoning} showTools={showTools} />
-            : <AssistantMessage key={message.id} message={message} git={EMPTY_GIT} isLast={false} showReasoning={showReasoning} showTools={showTools} onOpenChanges={onOpenChanges} />
-          : message.role === 'agent' ? <AgentMessage key={message.id} message={message} />
-          : message.role === 'goal' ? <GoalMessage key={message.id} message={message} />
-          : message.role === 'tool' || message.role === 'system' ? <ActivityMessage key={message.id} message={message} />
-          : <div className={`message message--${message.role}`} key={message.id}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>)}
+        {visibleMessages.map((message) => <ErrorBoundary key={message.id} fallback={<div className="message message--render-failure" role="note">This message could not be displayed.</div>}>
+          {message.role === 'user' ? <UserMessage message={message} />
+            : message.role === 'assistant' ? message.streaming || message.id === activeAssistantId
+              ? <ActiveAssistantMessage message={message} showReasoning={showReasoning} showTools={showTools} />
+              : <AssistantMessage message={message} git={EMPTY_GIT} isLast={false} showReasoning={showReasoning} showTools={showTools} onOpenChanges={onOpenChanges} />
+            : message.role === 'agent' ? <AgentMessage message={message} />
+            : message.role === 'goal' ? <GoalMessage message={message} />
+            : message.role === 'tool' || message.role === 'system' ? <ActivityMessage message={message} />
+            : <div className={`message message--${message.role}`}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>}
+        </ErrorBoundary>)}
         {active && !activeAssistantId ? <article className="message message--assistant transcript-active-placeholder" aria-live="polite">
           <div className="assistant-mark"><PrimeMark size={24} /></div><div className="streaming-state"><ThinkingDots /> Prime is working</div>
         </article> : null}

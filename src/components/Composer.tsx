@@ -14,6 +14,7 @@ import {
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
@@ -71,7 +72,7 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
 }
 
 export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(takeComposerDraft)
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [images, setImages] = useState<ComposerImage[]>([])
