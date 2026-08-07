@@ -280,10 +280,10 @@ Small, safe, batched into one or two commits at the end (each still with a test 
 
 ## Decisions required (not blocking Phases 1–7)
 
-- **D1. Release architecture matrix** — ship mac universal (or arm64+x64 DMGs), win/linux x64+arm64? Recommendation: mac `--arch universal`; win/linux add arm64 jobs. Needs a product call on artifact count.
-- **D2. Windows code signing** — unsigned public builds trip SmartScreen. Needs a cert (org decision); until then, label the artifacts clearly as unsigned in release notes and add the fuse/arch checks to `verify-cross-platform-package.mjs` regardless (that part is in 4.35's spirit and should be done now).
-- **D3. Dependency hosting** — move `prime-agent` tarballs off `pub-*.r2.dev` to a registry (private npm/GitHub Packages) or an immutable versioned bucket behind a custom domain. Until then 4.38's audit workflow is the mitigation.
-- **D4. BrowserPanel annotations** — wire the collected annotations into the next prompt, or remove the affordance. Currently silently discards user input; either resolution is fine, shipping the dead control is not.
+- **D1. Release architecture matrix** — RESOLVED (2026-08-07): ship separate mac arm64 and x64 DMGs (no universal binary — user declined doubling the binary size). Implemented via a mac packaging matrix (arm64 on macos-14, x64 on macos-13).
+- **D2. Windows code signing** — RESOLVED (2026-08-07): no cert purchase; builds stay unsigned. The fuse/arch verification hardening landed in Phase 4 regardless. Label artifacts as unsigned in release notes.
+- **D3. Dependency hosting** — DECIDED DIRECTION (2026-08-07): keep R2, but (a) front the bucket with a custom domain (Cloudflare dashboard; `pub-*.r2.dev` is a rate-limited dev endpoint), (b) treat every released version path as immutable — never overwrite `/releases/vX.Y.Z/*`, (c) never casually regenerate the lockfile (its sha512 pins are the integrity boundary). Update the two `package.json` URLs + lockfile once the domain exists. 4.38's weekly audit workflow covers CVE monitoring.
+- **D4. BrowserPanel annotations** — RESOLVED (2026-08-07): build the feature out. Spec: annotation mode highlights DOM elements on hover in the embedded browser; click selects an element; user comments on it; captured element info (selector, tag, text snippet, rect) + comment auto-attach to the chat composer as an attachment and are serialized into the prompt on send; up to 20 annotations at a time, individually deletable.
 
 ## Explicitly not planned (accepted as-is)
 
