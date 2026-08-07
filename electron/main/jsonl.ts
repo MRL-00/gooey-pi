@@ -9,16 +9,14 @@ class FragmentedLineBuffer {
 
   constructor(private readonly maxUnframedBytes: number, private readonly recordName: string) {}
 
-  append(fragment: string): void {
-    if (!fragment) return
-    const bytes = Buffer.byteLength(fragment, 'utf8')
-    if (this.bytes + bytes > this.maxUnframedBytes) this.tooLarge()
-    this.fragments.push(fragment)
-    this.bytes += bytes
+  append(fragment: string, fragmentBytes: number): void {
+    if (!fragment && !fragmentBytes) return
+    if (this.bytes + fragmentBytes > this.maxUnframedBytes) this.tooLarge()
+    if (fragment) this.fragments.push(fragment)
+    this.bytes += fragmentBytes
   }
 
-  takeLine(fragment: string): string {
-    const fragmentBytes = Buffer.byteLength(fragment, 'utf8')
+  takeLine(fragment: string, fragmentBytes: number): string {
     const totalBytes = this.bytes + fragmentBytes
     // A CR immediately before LF is framing, so it does not count toward the record limit.
     if (totalBytes > this.maxUnframedBytes + 1) this.tooLarge()
@@ -42,15 +40,24 @@ class FragmentedLineBuffer {
   private tooLarge(): never { throw new Error(`${this.recordName} record exceeded the maximum frame size`) }
 }
 
-function* decodedLines(text: string, buffer: FragmentedLineBuffer): Generator<string> {
+/**
+ * Splits an encoded chunk on LF (unambiguous in UTF-8) and accounts record
+ * size from the consumed input bytes, so no decoded string is re-measured.
+ */
+function* encodedLines(chunk: Buffer, decoder: StringDecoder, buffer: FragmentedLineBuffer): Generator<string> {
   let start = 0
   while (true) {
-    const index = text.indexOf('\n', start)
+    const index = chunk.indexOf(0x0a, start)
     if (index < 0) break
-    yield buffer.takeLine(text.slice(start, index))
+    yield buffer.takeLine(decoder.write(chunk.subarray(start, index)), index - start)
     start = index + 1
   }
-  buffer.append(text.slice(start))
+  const rest = chunk.subarray(start)
+  buffer.append(decoder.write(rest), rest.length)
+}
+
+function asBuffer(chunk: Buffer | string): Buffer {
+  return typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
 }
 
 /** Strict JSONL parser: only LF is a delimiter; U+2028/U+2029 stay inside JSON strings. */
@@ -58,10 +65,10 @@ export async function* strictJsonLines(stream: Readable, maxUnframedBytes = MAX_
   const decoder = new StringDecoder('utf8')
   const buffer = new FragmentedLineBuffer(maxUnframedBytes, 'JSONL')
   for await (const raw of stream) {
-    const decoded = typeof raw === 'string' ? raw : decoder.write(raw as Buffer)
-    for (const line of decodedLines(decoded, buffer)) yield line
+    for (const line of encodedLines(asBuffer(raw as Buffer | string), decoder, buffer)) yield line
   }
-  buffer.append(decoder.end())
+  // Any bytes a dangling partial sequence flushes were already accounted.
+  buffer.append(decoder.end(), 0)
   const finalLine = buffer.finish()
   if (finalLine !== undefined) yield finalLine
 }
@@ -75,12 +82,11 @@ export class StrictJsonlDecoder {
   }
 
   push(chunk: Buffer | string): void {
-    const decoded = typeof chunk === 'string' ? chunk : this.decoder.write(chunk)
-    for (const line of decodedLines(decoded, this.buffer)) if (line) this.onLine(line)
+    for (const line of encodedLines(asBuffer(chunk), this.decoder, this.buffer)) if (line) this.onLine(line)
   }
 
   end(): void {
-    this.buffer.append(this.decoder.end())
+    this.buffer.append(this.decoder.end(), 0)
     const finalLine = this.buffer.finish()
     if (finalLine !== undefined) this.onLine(finalLine)
   }

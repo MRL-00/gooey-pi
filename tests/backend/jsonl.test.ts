@@ -18,6 +18,23 @@ describe('StrictJsonlDecoder', () => {
     expect(() => decoder.push('123456789')).toThrow(/maximum frame size/)
   })
 
+  it('accounts each encoded input byte exactly once across chunk boundaries', () => {
+    const lines: string[] = []
+    const decoder = new StrictJsonlDecoder((line) => lines.push(line), 5)
+    const record = Buffer.from('€xy') // 5 encoded bytes, 3 characters
+    decoder.push(record.subarray(0, 1))
+    decoder.push(record.subarray(1, 2))
+    decoder.push(record.subarray(2))
+    decoder.push('\n')
+    decoder.end()
+    expect(lines).toEqual(['€xy'])
+  })
+
+  it('rejects a record whose encoded bytes exceed the limit even when decoded characters are few', () => {
+    const decoder = new StrictJsonlDecoder(() => undefined, 5)
+    expect(() => decoder.push(Buffer.from('€€'))).toThrow(/maximum frame size/)
+  })
+
   it('assembles highly fragmented records without repeatedly copying the buffered prefix', () => {
     const lines: string[] = []
     const decoder = new StrictJsonlDecoder((line) => lines.push(line), 100_000)
