@@ -90,7 +90,7 @@ function isAllowedBrowserUrl(raw: string): boolean {
   try { const url = new URL(raw); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password } catch { return false }
 }
 
-function hardenRenderer(window: BrowserWindow): void {
+export function hardenRenderer(window: BrowserWindow): void {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-attach-webview', (event, preferences, params) => {
     delete preferences.preload
@@ -100,6 +100,8 @@ function hardenRenderer(window: BrowserWindow): void {
     preferences.sandbox = true
     preferences.webSecurity = true
     preferences.allowRunningInsecureContent = false
+    // A guest page must never be able to attach a nested guest of its own.
+    preferences.webviewTag = false
     const partition = typeof params.partition === 'string' ? params.partition : ''
     if (partition !== 'persist:prime-work-browser' || !isAllowedBrowserUrl(params.src)) event.preventDefault()
   })
