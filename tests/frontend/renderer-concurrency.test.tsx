@@ -4,6 +4,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AGENT_EVENT_FLUSH_CHUNK, AGENT_EVENT_QUEUE_LIMIT } from '../../src/app/agent-events'
+import { useAgentEvents } from '../../src/hooks/useAgentEvents'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
 import { useBootstrap } from '../../src/hooks/useBootstrap'
 import { useExtensionUi } from '../../src/hooks/useExtensionUi'
@@ -235,6 +236,54 @@ describe('agent event frame queue', () => {
     await act(async () => { await new Promise((resolveWait) => setTimeout(resolveWait, 0)) })
     expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK + 1)}`)
     expect(read).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('agent event git refresh timer', () => {
+  it('coalesces terminal-event git refreshes and clears the timer on cleanup', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let handler!: (payload: { runtimeId: string; event: Record<string, unknown> }) => void
+      const unsubscribe = vi.fn()
+      const bridge = {
+        agent: { onEvent: (callback: typeof handler) => { handler = callback; return unsubscribe } },
+      } as unknown as PrimeWorkApi
+      const refreshGit = vi.fn(async () => undefined)
+      function AgentEventsProbe() {
+        useAgentEvents({
+          bridge,
+          runtimeIdRef: { current: 'runtime' },
+          runtimeSessionsRef: { current: new Map([['runtime', session.filePath]]) },
+          runtimeOwnerRef: { current: null },
+          workspaceRef: { current: { generation: 0, sessionFile: session.filePath, cwd: '/project' } },
+          setSessions: vi.fn(),
+          setRuntime: vi.fn(),
+          queueAgentEvent: vi.fn(),
+          reconcileTranscriptForEvent: vi.fn(),
+          showExtensionUi: vi.fn(),
+          clearExtensionUi: vi.fn(),
+          refreshGit,
+          refreshGitOnTerminalEvent: true,
+          activeSessionVisible: true,
+        })
+        return <Probe />
+      }
+      await act(async () => { root.render(<AgentEventsProbe />) })
+      act(() => {
+        handler({ runtimeId: 'runtime', event: { type: 'agent_end' } })
+        handler({ runtimeId: 'runtime', event: { type: 'error' } })
+      })
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(refreshGit).toHaveBeenCalledTimes(1)
+
+      act(() => { handler({ runtimeId: 'runtime', event: { type: 'agent_end' } }) })
+      await act(async () => root.unmount())
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(refreshGit).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -39,7 +39,15 @@ export function useAgentEvents({
 }: UseAgentEventsOptions) {
   useEffect(() => {
     if (!bridge) return
-    return bridge.agent.onEvent(({ runtimeId, event }) => {
+    let gitRefreshTimer: number | null = null
+    const scheduleGitRefresh = () => {
+      if (gitRefreshTimer !== null) return
+      gitRefreshTimer = window.setTimeout(() => {
+        gitRefreshTimer = null
+        void refreshGit()
+      }, 160)
+    }
+    const unsubscribe = bridge.agent.onEvent(({ runtimeId, event }) => {
       const type = typeof event.type === 'string' ? event.type : ''
       const sessionFile = runtimeSessionsRef.current.get(runtimeId)
         ?? (runtimeIdRef.current === runtimeId ? workspaceRef.current.sessionFile : undefined)
@@ -84,9 +92,13 @@ export function useAgentEvents({
         setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
       } else if (type === 'agent_end' || type === 'extension_error' || type === 'error' || type === 'transport_error') {
         setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false, isCompacting: false } : current)
-        if (refreshGitOnTerminalEvent) window.setTimeout(() => void refreshGit(), 160)
+        if (refreshGitOnTerminalEvent) scheduleGitRefresh()
       }
     })
+    return () => {
+      unsubscribe()
+      if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer)
+    }
   }, [
     activeSessionVisible,
     bridge,
