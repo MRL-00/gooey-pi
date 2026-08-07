@@ -34,6 +34,8 @@ function runInPage(view: WebviewElement, code: string): Promise<unknown> {
   }
 }
 
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)
+
 function normalizeUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return 'about:blank'
@@ -342,6 +344,14 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
                 }}
                 placeholder="Describe what should change…"
               />
+              <p className="annotation-popover__hints">
+                <span>
+                  <kbd>{IS_MAC ? '↩' : 'Enter'}</kbd> add to chat
+                </span>
+                <span>
+                  <kbd>{IS_MAC ? '⌘↩' : 'Ctrl+Enter'}</kbd> send now
+                </span>
+              </p>
               <div>
                 <button
                   type="button"

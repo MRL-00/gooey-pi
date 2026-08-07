@@ -109,6 +109,9 @@
 .annotation-popover > div:first-child strong { flex: 1; color: var(--text); font-size: 11px; }
 .annotation-popover > div:first-child button { width: 20px; height: 20px; display: grid; place-items: center; color: var(--text-secondary); background: transparent; }
 .annotation-popover textarea { width: 100%; min-height: 60px; margin-top: 4px; padding: 7px; resize: vertical; border: 1px solid var(--border); border-radius: 7px; outline: 0; background: var(--canvas); font-size: 11px; }
+.annotation-popover__hints { display: flex; gap: 12px; margin: 5px 1px 0; color: var(--text-tertiary); font-size: 10px; }
+.annotation-popover__hints span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.annotation-popover__hints kbd { padding: 1px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-subtle); color: var(--text-secondary); font-family: inherit; font-size: 9.5px; line-height: 1.4; }
 .annotation-popover > div:last-child { display: flex; justify-content: flex-end; gap: 5px; margin-top: 7px; }
 .annotation-popover .button { min-height: 26px; font-size: 10.5px; }
 .annotation-count { position: absolute; z-index: 10; left: 9px; bottom: 9px; height: 25px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--annotation); background: var(--surface-raised); box-shadow: 0 2px 8px rgba(0,0,0,.1); font-size: 10px; }

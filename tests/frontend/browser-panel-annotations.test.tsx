@@ -178,6 +178,10 @@ describe('BrowserPanel annotation mode', () => {
     }
 
     await capture()
+    // jsdom reports no platform, so the non-mac hint labels render.
+    const hints = container.querySelector('.annotation-popover__hints')
+    expect(hints?.textContent).toContain('Enter add to chat')
+    expect(hints?.textContent).toContain('Ctrl+Enter send now')
     await setComment('plain enter saves')
     const signalBefore = latestApi.sendSignal
     await keydown({ key: 'Enter' })
