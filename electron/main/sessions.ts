@@ -6,7 +6,7 @@ import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../..
 import { queueDaemonFollowUp } from './agent-daemon'
 import { runProcess } from './process-utils'
 import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
-import { readSessionMetadata, type SessionMetadata } from './sessions/metadata'
+import { createSessionMetadataReader, type SessionMetadata } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
 import type { JsonStateStore } from './store'
 import { isPathWithin, isRecord, requireBoolean, requireExistingDirectory, requireId, requireString } from './validation'
@@ -36,6 +36,7 @@ export class SessionService {
   private stopRuntimeForSession: (filePath: string) => Promise<void> = async () => undefined
   private renameRuntimeSession: (filePath: string, title: string) => Promise<boolean> = async () => false
   private readonly catalog: SessionMetadataCatalog
+  private readonly metadataReader = createSessionMetadataReader()
   private readonly transcriptReadsByCanonicalPath = new Map<string, Promise<TranscriptMessage[]>>()
   private readonly transcriptReadQueue: Array<() => void> = []
   private activeTranscriptReads = 0
@@ -315,7 +316,7 @@ export class SessionService {
   }
 
   private async readMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
-    const metadata = await readSessionMetadata(filePath, knownStat)
+    const metadata = await this.metadataReader(filePath, knownStat)
     if (metadata.projectPath) {
       try { metadata.projectPath = await requireExistingDirectory(metadata.projectPath, 'session project path') }
       catch { if (metadata.projectPath.startsWith('/')) metadata.projectPath = resolve(metadata.projectPath) }

@@ -1,4 +1,5 @@
-import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { appendFileSync, chmodSync, createReadStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectService } from '../../electron/main/projects'
 import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
 import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
-import type { SessionMetadata } from '../../electron/main/sessions/metadata'
+import { createSessionMetadataReader, METADATA_VERIFY_TAIL_BYTES, readSessionMetadata, type SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
@@ -181,6 +182,102 @@ describe('SessionService catalog scaling', () => {
     expect(inspect).toHaveBeenCalledTimes(2 * maxSessionFiles)
     expect(readMetadata).toHaveBeenCalledTimes(maxSessionFiles)
     expect(inspect.mock.calls.flat().join(' ')).not.toContain(sessionName(0))
+  })
+})
+
+describe('incremental session metadata reads', () => {
+  function trackedReader(): { reader: ReturnType<typeof createSessionMetadataReader>; opens: Array<{ start: number; end: number }> } {
+    const opens: Array<{ start: number; end: number }> = []
+    const reader = createSessionMetadataReader({
+      inspect: stat,
+      openStream: (path, start, end) => {
+        opens.push({ start, end })
+        return createReadStream(path, { start, end })
+      },
+    })
+    return { reader, opens }
+  }
+
+  function writeLargeSession(file: string, id: string): void {
+    writeSession(file, '/project', id)
+    for (let index = 0; index < 8; index += 1) {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `${id}-bulk-${index}`, message: { role: 'user', content: `${id} `.repeat(200) } })}\n`)
+    }
+    expect(statSync(file).size).toBeGreaterThan(METADATA_VERIFY_TAIL_BYTES)
+  }
+
+  it('reads only the appended byte range plus the verification tail after the initial parse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-incremental-')); dirs.push(dir)
+    const file = join(dir, 'incremental.jsonl')
+    writeLargeSession(file, 'incremental')
+    const { reader, opens } = trackedReader()
+
+    const first = await reader(file)
+    const firstSize = statSync(file).size
+    expect(first.status).toBe('idle')
+    expect(opens).toEqual([{ start: 0, end: firstSize - 1 }])
+
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'reply', timestamp: '2025-06-01T00:00:00.000Z', message: { role: 'assistant', content: 'answered' } })}\n`)
+    const second = await reader(file)
+    const secondSize = statSync(file).size
+    expect(second.preview).toBe('answered')
+    expect(second.status).toBe('complete')
+    expect(second.updatedAt).toBe('2025-06-01T00:00:00.000Z')
+    expect(opens).toHaveLength(2)
+    expect(opens[1]).toEqual({ start: firstSize - METADATA_VERIFY_TAIL_BYTES, end: secondSize - 1 })
+    expect(opens[1]!.start).toBeGreaterThan(0)
+    expect(second).toEqual(await readSessionMetadata(file))
+  })
+
+  it('resumes a verified partial line and matches the one-shot parser', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-partial-line-')); dirs.push(dir)
+    const file = join(dir, 'partial.jsonl')
+    writeLargeSession(file, 'partial')
+    const { reader, opens } = trackedReader()
+    await reader(file)
+    const baseSize = statSync(file).size
+
+    const record = JSON.stringify({ type: 'message', id: 'split', message: { role: 'assistant', content: 'split record' } })
+    appendFileSync(file, record.slice(0, 25))
+    const speculative = await reader(file)
+    // The unterminated tail parses speculatively, exactly like a full read.
+    expect(speculative).toEqual(await readSessionMetadata(file))
+    expect(opens[1]?.start).toBe(baseSize - METADATA_VERIFY_TAIL_BYTES)
+
+    appendFileSync(file, `${record.slice(25)}\n`)
+    const completed = await reader(file)
+    // Only the verification tail is re-read, nothing earlier.
+    expect(opens[2]?.start).toBe(statSync(file).size - record.length - 1 - (METADATA_VERIFY_TAIL_BYTES - 25))
+    expect(opens[2]!.start).toBeGreaterThan(0)
+    expect(completed.preview).toBe('split record')
+    expect(completed).toEqual(await readSessionMetadata(file))
+  })
+
+  it('falls back to a full re-read on truncation and rewritten tails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-truncate-')); dirs.push(dir)
+    const file = join(dir, 'truncate.jsonl')
+    writeSession(file, '/project', 'original')
+    appendFileSync(file, JSON.stringify({ type: 'message', id: 'tail', message: { role: 'assistant', content: 'tail' } }).slice(0, 30))
+    const { reader, opens } = trackedReader()
+    await reader(file)
+
+    writeSession(file, '/project', 'rewritten')
+    const rewritten = await reader(file)
+    expect(rewritten.preview).toBe('rewritten')
+    expect(opens.at(-1)?.start).toBe(0)
+    expect(rewritten).toEqual(await readSessionMetadata(file))
+
+    const longer = [
+      JSON.stringify({ type: 'session', id: 'replaced', cwd: '/project' }),
+      JSON.stringify({ type: 'message', id: 'replaced-1', parentId: null, message: { role: 'user', content: 'a completely different transcript body' } }),
+      '',
+    ].join('\n')
+    writeFileSync(file, longer)
+    // Larger file whose retained-tail bytes no longer match: full re-read.
+    const replaced = await reader(file)
+    expect(replaced.preview).toBe('a completely different transcript body')
+    expect(opens.at(-1)?.start).toBe(0)
+    expect(replaced).toEqual(await readSessionMetadata(file))
   })
 })
 

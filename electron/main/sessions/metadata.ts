@@ -1,14 +1,22 @@
 import { createReadStream, type Stats } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { basename } from 'node:path'
+import type { Readable } from 'node:stream'
 import type { SessionRecord, SessionStatus } from '../../../src/types/api'
-import { strictJsonLines } from '../jsonl'
 import { isRecord } from '../validation'
 import { compactText, textFromContent, validTimestamp } from './transcript'
 
 export type JsonRecord = Record<string, unknown>
 
 export interface SessionMetadata extends SessionRecord { sessionName?: string }
+
+const MAX_SESSION_FILE_BYTES = 256 * 1024 * 1024
+const MAX_METADATA_RECORDS = 200_000
+const MAX_METADATA_RECORD_BYTES = 64 * 1024 * 1024
+const MAX_TRACKED_METADATA_STATES = 5_000
+export const METADATA_VERIFY_TAIL_BYTES = 4_096
+const LINE_FEED = 0x0a
+const CARRIAGE_RETURN = 0x0d
 
 function statusFrom(
   taskState: string | undefined,
@@ -49,78 +57,288 @@ export function applyLiveMetadata(metadata: SessionMetadata, live: JsonRecord): 
   }
 }
 
-export async function readSessionMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
-  const fileStat = knownStat ?? await stat(filePath)
-  if (fileStat.size > 256 * 1024 * 1024) throw new Error('Session file is too large')
-  const fallbackCreated = fileStat.birthtime.toISOString()
-  const fallbackUpdated = fileStat.mtime.toISOString()
-  let id = basename(filePath, '.jsonl')
-  let projectPath = ''
-  let createdAt = fallbackCreated
-  let updatedAt = fallbackUpdated
-  let lastUserMessageAt: string | undefined
-  let depth = 0
-  let model: string | undefined
-  let provider: string | undefined
-  let thinkingLevel: string | undefined
-  let sessionName: string | undefined
-  let firstUser = ''
-  let preview = ''
-  let lifecycle: string | undefined
-  let taskState: string | undefined
-  let lastRole: string | undefined
-  let stopReason: string | undefined
+interface MetadataAccumulator {
+  id: string
+  projectPath: string
+  createdAt: string
+  updatedAt: string
+  sawRecordTimestamp: boolean
+  lastUserMessageAt?: string
+  depth: number
+  model?: string
+  provider?: string
+  thinkingLevel?: string
+  sessionName?: string
+  firstUser: string
+  preview: string
+  lifecycle?: string
+  taskState?: string
+  lastRole?: string
+  stopReason?: string
+  records: number
+}
 
-  let metadataRecords = 0
-  for await (const line of strictJsonLines(createReadStream(filePath))) {
-    if (!line) continue
-    if (++metadataRecords > 200_000) throw new Error('Session file has too many records')
-    let value: unknown
-    try { value = JSON.parse(line) } catch { continue }
-    if (!isRecord(value)) continue
-    updatedAt = validTimestamp(value.timestamp, updatedAt)
-    if (value.type === 'session') {
-      if (typeof value.id === 'string') id = value.id
-      if (typeof value.cwd === 'string') projectPath = value.cwd
-      createdAt = validTimestamp(value.timestamp, createdAt)
-      if (typeof value.rlmDepth === 'number' && Number.isInteger(value.rlmDepth) && value.rlmDepth >= 0) depth = value.rlmDepth
-      else if (typeof value.parentSession === 'string') depth = 1
-    } else if (value.type === 'model_change') {
-      if (typeof value.modelId === 'string') model = value.modelId
-      if (typeof value.provider === 'string') provider = value.provider
-    } else if (value.type === 'thinking_level_change' && typeof value.thinkingLevel === 'string') thinkingLevel = value.thinkingLevel
-    else if (value.type === 'session_info' && typeof value.name === 'string') sessionName = value.name
-    else if (value.type === 'session_state' && isRecord(value.state) && typeof value.state.status === 'string') lifecycle = value.state.status
-    else if (value.type === 'agent_status' && isRecord(value.status) && typeof value.status.taskState === 'string') taskState = value.status.taskState
-    else if (value.type === 'message' && isRecord(value.message)) {
-      const message = value.message
-      if (typeof message.role === 'string') lastRole = message.role
-      if (typeof message.stopReason === 'string') stopReason = message.stopReason
-      const text = textFromContent(message.content, 4_096)
-      if (message.role === 'user') {
-        if (!firstUser && text) firstUser = text
-        lastUserMessageAt = validTimestamp(message.timestamp, validTimestamp(value.timestamp, lastUserMessageAt ?? createdAt))
-      }
-      if ((message.role === 'assistant' || message.role === 'user') && text) preview = text
-    }
-  }
-  const title = compactText(sessionName || firstUser, 100) || 'Untitled session'
+function createAccumulator(filePath: string, fileStat: Stats): MetadataAccumulator {
   return {
-    id,
+    id: basename(filePath, '.jsonl'),
+    projectPath: '',
+    createdAt: fileStat.birthtime.toISOString(),
+    updatedAt: fileStat.mtime.toISOString(),
+    sawRecordTimestamp: false,
+    depth: 0,
+    firstUser: '',
+    preview: '',
+    records: 0,
+  }
+}
+
+function ingestMetadataLine(state: MetadataAccumulator, line: string): void {
+  if (!line) return
+  if (++state.records > MAX_METADATA_RECORDS) throw new Error('Session file has too many records')
+  let value: unknown
+  try { value = JSON.parse(line) } catch { return }
+  if (!isRecord(value)) return
+  const recordTimestamp = validTimestamp(value.timestamp, '')
+  if (recordTimestamp) {
+    state.updatedAt = recordTimestamp
+    state.sawRecordTimestamp = true
+  }
+  if (value.type === 'session') {
+    if (typeof value.id === 'string') state.id = value.id
+    if (typeof value.cwd === 'string') state.projectPath = value.cwd
+    state.createdAt = validTimestamp(value.timestamp, state.createdAt)
+    if (typeof value.rlmDepth === 'number' && Number.isInteger(value.rlmDepth) && value.rlmDepth >= 0) state.depth = value.rlmDepth
+    else if (typeof value.parentSession === 'string') state.depth = 1
+  } else if (value.type === 'model_change') {
+    if (typeof value.modelId === 'string') state.model = value.modelId
+    if (typeof value.provider === 'string') state.provider = value.provider
+  } else if (value.type === 'thinking_level_change' && typeof value.thinkingLevel === 'string') state.thinkingLevel = value.thinkingLevel
+  else if (value.type === 'session_info' && typeof value.name === 'string') state.sessionName = value.name
+  else if (value.type === 'session_state' && isRecord(value.state) && typeof value.state.status === 'string') state.lifecycle = value.state.status
+  else if (value.type === 'agent_status' && isRecord(value.status) && typeof value.status.taskState === 'string') state.taskState = value.status.taskState
+  else if (value.type === 'message' && isRecord(value.message)) {
+    const message = value.message
+    if (typeof message.role === 'string') state.lastRole = message.role
+    if (typeof message.stopReason === 'string') state.stopReason = message.stopReason
+    const text = textFromContent(message.content, 4_096)
+    if (message.role === 'user') {
+      if (!state.firstUser && text) state.firstUser = text
+      state.lastUserMessageAt = validTimestamp(message.timestamp, validTimestamp(value.timestamp, state.lastUserMessageAt ?? state.createdAt))
+    }
+    if ((message.role === 'assistant' || message.role === 'user') && text) state.preview = text
+  }
+}
+
+function metadataFromAccumulator(state: MetadataAccumulator, filePath: string, fallbackUpdated: string): SessionMetadata {
+  const title = compactText(state.sessionName || state.firstUser, 100) || 'Untitled session'
+  return {
+    id: state.id,
     filePath,
-    projectPath,
+    projectPath: state.projectPath,
     title,
-    createdAt,
-    updatedAt,
-    lastUserMessageAt: lastUserMessageAt ?? createdAt,
-    status: statusFrom(taskState, lifecycle, lastRole, stopReason),
-    model,
-    provider,
-    thinkingLevel,
-    depth,
+    createdAt: state.createdAt,
+    updatedAt: state.sawRecordTimestamp ? state.updatedAt : fallbackUpdated,
+    lastUserMessageAt: state.lastUserMessageAt ?? state.createdAt,
+    status: statusFrom(state.taskState, state.lifecycle, state.lastRole, state.stopReason),
+    model: state.model,
+    provider: state.provider,
+    thinkingLevel: state.thinkingLevel,
+    depth: state.depth,
     pinned: false,
     unread: false,
-    preview: compactText(preview || firstUser),
-    sessionName,
+    preview: compactText(state.preview || state.firstUser),
+    sessionName: state.sessionName,
   }
+}
+
+interface IncrementalMetadataState {
+  size: number
+  mtimeMs: number
+  /** Raw bytes of the current unterminated final line, resumed on the next append. */
+  pending: Buffer
+  /** Last raw bytes of the parsed range, re-read and compared before resuming. */
+  tail: Buffer
+  accumulator: MetadataAccumulator
+}
+
+export interface SessionMetadataReaderIo {
+  inspect(path: string): Promise<Stats>
+  /** Opens a byte-range read of `[start, end]` (inclusive), mirroring createReadStream. */
+  openStream(path: string, start: number, end: number): Readable
+}
+
+const nodeMetadataReaderIo: SessionMetadataReaderIo = {
+  inspect: stat,
+  openStream: (path, start, end) => createReadStream(path, { start, end }),
+}
+
+function trimTrailingCarriageReturn(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line
+}
+
+function lastBytes(data: Buffer, max: number): Buffer {
+  return data.length <= max ? data : Buffer.from(data.subarray(data.length - max))
+}
+
+function ingestBytes(state: IncrementalMetadataState, bytes: Buffer): void {
+  state.tail = state.tail.length + bytes.length <= METADATA_VERIFY_TAIL_BYTES
+    ? Buffer.concat([state.tail, bytes])
+    : lastBytes(bytes.length >= METADATA_VERIFY_TAIL_BYTES ? bytes : Buffer.concat([state.tail, bytes]), METADATA_VERIFY_TAIL_BYTES)
+  const data = state.pending.length ? Buffer.concat([state.pending, bytes]) : bytes
+  let start = 0
+  while (true) {
+    const newline = data.indexOf(LINE_FEED, start)
+    if (newline < 0) break
+    if (newline - start > MAX_METADATA_RECORD_BYTES) throw new Error('JSONL record exceeded the maximum frame size')
+    const end = newline > start && data[newline - 1] === CARRIAGE_RETURN ? newline - 1 : newline
+    ingestMetadataLine(state.accumulator, data.toString('utf8', start, end))
+    start = newline + 1
+  }
+  const rest = data.subarray(start)
+  if (rest.length > MAX_METADATA_RECORD_BYTES) throw new Error('JSONL record exceeded the maximum frame size')
+  state.pending = Buffer.from(rest)
+}
+
+function snapshotState(state: IncrementalMetadataState, filePath: string, fallbackUpdated: string): SessionMetadata {
+  if (!state.pending.length) return metadataFromAccumulator(state.accumulator, filePath, fallbackUpdated)
+  // A full stream read parses the final unterminated line; fold it into a
+  // speculative copy so incremental snapshots stay identical without
+  // committing a partial record to the retained parse state.
+  const speculative = { ...state.accumulator }
+  ingestMetadataLine(speculative, trimTrailingCarriageReturn(state.pending.toString('utf8')))
+  return metadataFromAccumulator(speculative, filePath, fallbackUpdated)
+}
+
+async function ingestRange(io: SessionMetadataReaderIo, state: IncrementalMetadataState, filePath: string, start: number, end: number): Promise<void> {
+  if (end <= start) {
+    state.size = end
+    return
+  }
+  const stream = io.openStream(filePath, start, end - 1)
+  try {
+    for await (const chunk of stream) {
+      ingestBytes(state, typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk as Buffer)
+    }
+  } finally {
+    stream.destroy()
+  }
+  state.size = end
+}
+
+export type SessionMetadataReader = (filePath: string, knownStat?: Stats) => Promise<SessionMetadata>
+
+/**
+ * Creates a metadata reader that caches per-file parse state: appends read only
+ * the new byte range plus the retained tail, which is verified byte-for-byte
+ * before the parse resumes. Truncation, tail mismatch, or a same-size rewrite
+ * fall back to a full re-read.
+ */
+export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMetadataReaderIo): SessionMetadataReader {
+  const states = new Map<string, IncrementalMetadataState>()
+  const locks = new Map<string, Promise<unknown>>()
+
+  const remember = (filePath: string, state: IncrementalMetadataState): void => {
+    states.delete(filePath)
+    states.set(filePath, state)
+    while (states.size > MAX_TRACKED_METADATA_STATES) {
+      const oldest = states.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      states.delete(oldest)
+    }
+  }
+
+  const fullRead = async (filePath: string, fileStat: Stats): Promise<SessionMetadata> => {
+    const state: IncrementalMetadataState = {
+      size: 0,
+      mtimeMs: fileStat.mtimeMs,
+      pending: Buffer.alloc(0),
+      tail: Buffer.alloc(0),
+      accumulator: createAccumulator(filePath, fileStat),
+    }
+    await ingestRange(io, state, filePath, 0, fileStat.size)
+    remember(filePath, state)
+    return snapshotState(state, filePath, fileStat.mtime.toISOString())
+  }
+
+  const perform = async (filePath: string, knownStat?: Stats): Promise<SessionMetadata> => {
+    let fileStat: Stats
+    try {
+      fileStat = knownStat ?? await io.inspect(filePath)
+    } catch (error) {
+      states.delete(filePath)
+      throw error
+    }
+    if (fileStat.size > MAX_SESSION_FILE_BYTES) {
+      states.delete(filePath)
+      throw new Error('Session file is too large')
+    }
+    const state = states.get(filePath)
+    if (state && fileStat.size === state.size && fileStat.mtimeMs === state.mtimeMs) {
+      remember(filePath, state)
+      return snapshotState(state, filePath, fileStat.mtime.toISOString())
+    }
+    if (state && fileStat.size > state.size) {
+      try {
+        const verified = state.tail
+        const verifyStart = state.size - verified.length
+        const resumed: IncrementalMetadataState = {
+          size: state.size,
+          mtimeMs: fileStat.mtimeMs,
+          pending: state.pending,
+          tail: state.tail,
+          accumulator: { ...state.accumulator },
+        }
+        let verifiedBytes = 0
+        let mismatch = false
+        const stream = io.openStream(filePath, verifyStart, fileStat.size - 1)
+        try {
+          for await (const raw of stream) {
+            let chunk = typeof raw === 'string' ? Buffer.from(raw, 'utf8') : raw as Buffer
+            if (verifiedBytes < verified.length) {
+              const compare = Math.min(verified.length - verifiedBytes, chunk.length)
+              if (!chunk.subarray(0, compare).equals(verified.subarray(verifiedBytes, verifiedBytes + compare))) {
+                mismatch = true
+                break
+              }
+              verifiedBytes += compare
+              chunk = chunk.subarray(compare)
+            }
+            if (chunk.length) ingestBytes(resumed, chunk)
+          }
+        } finally {
+          stream.destroy()
+        }
+        if (!mismatch && verifiedBytes === verified.length) {
+          resumed.size = fileStat.size
+          remember(filePath, resumed)
+          return snapshotState(resumed, filePath, fileStat.mtime.toISOString())
+        }
+      } catch (error) {
+        if (error instanceof Error && (error.message === 'Session file has too many records' || error.message === 'JSONL record exceeded the maximum frame size')) {
+          states.delete(filePath)
+          throw error
+        }
+        // A failed range read (rotation, permissions) falls through to a full read.
+      }
+    }
+    try {
+      return await fullRead(filePath, fileStat)
+    } catch (error) {
+      states.delete(filePath)
+      throw error
+    }
+  }
+
+  return (filePath, knownStat) => {
+    const previous = locks.get(filePath) ?? Promise.resolve()
+    const run = previous.then(() => perform(filePath, knownStat), () => perform(filePath, knownStat))
+    const settled = run.then(() => undefined, () => undefined)
+    locks.set(filePath, settled)
+    void settled.then(() => { if (locks.get(filePath) === settled) locks.delete(filePath) })
+    return run
+  }
+}
+
+export async function readSessionMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
+  return createSessionMetadataReader()(filePath, knownStat)
 }
