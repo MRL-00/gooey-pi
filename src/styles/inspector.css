@@ -124,8 +124,7 @@
 /* visibility (not display) keeps the user webview's guest alive while an agent tab is shown */
 .browser-panel .browser-preview--hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
 .browser-agent-area { position: relative; min-height: 0; flex: 1; display: flex; flex-direction: column; }
-.browser-agent-urlbar { height: 29px; flex: 0 0 29px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); background: var(--surface-subtle); font-size: 10.5px; }
-.browser-agent-urlbar span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-agent-urlbar { height: 43px; flex: 0 0 43px; display: flex; align-items: center; gap: 2px; padding: 0 7px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); background: var(--surface-subtle); font-size: 10.5px; }
 .browser-agent-urlbar em { flex: 0 0 auto; font-style: normal; color: var(--text-tertiary); }
 .browser-agent-slot { min-height: 0; flex: 1; background: #fff; }
 .agent-browser-layer { position: fixed; z-index: 90; left: 0; top: 0; width: 1024px; height: 700px; visibility: hidden; pointer-events: none; }

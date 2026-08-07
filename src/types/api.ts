@@ -421,6 +421,8 @@ export interface AgentBrowserTabRecord {
   attached: boolean
   /** Whether this is the session's currently targeted tab. */
   active: boolean
+  canGoBack: boolean
+  canGoForward: boolean
 }
 
 export interface AgentBrowserState {
@@ -490,6 +492,7 @@ export interface PrimeWorkApi {
     selectTab(tabId: string): Promise<boolean>
     closeTab(tabId: string): Promise<boolean>
     setPreviewContext(webContentsId: number | null, sessionFile: string | null): Promise<boolean>
+    navigateTab(tabId: string, action: 'back' | 'forward' | 'reload' | 'url', url?: string): Promise<boolean>
     onChanged(callback: (state: AgentBrowserState) => void): () => void
     onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
     onActivity(callback: (event: AgentBrowserActivityEvent) => void): () => void
