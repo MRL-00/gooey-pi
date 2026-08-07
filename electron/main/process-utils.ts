@@ -5,6 +5,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
 
+import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
+
 export interface ProcessResult {
   code: number
   signal: NodeJS.Signals | null
@@ -14,6 +16,20 @@ export interface ProcessResult {
   outputExceeded: boolean
   stdoutBytes: number
   stderrBytes: number
+}
+
+/** Classifies a completed subprocess: overflow, then timeout, then exit status. */
+export function processFailureReason(result: ProcessResult): ProcessFailureReason | undefined {
+  if (result.outputExceeded) return 'overflow'
+  if (result.timedOut) return 'timeout'
+  if (result.code !== 0) return 'exit'
+  return undefined
+}
+
+/** Folds a ProcessResult into the shared `{ ok, output, reason }` outcome shape. */
+export function processOutcome(result: ProcessResult, output: string): ProcessOutcome {
+  const reason = processFailureReason(result)
+  return reason ? { ok: false, output, reason } : { ok: true, output }
 }
 
 export const PROCESS_CONCURRENCY_LIMIT = 8

@@ -315,15 +315,15 @@ export default function App() {
   }
 
   const installSkill = async (source: string) => {
-    if (!bridge) return { ok: false, output: 'Package installation is available in the desktop app.' }
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Package installation is available in the desktop app.' }
     try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
   }
   const connectMcp = async (input: McpConnectionInput) => {
-    if (!bridge) return { ok: false, output: 'MCP connections are available in the desktop app.' }
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'MCP connections are available in the desktop app.' }
     try {
       let connection = input
       if (input.scope === 'project') {
-        if (!activeProject) return { ok: false, output: 'Open a project before adding a project MCP server.' }
+        if (!activeProject) return { ok: false as const, reason: 'blocked' as const, output: 'Open a project before adding a project MCP server.' }
         const project = await grantProject(activeProject); connection = { ...input, projectPath: project.primaryFolder }
       }
       const response = await bridge.plugins.connectMcp(connection)

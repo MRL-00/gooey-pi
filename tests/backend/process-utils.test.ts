@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, runProcess, stopChildProcesses, waitForProcessExit } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -86,6 +86,25 @@ setInterval(() => {}, 1000)
     expect(completed.every((result) => result.signal === 'SIGKILL' || result.signal === 'SIGTERM')).toBe(true)
     expect(readdirSync(dir)).not.toContain('queued-ran')
   }, 15_000)
+})
+
+describe('processOutcome classification', () => {
+  const result = (overrides: Partial<ProcessResult>): ProcessResult => ({
+    code: 0, signal: null, stdout: '', stderr: '', timedOut: false, outputExceeded: false, stdoutBytes: 0, stderrBytes: 0, ...overrides,
+  })
+
+  it('classifies overflow before timeout before exit status', () => {
+    expect(processFailureReason(result({ outputExceeded: true, timedOut: true, code: 1 }))).toBe('overflow')
+    expect(processFailureReason(result({ timedOut: true, code: 1 }))).toBe('timeout')
+    expect(processFailureReason(result({ code: 1 }))).toBe('exit')
+    expect(processFailureReason(result({}))).toBeUndefined()
+  })
+
+  it('folds results into the shared outcome shape', () => {
+    expect(processOutcome(result({}), 'done')).toEqual({ ok: true, output: 'done' })
+    expect(processOutcome(result({ code: 3 }), 'failed')).toEqual({ ok: false, output: 'failed', reason: 'exit' })
+    expect(processOutcome(result({ timedOut: true }), '')).toEqual({ ok: false, output: '', reason: 'timeout' })
+  })
 })
 
 describe('killProcessTree', () => {

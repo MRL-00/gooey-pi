@@ -1,4 +1,4 @@
-import type { GitDiff, GitFileChange, GitStatus } from '../../src/types/api'
+import type { GitDiff, GitFileChange, GitStatus, ProcessOutcome } from '../../src/types/api'
 import { restrictedGitEnvironment, runProcess, type ProcessResult } from './process-utils'
 import { errorMessage, requireGitPath, requireString, stripAnsi } from './validation'
 
@@ -393,7 +393,7 @@ export class GitService {
     return this.mutate(cwd, paths, ['restore', '--worktree'])
   }
 
-  async commit(cwdValue: unknown, messageValue: unknown): Promise<{ ok: boolean; output: string }> {
+  async commit(cwdValue: unknown, messageValue: unknown): Promise<ProcessOutcome> {
     const message = requireString(messageValue, 'commit message', { min: 1, max: 20_000, trim: true })
     // No rejectFilteredPaths here on purpose: commit records already-staged
     // index content and never runs clean/smudge filters — the mutations that
@@ -401,10 +401,11 @@ export class GitService {
     const context = await this.withRepositoryGuards(cwdValue)
     const overrides = [...context.overrides, ...await commitIdentityOverrides(context.cwd, context.config)]
     const result = await runGit(context.cwd, ['commit', '--no-verify', '--no-gpg-sign', '--no-status', '-m', message], { timeoutMs: 2 * 60_000, maxBytes: 64 * 1024 }, overrides)
-    if (result.outputExceeded) return { ok: false, output: 'Git commit output exceeded the safety limit; the commit result is unknown. Refresh status before retrying.' }
-    if (result.timedOut) return { ok: false, output: 'Git commit timed out; the commit result is unknown. Refresh status before retrying.' }
+    if (result.outputExceeded) return { ok: false, reason: 'overflow', output: 'Git commit output exceeded the safety limit; the commit result is unknown. Refresh status before retrying.' }
+    if (result.timedOut) return { ok: false, reason: 'timeout', output: 'Git commit timed out; the commit result is unknown. Refresh status before retrying.' }
     const output = stripAnsi(`${result.stdout}${result.stderr}`).trim()
-    return { ok: result.code === 0, output: output || (result.code === 0 ? 'Commit created.' : processError('Git commit', result).message) }
+    if (result.code !== 0) return { ok: false, reason: 'exit', output: output || processError('Git commit', result).message }
+    return { ok: true, output: output || 'Commit created.' }
   }
 
   private async repositoryCwd(value: string): Promise<string> {
