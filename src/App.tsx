@@ -5,7 +5,7 @@ import { TitleToolbar } from '@/components/TitleToolbar'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
-import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
+import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
 import { DEFAULT_SETTINGS, SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { requestFailureMessage } from '@/app/workspace'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
@@ -16,8 +16,9 @@ import { INSPECTOR_DEFAULT, INSPECTOR_MIN, TERMINAL_DEFAULT, TERMINAL_MIN, usePa
 import { usePluginSkills } from '@/hooks/usePluginSkills'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useSidebarActions } from '@/hooks/useSidebarActions'
+import { useStableCallback } from '@/hooks/useStableCallback'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, McpConnectionInput, NativeHeartbeatRecord, ProjectRecord, PromptDeliveryIntent, PromptImage, AutomationScheduleRecord, ScheduleInput, SchedulePatch, ScheduleTiming, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { GitStatus, McpConnectionInput, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, PromptDeliveryIntent, PromptImage, AutomationScheduleRecord, ScheduleInput, SchedulePatch, ScheduleTiming, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -32,6 +33,9 @@ const PluginsPage = lazy(() => import('@/pages/PluginsPage').then((module) => ({
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((module) => ({ default: module.SettingsPage })))
 
 const hasBridge = () => typeof window !== 'undefined' && typeof window.prime !== 'undefined'
+// Stable fallback identities keep memoized children from re-rendering while the catalog loads.
+const EMPTY_MODELS: PrimeModelDescriptor[] = []
+const EMPTY_PROVIDERS: PrimeProviderDescriptor[] = []
 const LoadingPanel = ({ label }: { label: string }) => <div className="empty-state" role="status">Loading {label}…</div>
 
 export default function App() {
@@ -115,9 +119,14 @@ export default function App() {
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])
+  const previousSessionStatusRef = useRef<SessionRecord['status'] | undefined>(undefined)
+  const activeSessionStatus = activeSession?.status
+  const locallyOwnedActiveSession = Boolean(activeSession && workspace.runtime?.sessionFile === activeSession.filePath)
   useEffect(() => {
-    if (activeSession?.syncRevision) void refreshGit()
-  }, [activeSession?.syncRevision, refreshGit])
+    const previousStatus = previousSessionStatusRef.current
+    previousSessionStatusRef.current = activeSessionStatus
+    if (shouldRefreshGitOnSessionTransition(previousStatus, activeSessionStatus, locallyOwnedActiveSession)) void refreshGit()
+  }, [activeSessionStatus, locallyOwnedActiveSession, refreshGit])
   const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
   const pluginSkills = usePluginSkills({ bridge, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
@@ -305,6 +314,7 @@ export default function App() {
       } finally { setSubmitting(false) }
     })
   }
+  const sendPromptStable = useStableCallback(sendPrompt)
   const stopRuntime = async () => {
     if (!workspace.runtime) return
     if (!bridge) { workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item)); workspace.setRuntime(null); return }
@@ -314,6 +324,7 @@ export default function App() {
       workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item))
     } catch (error) { reportError(error) }
   }
+  const stopRuntimeStable = useStableCallback(stopRuntime)
 
   const installSkill = async (source: string) => {
     if (!bridge) return { ok: false, output: 'Package installation is available in the desktop app.' }
@@ -413,7 +424,7 @@ export default function App() {
   const busy = Boolean(workspace.runtime?.isStreaming || workspace.runtime?.isCompacting || workspace.messages.some((message) => message.streaming))
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
-    : view === 'scheduled' ? <ScheduledPage schedules={schedules} nativeHeartbeats={heartbeats} projects={projects} sessions={sessions} models={provider.catalog?.models ?? []} error={scheduleError} initialProjectId={activeProject?.id} initialSessionId={activeSession?.id} selectedScheduleId={scheduleFocusId} onCreate={createSchedule} onUpdate={updateSchedule} onPause={(id: string) => mutateSchedule(() => bridge!.schedules.pause(id))} onResume={(id: string) => mutateSchedule(() => bridge!.schedules.resume(id))} onDelete={(id: string) => mutateSchedule(() => bridge!.schedules.delete(id))} onRunNow={(id: string) => mutateSchedule(() => bridge!.schedules.runNow(id))} onPreview={async (timing: ScheduleTiming) => bridge ? bridge.schedules.preview(timing, 3) : { timing, occurrences: [] }} onOpenSession={openScheduledSession} onManageHeartbeat={manageHeartbeat} />
+    : view === 'scheduled' ? <ScheduledPage schedules={schedules} nativeHeartbeats={heartbeats} projects={projects} sessions={sessions} models={provider.catalog?.models ?? EMPTY_MODELS} error={scheduleError} initialProjectId={activeProject?.id} initialSessionId={activeSession?.id} selectedScheduleId={scheduleFocusId} onCreate={createSchedule} onUpdate={updateSchedule} onPause={(id: string) => mutateSchedule(() => bridge!.schedules.pause(id))} onResume={(id: string) => mutateSchedule(() => bridge!.schedules.resume(id))} onDelete={(id: string) => mutateSchedule(() => bridge!.schedules.delete(id))} onRunNow={(id: string) => mutateSchedule(() => bridge!.schedules.runNow(id))} onPreview={async (timing: ScheduleTiming) => bridge ? bridge.schedules.preview(timing, 3) : { timing, occurrences: [] }} onOpenSession={openScheduledSession} onManageHeartbeat={manageHeartbeat} />
     : view === 'plugins' ? <PluginsPage skills={pluginSkills.skills} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
     : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
@@ -430,7 +441,7 @@ export default function App() {
         <div ref={layout.workspaceRowRef} className="workspace-row">
           <main className="conversation-pane">
             <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} /></Suspense>
-            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} models={provider.catalog?.models ?? []} providers={provider.catalog?.providers ?? []} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} messageEnterAction={settingsState.settings.messageEnterAction} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} />
+            <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={!workspace.runtime || workspace.runtime.fastModeAvailable !== false} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} messageEnterAction={settingsState.settings.messageEnterAction} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPromptStable} onStop={stopRuntimeStable} />
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
           {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} automations={activeSession ? schedules.filter((task) => task.target.kind === 'session' && task.target.sessionId === activeSession.id) : []} heartbeats={activeSession ? heartbeats.filter((heartbeat) => heartbeat.sessionId === activeSession.id || heartbeat.sessionFile === activeSession.filePath) : []} onOpenAutomation={(id) => { setScheduleFocusId(id); setView('scheduled') }} browserHome={settingsState.settings.browserHome} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}

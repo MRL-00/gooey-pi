@@ -1,10 +1,12 @@
-import React, { memo, type MouseEvent } from 'react'
+import React, { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 interface MarkdownTextProps {
   text: string
+  /** Actively streaming text throttles Markdown re-parses and renders the raw tail as plain text between parses. */
+  streaming?: boolean
 }
 
 function openMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string): void {
@@ -30,7 +32,73 @@ const markdownComponents: Components = {
   img: ({ alt }) => <span className="markdown-image-placeholder">[Image: {alt || 'attachment'}]</span>,
 }
 
+export const STREAMING_PARSE_INTERVAL_MS = 100
+
+export interface StreamingParseState {
+  /** How much of the text is committed to the Markdown parser. */
+  boundary: number
+  lastParseAt: number
+}
+
+/**
+ * Decides how much of a streaming message to hand to the Markdown parser: the
+ * boundary advances at most every STREAMING_PARSE_INTERVAL_MS, or immediately
+ * when the unparsed tail crossed a newline; otherwise the caller renders the
+ * tail as plain text and retries after `delayMs`.
+ */
+export function advanceStreamingParse(
+  state: StreamingParseState,
+  textLength: number,
+  newlineInTail: boolean,
+  now: number,
+): { state: StreamingParseState; delayMs?: number } {
+  if (state.boundary >= textLength) {
+    return state.boundary === textLength ? { state } : { state: { boundary: textLength, lastParseAt: now } }
+  }
+  const elapsed = now - state.lastParseAt
+  if (newlineInTail || elapsed >= STREAMING_PARSE_INTERVAL_MS) {
+    return { state: { boundary: textLength, lastParseAt: now } }
+  }
+  return { state, delayMs: STREAMING_PARSE_INTERVAL_MS - elapsed }
+}
+
 /** Render model-authored Markdown without enabling raw HTML or remote images. */
-export const MarkdownText = memo(function MarkdownText({ text }: MarkdownTextProps) {
-  return <div className="prose"><ReactMarkdown remarkPlugins={markdownPlugins} skipHtml components={markdownComponents}>{text}</ReactMarkdown></div>
+export const MarkdownText = memo(function MarkdownText({ text, streaming = false }: MarkdownTextProps) {
+  const parseStateRef = useRef<StreamingParseState>({ boundary: text.length, lastParseAt: 0 })
+  const [, setParseRevision] = useState(0)
+
+  useEffect(() => {
+    if (!streaming) {
+      if (parseStateRef.current.boundary !== text.length) {
+        parseStateRef.current = { boundary: text.length, lastParseAt: parseStateRef.current.lastParseAt }
+        setParseRevision((revision) => revision + 1)
+      }
+      return
+    }
+    const decide = (): number | undefined => {
+      const current = parseStateRef.current
+      const newlineInTail = text.indexOf('\n', Math.min(current.boundary, text.length)) !== -1
+      const result = advanceStreamingParse(current, text.length, newlineInTail, Date.now())
+      if (result.state !== current) {
+        parseStateRef.current = result.state
+        setParseRevision((revision) => revision + 1)
+      }
+      return result.delayMs
+    }
+    const delayMs = decide()
+    if (delayMs === undefined) return
+    const timer = window.setTimeout(() => { decide() }, delayMs)
+    return () => window.clearTimeout(timer)
+  }, [streaming, text])
+
+  const boundary = streaming ? Math.min(parseStateRef.current.boundary, text.length) : text.length
+  const parsedText = boundary === text.length ? text : text.slice(0, boundary)
+  const tail = text.slice(boundary)
+  // Equal parsed text keeps the element identity, so React skips re-parsing
+  // the Markdown subtree while only the plain-text tail grows.
+  const markdown = useMemo(
+    () => <ReactMarkdown remarkPlugins={markdownPlugins} skipHtml components={markdownComponents}>{parsedText}</ReactMarkdown>,
+    [parsedText],
+  )
+  return <div className="prose">{markdown}{tail ? <p className="prose-stream-tail">{tail}</p> : null}</div>
 })

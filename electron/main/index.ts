@@ -259,6 +259,7 @@ async function bootstrap(): Promise<void> {
   )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
+    all: () => agents?.list() ?? [],
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })

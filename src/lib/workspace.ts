@@ -43,6 +43,19 @@ export function newSessionProject(
   return requestedProject ?? workspaceProject ?? displayedProject
 }
 
+/**
+ * Git status refreshes on turn boundaries, never on per-append catalog ticks:
+ * an externally running session triggers one refresh when it stops running.
+ * Locally owned runtimes already refresh through their own agent_end events.
+ */
+export function shouldRefreshGitOnSessionTransition(
+  previousStatus: SessionRecord['status'] | undefined,
+  status: SessionRecord['status'] | undefined,
+  locallyOwned: boolean,
+): boolean {
+  return !locallyOwned && previousStatus === 'running' && status !== undefined && status !== 'running'
+}
+
 export function runtimeMatchesWorkspace(runtime: RuntimeInfo, cwd: string, sessionFile: string): boolean {
   return runtime.cwd === cwd && runtime.sessionFile === sessionFile
 }

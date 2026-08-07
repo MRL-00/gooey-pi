@@ -12,3 +12,5 @@ test-results
 research/*.log
 research/prime-list.json
 research/prime-list.stderr
+
+.claude/worktrees/

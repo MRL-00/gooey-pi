@@ -231,6 +231,23 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
   branch.reverse()
   const transcript: TranscriptMessage[] = []
   let activeAssistant: TranscriptMessage | undefined
+  // First toolCall part index per id for the active turn: tool results resolve
+  // their call in O(1) instead of scanning the accumulated parts.
+  let toolCallIndexById = new Map<string, number>()
+  const beginAssistantTurn = (): void => { toolCallIndexById = new Map() }
+  const registerToolCalls = (startIndex: number, added: MessagePart[]): void => {
+    for (let offset = 0; offset < added.length; offset += 1) {
+      const part = added[offset]
+      if (part.type === 'toolCall' && part.id !== undefined && !toolCallIndexById.has(part.id)) {
+        toolCallIndexById.set(part.id, startIndex + offset)
+      }
+    }
+  }
+  const appendAssistantParts = (added: MessagePart[]): void => {
+    if (!activeAssistant) return
+    registerToolCalls(activeAssistant.parts.length, added)
+    activeAssistant.parts.push(...added)
+  }
   for (const { id, entry } of branch) {
     const safeId = boundedString(id, 1_024)
     if (entry.type === 'compaction') {
@@ -281,11 +298,11 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       const text = boundedString(readableText ?? textFromContent(entry.content), MAX_PART_TEXT_CHARS)
       const timestamp = typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined
       if (isAgentMessage && activeAssistant) {
-        activeAssistant.parts.push({ type: 'agentMessage', text, agentName })
+        appendAssistantParts([{ type: 'agentMessage', text, agentName }])
         activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
       } else if (!isAgentMessage && !isGoalSummary && activeAssistant) {
         const name = customActivityName(customType)
-        activeAssistant.parts.push({ type: 'toolCall', id: safeId, name }, { type: 'toolResult', name, text })
+        appendAssistantParts([{ type: 'toolCall', id: safeId, name }, { type: 'toolResult', name, text }])
         activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
       } else {
         const name = customActivityName(customType)
@@ -310,17 +327,24 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     const parts = partsFromMessage(message)
     if (role === 'tool' && activeAssistant) {
       const toolCallId = typeof message.toolCallId === 'string' ? boundedString(message.toolCallId, 1_024) : undefined
-      const callIndex = toolCallId ? activeAssistant.parts.findIndex((part) => part.type === 'toolCall' && part.id === toolCallId) : -1
-      if (callIndex >= 0) activeAssistant.parts.splice(callIndex + 1, 0, ...parts)
-      else activeAssistant.parts.push(...parts)
+      const callIndex = toolCallId !== undefined ? toolCallIndexById.get(toolCallId) ?? -1 : -1
+      if (callIndex >= 0) {
+        activeAssistant.parts.splice(callIndex + 1, 0, ...parts)
+        for (const [callId, index] of toolCallIndexById) {
+          if (index > callIndex) toolCallIndexById.set(callId, index + parts.length)
+        }
+        registerToolCalls(callIndex + 1, parts)
+      } else appendAssistantParts(parts)
       activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
       continue
     }
     if (role === 'assistant') {
       if (activeAssistant) {
-        activeAssistant.parts.push(...parts)
+        appendAssistantParts(parts)
         activeAssistant.completedAt = timestamp ?? activeAssistant.completedAt
       } else {
+        beginAssistantTurn()
+        registerToolCalls(0, parts)
         activeAssistant = { id: safeId, role, timestamp, startedAt: timestamp, completedAt: timestamp, parts }
         transcript.push(activeAssistant)
       }

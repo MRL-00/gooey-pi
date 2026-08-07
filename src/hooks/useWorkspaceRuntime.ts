@@ -10,6 +10,7 @@ import {
   type TranscriptReconciliationMarker,
 } from '@/app/agent-events'
 import { runTranscriptRead } from '@/app/transcript-load'
+import { reconcileTranscripts } from '@/app/transcript-reconcile'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import { createPrimeEventBuffer, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
@@ -184,7 +185,9 @@ export function useWorkspaceRuntime({
           setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
           return
         }
-        setMessages(pendingLoad.eventBuffer.replay(value))
+        // Reconcile instead of replacing wholesale: unchanged messages keep
+        // their identity so memoized rows do not re-render on sync ticks.
+        setMessages((messages) => reconcileTranscripts(messages, pendingLoad.eventBuffer.replay(value)))
       },
       onError: (error) => {
         setMessages((messages) => pendingLoad.eventBuffer.replay(messages))

@@ -72,8 +72,8 @@ function toolPreview(part: Extract<MessagePart, { type: 'toolCall' }>): string {
   return boundText(serialize(raw).replace(/\s+/g, ' ').trim(), 180, '…')
 }
 
-function ReasoningPart({ part }: { part: Extract<MessagePart, { type: 'thinking' }> }) {
-  return <div className="activity-line activity-line--reasoning"><MarkdownText text={boundText(part.text, 40_000, '\n… [Reasoning truncated in the desktop view.]')} /></div>
+function ReasoningPart({ part, streaming = false }: { part: Extract<MessagePart, { type: 'thinking' }>; streaming?: boolean }) {
+  return <div className="activity-line activity-line--reasoning"><MarkdownText text={boundText(part.text, 40_000, '\n… [Reasoning truncated in the desktop view.]')} streaming={streaming} /></div>
 }
 
 export function ThinkingDots({ labelled = false }: { labelled?: boolean }) {
@@ -163,12 +163,12 @@ function CompactionPart({ part }: { part: Extract<MessagePart, { type: 'compacti
   </div>
 }
 
-export function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
+export function WorkTimeline({ parts, showReasoning, showTools, streaming = false }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean; streaming?: boolean }) {
   const pairedResults = new Set<number>()
   return <div className="work-timeline">{parts.map((part, index) => {
     if (part.type === 'toolResult' && pairedResults.has(index)) return null
     if (part.type === 'compaction') return <CompactionPart key={index} part={part} />
-    if (part.type === 'thinking') return showReasoning ? <ReasoningPart key={index} part={part} /> : null
+    if (part.type === 'thinking') return showReasoning ? <ReasoningPart key={index} part={part} streaming={streaming} /> : null
     if (part.type === 'toolCall') {
       if (!showTools) return null
       const next = parts[index + 1]
@@ -185,7 +185,7 @@ export function WorkTimeline({ parts, showReasoning, showTools }: { parts: Messa
 export function WorkDisclosure({ message, parts, showReasoning, showTools, running = message.streaming }: { message: TranscriptMessage; parts: MessagePart[]; showReasoning: boolean; showTools: boolean; running?: boolean }) {
   const [open, setOpen] = useState(false)
   if (running) {
-    return <section className="work-disclosure is-running" aria-label="Prime work activity"><WorkTimeline parts={parts} showReasoning={showReasoning} showTools={showTools} /><div className="work-disclosure__thinking"><ThinkingDots labelled /></div></section>
+    return <section className="work-disclosure is-running" aria-label="Prime work activity"><WorkTimeline parts={parts} showReasoning={showReasoning} showTools={showTools} streaming /><div className="work-disclosure__thinking"><ThinkingDots labelled /></div></section>
   }
   const startedAt = timestamp(message.startedAt ?? message.timestamp) ?? 0
   const completedAt = timestamp(message.completedAt) ?? startedAt

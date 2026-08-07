@@ -1,4 +1,5 @@
-import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { appendFileSync, chmodSync, createReadStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectService } from '../../electron/main/projects'
 import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
 import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
-import type { SessionMetadata } from '../../electron/main/sessions/metadata'
+import { createSessionMetadataReader, METADATA_VERIFY_TAIL_BYTES, readSessionMetadata, type SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
@@ -182,6 +183,141 @@ describe('SessionService catalog scaling', () => {
     expect(readMetadata).toHaveBeenCalledTimes(maxSessionFiles)
     expect(inspect.mock.calls.flat().join(' ')).not.toContain(sessionName(0))
   })
+
+  it('re-canonicalizes only entries whose file identity changed between scans', async () => {
+    const root = '/sessions'
+    const identities = new Map<string, { dev: number; ino: number }>([
+      ['a.jsonl', { dev: 1, ino: 10 }],
+      ['b.jsonl', { dev: 1, ino: 11 }],
+    ])
+    const canonicalize = vi.fn(async (path: string) => path)
+    const io: SessionCatalogIo = {
+      readDirectory: vi.fn(async () => [...identities.keys()].map((name) => ({ name }))),
+      canonicalize,
+      inspect: vi.fn(async (path: string) => {
+        const name = path.slice(path.lastIndexOf('/') + 1)
+        const identity = identities.get(name) ?? { dev: 1, ino: 99 }
+        return { isFile: () => true, mtimeMs: 1, size: 100, dev: identity.dev, ino: identity.ino } as Stats
+      }),
+    }
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      null,
+      20,
+      async (filePath) => metadata(filePath, '/project', filePath.slice(filePath.lastIndexOf('/') + 1)),
+      io,
+    )
+
+    await catalog.all()
+    // Root plus one call per newly discovered entry.
+    expect(canonicalize).toHaveBeenCalledTimes(3)
+
+    await catalog.all()
+    // Unchanged identities reuse the cached canonical paths.
+    expect(canonicalize).toHaveBeenCalledTimes(4)
+    expect(canonicalize.mock.calls.slice(3).flat()).toEqual([root])
+
+    identities.set('b.jsonl', { dev: 1, ino: 12 })
+    await catalog.all()
+    expect(canonicalize).toHaveBeenCalledTimes(6)
+    expect(canonicalize.mock.calls.slice(4).flat().sort()).toEqual([root, `${root}/b.jsonl`])
+  })
+})
+
+describe('incremental session metadata reads', () => {
+  function trackedReader(): { reader: ReturnType<typeof createSessionMetadataReader>; opens: Array<{ start: number; end: number }> } {
+    const opens: Array<{ start: number; end: number }> = []
+    const reader = createSessionMetadataReader({
+      inspect: stat,
+      openStream: (path, start, end) => {
+        opens.push({ start, end })
+        return createReadStream(path, { start, end })
+      },
+    })
+    return { reader, opens }
+  }
+
+  function writeLargeSession(file: string, id: string): void {
+    writeSession(file, '/project', id)
+    for (let index = 0; index < 8; index += 1) {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `${id}-bulk-${index}`, message: { role: 'user', content: `${id} `.repeat(200) } })}\n`)
+    }
+    expect(statSync(file).size).toBeGreaterThan(METADATA_VERIFY_TAIL_BYTES)
+  }
+
+  it('reads only the appended byte range plus the verification tail after the initial parse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-incremental-')); dirs.push(dir)
+    const file = join(dir, 'incremental.jsonl')
+    writeLargeSession(file, 'incremental')
+    const { reader, opens } = trackedReader()
+
+    const first = await reader(file)
+    const firstSize = statSync(file).size
+    expect(first.status).toBe('idle')
+    expect(opens).toEqual([{ start: 0, end: firstSize - 1 }])
+
+    appendFileSync(file, `${JSON.stringify({ type: 'message', id: 'reply', timestamp: '2025-06-01T00:00:00.000Z', message: { role: 'assistant', content: 'answered' } })}\n`)
+    const second = await reader(file)
+    const secondSize = statSync(file).size
+    expect(second.preview).toBe('answered')
+    expect(second.status).toBe('complete')
+    expect(second.updatedAt).toBe('2025-06-01T00:00:00.000Z')
+    expect(opens).toHaveLength(2)
+    expect(opens[1]).toEqual({ start: firstSize - METADATA_VERIFY_TAIL_BYTES, end: secondSize - 1 })
+    expect(opens[1]!.start).toBeGreaterThan(0)
+    expect(second).toEqual(await readSessionMetadata(file))
+  })
+
+  it('resumes a verified partial line and matches the one-shot parser', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-partial-line-')); dirs.push(dir)
+    const file = join(dir, 'partial.jsonl')
+    writeLargeSession(file, 'partial')
+    const { reader, opens } = trackedReader()
+    await reader(file)
+    const baseSize = statSync(file).size
+
+    const record = JSON.stringify({ type: 'message', id: 'split', message: { role: 'assistant', content: 'split record' } })
+    appendFileSync(file, record.slice(0, 25))
+    const speculative = await reader(file)
+    // The unterminated tail parses speculatively, exactly like a full read.
+    expect(speculative).toEqual(await readSessionMetadata(file))
+    expect(opens[1]?.start).toBe(baseSize - METADATA_VERIFY_TAIL_BYTES)
+
+    appendFileSync(file, `${record.slice(25)}\n`)
+    const completed = await reader(file)
+    // Only the verification tail is re-read, nothing earlier.
+    expect(opens[2]?.start).toBe(statSync(file).size - record.length - 1 - (METADATA_VERIFY_TAIL_BYTES - 25))
+    expect(opens[2]!.start).toBeGreaterThan(0)
+    expect(completed.preview).toBe('split record')
+    expect(completed).toEqual(await readSessionMetadata(file))
+  })
+
+  it('falls back to a full re-read on truncation and rewritten tails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-truncate-')); dirs.push(dir)
+    const file = join(dir, 'truncate.jsonl')
+    writeSession(file, '/project', 'original')
+    appendFileSync(file, JSON.stringify({ type: 'message', id: 'tail', message: { role: 'assistant', content: 'tail' } }).slice(0, 30))
+    const { reader, opens } = trackedReader()
+    await reader(file)
+
+    writeSession(file, '/project', 'rewritten')
+    const rewritten = await reader(file)
+    expect(rewritten.preview).toBe('rewritten')
+    expect(opens.at(-1)?.start).toBe(0)
+    expect(rewritten).toEqual(await readSessionMetadata(file))
+
+    const longer = [
+      JSON.stringify({ type: 'session', id: 'replaced', cwd: '/project' }),
+      JSON.stringify({ type: 'message', id: 'replaced-1', parentId: null, message: { role: 'user', content: 'a completely different transcript body' } }),
+      '',
+    ].join('\n')
+    writeFileSync(file, longer)
+    // Larger file whose retained-tail bytes no longer match: full re-read.
+    const replaced = await reader(file)
+    expect(replaced.preview).toBe('a completely different transcript body')
+    expect(opens.at(-1)?.start).toBe(0)
+    expect(replaced).toEqual(await readSessionMetadata(file))
+  })
 })
 
 describe('SessionService user-message ordering', () => {
@@ -238,6 +374,48 @@ process.exit(2)
     expect(record?.filePath).toBe(realpathSync(file))
     expect(record?.status).toBe('running')
     expect(record?.updatedAt).toBe('2025-02-01T00:00:00.000Z')
+  })
+
+  it('rate limits the live-catalog CLI spawn independently of change events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-catalog-throttle-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'burst.jsonl')
+    writeSession(file, project, 'burst')
+    const spawnLog = join(dir, 'spawns.log')
+    writeFileSync(spawnLog, '')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+require('node:fs').appendFileSync(${JSON.stringify(spawnLog)}, 'spawn\\n')
+process.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(file)}, isStreaming: true }] }))
+process.exit(0)
+`)
+    chmodSync(executable, 0o755)
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      executable,
+      20,
+      async (filePath) => metadata(filePath, project, 'burst'),
+    )
+    const spawnCount = () => readFileSync(spawnLog, 'utf8').split('\n').filter(Boolean).length
+
+    expect((await catalog.all())[0]?.status).toBe('running')
+    expect(spawnCount()).toBe(1)
+    // A burst of change events within the throttle window serves the previous
+    // live snapshot instead of respawning the CLI.
+    for (let round = 0; round < 5; round += 1) {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `burst-${round}`, message: { role: 'user', content: 'burst' } })}\n`)
+      catalog.invalidateLiveCatalog()
+      expect((await catalog.all())[0]?.status).toBe('running')
+    }
+    expect(spawnCount()).toBe(1)
+
+    // Once the minimum spawn interval elapses, the next stale read respawns.
+    const throttleHarness = catalog as unknown as { lastCatalogSpawnAt: number }
+    throttleHarness.lastCatalogSpawnAt = Date.now() - 60_000
+    catalog.invalidateLiveCatalog()
+    await catalog.all()
+    expect(spawnCount()).toBe(2)
   })
 
   it('does not let an in-flight pre-append scan satisfy a post-invalidation refresh', async () => {
@@ -375,12 +553,12 @@ describe('SessionService transcript read admission', () => {
     const results = await Promise.all([first, duplicate, aliased, second, third, fourth])
     expect(transcriptReader).toHaveBeenCalledTimes(4)
     expect(peak).toBeLessThanOrEqual(2)
-    expect(results[0]).not.toBe(results[1])
-    expect(results[0][0]).not.toBe(results[1][0])
-    const firstPart = results[0][0]?.parts[0]
-    if (firstPart?.type === 'text') firstPart.text = 'mutated'
-    expect(results[1][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
-    expect(results[2][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
+    // Coalesced canonical reads share one immutable result: the IPC boundary
+    // clones per renderer, so main-side pre-clones would be redundant copies.
+    expect(results[0]).toBe(results[1])
+    expect(results[0]).toBe(results[2])
+    expect(results[3]).not.toBe(results[0])
+    expect(results[0][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
   })
 })
 
@@ -703,6 +881,23 @@ process.exit(9)
     Object.defineProperty(service, 'sessionRoot', { value: root })
 
     await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
+  })
+
+  it('snapshots runtimes once per list() instead of once per session', async () => {
+    const { root, project, service } = setup()
+    for (let index = 0; index < 5; index += 1) writeSession(join(root, `snapshot-${index}.jsonl`), project, `snapshot-${index}`)
+    const running = await service.requireSessionPath(join(root, 'snapshot-0.jsonl'))
+    const get = vi.fn(() => undefined)
+    const all = vi.fn(() => [{ sessionFile: running, isStreaming: true }])
+    service.bindRuntimeHooks({ get, all, stop: async () => undefined, rename: async () => false })
+
+    const records = await service.list()
+
+    expect(records).toHaveLength(5)
+    expect(records.find((record) => record.filePath === running)?.status).toBe('running')
+    expect(records.filter((record) => record.status === 'running')).toHaveLength(1)
+    expect(all).toHaveBeenCalledTimes(1)
+    expect(get).not.toHaveBeenCalled()
   })
 
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from '../../src/components/Composer'
-import type { PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor } from '../../src/types/api'
+import { groupModelsByProvider } from '../../src/hooks/useProviderCatalog'
+import type { PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, SkillRecord } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -17,6 +18,7 @@ const providers: PrimeProviderDescriptor[] = [{
   id: 'provider', name: 'Provider', authMethod: 'api_key', configured: true,
   modelCount: 1, availableModelCount: 1, enabled: true,
 }]
+const modelsByProvider = groupModelsByProvider(models)
 
 let container: HTMLDivElement
 let root: Root
@@ -41,7 +43,7 @@ function renderComposer(onSend = vi.fn(), imageInputSupported = true, busy = fal
     busy={busy}
     model="provider/vision"
     effort="medium"
-    models={models}
+    modelsByProvider={modelsByProvider}
     providers={providers}
     reasoningLevels={['medium']}
     fast={false}
@@ -227,5 +229,57 @@ describe('Composer context usage and stop control', () => {
     expect(dial?.title).toContain('unavailable')
     expect(container.querySelector('button[aria-label="Stop Prime"] .lucide-square')).not.toBeNull()
     expect(container.querySelector('.lucide-circle-stop')).toBeNull()
+  })
+})
+
+describe('Composer memoization', () => {
+  const stableProps = {
+    busy: false,
+    model: 'provider/vision',
+    effort: 'medium' as const,
+    modelsByProvider,
+    providers,
+    reasoningLevels: ['medium' as const],
+    fast: false,
+    fastSupported: false,
+    fastAvailable: true,
+    imageInputSupported: true,
+    messageEnterAction: 'queue' as const,
+    skills: [],
+    onModelChange: vi.fn(),
+    onEffortChange: vi.fn(),
+    onFastChange: vi.fn(),
+    onSend: vi.fn(),
+    onStop: vi.fn(),
+  }
+
+  it('does not re-render when a streaming parent re-renders with identical props', () => {
+    // Composer's render body scans `skills` for enabled entries, so counting
+    // those scans counts Composer renders.
+    let renderProbes = 0
+    const probedSkills = new Proxy([] as SkillRecord[], {
+      get(target, key, receiver) {
+        if (key === 'filter') renderProbes += 1
+        return Reflect.get(target, key, receiver)
+      },
+    })
+    let forceParentRender: () => void = () => undefined
+    function Parent() {
+      const [, setTick] = useState(0)
+      forceParentRender = () => setTick((value) => value + 1)
+      return <Composer {...stableProps} skills={probedSkills} />
+    }
+
+    act(() => root.render(<Parent />))
+    const initialRenders = renderProbes
+    expect(initialRenders).toBeGreaterThan(0)
+
+    act(() => forceParentRender())
+    act(() => forceParentRender())
+    // memo(Composer) bails out for identical props: no further renders.
+    expect(renderProbes).toBe(initialRenders)
+
+    expect(container.querySelectorAll('optgroup')).toHaveLength(1)
+    expect(container.querySelectorAll('optgroup option')).toHaveLength(1)
   })
 })

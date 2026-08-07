@@ -7,6 +7,9 @@ import { applyLiveMetadata, type JsonRecord, type SessionMetadata } from './meta
 
 interface SessionFileCandidate { filePath: string; fileStat: Stats; fingerprint: string }
 
+const LIVE_CATALOG_TTL_MS = 2_000
+const LIVE_CATALOG_MIN_SPAWN_INTERVAL_MS = 2_000
+
 export interface SessionCatalogEntry {
   name: string
   isFile?(): boolean
@@ -65,12 +68,14 @@ async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (valu
 }
 
 export class SessionMetadataCatalog {
-  private catalogCache: { expiresAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
-  private catalogRequest: { revision: number; promise: Promise<Map<string, JsonRecord>> } | null = null
+  private catalogCache: { fetchedAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
+  private catalogRequest: Promise<Map<string, JsonRecord>> | null = null
   private catalogRevision = 0
+  private lastCatalogSpawnAt = 0
   private sessionScanRequest: { revision: number; promise: Promise<SessionMetadata[]> } | null = null
   private readonly metadataCache = new Map<string, SessionMetadata>()
   private readonly metadataRequests = new Map<string, Promise<SessionMetadata>>()
+  private readonly canonicalByName = new Map<string, { canonical: string; dev: number; ino: number }>()
 
   constructor(
     private readonly sessionRoot: () => string,
@@ -80,9 +85,13 @@ export class SessionMetadataCatalog {
     private readonly io: SessionCatalogIo = nodeSessionCatalogIo,
   ) {}
 
+  /**
+   * Marks the catalog content stale without discarding the last snapshot: the
+   * `prime-agent list` spawn stays rate limited independently of change events,
+   * so append bursts keep serving the previous snapshot instead of respawning.
+   */
   invalidateLiveCatalog(): void {
     this.catalogRevision += 1
-    this.catalogCache = null
   }
 
   async all(): Promise<SessionMetadata[]> {
@@ -117,13 +126,31 @@ export class SessionMetadataCatalog {
     )
     const discovered = await mapLimit(names, 32, async (name): Promise<SessionFileCandidate | null> => {
       try {
-        const filePath = await this.io.canonicalize(join(root, name))
+        // stat() follows symlinks, so an unchanged dev/ino identity lets the
+        // cached canonical path stand in for a realpath call per entry.
+        const fileStat = await this.io.inspect(join(root, name))
+        if (!fileStat.isFile()) {
+          this.canonicalByName.delete(name)
+          return null
+        }
+        const known = this.canonicalByName.get(name)
+        const filePath = known && known.dev === fileStat.dev && known.ino === fileStat.ino
+          ? known.canonical
+          : await this.io.canonicalize(join(root, name))
+        this.canonicalByName.set(name, { canonical: filePath, dev: fileStat.dev, ino: fileStat.ino })
         if (!isPathWithin(root, filePath)) return null
-        const fileStat = await this.io.inspect(filePath)
-        if (!fileStat.isFile()) return null
         return { filePath, fileStat, fingerprint: `${filePath}\0${fileStat.mtimeMs}\0${fileStat.size}` }
-      } catch { return null }
+      } catch {
+        this.canonicalByName.delete(name)
+        return null
+      }
     })
+    if (this.canonicalByName.size > names.length) {
+      const listed = new Set(names)
+      for (const name of this.canonicalByName.keys()) {
+        if (!listed.has(name)) this.canonicalByName.delete(name)
+      }
+    }
     const byCanonicalPath = new Map<string, SessionFileCandidate>()
     for (const candidate of discovered) byCanonicalPath.set(candidate.filePath, candidate)
     const selected = [...byCanonicalPath.values()]
@@ -172,39 +199,38 @@ export class SessionMetadataCatalog {
   private async liveCatalog(): Promise<Map<string, JsonRecord>> {
     if (!this.primeAgentPath) return new Map()
     const revision = this.catalogRevision
-    if (this.catalogCache && this.catalogCache.revision === revision && this.catalogCache.expiresAt > Date.now()) {
-      return this.catalogCache.sessions
-    }
-    if (this.catalogRequest?.revision === revision) return this.catalogRequest.promise
-    const request = {
-      revision,
-      promise: (async () => {
-        const sessions = new Map<string, JsonRecord>()
-        try {
-          const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
-          if (result.code === 0) {
-            const parsed: unknown = JSON.parse(result.stdout)
-            if (isRecord(parsed) && Array.isArray(parsed.sessions)
-              && parsed.sessions.length <= this.maxSessionFiles * 4) {
-              await mapLimit(parsed.sessions, 32, async (raw) => {
-                if (!isRecord(raw) || typeof raw.sessionFile !== 'string'
-                  || raw.sessionFile.length > 4_096 || !isAbsolute(raw.sessionFile)) return null
-                try {
-                  sessions.set(await realpath(raw.sessionFile), raw)
-                  return true
-                } catch { return null }
-              })
-            }
+    const cache = this.catalogCache
+    const now = Date.now()
+    if (cache && cache.revision === revision && now - cache.fetchedAt < LIVE_CATALOG_TTL_MS) return cache.sessions
+    if (this.catalogRequest) return this.catalogRequest
+    // Invalidation marks content stale; the CLI spawn is throttled on its own
+    // clock so change-event bursts reuse the last snapshot.
+    if (cache && now - this.lastCatalogSpawnAt < LIVE_CATALOG_MIN_SPAWN_INTERVAL_MS) return cache.sessions
+    this.lastCatalogSpawnAt = now
+    const request = (async () => {
+      const sessions = new Map<string, JsonRecord>()
+      try {
+        const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
+        if (result.code === 0) {
+          const parsed: unknown = JSON.parse(result.stdout)
+          if (isRecord(parsed) && Array.isArray(parsed.sessions)
+            && parsed.sessions.length <= this.maxSessionFiles * 4) {
+            await mapLimit(parsed.sessions, 32, async (raw) => {
+              if (!isRecord(raw) || typeof raw.sessionFile !== 'string'
+                || raw.sessionFile.length > 4_096 || !isAbsolute(raw.sessionFile)) return null
+              try {
+                sessions.set(await realpath(raw.sessionFile), raw)
+                return true
+              } catch { return null }
+            })
           }
-        } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
-        if (this.catalogRevision === revision) {
-          this.catalogCache = { expiresAt: Date.now() + 2_000, revision, sessions }
         }
-        return sessions
-      })(),
-    }
+      } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
+      this.catalogCache = { fetchedAt: Date.now(), revision, sessions }
+      return sessions
+    })()
     this.catalogRequest = request
-    try { return await request.promise } finally {
+    try { return await request } finally {
       if (this.catalogRequest === request) this.catalogRequest = null
     }
   }

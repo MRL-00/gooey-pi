@@ -6,12 +6,14 @@ import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../..
 import { queueDaemonFollowUp } from './agent-daemon'
 import { runProcess } from './process-utils'
 import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
-import { readSessionMetadata, type SessionMetadata } from './sessions/metadata'
+import { createSessionMetadataReader, type SessionMetadata } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
 import type { JsonStateStore } from './store'
 import { isPathWithin, isRecord, requireBoolean, requireExistingDirectory, requireId, requireString } from './validation'
 
 interface RuntimeSessionState { isStreaming: boolean; isCompacting?: boolean }
+
+interface RuntimeSessionSnapshot extends RuntimeSessionState { sessionFile?: string }
 
 const MAX_SESSION_FILES = 5_000
 const MAX_CONCURRENT_TRANSCRIPT_READS = 2
@@ -33,9 +35,11 @@ function comparePaths(left: string, right: string): number {
 export class SessionService {
   readonly sessionRoot = join(homedir(), '.prime', 'agent', 'sessions')
   private runtimeForSession: (filePath: string) => RuntimeSessionState | undefined = () => undefined
+  private listRuntimeSessions: (() => readonly RuntimeSessionSnapshot[]) | null = null
   private stopRuntimeForSession: (filePath: string) => Promise<void> = async () => undefined
   private renameRuntimeSession: (filePath: string, title: string) => Promise<boolean> = async () => false
   private readonly catalog: SessionMetadataCatalog
+  private readonly metadataReader = createSessionMetadataReader()
   private readonly transcriptReadsByCanonicalPath = new Map<string, Promise<TranscriptMessage[]>>()
   private readonly transcriptReadQueue: Array<() => void> = []
   private activeTranscriptReads = 0
@@ -74,10 +78,12 @@ export class SessionService {
 
   bindRuntimeHooks(hooks: {
     get(filePath: string): RuntimeSessionState | undefined
+    all?(): readonly RuntimeSessionSnapshot[]
     stop(filePath: string): Promise<void>
     rename(filePath: string, title: string): Promise<boolean>
   }): void {
     this.runtimeForSession = hooks.get
+    this.listRuntimeSessions = hooks.all ?? null
     this.stopRuntimeForSession = hooks.stop
     this.renameRuntimeSession = hooks.rename
   }
@@ -100,17 +106,32 @@ export class SessionService {
     }
     const sessions = await this.catalog.all()
     const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
+    // One runtime snapshot per list call; each session then resolves in O(1).
+    const runtimeBySession = this.snapshotRuntimeSessions()
     const records: SessionRecord[] = []
     for (const original of sessions) {
       const metadata = { ...original }
       const isArchived = archived.has(resolve(metadata.filePath))
       if ((isArchived && !includeArchived) || (project && resolve(metadata.projectPath) !== project)) continue
-      const runtime = this.runtimeForSession(metadata.filePath)
+      const runtime = runtimeBySession
+        ? runtimeBySession.get(resolve(metadata.filePath))
+        : this.runtimeForSession(metadata.filePath)
       if (runtime) metadata.status = runtime.isStreaming || runtime.isCompacting ? 'running' : 'idle'
       const { sessionName: _sessionName, ...record } = metadata
       records.push({ ...record, archived: isArchived })
     }
     return records.sort((a, b) => Date.parse(b.lastUserMessageAt ?? b.createdAt) - Date.parse(a.lastUserMessageAt ?? a.createdAt) || comparePaths(a.filePath, b.filePath))
+  }
+
+  private snapshotRuntimeSessions(): Map<string, RuntimeSessionState> | null {
+    if (!this.listRuntimeSessions) return null
+    const bySession = new Map<string, RuntimeSessionState>()
+    for (const runtime of this.listRuntimeSessions()) {
+      if (!runtime.sessionFile) continue
+      const key = resolve(runtime.sessionFile)
+      if (!bySession.has(key)) bySession.set(key, runtime)
+    }
+    return bySession
   }
 
   async projectPaths(): Promise<string[]> {
@@ -122,7 +143,9 @@ export class SessionService {
     const requested = requireString(filePath, 'filePath', { min: 1, max: 4096 })
     const safePath = await this.requireSessionPath(requested)
     const existing = this.transcriptReadsByCanonicalPath.get(safePath)
-    if (existing) return structuredClone(await existing)
+    // Coalesced callers share one immutable result; the IPC boundary clones it
+    // for the renderer, so a pre-IPC structuredClone would be a second copy.
+    if (existing) return existing
 
     const operation = this.admitTranscriptRead(async () => {
       const runtime = this.runtimeForSession(safePath)
@@ -130,7 +153,7 @@ export class SessionService {
     })
     this.transcriptReadsByCanonicalPath.set(safePath, operation)
     try {
-      return structuredClone(await operation)
+      return await operation
     } finally {
       if (this.transcriptReadsByCanonicalPath.get(safePath) === operation) {
         this.transcriptReadsByCanonicalPath.delete(safePath)
@@ -315,7 +338,7 @@ export class SessionService {
   }
 
   private async readMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {
-    const metadata = await readSessionMetadata(filePath, knownStat)
+    const metadata = await this.metadataReader(filePath, knownStat)
     if (metadata.projectPath) {
       try { metadata.projectPath = await requireExistingDirectory(metadata.projectPath, 'session project path') }
       catch { if (metadata.projectPath.startsWith('/')) metadata.projectPath = resolve(metadata.projectPath) }

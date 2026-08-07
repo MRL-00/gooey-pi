@@ -68,8 +68,9 @@ export class RpcRuntime {
     })
   }
 
+  /** Frozen shallow copy: nested state is replaced wholesale on update, and the IPC boundary clones for the renderer. */
   snapshot(): RuntimeInfo {
-    return structuredClone(this.continuationPending ? { ...this.info, isStreaming: true } : this.info)
+    return Object.freeze(this.continuationPending ? { ...this.info, isStreaming: true } : { ...this.info })
   }
 
   async handshake(): Promise<RuntimeInfo> {
