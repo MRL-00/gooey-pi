@@ -12,7 +12,9 @@ function inferredId(path: string): string {
 }
 
 export class ProjectService {
-  private readonly authorizedRoots = new Map<string, FolderIdentity>()
+  // Reassigned wholesale (build-new-map-then-swap) so authorization reads are
+  // never served from a partially repopulated map.
+  private authorizedRoots = new Map<string, FolderIdentity>()
   private readonly removalRoots = new Set<string>()
   private authorizationRevision = 0
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
@@ -89,7 +91,8 @@ export class ProjectService {
     })))
     const records: ProjectRecord[] = []
     const represented = new Set<string>()
-    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.clear()
+    const nextAuthorized = new Map<string, FolderIdentity>()
+    const branchTargets: Array<{ record: ProjectRecord; cwd: string }> = []
 
     for (const project of persisted) {
       const folderSet = new Set<string>()
@@ -105,16 +108,22 @@ export class ProjectService {
         represented.add(canonical)
         if (verified && expected) {
           if (configured === resolve(project.primaryFolder)) primaryGranted = true
-          if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.set(configured, expected)
+          nextAuthorized.set(configured, expected)
         }
       }
-      records.push({
+      const record: ProjectRecord = {
         id: project.id, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
         pinned: project.pinned, createdAt: project.createdAt, lastOpenedAt: project.lastOpenedAt,
         sessionCount: sessions.filter((session) => folderSet.has(sessionProjectPaths.get(session)!)).length,
-        gitBranch: primaryGranted ? await this.branchProvider(project.primaryFolder) : undefined,
-      })
+        gitBranch: undefined,
+      }
+      records.push(record)
+      if (primaryGranted) branchTargets.push({ record, cwd: project.primaryFolder })
     }
+
+    // Swap the fully built map in one step; the previous map keeps serving
+    // authorization checks while this refresh was collecting identities.
+    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
 
     for (const projectPath of [...new Set(sessions.map((session) => session.projectPath).filter(Boolean))]) {
       let canonical: string
@@ -139,6 +148,9 @@ export class ProjectService {
         inferred: true,
       })
     }
+    // Branch enrichment runs after the swap: authorization must never wait on
+    // git subprocesses.
+    for (const target of branchTargets) target.record.gitBranch = await this.branchProvider(target.cwd)
     return records.sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.lastOpenedAt) - Date.parse(a.lastOpenedAt))
   }
 
@@ -233,36 +245,47 @@ export class ProjectService {
       }
     }
     const roots = persisted ? persistedPaths : inferredPath ? [inferredPath] : []
-    if (roots.length) {
-      for (const root of roots) this.removalRoots.add(root)
-      for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
-      await this.stopProjectProcesses([...new Set(roots)])
+    try {
+      if (roots.length) {
+        for (const root of roots) this.removalRoots.add(root)
+        for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
+        await this.stopProjectProcesses([...new Set(roots)])
+      }
+      return await this.store.update((state) => {
+        const index = state.projects.findIndex((project) => project.id === id)
+        const paths = index >= 0 ? persistedPaths : inferredPath ? [inferredPath] : []
+        if (!paths.length) return false
+        if (index >= 0) state.projects.splice(index, 1)
+        const dismissed = new Set(state.dismissedProjectPaths.map((path) => resolve(path)))
+        for (const path of paths) dismissed.add(path)
+        state.dismissedProjectPaths = [...dismissed]
+        return true
+      })
+    } finally {
+      // Removal blocks are transient: release them whether the store update
+      // settled or threw, then rebuild authorization from the store. After a
+      // successful removal the authoritative block is absence from
+      // authorizedRoots; after a failed one the project keeps working.
+      for (const root of roots) this.removalRoots.delete(root)
+      if (authorizationRevision === this.authorizationRevision) await this.rebuildAuthorizedRoots(authorizationRevision)
     }
-    const removed = await this.store.update((state) => {
-      const index = state.projects.findIndex((project) => project.id === id)
-      const paths = index >= 0 ? persistedPaths : inferredPath ? [inferredPath] : []
-      if (!paths.length) return false
-      if (index >= 0) state.projects.splice(index, 1)
-      const dismissed = new Set(state.dismissedProjectPaths.map((path) => resolve(path)))
-      for (const path of paths) dismissed.add(path)
-      state.dismissedProjectPaths = [...dismissed]
-      return true
-    })
-    if (removed && authorizationRevision === this.authorizationRevision) {
-      this.authorizedRoots.clear()
-      for (const project of this.store.snapshot().projects) {
-        for (const folder of project.folders) {
-          if (authorizationRevision !== this.authorizationRevision) break
-          const configured = resolve(folder)
-          let canonical = configured
-          try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
-          const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
-          const verified = await this.verifyFolderIdentity(configured, expected)
-          if (verified && expected) this.authorizedRoots.set(configured, expected)
-        }
+  }
+
+  /** Rebuilds authorization into a fresh map and swaps it in one step. */
+  private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
+    const nextAuthorized = new Map<string, FolderIdentity>()
+    for (const project of this.store.snapshot().projects) {
+      for (const folder of project.folders) {
+        if (authorizationRevision !== this.authorizationRevision) return
+        const configured = resolve(folder)
+        let canonical = configured
+        try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
+        const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
+        const verified = await this.verifyFolderIdentity(configured, expected)
+        if (verified && expected) nextAuthorized.set(configured, expected)
       }
     }
-    return removed
+    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
   }
 
   async touch(idValue: unknown): Promise<boolean> {
@@ -302,18 +325,27 @@ export class ProjectService {
   }
 
   private async authorizedRootFor(path: string): Promise<string> {
-    if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
     if (!this.authorizedRoots.size) await this.list()
     const authorizationRevision = this.authorizationRevision
     const roots: string[] = []
-    for (const [configured, expected] of this.authorizedRoots) {
+    // Snapshot the map: a concurrent refresh may swap this.authorizedRoots
+    // mid-iteration, and stale-entry eviction must target the map iterated.
+    const authorized = this.authorizedRoots
+    for (const [configured, expected] of authorized) {
+      // An in-flight removal blocks exactly the roots being removed; a nested
+      // project registered inside them keeps its own grant.
+      if (this.removalRoots.has(configured)) continue
       const verified = await this.verifyFolderIdentity(configured, expected)
-      if (verified) roots.push(verified)
-      else this.authorizedRoots.delete(configured)
+      if (!verified) { authorized.delete(configured); continue }
+      if (this.removalRoots.has(verified)) continue
+      roots.push(verified)
     }
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
-    if (!authorizedRoot) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    if (!authorizedRoot) {
+      if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
+      throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    }
     return authorizedRoot
   }
 

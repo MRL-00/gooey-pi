@@ -267,7 +267,10 @@ async function bootstrap(): Promise<void> {
   projects.bindProviders({
     sessions: listCatalogSessions,
     branch: (cwd) => git.branch(cwd),
-    stopProjectProcesses: async (roots) => { await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)]) },
+    stopProjectProcesses: async (roots) => {
+      plugins.evictProjects(roots)
+      await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
+    },
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))

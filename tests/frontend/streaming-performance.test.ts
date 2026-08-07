@@ -9,7 +9,7 @@ import {
   updateActivityCriteria,
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
-import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, type PrimeEventReplayStats } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
 import { reconcileTranscripts } from '../../src/app/transcript-reconcile'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
@@ -184,7 +184,9 @@ describe('batched Prime event reduction', () => {
       { type: 'tool_execution_end', toolCallId: 'tool-2', toolName: 'Write', result: 'written', isError: false },
       { type: 'agent_end' },
     ]
+    resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
     const batched = replayPrimeEvents(transcript(), events)
 
     expect(batched).toEqual(sequential)
@@ -252,7 +254,9 @@ describe('linear event batches', () => {
       { type: 'tool_execution_end', toolCallId: 'tool-2', toolName: 'Write', result: { output: 'saved' } },
       { type: 'runtime_exit', expected: true },
     ]
+    resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
     expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
   })
 
@@ -269,14 +273,37 @@ describe('linear event batches', () => {
       { type: 'tool_execution_end', toolName: 'Anonymous', result: 'done' },
       { type: 'agent_end' }, { type: 'error', message: 'failed' },
       { type: 'runtime_exit', expected: true },
+      { type: 'compaction_start', reason: 'threshold' },
+      { type: 'compaction_end', reason: 'threshold', aborted: false, result: { summary: 'Trimmed earlier work.', tokensBefore: 4_096, firstKeptEntryId: 'kept-1' } },
+      { type: 'compaction_end', reason: 'manual', aborted: true },
     ]
     let seed = 0x5eed
     const random = () => { seed = (seed * 1_664_525 + 1_013_904_223) >>> 0; return seed }
     for (let run = 0; run < 100; run += 1) {
       const events = Array.from({ length: 80 }, () => pool[random() % pool.length])
+      resetTranscriptIdsForTests()
       const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+      resetTranscriptIdsForTests()
       expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
     }
+  })
+
+  it('opens a fresh assistant turn after a compaction row carried over from a prior batch', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(7)
+    const batchA: Record<string, unknown>[] = [{ type: 'compaction_start', reason: 'threshold' }]
+    const batchB: Record<string, unknown>[] = [
+      { type: 'agent_start' },
+      delta('after compaction'),
+      { type: 'agent_end' },
+    ]
+    resetTranscriptIdsForTests()
+    const sequential = [...batchA, ...batchB].reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
+    const batched = replayPrimeEvents(replayPrimeEvents(transcript(), batchA), batchB)
+
+    expect(batched).toEqual(sequential)
+    expect(batched.filter((message) => message.role === 'assistant')).toHaveLength(2)
+    expect(batched.at(-1)?.parts).toMatchObject([{ type: 'text', text: 'after compaction' }])
   })
 
   it('uses one bounded state commit for each sustained frame batch', () => {

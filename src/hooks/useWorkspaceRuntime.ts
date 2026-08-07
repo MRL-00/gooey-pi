@@ -5,6 +5,7 @@ import {
   eventsForWorkspace,
   isTranscriptTerminalEvent,
   needsTranscriptReconciliation,
+  reconcileTranscriptMessages,
   reconciliationMatches,
   type PendingAgentEvent,
   type TranscriptReconciliationMarker,
@@ -185,9 +186,16 @@ export function useWorkspaceRuntime({
           setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
           return
         }
-        // Reconcile instead of replacing wholesale: unchanged messages keep
-        // their identity so memoized rows do not re-render on sync ticks.
-        setMessages((messages) => reconcileTranscripts(messages, pendingLoad.eventBuffer.replay(value)))
+        // Post-turn reconciliation reads restore disk authority, but unchanged
+        // messages keep their identity so memoized rows do not re-render.
+        if (pendingLoad.reconciliation) {
+          setMessages((messages) => reconcileTranscripts(messages, pendingLoad.eventBuffer.replay(value)))
+          return
+        }
+        // Background reads (initial and external-sync) merge into the live
+        // list so an optimistic message sent while the read was in flight is
+        // not replaced away by older on-disk state.
+        setMessages((messages) => reconcileTranscriptMessages(messages, pendingLoad.eventBuffer.replay(value)))
       },
       onError: (error) => {
         setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
@@ -254,7 +262,11 @@ export function useWorkspaceRuntime({
     promptAdmissionGenerationRef.current = generation
     reconciliationNeededRef.current = null
     const load = transcriptLoadRef.current
-    if (load?.generation === generation && load.reconciliation) {
+    // Supersede every pending transcript load, not only reconciliations: a
+    // background read resolving after the prompt would otherwise replace the
+    // optimistic user message with older on-disk state. The reconciliation
+    // read after the turn's terminal event restores disk authority.
+    if (load?.generation === generation) {
       transcriptLoadRef.current = null
       deferredReconciliationRef.current = null
       setMessages((current) => load.eventBuffer.replay(current))

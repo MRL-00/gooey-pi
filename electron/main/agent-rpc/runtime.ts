@@ -2,9 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { safeChildEnvironment } from '../process-utils'
+import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
-import { FramedRpcTransport } from './transport'
+import { FramedRpcTransport, type QueuedRpcWrite } from './transport'
 import type { RpcObject } from './types'
 
 interface PendingRequest {
@@ -26,6 +27,7 @@ function parseContextUsage(raw: unknown): PrimeContextUsage | null {
 export class RpcRuntime {
   readonly runtimeId = randomUUID()
   private readonly pending = new Map<string, PendingRequest>()
+  private readonly uncertainDeliveries = new Set<string>()
   private pendingBytes = 0
   private transportFailed = false
   private readonly child: ChildProcessWithoutNullStreams
@@ -118,7 +120,7 @@ export class RpcRuntime {
 
   async command(command: RpcObject): Promise<RpcObject> {
     if (command.type === 'extension_ui_response') {
-      await this.transport.enqueue(`${JSON.stringify(command)}\n`)
+      await this.transport.enqueue(`${JSON.stringify(command)}\n`).done
       return { type: 'response', command: 'extension_ui_response', success: true }
     }
     const timeout = command.type === 'compact' ? 10 * 60_000 : 60_000
@@ -199,12 +201,23 @@ export class RpcRuntime {
     if (this.pendingBytes + bytes > 32 * 1024 * 1024) return Promise.reject(new Error('RPC in-flight byte budget exceeded'))
     this.pendingBytes += bytes
     return new Promise((resolveRequest, reject) => {
+      let write: QueuedRpcWrite | null = null
       const timer = setTimeout(() => {
         const pending = this.pending.get(id)
         if (!pending) return
         this.pendingBytes -= pending.bytes
         this.pending.delete(id)
-        pending.reject(new Error(`RPC command ${commandType} timed out`))
+        if (write?.cancel() !== 'flushed') {
+          // The line never reached the child: the command cannot execute, so
+          // a retry is safe.
+          pending.reject(new Error(`RPC command ${commandType} timed out before it was sent`))
+          return
+        }
+        // The line reached the child, which may still execute the command. A
+        // late response must be consumed silently rather than reported as an
+        // orphan, and the caller must not retry automatically.
+        this.rememberUncertainDelivery(id)
+        pending.reject(new Error(`RPC command ${commandType} timed out after delivery; the agent may still run it — do not retry automatically`))
       }, timeoutMs)
       timer.unref()
       this.pending.set(id, { resolve: resolveRequest, reject, timer, bytes, command: commandType })
@@ -216,7 +229,8 @@ export class RpcRuntime {
         this.pending.delete(id)
         pending.reject(error instanceof Error ? error : new Error(errorMessage(error)))
       }
-      void this.transport.enqueue(line).catch(failWrite)
+      write = this.transport.enqueue(line)
+      void write.done.catch(failWrite)
     })
   }
 
@@ -229,7 +243,13 @@ export class RpcRuntime {
     if (!isRecord(value) || typeof value.type !== 'string') return
     if (value.type === 'response' && typeof value.id === 'string') {
       const pending = this.pending.get(value.id)
-      if (!pending) { this.emit({ type: 'orphan_response', command: value.command }); return }
+      if (!pending) {
+        // A late answer to a request that timed out after its write flushed
+        // is consumed, not surfaced as an orphan.
+        if (this.uncertainDeliveries.delete(value.id)) return
+        this.emit({ type: 'orphan_response', command: value.command })
+        return
+      }
       clearTimeout(pending.timer)
       this.pendingBytes -= pending.bytes
       this.pending.delete(value.id)
@@ -281,7 +301,9 @@ export class RpcRuntime {
   private updateFromState(raw: unknown): void {
     if (!isRecord(raw)) return
     if (typeof raw.sessionId === 'string') this.info.sessionId = raw.sessionId
-    if (typeof raw.sessionFile === 'string') this.info.sessionFile = raw.sessionFile
+    // Canonicalize once at the boundary (cached): every later comparison
+    // against catalog and validator paths uses the canonical form.
+    if (typeof raw.sessionFile === 'string') this.info.sessionFile = canonicalSessionPath(raw.sessionFile)
     if (typeof raw.isStreaming === 'boolean') this.info.isStreaming = raw.isStreaming
     if (typeof raw.isCompacting === 'boolean') this.info.isCompacting = raw.isCompacting
     if (typeof raw.thinkingLevel === 'string') this.info.thinkingLevel = raw.thinkingLevel
@@ -301,9 +323,17 @@ export class RpcRuntime {
 
   private emit(event: RpcObject): void { this.eventForwarder.emit(event) }
 
+  private rememberUncertainDelivery(id: string): void {
+    this.uncertainDeliveries.add(id)
+    if (this.uncertainDeliveries.size <= 64) return
+    const oldest = this.uncertainDeliveries.values().next().value
+    if (oldest !== undefined) this.uncertainDeliveries.delete(oldest)
+  }
+
   private fail(error: Error): void {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
     this.pending.clear()
+    this.uncertainDeliveries.clear()
     this.pendingBytes = 0
   }
 }

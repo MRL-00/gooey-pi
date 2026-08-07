@@ -80,7 +80,60 @@ describe('project removal', () => {
     releaseBranch()
     await staleList
 
-    await expect(service.authorizeCwd(second)).rejects.toThrow(/being removed/)
+    // The removal deny-list is released once removal completes; the lasting
+    // block is that the project is no longer authorized at all.
+    await expect(service.authorizeCwd(second)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('keeps a nested registered project authorized while and after its parent is removed', async () => {
+    const { folder, store, service } = fixture()
+    const nested = join(folder, 'nested')
+    mkdirSync(nested)
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push(
+      { id: 'parent', name: 'Parent', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
+      { id: 'nested', name: 'Nested', path: nested, folders: [nested], primaryFolder: nested, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(nested) },
+    ) })
+    await service.list()
+    let releaseStop!: () => void
+    let markStopStarted!: () => void
+    const stopStarted = new Promise<void>((resolve) => { markStopStarted = resolve })
+    const stopGate = new Promise<void>((resolve) => { releaseStop = resolve })
+    service.bindProviders({
+      sessions: async () => [],
+      branch: async () => undefined,
+      stopProjectProcesses: async () => { markStopStarted(); await stopGate },
+    })
+
+    const removal = service.remove('parent')
+    await stopStarted
+    await expect(service.authorizeCwd(nested)).resolves.toBe(realpathSync(nested))
+    await expect(service.authorizeCwd(folder)).rejects.toThrow(/being removed/)
+    releaseStop()
+    await expect(removal).resolves.toBe(true)
+
+    await expect(service.authorizeCwd(nested)).resolves.toBe(realpathSync(nested))
+    await expect(service.authorizeCwd(folder)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('releases removal roots and keeps the project working when the store update fails', async () => {
+    const { folder, store, service } = fixture()
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
+    }) })
+    await service.list()
+    const originalUpdate = store.update.bind(store)
+    let failNext = true
+    store.update = (async (mutate: never) => {
+      if (failNext) { failNext = false; throw new Error('state write failed') }
+      return originalUpdate(mutate)
+    }) as typeof store.update
+
+    await expect(service.remove('project-1')).rejects.toThrow('state write failed')
+    await expect(service.authorizeCwd(folder)).resolves.toBe(realpathSync(folder))
+    expect((await service.list()).map((record) => record.id)).toEqual(['project-1'])
   })
 
   it('does not duplicate a persisted multi-folder project as an inferred project', async () => {

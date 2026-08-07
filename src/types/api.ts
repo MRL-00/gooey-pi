@@ -57,14 +57,15 @@ export type PrimeCompactionStatus = 'running' | 'done' | 'failed' | 'cancelled'
 export type PrimeCompactionOutcome = 'failed' | 'cancelled' | 'skipped'
 
 export type MessagePart =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string }
-  | { type: 'toolCall'; id?: string; name: string; args?: unknown }
-  | { type: 'toolResult'; name?: string; text: string; isError?: boolean }
-  | { type: 'agentMessage'; text: string; agentName?: string }
-  | { type: 'image'; mimeType?: string; data?: string; dataTruncated?: boolean }
+  | { type: 'text'; partId?: string; text: string }
+  | { type: 'thinking'; partId?: string; text: string }
+  | { type: 'toolCall'; partId?: string; id?: string; name: string; args?: unknown }
+  | { type: 'toolResult'; partId?: string; name?: string; text: string; isError?: boolean }
+  | { type: 'agentMessage'; partId?: string; text: string; agentName?: string }
+  | { type: 'image'; partId?: string; mimeType?: string; data?: string; dataTruncated?: boolean }
   | {
       type: 'compaction'
+      partId?: string
       status: PrimeCompactionStatus
       reason?: PrimeCompactionReason
       outcome?: PrimeCompactionOutcome

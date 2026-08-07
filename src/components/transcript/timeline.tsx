@@ -163,21 +163,33 @@ function CompactionPart({ part }: { part: Extract<MessagePart, { type: 'compacti
   </div>
 }
 
+/**
+ * Streaming reducers splice tool results into the middle of a part list, so
+ * index keys detach expanded panels mid-stream. Key on the part's stable id
+ * (a tool call keeps its semantic tool id); parts loaded from disk without an
+ * id fall back to a type-scoped index, which is stable for static lists.
+ */
+function partKey(part: MessagePart, index: number): string {
+  if (part.type === 'toolCall' && part.id) return part.id
+  return part.partId ?? `${part.type}:${index}`
+}
+
 export function WorkTimeline({ parts, showReasoning, showTools, streaming = false }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean; streaming?: boolean }) {
   const pairedResults = new Set<number>()
   return <div className="work-timeline">{parts.map((part, index) => {
+    const key = partKey(part, index)
     if (part.type === 'toolResult' && pairedResults.has(index)) return null
-    if (part.type === 'compaction') return <CompactionPart key={index} part={part} />
-    if (part.type === 'thinking') return showReasoning ? <ReasoningPart key={index} part={part} streaming={streaming} /> : null
+    if (part.type === 'compaction') return <CompactionPart key={key} part={part} />
+    if (part.type === 'thinking') return showReasoning ? <ReasoningPart key={key} part={part} streaming={streaming} /> : null
     if (part.type === 'toolCall') {
       if (!showTools) return null
       const next = parts[index + 1]
       if (next?.type === 'toolResult') pairedResults.add(index + 1)
-      return <ToolPart key={part.id ?? index} part={part} next={next} />
+      return <ToolPart key={key} part={part} next={next} />
     }
-    if (part.type === 'toolResult') return showTools ? <StandaloneToolResult key={index} part={part} /> : null
-    if (part.type === 'agentMessage') return <AgentActivityPart key={index} part={part} />
-    if (part.type === 'text') return <div className="activity-line activity-line--note" key={index}><MarkdownText text={part.text} /></div>
+    if (part.type === 'toolResult') return showTools ? <StandaloneToolResult key={key} part={part} /> : null
+    if (part.type === 'agentMessage') return <AgentActivityPart key={key} part={part} />
+    if (part.type === 'text') return <div className="activity-line activity-line--note" key={key}><MarkdownText text={part.text} /></div>
     return null
   })}</div>
 }

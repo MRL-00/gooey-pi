@@ -1,5 +1,5 @@
 import type { PrimeEventBuffer } from '@/lib/events'
-import type { PrimeContextUsage } from '@/types/api'
+import type { PrimeContextUsage, TranscriptMessage } from '@/types/api'
 
 export interface PendingAgentEvent {
   generation: number
@@ -70,6 +70,44 @@ export function authoritativeTranscriptReadIsCurrent(
     && marker.sessionFile === current.sessionFile
     && (marker.admissionRevision ?? 0) === (current.admissionRevision ?? 0)
     && (currentRuntimeId === null || currentRuntimeId === marker.runtimeId)
+}
+
+const LOCAL_MESSAGE_ID = /^(?:user|assistant|stream|error|compaction)-/
+
+function messageText(message: TranscriptMessage): string {
+  return message.parts.map((part) => 'text' in part && typeof part.text === 'string' ? part.text : '').join('\n').trim()
+}
+
+/**
+ * Merges a background (non-authoritative) transcript read into the live
+ * message list instead of replacing it wholesale: renderer-local rows that
+ * trail the last message the disk read knows about — an optimistic user
+ * bubble, a streaming placeholder, a system error row — survive unless the
+ * read already contains their persisted counterpart.
+ */
+export function reconcileTranscriptMessages(
+  current: TranscriptMessage[],
+  incoming: TranscriptMessage[],
+): TranscriptMessage[] {
+  if (!current.length) return incoming
+  const incomingIds = new Set(incoming.map((message) => message.id))
+  const localTail: TranscriptMessage[] = []
+  for (let index = current.length - 1; index >= 0; index -= 1) {
+    if (incomingIds.has(current[index].id)) break
+    localTail.unshift(current[index])
+  }
+  if (!localTail.length) return incoming
+  const currentIds = new Set(current.map((message) => message.id))
+  const persistedTail = incoming.filter((message) => !currentIds.has(message.id))
+  const persisted = (local: TranscriptMessage): boolean => {
+    if (local.role === 'user') {
+      const text = messageText(local)
+      return persistedTail.some((message) => message.role === 'user' && messageText(message) === text)
+    }
+    return persistedTail.some((message) => message.role === local.role)
+  }
+  const additions = localTail.filter((local) => LOCAL_MESSAGE_ID.test(local.id) && !persisted(local))
+  return additions.length ? [...incoming, ...additions] : incoming
 }
 
 export function admitAgentEvent(
