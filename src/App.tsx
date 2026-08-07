@@ -211,20 +211,18 @@ export default function App() {
   }, [onAppKeyDown])
 
   const busy = Boolean(workspace.runtime?.isStreaming || workspace.runtime?.isCompacting || workspace.messages.some((message) => message.streaming))
-  const queuedMessages = useMemo<QueuedPrompt[]>(() => {
-    const actions = workspace.runtime?.sessionActions
-    const visible: QueuedPrompt[] = actions
-      ? actions.followUps.filter((text) => !/^Agent message received:/i.test(text)).map((text, index) => ({ id: `queue-${index}-${text}`, text, intent: 'queue' as const }))
-      : []
-    const optimistic = workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'queue' && !visible.some((item) => item.text === pending.text))
-    return [...visible, ...optimistic]
-  }, [workspace.pendingQueuedPrompts, workspace.runtime?.sessionActions])
+  const queuedMessages = useMemo<QueuedPrompt[]>(
+    () => workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'queue'),
+    [workspace.pendingQueuedPrompts],
+  )
   useEffect(() => {
     if (!bridge || busy || submitting || queuedFlushRef.current || workspace.pendingQueuedPrompts.length === 0) return
     const next = workspace.pendingQueuedPrompts[0]
     queuedFlushRef.current = true
-    workspace.removeQueuedPrompt(next.id)
-    void sendPrompt(next.text, [], 'queue').catch(() => undefined).finally(() => { queuedFlushRef.current = false })
+    void sendPrompt(next.text, [], 'queue')
+      .then(() => workspace.removeQueuedPrompt(next.id))
+      .catch(() => undefined)
+      .finally(() => { queuedFlushRef.current = false })
   }, [bridge, busy, sendPrompt, submitting, workspace.pendingQueuedPrompts, workspace.removeQueuedPrompt])
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />

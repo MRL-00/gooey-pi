@@ -20,7 +20,10 @@ describe('composer queue tray', () => {
     container.remove()
   })
 
-  it('keeps accepted queue and steering messages above the input', () => {
+  it('shows user queues in one tray and supports editing or deleting them', () => {
+    const onEdit = vi.fn()
+    const onDelete = vi.fn()
+    const queued = { id: 'queue-1', text: 'run tests', intent: 'queue' as const }
     act(() => root.render(<Composer
       busy
       submitting={false}
@@ -37,17 +40,27 @@ describe('composer queue tray', () => {
       imageInputSupported={true}
       messageEnterAction="queue"
       skills={[]}
-      queuedMessages={[{ id: 'queue-1', text: 'run tests', intent: 'queue' }, { id: 'steer-1', text: 'focus on auth', intent: 'steer' }]}
+      queuedMessages={[queued]}
+      onDeleteQueuedMessage={onDelete}
+      onEditQueuedMessage={onEdit}
       onModelChange={vi.fn()}
       onEffortChange={vi.fn()}
       onFastChange={vi.fn()}
       onSend={vi.fn()}
       onStop={vi.fn()}
     />))
+
     const tray = container.querySelector('.composer-queue')
-    expect(tray).not.toBeNull()
+    expect(tray?.querySelectorAll('.composer-queue__item')).toHaveLength(1)
     expect(tray?.textContent).toContain('run tests')
-    expect(tray?.textContent).toContain('focus on auth')
     expect(tray?.nextElementSibling?.classList.contains('composer')).toBe(true)
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Edit queued message"]')?.click())
+    expect(onEdit).toHaveBeenCalledWith(queued)
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('run tests')
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Delete queued message"]')?.click())
+    expect(onDelete).toHaveBeenCalledWith(queued)
   })
+
 })

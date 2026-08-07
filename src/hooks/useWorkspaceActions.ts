@@ -159,7 +159,38 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
 
   const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
     const { bridge, sessions, workspace, provider, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
-    await submissionAdmissionRef.current.run(async () => {
+    const currentWorkspace = workspace.workspaceRef.current
+    const currentRuntime = workspace.runtime
+    const currentOwner = workspace.runtimeOwnerRef.current
+    const ownsStreamingRuntime = Boolean(
+      bridge && currentRuntime && (currentRuntime.isStreaming || submissionAdmissionRef.current.active)
+      && workspace.runtimeIdRef.current === currentRuntime.runtimeId
+      && currentOwner?.runtimeId === currentRuntime.runtimeId
+      && currentOwner.generation === currentWorkspace.generation,
+    )
+    if (ownsStreamingRuntime && currentRuntime && bridge) {
+      if (intent === 'queue' && images.length === 0) {
+        workspace.queuePrompt(prompt, intent)
+        return
+      }
+      if (intent === 'steer') {
+        try {
+          await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
+          if (workspace.workspaceRef.current.generation !== currentWorkspace.generation) return
+          const sentAt = Date.now()
+          workspace.setMessages((items) => [...items, { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }])
+          if (currentWorkspace.sessionFile) {
+            const sentAtIso = new Date(sentAt).toISOString()
+            setSessions((items) => items.map((session) => session.filePath === currentWorkspace.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
+          }
+          return
+        } catch (error) {
+          reportError(error)
+          throw error
+        }
+      }
+    }
+    const admittedSubmission = await submissionAdmissionRef.current.run(async () => {
       setSubmitting(true)
       const admitted = workspace.workspaceRef.current
       const generation = admitted.generation
@@ -182,9 +213,15 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         const sentAt = Date.now()
         const sentAtIso = new Date(sentAt).toISOString()
         const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
-        workspace.setMessages((items) => [...items, userMessage])
-        if (admitted.sessionFile) setSessions((items) => items.map((session) => session.filePath === admitted.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
+        let userMessageAppended = false
+        const appendUserMessage = () => {
+          if (userMessageAppended) return
+          userMessageAppended = true
+          workspace.setMessages((items) => [...items, userMessage])
+          if (admitted.sessionFile) setSessions((items) => items.map((session) => session.filePath === admitted.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
+        }
         if (!bridge) {
+          appendUserMessage()
           const assistantId = `assistant-${Date.now()}`
           workspace.setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
           demoTimerRef.current.push(window.setTimeout(() => workspace.setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, parts: [...item.parts, { type: 'toolCall', id: 'demo-tool', name: 'Inspect project', args: { cwd: admitted.cwd } }] } : item)), 450))
@@ -204,7 +241,6 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
         if (intent === 'queue' && images.length === 0 && (activeRuntime?.isStreaming || selectedSession?.status === 'running')) {
           queuedPromptId = workspace.queuePrompt(prompt, intent)
-          workspace.setMessages((items) => items.filter((item) => item.id !== userMessage.id))
           return
         }
         let startedRuntime = false
@@ -214,11 +250,17 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             throw new Error('Image attachments cannot be queued while this session is active outside Prime Work. Wait for it to finish, then try again.')
           }
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
-            && await followUpExternalSession(selected.sessionFile)) return
+            && await followUpExternalSession(selected.sessionFile)) {
+            if (intent === 'steer') appendUserMessage()
+            return
+          }
           try {
             activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
           } catch (startError) {
-            if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) return
+            if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) {
+              if (intent === 'steer') appendUserMessage()
+              return
+            }
             throw startError
           }
           startedRuntime = true
@@ -232,8 +274,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         if (activeRuntime.isStreaming) {
           if (intent === 'queue') queuedPromptId = workspace.queuePrompt(prompt, intent)
           await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
+          if (intent === 'steer') appendUserMessage()
         } else {
           startedPrompt = true
+          appendUserMessage()
           workspace.setRuntime({ ...activeRuntime, isStreaming: true })
           workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
           await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
@@ -252,6 +296,11 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         throw error
       } finally { setSubmitting(false) }
     })
+    if (!admittedSubmission) {
+      const error = new Error('Another message is still being admitted. Try steering again.')
+      reportError(error)
+      throw error
+    }
   }
   const stopRuntime = async () => {
     const { bridge, workspace, reportError } = getDeps()

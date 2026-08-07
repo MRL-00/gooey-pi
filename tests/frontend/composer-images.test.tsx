@@ -213,6 +213,19 @@ describe('Composer message delivery shortcuts', () => {
     expect(onSend).toHaveBeenNthCalledWith(2, 'Steer with this', [], 'steer')
   })
 
+  it('allows Ctrl+Enter steering while an earlier delivery callback is still pending', async () => {
+    let release: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    const onSend = renderComposer(vi.fn(() => pending), true, true)
+
+    await enterDraft('Queue this')
+    await enterDraft('Steer immediately', { ctrlKey: true })
+
+    expect(onSend).toHaveBeenNthCalledWith(1, 'Queue this', [], 'queue')
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Steer immediately', [], 'steer')
+    await act(async () => { release?.(); await pending })
+  })
+
   it('reverses both shortcuts from the persisted setting and preserves Shift+Enter', async () => {
     const onSend = renderComposer(vi.fn(async () => undefined), true, true, 'steer')
     await enterDraft('Steer this')

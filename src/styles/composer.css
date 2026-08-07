@@ -5,7 +5,7 @@
 .composer-queue__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-tertiary); font-size: 10.5px; font-weight: 620; letter-spacing: .01em; }
 .composer-queue__header > span { display: inline-flex; align-items: center; gap: 5px; }
 .composer-queue__header svg { color: var(--text-tertiary); }
-.composer-queue__header strong { min-width: 18px; padding: 1px 5px; border-radius: 999px; color: var(--prime); background: color-mix(in srgb, var(--prime) 12%, transparent); font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+.composer-queue__header strong { min-width: 18px; padding: 1px 5px; border-radius: 999px; color: var(--text-secondary); background: var(--surface-hover); font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
 .composer-queue__list { display: grid; gap: 3px; max-height: 132px; overflow-y: auto; }
 .composer-queue__item { min-width: 0; min-height: 29px; display: flex; align-items: center; gap: 6px; padding: 3px 5px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px; }
 .composer-queue__item:first-child { border-top: 0; }

@@ -164,7 +164,7 @@ export const Composer = memo(function Composer({
     const currentImages = imagesRef.current
     const currentAnnotations = annotationsRef.current
     const prompt = value.trim() || (currentImages.length > 0 ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]') : '[Page annotations]')
-    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0) || submitting || loading || disabled || submittingRef.current) return
+    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
     if (pendingImagesRef.current > 0) {
       setAttachmentError('Wait for the pasted image to finish processing before sending.')
       return
