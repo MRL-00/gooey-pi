@@ -18,6 +18,8 @@ interface PluginServiceOptions {
 
 const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
 const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
+const MAX_KNOWN_PATH_OWNERS = 64
+const MAX_KNOWN_PATHS_PER_OWNER = 4_096
 let activePluginDiscoveries = 0
 const discoveryWaiters: Array<() => void> = []
 
@@ -90,7 +92,15 @@ export class PluginService {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.primeAgentPath)
     const combined = [...this.builtInSkills, ...result.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
-    this.knownPathsByOwner.set(ownerKey, new Set(combined.flatMap((item) => item.path ? [item.path] : [])))
+    const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
+    // Delete-then-set keeps insertion order as LRU order for owner eviction.
+    this.knownPathsByOwner.delete(ownerKey)
+    this.knownPathsByOwner.set(ownerKey, new Set(knownPaths))
+    while (this.knownPathsByOwner.size > MAX_KNOWN_PATH_OWNERS) {
+      const oldest = this.knownPathsByOwner.keys().next().value
+      if (oldest === undefined) break
+      this.knownPathsByOwner.delete(oldest)
+    }
     return combined
   }
 
@@ -139,7 +149,27 @@ export class PluginService {
     return await mutation
   }
 
-  refresh(): Promise<SkillRecord[]> { return this.listCanonical(this.lastProjectPath) }
+  refresh(): Promise<SkillRecord[]> {
+    const projectPath = this.lastProjectPath
+    if (!projectPath) return this.listCanonical()
+    // Re-authorize on every refresh: the remembered project may have been
+    // removed (or replaced) since the scope was last used.
+    return this.authorizeProject(projectPath).then(
+      (safeProjectPath) => this.listCanonical(safeProjectPath),
+      (error) => {
+        // Surface the failure once, then forget the stale scope so later
+        // refreshes fall back to the user catalog.
+        if (this.lastProjectPath === projectPath) this.lastProjectPath = undefined
+        this.knownPathsByOwner.delete(`project:${projectPath}`)
+        throw error
+      },
+    )
+  }
+
+  /** Revokes a removed project's revealable paths. */
+  evictProjects(roots: readonly string[]): void {
+    for (const root of roots) this.knownPathsByOwner.delete(`project:${root}`)
+  }
 
   private settingsFingerprint(path: string): Promise<string> {
     return settingsFingerprint(path)

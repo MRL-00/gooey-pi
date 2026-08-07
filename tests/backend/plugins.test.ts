@@ -171,6 +171,62 @@ describe('PluginService discovery', () => {
     expect(service.authorizeReveal(projectPrompt)).toBe(realpathSync(projectPrompt))
   })
 
+  it('re-authorizes refresh scope and revokes reveal paths after project removal', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const projectPrompt = join(project, 'project-prompt.md')
+    mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true })
+    writeFileSync(projectPrompt, '# Project prompt')
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify({ prompts: [projectPrompt] }))
+    const store = new JsonStateStore(join(root, 'state.json'))
+    const info = lstatSync(project, { bigint: true })
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
+      folderIdentities: { [realpathSync(project)]: { dev: info.dev.toString(), ino: info.ino.toString() } },
+    }) })
+    const projectsService = new ProjectService(store, () => null)
+    projectsService.bindProviders({
+      sessions: async () => [],
+      branch: async () => undefined,
+      stopProjectProcesses: async (roots) => service.evictProjects(roots),
+    })
+    const service = new PluginService(null, (path) => projectsService.authorizeProjectRoot(path), { agentDir })
+
+    await service.list(project)
+    expect(service.authorizeReveal(projectPrompt)).toBe(realpathSync(projectPrompt))
+
+    expect(await projectsService.remove('project')).toBe(true)
+    await expect(service.refresh()).rejects.toThrow(/not inside an added Prime Work project/)
+    expect(() => service.authorizeReveal(projectPrompt)).toThrow('plugin path was not discovered')
+  })
+
+  it('bounds the reveal path owners to a fixed LRU window', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const projectFor = (index: number) => {
+      const project = join(root, `project-${index}`)
+      mkdirSync(project)
+      writeFileSync(join(project, 'prompt.md'), `# ${index}`)
+      return project
+    }
+    const projects = Array.from({ length: 66 }, (_, index) => projectFor(index))
+    const service = new PluginService(null, async (path) => realpathSync(path), {
+      agentDir,
+      discover: async (_agentDirectory, safeProjectPath) => safeProjectPath
+        ? [{ id: `skill-${safeProjectPath}`, name: 'Prompt', description: '', kind: 'prompt', location: 'project', path: join(safeProjectPath, 'prompt.md'), enabled: true }]
+        : [],
+    })
+
+    for (const project of projects) await service.list(project)
+
+    expect(() => service.authorizeReveal(join(projects[0], 'prompt.md'))).toThrow('plugin path was not discovered')
+    expect(service.authorizeReveal(join(projects.at(-1)!, 'prompt.md'))).toBe(realpathSync(join(projects.at(-1)!, 'prompt.md')))
+  })
+
   it('discovers only the authorized project .agents root without walking ancestors', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
