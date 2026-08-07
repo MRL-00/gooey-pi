@@ -25,6 +25,7 @@ let root: Root
 let executed: string[]
 let takeResult: string | null
 let webviewUrl: string
+let webviewDomReady: boolean
 
 // jsdom renders <webview> as HTMLUnknownElement; give the prototype the small
 // Electron surface BrowserPanel relies on.
@@ -39,9 +40,13 @@ const webviewMethods = {
   canGoForward: () => false,
   reload: () => undefined,
   stop: () => undefined,
-  executeJavaScript: async (code: string) => {
+  // Electron throws SYNCHRONOUSLY (not a rejected promise) until the guest
+  // emits dom-ready; the mock mirrors that so mount-time calls crash tests
+  // the same way they crash the real renderer.
+  executeJavaScript: (code: string) => {
+    if (!webviewDomReady) throw new Error('The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.')
     executed.push(code)
-    return code.includes('.take()') ? takeResult : undefined
+    return Promise.resolve(code.includes('.take()') ? takeResult : undefined)
   },
 }
 
@@ -56,6 +61,7 @@ beforeEach(() => {
   executed = []
   takeResult = null
   webviewUrl = 'https://example.com/'
+  webviewDomReady = false
   Object.assign(webviewProto, webviewMethods)
   container = document.createElement('div')
   document.body.append(container)
@@ -71,6 +77,11 @@ afterEach(async () => {
 })
 
 const webviewElement = () => container.querySelector('webview') as HTMLElement
+
+const makeDomReady = async () => {
+  webviewDomReady = true
+  await act(async () => { webviewElement().dispatchEvent(new Event('dom-ready')) })
+}
 
 const toggleAnnotate = async () => {
   await act(async () => {
@@ -88,8 +99,23 @@ const setComment = async (value: string) => {
 }
 
 describe('BrowserPanel annotation mode', () => {
+  it('mounts safely before dom-ready and defers page scripts until it fires', async () => {
+    // Regression: executeJavaScript throws synchronously pre-dom-ready; a
+    // mount-time call escaped the effect and blanked the app behind the
+    // root error boundary.
+    await act(async () => root.render(<Harness />))
+    expect(executed).toHaveLength(0)
+    await toggleAnnotate()
+    expect(executed).toHaveLength(0)
+
+    await makeDomReady()
+    await act(async () => { await vi.advanceTimersByTimeAsync(60) })
+    expect(executed.some((code) => code.includes('__primeAnnotator'))).toBe(true)
+  })
+
   it('injects the picker, captures a clicked element, and stores the comment', async () => {
     await act(async () => root.render(<Harness />))
+    await makeDomReady()
     await toggleAnnotate()
 
     expect(executed.some((code) => code.includes('__primeAnnotator.start()'))).toBe(true)
@@ -130,6 +156,7 @@ describe('BrowserPanel annotation mode', () => {
     }))
     const api: BrowserAnnotationsApi = { annotations, atCapacity: true, add: vi.fn(() => false), remove: vi.fn(), clear: vi.fn(), handleNavigation: vi.fn() }
     await act(async () => root.render(<BrowserPanel home="https://example.com/" onOpenExternal={() => undefined} annotations={api} pollIntervalMs={50} />))
+    await makeDomReady()
     const injectedBefore = executed.filter((code) => code.includes('__primeAnnotator.start()')).length
 
     await toggleAnnotate()
@@ -141,6 +168,7 @@ describe('BrowserPanel annotation mode', () => {
 
   it('marks annotations stale on navigation and exits annotation mode', async () => {
     await act(async () => root.render(<Harness />))
+    await makeDomReady()
     act(() => {
       latestApi.add({
         comment: 'Original page note',
@@ -169,6 +197,7 @@ describe('BrowserPanel annotation mode', () => {
 
   it('rejects malformed picker payloads without leaving annotation mode', async () => {
     await act(async () => root.render(<Harness />))
+    await makeDomReady()
     await toggleAnnotate()
 
     takeResult = JSON.stringify([{ tagName: 'div' }])

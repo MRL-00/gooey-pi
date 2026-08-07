@@ -21,6 +21,19 @@ type WebviewElement = HTMLElement & {
   removeEventListener(type: string, listener: EventListener): void
 }
 
+/**
+ * Electron's webview.executeJavaScript throws synchronously (not a rejected
+ * promise) until the guest emits dom-ready, so a bare call from a mount
+ * effect crashes the renderer. Route every call through this guard.
+ */
+function runInPage(view: WebviewElement, code: string): Promise<unknown> {
+  try {
+    return view.executeJavaScript(code).catch(() => undefined)
+  } catch {
+    return Promise.resolve(undefined)
+  }
+}
+
 function normalizeUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return 'about:blank'
@@ -46,6 +59,7 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
   const [canBack, setCanBack] = useState(false)
   const [canForward, setCanForward] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [domReady, setDomReady] = useState(false)
   const [pendingElement, setPendingElement] = useState<BrowserAnnotationElement | null>(null)
   const [annotationText, setAnnotationText] = useState('')
   const [notice, setNotice] = useState('')
@@ -81,25 +95,29 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
       setAnnotationText('')
       try { annotationsRef.current.handleNavigation(view.getURL()) } catch { /* webview not ready */ }
     }
+    // dom-ready is the earliest point at which executeJavaScript is legal;
+    // it fires again for every subsequent document, so markers re-apply.
+    const onDomReady = () => { setDomReady(true); lastMarkersRef.current = '' }
+    view.addEventListener('dom-ready', onDomReady)
     view.addEventListener('did-start-loading', didStart)
     view.addEventListener('did-stop-loading', didStop)
     view.addEventListener('did-navigate', didNavigate)
     view.addEventListener('did-navigate-in-page', sync)
-    return () => { view.removeEventListener('did-start-loading', didStart); view.removeEventListener('did-stop-loading', didStop); view.removeEventListener('did-navigate', didNavigate); view.removeEventListener('did-navigate-in-page', sync) }
+    return () => { view.removeEventListener('dom-ready', onDomReady); view.removeEventListener('did-start-loading', didStart); view.removeEventListener('did-stop-loading', didStop); view.removeEventListener('did-navigate', didNavigate); view.removeEventListener('did-navigate-in-page', sync) }
   }, [home])
 
   // While annotation mode is on, the picker runs inside the page; poll it for
   // the element the user clicked. Stopping cleans up the page-side listeners.
   useEffect(() => {
     const view = webviewRef.current
-    if (!picking || !view) return
+    if (!picking || !view || !domReady) return
     let disposed = false
     let inFlight = false
-    void view.executeJavaScript(annotationPickerScript('start')).catch(() => undefined)
+    void runInPage(view, annotationPickerScript('start'))
     const interval = window.setInterval(() => {
       if (inFlight) return
       inFlight = true
-      view.executeJavaScript(annotationTakeScript()).then((payload) => {
+      runInPage(view, annotationTakeScript()).then((payload) => {
         inFlight = false
         if (disposed || typeof payload !== 'string') return
         let parsed: unknown
@@ -114,19 +132,19 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
     return () => {
       disposed = true
       window.clearInterval(interval)
-      void view.executeJavaScript(annotationPickerScript('stop')).catch(() => undefined)
+      void runInPage(view, annotationPickerScript('stop'))
     }
-  }, [picking, pollIntervalMs])
+  }, [picking, pollIntervalMs, domReady])
 
   // Persistent numbered markers for every live annotation on the current page.
   const markers = annotations.annotations.flatMap((annotation, index) => annotation.stale ? [] : [{ selector: annotation.element.selector, index: index + 1 }])
   const markerSignature = `${currentUrl}|${markers.map((marker) => `${marker.index}:${marker.selector}`).join('|')}`
   useEffect(() => {
     const view = webviewRef.current
-    if (!view || loading || lastMarkersRef.current === markerSignature) return
+    if (!view || !domReady || loading || lastMarkersRef.current === markerSignature) return
     lastMarkersRef.current = markerSignature
-    void view.executeJavaScript(annotationMarkersScript(markers)).catch(() => undefined)
-  }, [markerSignature, loading])
+    void runInPage(view, annotationMarkersScript(markers))
+  }, [markerSignature, loading, domReady])
 
   const navigate = (value: string) => {
     const url = normalizeUrl(value)
