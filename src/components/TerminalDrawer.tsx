@@ -108,7 +108,10 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
         const earlyExit = bufferedExits.get(terminalId)
         bufferedData.clear(); bufferedExits.clear()
         if (earlyExit !== undefined) announceExit(earlyExit)
-      }).catch((error: unknown) => { const message = error instanceof Error ? error.message : 'Unable to start terminal'; terminal.writeln(`\x1b[31m${message}\x1b[0m`); onError?.(message) })
+      }).catch((error: unknown) => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : 'Unable to start terminal'; terminal.writeln(`\x1b[31m${message}\x1b[0m`); onError?.(message)
+      })
     } else {
       terminal.writeln('\x1b[38;5;141mPrime Work terminal\x1b[0m')
       terminal.writeln('\x1b[90mA live PTY will connect when the desktop bridge and project are available.\x1b[0m')
