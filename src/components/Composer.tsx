@@ -1,10 +1,12 @@
 import {
   ArrowUp,
   AtSign,
+  ChevronDown,
   Command,
   FolderGit2,
   Gauge,
   ImageIcon,
+  MessageCirclePlus,
   Plus,
   ShieldCheck,
   Square,
@@ -13,7 +15,8 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import type { BrowserAnnotation, MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import { annotationElementLabel, appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
@@ -35,11 +38,16 @@ interface ComposerProps {
   messageEnterAction: MessageEnterAction
   contextUsage?: PrimeContextUsage
   skills: SkillRecord[]
+  /** Browser annotations auto-attach as a composer attachment while any exist. */
+  annotations?: BrowserAnnotation[]
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
   onSend(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent): Promise<void> | void
   onStop(): Promise<void> | void
+  onRemoveAnnotation?(id: string): void
+  /** Called after a send that included the annotations, and by the attachment's remove control. */
+  onClearAnnotations?(): void
 }
 
 const commands = [
@@ -71,11 +79,15 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
-export const Composer = memo(function Composer({ busy, submitting = false, loading = false, disabled, model, effort, modelsByProvider, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
+const EMPTY_ANNOTATIONS: BrowserAnnotation[] = []
+const noop = () => undefined
+
+export const Composer = memo(function Composer({ busy, submitting = false, loading = false, disabled, model, effort, modelsByProvider, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, annotations = EMPTY_ANNOTATIONS, onModelChange, onEffortChange, onFastChange, onSend, onStop, onRemoveAnnotation = noop, onClearAnnotations = noop }: ComposerProps) {
   const [value, setValue] = useState(takeComposerDraft)
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [images, setImages] = useState<ComposerImage[]>([])
+  const [annotationsOpen, setAnnotationsOpen] = useState(false)
   const [attachmentError, setAttachmentError] = useState('')
   const [processingImages, setProcessingImages] = useState(false)
   const menuId = useId()
@@ -83,6 +95,8 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
   const submittingRef = useRef(false)
   const pendingImagesRef = useRef(0)
   const imagesRef = useRef<ComposerImage[]>([])
+  const annotationsRef = useRef(annotations)
+  annotationsRef.current = annotations
   const mountedRef = useRef(true)
   const enabledSkills = skills.filter((skill) => skill.enabled).slice(0, 6)
 
@@ -90,11 +104,13 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
     setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : value.endsWith('@') ? 'skill' : null)
   }, [value])
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  useEffect(() => { if (annotations.length === 0) setAnnotationsOpen(false) }, [annotations.length])
 
   const submit = async (intent: PromptDeliveryIntent = 'queue') => {
     const currentImages = imagesRef.current
-    const prompt = value.trim() || (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
-    if ((!value.trim() && currentImages.length === 0) || submitting || loading || disabled || submittingRef.current) return
+    const currentAnnotations = annotationsRef.current
+    const prompt = value.trim() || (currentImages.length > 0 ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]') : '[Page annotations]')
+    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0) || submitting || loading || disabled || submittingRef.current) return
     if (pendingImagesRef.current > 0) {
       setAttachmentError('Wait for the pasted image to finish processing before sending.')
       return
@@ -104,9 +120,11 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
       return
     }
     const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
-    const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
+    // Annotations ride along inside the prompt as a delimited plain-text block.
+    const promptWithAnnotations = appendAnnotationsToPrompt(prompt, currentAnnotations)
+    const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: promptWithAnnotations, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
     if (new TextEncoder().encode(frame).byteLength > MAX_IMAGE_PROMPT_BYTES) {
-      setAttachmentError('This message and its images are too large to send. Shorten the message or remove an image.')
+      setAttachmentError('This message and its attachments are too large to send. Shorten the message or remove an attachment.')
       return
     }
     submittingRef.current = true
@@ -118,7 +136,9 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
     setAttachmentError('')
     setMenu(null)
     try {
-      await onSend(prompt, submittedImages, intent)
+      await onSend(promptWithAnnotations, submittedImages, intent)
+      // The annotations were delivered: clear the attachment and page markers.
+      if (currentAnnotations.length > 0) onClearAnnotations()
     } catch {
       if (mountedRef.current) {
         setValue((current) => current || submittedValue)
@@ -289,7 +309,30 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
             >{suggestion.icon}<span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span></button>)}
           </div>
         ) : null}
-        {images.length ? <div className="composer-attachments" aria-label="Image attachments">{images.map((image) => <div className="composer-attachment" key={image.id}>
+        {annotationsOpen && annotations.length ? <div className="composer-annotations" role="region" aria-label="Page annotation details">
+          {annotations.map((annotation, index) => {
+            const snippet = annotation.element.text ? (annotation.element.text.length > 70 ? `${annotation.element.text.slice(0, 70)}…` : annotation.element.text) : ''
+            return <div className="composer-annotation" key={annotation.id}>
+              <span className="composer-annotation__badge" aria-hidden="true">{index + 1}</span>
+              <div className="composer-annotation__body">
+                <p>{annotation.comment}</p>
+                <small>{annotationElementLabel(annotation.element)}{snippet ? ` — “${snippet}”` : ''}</small>
+                <small>{annotation.pageTitle || annotation.pageUrl}{annotation.stale ? ' · page changed since capture' : ''}</small>
+              </div>
+              <button type="button" aria-label={`Remove annotation ${index + 1}`} onClick={() => onRemoveAnnotation(annotation.id)}><X size={12} /></button>
+            </div>
+          })}
+        </div> : null}
+        {images.length || annotations.length ? <div className="composer-attachments" aria-label="Attachments">
+          {annotations.length ? <div className="composer-attachment composer-attachment--annotations">
+            <button type="button" className="composer-attachment__expand" aria-expanded={annotationsOpen} aria-label={`Inspect ${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`} onClick={() => setAnnotationsOpen((open) => !open)}>
+              <MessageCirclePlus size={12} />
+              <span>{annotations.length} page annotation{annotations.length === 1 ? '' : 's'}</span>
+              <ChevronDown size={12} className={annotationsOpen ? 'is-open' : ''} />
+            </button>
+            <button type="button" aria-label="Remove page annotations" onClick={() => { setAnnotationsOpen(false); onClearAnnotations() }}><X size={12} /></button>
+          </div> : null}
+          {images.map((image) => <div className="composer-attachment" key={image.id}>
           <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
           <span><ImageIcon size={12} />{image.name}</span>
           <button type="button" aria-label={`Remove ${image.name}`} onClick={() => { const next = imagesRef.current.filter((item) => item.id !== image.id); imagesRef.current = next; setImages(next); setAttachmentError('') }}><X size={12} /></button>
@@ -323,7 +366,7 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
               data-tooltip={contextLabel}
               style={contextStyle}
             ><span>{contextDisplayPercent ?? '—'}</span></span>
-            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><Square size={10} fill="currentColor" aria-hidden="true" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
+            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><Square size={10} fill="currentColor" aria-hidden="true" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0 && annotations.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
           </div>
         </div>
       </div>
