@@ -120,10 +120,17 @@ describe('release preflight', () => {
     let inJobs = false
     let current: WorkflowStep | undefined
     for (const line of source.split('\n')) {
-      if (/^jobs:\s*$/.test(line)) { inJobs = true; continue }
+      if (/^jobs:\s*$/.test(line)) {
+        inJobs = true
+        continue
+      }
       if (!inJobs) continue
       const jobMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*$/)
-      if (jobMatch) { job = jobMatch[1]; current = undefined; continue }
+      if (jobMatch) {
+        job = jobMatch[1]
+        current = undefined
+        continue
+      }
       if (/^      - /.test(line)) {
         current = { job, name: undefined, uses: undefined, secretLines: [], lines: [] }
         steps.push(current)
