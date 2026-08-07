@@ -153,6 +153,10 @@
       {
         "from": "assets/skills",
         "to": "skills"
+      },
+      {
+        "from": "assets/extensions",
+        "to": "extensions"
       }
     ],
     "electronLanguages": [
