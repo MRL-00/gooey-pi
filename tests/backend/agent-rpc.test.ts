@@ -1,8 +1,12 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AgentRpcManager } from '../../electron/main/agent-rpc'
+import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
 import { validateRpcCommand } from '../../electron/main/agent-rpc/command-schema'
 import { MAX_RPC_WRITE_FRAME_BYTES, rpcRequestFrameBytes } from '../../electron/main/agent-rpc/limits'
 import { PrimeProviderService } from '../../electron/main/providers'
@@ -272,4 +276,52 @@ setInterval(() => {}, 1000)
     expect(manager.list().some((runtime) => runtime.runtimeId === projectRuntime.runtimeId)).toBe(false)
   })
 
+})
+
+describe('framed RPC transport stdio failure', () => {
+  interface FakeRpcChild extends EventEmitter {
+    stdout: PassThrough
+    stderr: PassThrough
+    stdin: PassThrough
+  }
+
+  function fakeChild(): FakeRpcChild {
+    const child = new EventEmitter() as FakeRpcChild
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.stdin = new PassThrough()
+    return child
+  }
+
+  const asChild = (child: FakeRpcChild): ChildProcessWithoutNullStreams => child as unknown as ChildProcessWithoutNullStreams
+
+  it('routes stdout and stderr pipe errors into the fatal frame path instead of crashing', () => {
+    const uncaught: unknown[] = []
+    const spy: NodeJS.UncaughtExceptionListener = (error) => { uncaught.push(error) }
+    process.on('uncaughtException', spy)
+    try {
+      const failures: unknown[] = []
+      const child = fakeChild()
+      new FramedRpcTransport(asChild(child), () => {}, (error) => failures.push(error), () => true)
+      const pipeError = new Error('read EPIPE')
+      child.stdout.emit('error', pipeError)
+      expect(failures).toEqual([pipeError])
+      // A second pipe failure and the trailing stdout end must not re-fire the fatal path.
+      child.stderr.emit('error', new Error('read ECONNRESET'))
+      child.stdout.emit('end')
+      expect(failures).toEqual([pipeError])
+      expect(uncaught).toEqual([])
+    } finally {
+      process.off('uncaughtException', spy)
+    }
+  })
+
+  it('fails the transport when only stderr errors', () => {
+    const failures: unknown[] = []
+    const child = fakeChild()
+    new FramedRpcTransport(asChild(child), () => {}, (error) => failures.push(error), () => true)
+    const pipeError = new Error('read ECONNRESET')
+    child.stderr.emit('error', pipeError)
+    expect(failures).toEqual([pipeError])
+  })
 })

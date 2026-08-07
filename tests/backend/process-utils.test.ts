@@ -1,8 +1,19 @@
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, primeAgentCandidates, primeAgentExecutableName, runProcess, stopChildProcesses } from '../../electron/main/process-utils'
+
+const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => (spawnOverride.current ? spawnOverride.current(...args) : (actual.spawn as (...spawnArgs: unknown[]) => unknown)(...args)),
+  }
+})
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -107,5 +118,78 @@ describe('Prime Agent discovery candidates', () => {
     expect(candidates).toContain('C:\\Program Files\\Prime Agent\\prime-agent.exe')
     expect(candidates).toContain('D:\\bin\\prime-agent.exe')
     expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\Programs\\Prime Agent\\prime-agent.exe')
+  })
+})
+
+describe('runProcess stdio pipe failures', () => {
+  interface FakeProcessChild extends EventEmitter {
+    stdout: PassThrough
+    stderr: PassThrough
+    stdin: PassThrough | null
+    pid: number | undefined
+    exitCode: number | null
+    signalCode: NodeJS.Signals | null
+    killed: string[]
+    kill(signal?: NodeJS.Signals): boolean
+  }
+
+  function fakeChild(): FakeProcessChild {
+    const child = new EventEmitter() as FakeProcessChild
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.stdin = null
+    child.pid = undefined
+    child.exitCode = null
+    child.signalCode = null
+    child.killed = []
+    child.kill = (signal?: NodeJS.Signals) => {
+      child.killed.push(signal ?? 'SIGTERM')
+      return true
+    }
+    return child
+  }
+
+  afterEach(() => { spawnOverride.current = null })
+
+  // Earlier suites close the shared module's process admission via stopChildProcesses,
+  // so these cases run against a fresh module instance.
+  async function freshRunProcess(): Promise<typeof runProcess> {
+    vi.resetModules()
+    const module = await import('../../electron/main/process-utils')
+    return module.runProcess
+  }
+
+  it('rejects the promise on a stdout pipe error without an uncaught exception or double-settle', async () => {
+    const run = await freshRunProcess()
+    const child = fakeChild()
+    spawnOverride.current = () => child
+    const uncaught: unknown[] = []
+    const spy: NodeJS.UncaughtExceptionListener = (error) => { uncaught.push(error) }
+    process.on('uncaughtException', spy)
+    try {
+      const pending = run('/fake/prime-agent', ['--version'], { timeoutMs: 5_000 })
+      const pipeError = new Error('read EPIPE')
+      child.stdout.emit('error', pipeError)
+      await expect(pending).rejects.toThrow('read EPIPE')
+      expect(child.killed).toContain('SIGTERM')
+      // A late close event must not settle the promise a second time.
+      child.emit('close', null, 'SIGKILL')
+      expect(uncaught).toEqual([])
+    } finally {
+      process.off('uncaughtException', spy)
+    }
+  })
+
+  it('rejects the promise on a stderr pipe error and keeps admitting new work', async () => {
+    const run = await freshRunProcess()
+    const child = fakeChild()
+    spawnOverride.current = () => child
+    const pending = run('/fake/prime-agent', [], { timeoutMs: 5_000 })
+    child.stderr.emit('error', new Error('read ECONNRESET'))
+    await expect(pending).rejects.toThrow('read ECONNRESET')
+    spawnOverride.current = null
+    const result = await run(process.execPath, ['-e', 'process.stdout.write("still-alive")'], { timeoutMs: 10_000 })
+    expect(result.code).toBe(0)
+    expect(result.stdout).toBe('still-alive')
   })
 })

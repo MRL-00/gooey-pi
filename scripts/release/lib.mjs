@@ -1,7 +1,42 @@
+import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
+const localRequire = createRequire(import.meta.url)
+
 export const MINIMUM_NODE = [22, 12, 0]
+
+/**
+ * Resolves a release-script command to a spawn invocation that works on every platform.
+ * Windows npm and npx ship as .cmd shims Node refuses to spawn without a shell, so known
+ * commands run their JavaScript entrypoint directly under the current Node executable.
+ */
+export function resolveCommandInvocation(command, args, platform = process.platform, env = process.env) {
+  if (command === 'node') return { file: process.execPath, args: [...args], shell: false }
+  if (command === 'electron-builder') {
+    return { file: process.execPath, args: [localRequire.resolve('electron-builder/cli.js'), ...args], shell: false }
+  }
+  if (command === 'npm') {
+    const npmCli = env.npm_execpath
+    if (npmCli && /\.[cm]?js$/.test(npmCli)) return { file: process.execPath, args: [npmCli, ...args], shell: false }
+    // Outside an npm lifecycle there is no npm_execpath; on Windows npm.cmd requires a shell.
+    return platform === 'win32' ? { file: 'npm.cmd', args: [...args], shell: true } : { file: 'npm', args: [...args], shell: false }
+  }
+  return { file: command, args: [...args], shell: false }
+}
+
+export function runCommand(command, args, options = {}) {
+  const invocation = resolveCommandInvocation(command, args)
+  const result = spawnSync(invocation.file, invocation.args, {
+    stdio: 'inherit',
+    env: options.env ?? process.env,
+    shell: invocation.shell,
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`${command} failed with exit code ${result.status ?? `signal ${result.signal}`}`)
+  return result
+}
 
 export const RELEASE_CREDENTIAL_NAMES = [
   'RELEASE_SIGNING_TEAM_ID',

@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import type { AppMeta, ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
+import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
@@ -35,6 +36,17 @@ let agentScheduleBridge: AgentScheduleBridge | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
+
+installCrashGuards({
+  logPath: () => {
+    try { return join(app.getPath('userData'), 'crash.log') } catch { return null }
+  },
+  cleanup: async () => {
+    agents?.beginShutdown()
+    beginProcessShutdown()
+    await Promise.allSettled([agents?.stopAll() ?? Promise.resolve(), stopChildProcesses()])
+  },
+})
 
 function appIconPath(): string {
   return app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'assets', 'icon.png')

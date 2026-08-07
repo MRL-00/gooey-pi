@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { assertSupportedNode, validateReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
+import { assertSupportedNode, runCommand, validateReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
 
 const args = new Set(process.argv.slice(2))
 const isPublic = args.has('--public')
@@ -32,9 +31,7 @@ if (!(arch in nativeArchitectures)) {
 function run(command, commandArgs, env = process.env) {
   console.log(`\n> ${command} ${commandArgs.join(' ')}`)
   if (dryRun) return
-  const result = spawnSync(command, commandArgs, { stdio: 'inherit', env })
-  if (result.error) throw result.error
-  if (result.status !== 0) throw new Error(`${command} failed with exit code ${result.status}`)
+  runCommand(command, commandArgs, { env })
 }
 
 try {
