@@ -245,25 +245,30 @@ export class ProjectService {
       }
     }
     const roots = persisted ? persistedPaths : inferredPath ? [inferredPath] : []
-    if (roots.length) {
-      for (const root of roots) this.removalRoots.add(root)
-      for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
-      await this.stopProjectProcesses([...new Set(roots)])
+    try {
+      if (roots.length) {
+        for (const root of roots) this.removalRoots.add(root)
+        for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
+        await this.stopProjectProcesses([...new Set(roots)])
+      }
+      return await this.store.update((state) => {
+        const index = state.projects.findIndex((project) => project.id === id)
+        const paths = index >= 0 ? persistedPaths : inferredPath ? [inferredPath] : []
+        if (!paths.length) return false
+        if (index >= 0) state.projects.splice(index, 1)
+        const dismissed = new Set(state.dismissedProjectPaths.map((path) => resolve(path)))
+        for (const path of paths) dismissed.add(path)
+        state.dismissedProjectPaths = [...dismissed]
+        return true
+      })
+    } finally {
+      // Removal blocks are transient: release them whether the store update
+      // settled or threw, then rebuild authorization from the store. After a
+      // successful removal the authoritative block is absence from
+      // authorizedRoots; after a failed one the project keeps working.
+      for (const root of roots) this.removalRoots.delete(root)
+      if (authorizationRevision === this.authorizationRevision) await this.rebuildAuthorizedRoots(authorizationRevision)
     }
-    const removed = await this.store.update((state) => {
-      const index = state.projects.findIndex((project) => project.id === id)
-      const paths = index >= 0 ? persistedPaths : inferredPath ? [inferredPath] : []
-      if (!paths.length) return false
-      if (index >= 0) state.projects.splice(index, 1)
-      const dismissed = new Set(state.dismissedProjectPaths.map((path) => resolve(path)))
-      for (const path of paths) dismissed.add(path)
-      state.dismissedProjectPaths = [...dismissed]
-      return true
-    })
-    if (removed && authorizationRevision === this.authorizationRevision) {
-      await this.rebuildAuthorizedRoots(authorizationRevision)
-    }
-    return removed
   }
 
   /** Rebuilds authorization into a fresh map and swaps it in one step. */
@@ -320,7 +325,6 @@ export class ProjectService {
   }
 
   private async authorizedRootFor(path: string): Promise<string> {
-    if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
     if (!this.authorizedRoots.size) await this.list()
     const authorizationRevision = this.authorizationRevision
     const roots: string[] = []
@@ -328,13 +332,20 @@ export class ProjectService {
     // mid-iteration, and stale-entry eviction must target the map iterated.
     const authorized = this.authorizedRoots
     for (const [configured, expected] of authorized) {
+      // An in-flight removal blocks exactly the roots being removed; a nested
+      // project registered inside them keeps its own grant.
+      if (this.removalRoots.has(configured)) continue
       const verified = await this.verifyFolderIdentity(configured, expected)
-      if (verified) roots.push(verified)
-      else authorized.delete(configured)
+      if (!verified) { authorized.delete(configured); continue }
+      if (this.removalRoots.has(verified)) continue
+      roots.push(verified)
     }
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
-    if (!authorizedRoot) throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    if (!authorizedRoot) {
+      if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
+      throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+    }
     return authorizedRoot
   }
 
