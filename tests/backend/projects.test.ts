@@ -77,6 +77,20 @@ describe('ProjectService file listing', () => {
     await expect(restarted.authorizeCwd(root)).rejects.toThrow(/identity changed/)
   })
 
+  it('revokes a grant when its directory is replaced by a regular file', async () => {
+    const { root, service, store } = setup()
+    await store.update((state) => { state.projects.push({
+      id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false,
+      createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root),
+    }) })
+    await service.list()
+    expect(await service.authorizeCwd(root)).toBe(realpathSync(root))
+
+    rmSync(root, { recursive: true })
+    writeFileSync(root, 'not a directory')
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/cwd must be a directory|identity changed/)
+  })
+
   it('revokes a grant when a different directory is recreated at the same path', async () => {
     const { root, service, store } = setup()
     await store.update((state) => { state.projects.push({
