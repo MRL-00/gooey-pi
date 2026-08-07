@@ -330,6 +330,44 @@ describe('bootstrap critical path', () => {
     await act(async () => { runtimes.resolve([runtime]); await runtimes.promise; await Promise.resolve() })
     expect(attached).toEqual([runtime])
   })
+
+  it('merges runtime discovery into sessions learned from live events', async () => {
+    const runtimes = deferred<RuntimeInfo[]>()
+    const bridge = {
+      projects: { list: async () => [project] },
+      sessions: { list: async () => [session], onChanged: () => () => undefined },
+      agent: { list: () => runtimes.promise },
+      app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
+      schedules: { list: async () => [] },
+    } as unknown as PrimeWorkApi
+    const runtimeSessionsRef = { current: new Map<string, string>() }
+    const workspaceRef = { current: { generation: 0 } }
+    const setProjects = vi.fn()
+    const setSessions = vi.fn()
+    const setSchedules = vi.fn()
+    const setScheduleError = vi.fn()
+    const attachRuntime = vi.fn()
+    const reportError = vi.fn()
+    const activateWorkspace = () => 1
+    function BootstrapProbe() {
+      useBootstrap({
+        bridge, setProjects, setSessions, setSchedules, setScheduleError,
+        runtimeSessionsRef, workspaceRef,
+        activateWorkspace, attachRuntime, reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<BootstrapProbe />); await Promise.resolve(); await Promise.resolve() })
+    // A live event arrives while agent.list() is still in flight.
+    runtimeSessionsRef.current.set('live-runtime', '/sessions/live.jsonl')
+    await act(async () => {
+      runtimes.resolve([{ runtimeId: 'listed-runtime', cwd: '/project', sessionFile: '/sessions/listed.jsonl', isStreaming: false }])
+      await runtimes.promise
+      await Promise.resolve()
+    })
+    expect(runtimeSessionsRef.current.get('live-runtime')).toBe('/sessions/live.jsonl')
+    expect(runtimeSessionsRef.current.get('listed-runtime')).toBe('/sessions/listed.jsonl')
+  })
 })
 
 

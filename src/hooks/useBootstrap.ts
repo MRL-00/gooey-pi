@@ -67,9 +67,11 @@ export function useBootstrap({
     const sessionsRequest = bridge.sessions.list(undefined, true)
     const runtimesRequest = bridge.agent.list().then((value) => {
       if (!cancelled) {
-        runtimeSessionsRef.current = new Map(value.flatMap((runtime) => runtime.sessionFile
-          ? [[runtime.runtimeId, runtime.sessionFile] as const]
-          : []))
+        // Merge instead of replacing: entries learned from live events while the
+        // bootstrap list was in flight must survive the snapshot.
+        for (const runtime of value) {
+          if (runtime.sessionFile) runtimeSessionsRef.current.set(runtime.runtimeId, runtime.sessionFile)
+        }
       }
       return value
     }).catch((error) => {
