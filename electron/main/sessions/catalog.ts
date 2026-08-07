@@ -1,6 +1,7 @@
 import type { Stats } from 'node:fs'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
+import { comparePaths, createSingleFlight, mapLimit } from '../lib/async'
 import { runProcess } from '../process-utils'
 import { isPathWithin, isRecord } from '../validation'
 import { applyLiveMetadata, type JsonRecord, type SessionMetadata } from './metadata'
@@ -25,10 +26,6 @@ const nodeSessionCatalogIo: SessionCatalogIo = {
   inspect: stat,
 }
 
-function comparePaths(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
 function timestampFromSessionName(name: string): number | undefined {
   const match = /^([0-9a-f]{8})-([0-9a-f]{4})-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jsonl$/i.exec(name)
   if (!match) return undefined
@@ -51,26 +48,13 @@ export function boundedSessionDiscoveryNames(names: readonly string[], maxSessio
   return [...names].sort(compareCandidateNames).slice(0, budget)
 }
 
-async function mapLimit<T, U>(values: readonly T[], limit: number, mapper: (value: T) => Promise<U | null>): Promise<U[]> {
-  const result: U[] = []
-  let index = 0
-  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
-    while (index < values.length) {
-      const current = values[index++]
-      const mapped = await mapper(current)
-      if (mapped !== null) result.push(mapped)
-    }
-  }))
-  return result
-}
-
 export class SessionMetadataCatalog {
   private catalogCache: { expiresAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
-  private catalogRequest: { revision: number; promise: Promise<Map<string, JsonRecord>> } | null = null
+  private readonly catalogRequests = createSingleFlight<number, Map<string, JsonRecord>>()
   private catalogRevision = 0
-  private sessionScanRequest: { revision: number; promise: Promise<SessionMetadata[]> } | null = null
+  private readonly sessionScanRequests = createSingleFlight<number, SessionMetadata[]>()
   private readonly metadataCache = new Map<string, SessionMetadata>()
-  private readonly metadataRequests = new Map<string, Promise<SessionMetadata>>()
+  private readonly metadataRequests = createSingleFlight<string, SessionMetadata>()
 
   constructor(
     private readonly sessionRoot: () => string,
@@ -87,12 +71,7 @@ export class SessionMetadataCatalog {
 
   async all(): Promise<SessionMetadata[]> {
     const revision = this.catalogRevision
-    if (this.sessionScanRequest?.revision === revision) return this.sessionScanRequest.promise
-    const request = { revision, promise: this.scan(revision) }
-    this.sessionScanRequest = request
-    try { return await request.promise } finally {
-      if (this.sessionScanRequest === request) this.sessionScanRequest = null
-    }
+    return this.sessionScanRequests.run(revision, () => this.scan(revision))
   }
 
   private async scan(revision: number): Promise<SessionMetadata[]> {
@@ -152,21 +131,16 @@ export class SessionMetadataCatalog {
   private async cachedMetadata(candidate: SessionFileCandidate, revision: number): Promise<SessionMetadata> {
     const cached = this.metadataCache.get(candidate.fingerprint)
     if (cached) return { ...cached }
-    const inFlight = this.metadataRequests.get(candidate.fingerprint)
-    if (inFlight) return { ...await inFlight }
-    const request = this.readMetadata(candidate.filePath, candidate.fileStat)
-    this.metadataRequests.set(candidate.fingerprint, request)
-    try {
-      const metadata = await request
+    const metadata = await this.metadataRequests.run(candidate.fingerprint, async () => {
+      const read = await this.readMetadata(candidate.filePath, candidate.fileStat)
       const current = await this.io.inspect(candidate.filePath)
       if (this.catalogRevision === revision
         && current.mtimeMs === candidate.fileStat.mtimeMs && current.size === candidate.fileStat.size) {
-        this.metadataCache.set(candidate.fingerprint, metadata)
+        this.metadataCache.set(candidate.fingerprint, read)
       }
-      return { ...metadata }
-    } finally {
-      if (this.metadataRequests.get(candidate.fingerprint) === request) this.metadataRequests.delete(candidate.fingerprint)
-    }
+      return read
+    })
+    return { ...metadata }
   }
 
   private async liveCatalog(): Promise<Map<string, JsonRecord>> {
@@ -175,37 +149,29 @@ export class SessionMetadataCatalog {
     if (this.catalogCache && this.catalogCache.revision === revision && this.catalogCache.expiresAt > Date.now()) {
       return this.catalogCache.sessions
     }
-    if (this.catalogRequest?.revision === revision) return this.catalogRequest.promise
-    const request = {
-      revision,
-      promise: (async () => {
-        const sessions = new Map<string, JsonRecord>()
-        try {
-          const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
-          if (result.code === 0) {
-            const parsed: unknown = JSON.parse(result.stdout)
-            if (isRecord(parsed) && Array.isArray(parsed.sessions)
-              && parsed.sessions.length <= this.maxSessionFiles * 4) {
-              await mapLimit(parsed.sessions, 32, async (raw) => {
-                if (!isRecord(raw) || typeof raw.sessionFile !== 'string'
-                  || raw.sessionFile.length > 4_096 || !isAbsolute(raw.sessionFile)) return null
-                try {
-                  sessions.set(await realpath(raw.sessionFile), raw)
-                  return true
-                } catch { return null }
-              })
-            }
+    return this.catalogRequests.run(revision, async () => {
+      const sessions = new Map<string, JsonRecord>()
+      try {
+        const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
+        if (result.code === 0) {
+          const parsed: unknown = JSON.parse(result.stdout)
+          if (isRecord(parsed) && Array.isArray(parsed.sessions)
+            && parsed.sessions.length <= this.maxSessionFiles * 4) {
+            await mapLimit(parsed.sessions, 32, async (raw) => {
+              if (!isRecord(raw) || typeof raw.sessionFile !== 'string'
+                || raw.sessionFile.length > 4_096 || !isAbsolute(raw.sessionFile)) return null
+              try {
+                sessions.set(await realpath(raw.sessionFile), raw)
+                return true
+              } catch { return null }
+            })
           }
-        } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
-        if (this.catalogRevision === revision) {
-          this.catalogCache = { expiresAt: Date.now() + 2_000, revision, sessions }
         }
-        return sessions
-      })(),
-    }
-    this.catalogRequest = request
-    try { return await request.promise } finally {
-      if (this.catalogRequest === request) this.catalogRequest = null
-    }
+      } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
+      if (this.catalogRevision === revision) {
+        this.catalogCache = { expiresAt: Date.now() + 2_000, revision, sessions }
+      }
+      return sessions
+    })
   }
 }

@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises'
 import { delimiter, join, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
+import { createAdmissionQueue } from './lib/async'
 
 export interface ProcessResult {
   code: number
@@ -20,14 +21,18 @@ export const PROCESS_QUEUE_LIMIT = 64
 
 const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
 const activeChildren = new Set<ChildProcess>()
-const pendingAdmissions: Array<{ start: () => void; reject: (error: Error) => void }> = []
+const processAdmission = createAdmissionQueue({
+  maxConcurrent: PROCESS_CONCURRENCY_LIMIT,
+  maxPending: PROCESS_QUEUE_LIMIT,
+  pendingLimitError: () => new Error(`Process queue limit of ${PROCESS_QUEUE_LIMIT} exceeded`),
+  closedError: () => new Error('Process admission is closed during shutdown'),
+})
 let processAdmissionClosed = false
 
 export function beginProcessShutdown(): void {
   if (processAdmissionClosed) return
   processAdmissionClosed = true
-  const error = new Error('Process admission is closed during shutdown')
-  for (const pending of pendingAdmissions.splice(0)) pending.reject(error)
+  processAdmission.close()
 }
 
 export interface KillLadderRung {
@@ -149,19 +154,6 @@ function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<v
   return Promise.all(children.map((child) => waitForProcessExit(child, timeoutMs))).then(() => undefined)
 }
 
-function drainProcessQueue(): void {
-  if (processAdmissionClosed) {
-    const error = new Error('Process admission is closed during shutdown')
-    for (const pending of pendingAdmissions.splice(0)) pending.reject(error)
-    return
-  }
-  while (activeChildren.size < PROCESS_CONCURRENCY_LIMIT) {
-    const pending = pendingAdmissions.shift()
-    if (!pending) return
-    pending.start()
-  }
-}
-
 export async function stopChildProcesses(): Promise<void> {
   // Close admission (including queued work) before taking the snapshot so no
   // later one-shot child can escape cleanup.
@@ -264,94 +256,86 @@ export function runProcess(file: string, args: readonly string[], options: {
     return Promise.reject(new TypeError(`process input must not exceed ${PROCESS_INPUT_LIMIT} bytes`))
   }
 
-  return new Promise((resolve, reject) => {
-    const start = (): void => {
-      if (processAdmissionClosed) { reject(new Error('Process admission is closed during shutdown')); return }
-      const child = spawn(file, [...args], {
-        cwd: options.cwd,
-        env: options.env ?? safeChildEnvironment(),
-        shell: false,
-        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        detached: process.platform !== 'win32',
-      })
-      activeChildren.add(child)
-      if (options.input !== undefined) child.stdin?.on('error', () => { /* child close/error reports the process result */ })
-      const stdout: Buffer[] = []
-      const stderr: Buffer[] = []
-      let stdoutBytes = 0
-      let stderrBytes = 0
-      let capturedBytes = 0
-      let timedOut = false
-      let outputExceeded = false
-      let settled = false
-      let limitKillTimer: NodeJS.Timeout | undefined
-      const timer = setTimeout(() => {
-        timedOut = true
-        terminateChild(child, 'SIGTERM')
-        limitKillTimer ??= setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
-        }, 2_000)
-        limitKillTimer.unref()
-      }, timeoutMs)
-      timer.unref()
+  return processAdmission.run(() => new Promise((resolve, reject) => {
+    const child = spawn(file, [...args], {
+      cwd: options.cwd,
+      env: options.env ?? safeChildEnvironment(),
+      shell: false,
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    })
+    activeChildren.add(child)
+    if (options.input !== undefined) child.stdin?.on('error', () => { /* child close/error reports the process result */ })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let capturedBytes = 0
+    let timedOut = false
+    let outputExceeded = false
+    let settled = false
+    let limitKillTimer: NodeJS.Timeout | undefined
+    const timer = setTimeout(() => {
+      timedOut = true
+      terminateChild(child, 'SIGTERM')
+      limitKillTimer ??= setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
+      }, 2_000)
+      limitKillTimer.unref()
+    }, timeoutMs)
+    timer.unref()
 
-      const exceedOutputLimit = (): void => {
-        if (outputExceeded) return
-        outputExceeded = true
-        terminateChild(child, 'SIGTERM')
-        // Output limits need their own short escalation rather than waiting for
-        // the operation timeout while a producer ignores TERM.
-        if (limitKillTimer) clearTimeout(limitKillTimer)
-        limitKillTimer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
-        }, 500)
-        limitKillTimer.unref()
-      }
-      const collect = (target: Buffer[], chunk: Buffer): void => {
-        const remaining = maxBytes - capturedBytes
-        if (remaining > 0) {
-          const retained = chunk.subarray(0, remaining)
-          target.push(retained)
-          capturedBytes += retained.length
-        }
-        if (chunk.length > remaining) exceedOutputLimit()
-      }
-      child.stdout?.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
-      child.stderr?.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
-
-      const finish = (): void => {
-        activeChildren.delete(child)
-        clearTimeout(timer)
-        if (limitKillTimer) clearTimeout(limitKillTimer)
-        drainProcessQueue()
-      }
-      child.once('error', (error) => {
-        if (settled) return
-        settled = true
-        finish()
-        reject(error)
-      })
-      child.once('close', (code, signal) => {
-        if (settled) return
-        settled = true
-        finish()
-        resolve({
-          code: code ?? -1,
-          signal,
-          stdout: Buffer.concat(stdout).toString('utf8'),
-          stderr: Buffer.concat(stderr).toString('utf8'),
-          timedOut,
-          outputExceeded,
-          stdoutBytes,
-          stderrBytes,
-        })
-      })
-      if (options.input !== undefined) child.stdin?.end(options.input)
+    const exceedOutputLimit = (): void => {
+      if (outputExceeded) return
+      outputExceeded = true
+      terminateChild(child, 'SIGTERM')
+      // Output limits need their own short escalation rather than waiting for
+      // the operation timeout while a producer ignores TERM.
+      if (limitKillTimer) clearTimeout(limitKillTimer)
+      limitKillTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
+      }, 500)
+      limitKillTimer.unref()
     }
+    const collect = (target: Buffer[], chunk: Buffer): void => {
+      const remaining = maxBytes - capturedBytes
+      if (remaining > 0) {
+        const retained = chunk.subarray(0, remaining)
+        target.push(retained)
+        capturedBytes += retained.length
+      }
+      if (chunk.length > remaining) exceedOutputLimit()
+    }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
+    child.stderr?.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
 
-    if (activeChildren.size < PROCESS_CONCURRENCY_LIMIT) start()
-    else if (pendingAdmissions.length >= PROCESS_QUEUE_LIMIT) reject(new Error(`Process queue limit of ${PROCESS_QUEUE_LIMIT} exceeded`))
-    else pendingAdmissions.push({ start, reject })
-  })
+    const finish = (): void => {
+      activeChildren.delete(child)
+      clearTimeout(timer)
+      if (limitKillTimer) clearTimeout(limitKillTimer)
+    }
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      finish()
+      reject(error)
+    })
+    child.once('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      finish()
+      resolve({
+        code: code ?? -1,
+        signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        timedOut,
+        outputExceeded,
+        stdoutBytes,
+        stderrBytes,
+      })
+    })
+    if (options.input !== undefined) child.stdin?.end(options.input)
+  }))
 }
