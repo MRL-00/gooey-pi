@@ -45,10 +45,9 @@ describe('requireWebUrl', () => {
     expect(requireWebUrl('mailto:team@example.com', { mailto: true })).toBe('mailto:team@example.com')
   })
 
-  it('does not apply the credential check to mailto URLs', () => {
-    // Pins current behavior: the credential rejection only covers http/https.
-    // Phase 7 owns "mailto: credential check parity" (validation.ts:74-76).
+  it('rejects embedded credentials in mailto URLs too', () => {
     expect(requireWebUrl('mailto:team@example.com?subject=hi', { mailto: true })).toBe('mailto:team@example.com?subject=hi')
+    expect(() => requireWebUrl('mailto://user:pass@example.com', { mailto: true })).toThrow(/credentials/)
   })
 
   it('rejects malformed, empty, and oversized inputs', () => {

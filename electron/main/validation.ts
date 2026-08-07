@@ -71,7 +71,7 @@ export function requireWebUrl(value: unknown, options: { mailto?: boolean; max?:
   try { parsed = new URL(raw) } catch { throw new TypeError('Invalid URL') }
   const allowed = options.mailto ? ['http:', 'https:', 'mailto:'] : ['http:', 'https:']
   if (!allowed.includes(parsed.protocol)) throw new TypeError('URL scheme is not allowed')
-  if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && (parsed.username || parsed.password)) {
+  if (parsed.username || parsed.password) {
     throw new TypeError('URLs containing credentials are not allowed')
   }
   return parsed.toString()
