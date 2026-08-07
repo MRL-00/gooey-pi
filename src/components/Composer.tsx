@@ -1,21 +1,17 @@
-import {
-  ArrowUp,
-  AtSign,
-  ChevronDown,
-  Command,
-  FolderGit2,
-  Gauge,
-  ImageIcon,
-  MessageCirclePlus,
-  Plus,
-  ShieldCheck,
-  Square,
-  X,
-  Zap,
-} from 'lucide-react'
+import { ArrowUp, AtSign, ChevronDown, Command, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { BrowserAnnotation, MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import type {
+  BrowserAnnotation,
+  MessageEnterAction,
+  PrimeContextUsage,
+  PrimeModelDescriptor,
+  PrimeProviderDescriptor,
+  PrimeThinkingLevel,
+  PromptDeliveryIntent,
+  PromptImage,
+  SkillRecord,
+} from '@/types/api'
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
@@ -40,6 +36,8 @@ interface ComposerProps {
   skills: SkillRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
   annotations?: BrowserAnnotation[]
+  /** Each bump submits the current draft immediately (Ctrl/Cmd+Enter from the annotation popover). */
+  sendSignal?: number
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
@@ -58,7 +56,13 @@ const commands = [
 ]
 
 const reasoningLabels: Record<PrimeThinkingLevel, string> = {
-  off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Standard', high: 'High', xhigh: 'Extra high', max: 'Max',
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Standard',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
 }
 
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -82,7 +86,33 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
 const EMPTY_ANNOTATIONS: BrowserAnnotation[] = []
 const noop = () => undefined
 
-export const Composer = memo(function Composer({ busy, submitting = false, loading = false, disabled, model, effort, modelsByProvider, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, annotations = EMPTY_ANNOTATIONS, onModelChange, onEffortChange, onFastChange, onSend, onStop, onRemoveAnnotation = noop, onClearAnnotations = noop }: ComposerProps) {
+export const Composer = memo(function Composer({
+  busy,
+  submitting = false,
+  loading = false,
+  disabled,
+  model,
+  effort,
+  modelsByProvider,
+  providers,
+  reasoningLevels,
+  fast,
+  fastSupported,
+  fastAvailable,
+  imageInputSupported,
+  messageEnterAction,
+  contextUsage,
+  skills,
+  annotations = EMPTY_ANNOTATIONS,
+  sendSignal = 0,
+  onModelChange,
+  onEffortChange,
+  onFastChange,
+  onSend,
+  onStop,
+  onRemoveAnnotation = noop,
+  onClearAnnotations = noop,
+}: ComposerProps) {
   const [value, setValue] = useState(takeComposerDraft)
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -103,8 +133,24 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
   useEffect(() => {
     setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : value.endsWith('@') ? 'skill' : null)
   }, [value])
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
-  useEffect(() => { if (annotations.length === 0) setAnnotationsOpen(false) }, [annotations.length])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (annotations.length === 0) setAnnotationsOpen(false)
+  }, [annotations.length])
+
+  // Ctrl/Cmd+Enter in the annotation popover bumps sendSignal to submit the
+  // draft (with the just-saved annotation) without switching focus here.
+  const lastSendSignalRef = useRef(sendSignal)
+  useEffect(() => {
+    if (sendSignal === lastSendSignalRef.current) return
+    lastSendSignalRef.current = sendSignal
+    void submit()
+  }, [sendSignal])
 
   const submit = async (intent: PromptDeliveryIntent = 'queue') => {
     const currentImages = imagesRef.current
@@ -167,14 +213,18 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
         setAttachmentError('Prime supports pasted PNG, JPEG, GIF, and WebP images.')
         return
       }
-      const added = await Promise.all(supported.map(async (file, index): Promise<ComposerImage> => ({
-        id: crypto.randomUUID(),
-        name: file.name || `Pasted image ${index + 1}`,
-        size: file.size,
-        type: 'image',
-        mimeType: file.type.toLowerCase(),
-        data: base64FromBuffer(await file.arrayBuffer()),
-      })))
+      const added = await Promise.all(
+        supported.map(
+          async (file, index): Promise<ComposerImage> => ({
+            id: crypto.randomUUID(),
+            name: file.name || `Pasted image ${index + 1}`,
+            size: file.size,
+            type: 'image',
+            mimeType: file.type.toLowerCase(),
+            data: base64FromBuffer(await file.arrayBuffer()),
+          }),
+        ),
+      )
       if (!mountedRef.current) return
       const current = imagesRef.current
       if (current.length + added.length > MAX_IMAGE_COUNT) {
@@ -212,33 +262,53 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
     textarea?.focus()
   }
 
-  const suggestions = menu === 'command'
-    ? commands.filter((item) => item.command.startsWith(value)).map((item) => ({
-        key: item.command, label: item.command, detail: item.detail, icon: <Command size={14} />,
-        choose: () => { setValue(`${item.command} `); setMenu(null); textareaRef.current?.focus() },
-      }))
-    : menu === 'skill'
-      ? enabledSkills.map((skill) => ({ key: skill.id, label: skill.name, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
-      : menu === 'add'
-        ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
-        : []
+  const suggestions =
+    menu === 'command'
+      ? commands
+          .filter((item) => item.command.startsWith(value))
+          .map((item) => ({
+            key: item.command,
+            label: item.command,
+            detail: item.detail,
+            icon: <Command size={14} />,
+            choose: () => {
+              setValue(`${item.command} `)
+              setMenu(null)
+              textareaRef.current?.focus()
+            },
+          }))
+      : menu === 'skill'
+        ? enabledSkills.map((skill) => ({ key: skill.id, label: skill.name, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
+        : menu === 'add'
+          ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
+          : []
 
-  useEffect(() => { setActiveSuggestion(0) }, [menu, value, suggestions.length])
+  useEffect(() => {
+    setActiveSuggestion(0)
+  }, [menu, value, suggestions.length])
   const chooseSuggestion = (index: number) => suggestions[index]?.choose()
   // The option tree only depends on catalog identity, not on per-keystroke state.
-  const modelOptions = useMemo(() => providers.filter((provider) => provider.enabled && provider.modelCount > 0).map((provider) => (
-    <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
-      {(modelsByProvider.get(provider.id) ?? []).map((candidate) => (
-        <option key={candidate.key} value={candidate.key} disabled={!candidate.available}>{candidate.name}{candidate.available ? '' : ' · connect provider'}</option>
-      ))}
-    </optgroup>
-  )), [modelsByProvider, providers])
-  const contextPercent = contextUsage?.percent === null || contextUsage?.percent === undefined
-    ? null
-    : Math.min(100, Math.max(0, contextUsage.percent))
-  const contextLabel = contextUsage && contextUsage.tokens !== null
-    ? `${contextUsage.tokens.toLocaleString('en-US')} / ${contextUsage.contextWindow.toLocaleString('en-US')} tokens`
-    : 'Context usage unavailable until the next response'
+  const modelOptions = useMemo(
+    () =>
+      providers
+        .filter((provider) => provider.enabled && provider.modelCount > 0)
+        .map((provider) => (
+          <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
+            {(modelsByProvider.get(provider.id) ?? []).map((candidate) => (
+              <option key={candidate.key} value={candidate.key} disabled={!candidate.available}>
+                {candidate.name}
+                {candidate.available ? '' : ' · connect provider'}
+              </option>
+            ))}
+          </optgroup>
+        )),
+    [modelsByProvider, providers],
+  )
+  const contextPercent = contextUsage?.percent === null || contextUsage?.percent === undefined ? null : Math.min(100, Math.max(0, contextUsage.percent))
+  const contextLabel =
+    contextUsage && contextUsage.tokens !== null
+      ? `${contextUsage.tokens.toLocaleString('en-US')} / ${contextUsage.contextWindow.toLocaleString('en-US')} tokens`
+      : 'Context usage unavailable until the next response'
   const contextDisplayPercent = contextPercent === null ? null : Math.min(99, Math.round(contextPercent))
   const contextStyle = { '--context-percent': `${contextPercent ?? 0}%` } as CSSProperties
 
@@ -261,7 +331,10 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
           onPaste={(event) => {
             const files = [...event.clipboardData.items]
               .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-              .flatMap((item) => { const file = item.getAsFile(); return file ? [file] : [] })
+              .flatMap((item) => {
+                const file = item.getAsFile()
+                return file ? [file] : []
+              })
             if (!files.length) return
             const pastedText = event.clipboardData.getData('text/plain')
             event.preventDefault()
@@ -271,7 +344,7 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
           onKeyDown={(event) => {
             if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
               event.preventDefault()
-              setActiveSuggestion((current) => event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length)
+              setActiveSuggestion((current) => (event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length))
               return
             }
             if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing && menu && suggestions.length) {
@@ -279,76 +352,170 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
               chooseSuggestion(activeSuggestion)
               return
             }
-            const intent = messageActionForKey({
-              key: event.key,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              altKey: event.altKey,
-              shiftKey: event.shiftKey,
-              isComposing: event.nativeEvent.isComposing,
-            }, messageEnterAction)
+            const intent = messageActionForKey(
+              {
+                key: event.key,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                altKey: event.altKey,
+                shiftKey: event.shiftKey,
+                isComposing: event.nativeEvent.isComposing,
+              },
+              messageEnterAction,
+            )
             if (intent) {
               event.preventDefault()
               void submit(intent)
             }
-            if (event.key === 'Escape') { event.preventDefault(); setMenu(null) }
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              setMenu(null)
+            }
           }}
         />
         {menu && suggestions.length ? (
           <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
-            {suggestions.map((suggestion, index) => <button
-              id={`${menuId}-option-${index}`}
-              type="button"
-              role="option"
-              tabIndex={-1}
-              aria-selected={activeSuggestion === index}
-              className={activeSuggestion === index ? 'is-active' : ''}
-              key={suggestion.key}
-              onMouseEnter={() => setActiveSuggestion(index)}
-              onClick={suggestion.choose}
-            >{suggestion.icon}<span><strong>{suggestion.label}</strong><small>{suggestion.detail}</small></span></button>)}
+            {suggestions.map((suggestion, index) => (
+              <button
+                id={`${menuId}-option-${index}`}
+                type="button"
+                role="option"
+                tabIndex={-1}
+                aria-selected={activeSuggestion === index}
+                className={activeSuggestion === index ? 'is-active' : ''}
+                key={suggestion.key}
+                onMouseEnter={() => setActiveSuggestion(index)}
+                onClick={suggestion.choose}
+              >
+                {suggestion.icon}
+                <span>
+                  <strong>{suggestion.label}</strong>
+                  <small>{suggestion.detail}</small>
+                </span>
+              </button>
+            ))}
           </div>
         ) : null}
-        {annotationsOpen && annotations.length ? <div className="composer-annotations" role="region" aria-label="Page annotation details">
-          {annotations.map((annotation, index) => {
-            return <div className="composer-annotation" key={annotation.id}>
-              <span className="composer-annotation__badge" aria-hidden="true">{index + 1}</span>
-              <div className="composer-annotation__body">
-                <p>{annotation.comment}</p>
-                {annotation.stale ? <small>page changed since capture</small> : null}
+        {annotationsOpen && annotations.length ? (
+          <div className="composer-annotations" role="region" aria-label="Page annotation details">
+            {annotations.map((annotation, index) => {
+              return (
+                <div className="composer-annotation" key={annotation.id}>
+                  <span className="composer-annotation__badge" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <div className="composer-annotation__body">
+                    <p>{annotation.comment}</p>
+                    {annotation.stale ? <small>page changed since capture</small> : null}
+                  </div>
+                  <button type="button" aria-label={`Remove annotation ${index + 1}`} onClick={() => onRemoveAnnotation(annotation.id)}>
+                    <X size={12} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+        {images.length || annotations.length ? (
+          <div className="composer-attachments" aria-label="Attachments">
+            {annotations.length ? (
+              <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
+                <button
+                  type="button"
+                  className="composer-attachment__expand"
+                  aria-expanded={annotationsOpen}
+                  aria-label={`Inspect ${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}
+                  onClick={() => setAnnotationsOpen((open) => !open)}
+                >
+                  <MessageCirclePlus size={13} />
+                  <span>{annotations.length}</span>
+                  <ChevronDown size={11} className={annotationsOpen ? 'is-open' : ''} />
+                </button>
+                <button
+                  type="button"
+                  className="composer-attachment__clear"
+                  aria-label="Remove page annotations"
+                  onClick={() => {
+                    setAnnotationsOpen(false)
+                    onClearAnnotations()
+                  }}
+                >
+                  <X size={12} />
+                </button>
               </div>
-              <button type="button" aria-label={`Remove annotation ${index + 1}`} onClick={() => onRemoveAnnotation(annotation.id)}><X size={12} /></button>
-            </div>
-          })}
-        </div> : null}
-        {images.length || annotations.length ? <div className="composer-attachments" aria-label="Attachments">
-          {annotations.length ? <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
-            <button type="button" className="composer-attachment__expand" aria-expanded={annotationsOpen} aria-label={`Inspect ${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`} onClick={() => setAnnotationsOpen((open) => !open)}>
-              <MessageCirclePlus size={13} />
-              <span>{annotations.length}</span>
-              <ChevronDown size={11} className={annotationsOpen ? 'is-open' : ''} />
-            </button>
-            <button type="button" className="composer-attachment__clear" aria-label="Remove page annotations" onClick={() => { setAnnotationsOpen(false); onClearAnnotations() }}><X size={12} /></button>
-          </div> : null}
-          {images.map((image) => <div className="composer-attachment" key={image.id}>
-          <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
-          <span><ImageIcon size={12} />{image.name}</span>
-          <button type="button" aria-label={`Remove ${image.name}`} onClick={() => { const next = imagesRef.current.filter((item) => item.id !== image.id); imagesRef.current = next; setImages(next); setAttachmentError('') }}><X size={12} /></button>
-        </div>)}</div> : null}
-        {attachmentError ? <p className="composer-attachment-error" role="alert">{attachmentError}</p> : null}
+            ) : null}
+            {images.map((image) => (
+              <div className="composer-attachment" key={image.id}>
+                <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
+                <span>
+                  <ImageIcon size={12} />
+                  {image.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${image.name}`}
+                  onClick={() => {
+                    const next = imagesRef.current.filter((item) => item.id !== image.id)
+                    imagesRef.current = next
+                    setImages(next)
+                    setAttachmentError('')
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {attachmentError ? (
+          <p className="composer-attachment-error" role="alert">
+            {attachmentError}
+          </p>
+        ) : null}
         <div className="composer__footer">
           <div className="composer__controls">
-            <IconButton label="Add skill" aria-expanded={menu === 'add'} aria-controls={menu === 'add' ? menuId : undefined} onClick={() => { setMenu((current) => current === 'add' ? null : 'add'); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Plus size={17} /></IconButton>
+            <IconButton
+              label="Add skill"
+              aria-expanded={menu === 'add'}
+              aria-controls={menu === 'add' ? menuId : undefined}
+              onClick={() => {
+                setMenu((current) => (current === 'add' ? null : 'add'))
+                requestAnimationFrame(() => textareaRef.current?.focus())
+              }}
+            >
+              <Plus size={17} />
+            </IconButton>
             <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option>
               {modelOptions}
             </SelectControl>
             <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value as PrimeThinkingLevel)}>
-              {reasoningLevels.map((level) => <option key={level} value={level}>{reasoningLabels[level]}</option>)}
+              {reasoningLevels.map((level) => (
+                <option key={level} value={level}>
+                  {reasoningLabels[level]}
+                </option>
+              ))}
             </SelectControl>
-            {fastSupported ? <button type="button" className={`fast-mode-toggle ${fast ? 'is-active' : ''}`} aria-pressed={fast} disabled={!fastAvailable} title={fastAvailable ? 'Use Prime Agent priority service tier' : 'The installed Prime Agent RPC runtime does not expose fast mode'} onClick={() => onFastChange(!fast)}><Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast</button> : null}
-            <span className="permissions-chip" title="Local environment"><FolderGit2 size={12} /><span>Local</span></span>
-            <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
+            {fastSupported ? (
+              <button
+                type="button"
+                className={`fast-mode-toggle ${fast ? 'is-active' : ''}`}
+                aria-pressed={fast}
+                disabled={!fastAvailable}
+                title={fastAvailable ? 'Use Prime Agent priority service tier' : 'The installed Prime Agent RPC runtime does not expose fast mode'}
+                onClick={() => onFastChange(!fast)}
+              >
+                <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast
+              </button>
+            ) : null}
+            <span className="permissions-chip" title="Local environment">
+              <FolderGit2 size={12} />
+              <span>Local</span>
+            </span>
+            <span className="permissions-chip" title="Workspace write access">
+              <ShieldCheck size={12} />
+              <span>Workspace</span>
+            </span>
           </div>
           <div className="composer__actions">
             <span
@@ -363,8 +530,24 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
               title={contextLabel}
               data-tooltip={contextLabel}
               style={contextStyle}
-            ><span>{contextDisplayPercent ?? '—'}</span></span>
-            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><Square size={10} fill="currentColor" aria-hidden="true" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0 && annotations.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
+            >
+              <span>{contextDisplayPercent ?? '—'}</span>
+            </span>
+            {busy ? (
+              <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}>
+                <Square size={10} fill="currentColor" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="send-button"
+                aria-label="Send message"
+                disabled={(!value.trim() && images.length === 0 && annotations.length === 0) || processingImages || submitting || loading || disabled}
+                onClick={() => void submit()}
+              >
+                <ArrowUp size={17} />
+              </button>
+            )}
           </div>
         </div>
       </div>

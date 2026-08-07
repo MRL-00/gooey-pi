@@ -620,10 +620,9 @@ describe('non-registry dependency pins', () => {
   test('every non-registry dependency in the lockfile matches its recorded pin exactly', () => {
     const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'))
     const pins = JSON.parse(readFileSync('scripts/release/dependency-pins.json', 'utf8')).packages
-    const nonRegistry = (Object.entries(lockfile.packages ?? {}) as Array<[string, { resolved?: string; integrity?: string }]>)
-      .filter(([, entry]) => typeof entry.resolved === 'string'
-        && entry.resolved.length > 0
-        && !entry.resolved.startsWith('https://registry.npmjs.org'))
+    const nonRegistry = (Object.entries(lockfile.packages ?? {}) as Array<[string, { resolved?: string; integrity?: string }]>).filter(
+      ([, entry]) => typeof entry.resolved === 'string' && entry.resolved.length > 0 && !entry.resolved.startsWith('https://registry.npmjs.org'),
+    )
 
     // The lockfile sha512 hashes are the supply-chain integrity boundary for
     // the vendored Prime Agent tarballs. A regenerated lockfile silently
@@ -640,16 +639,23 @@ describe('non-registry dependency pins', () => {
       expect(entry.integrity, `weak integrity algorithm for ${name}`).toMatch(/^sha512-/)
     }
     for (const name of Object.keys(pins)) {
-      expect(nonRegistry.some(([lockName]) => lockName === name), `stale pin for removed dependency: ${name}`).toBe(true)
+      expect(
+        nonRegistry.some(([lockName]) => lockName === name),
+        `stale pin for removed dependency: ${name}`,
+      ).toBe(true)
     }
   })
 
   test('the vendored tarballs on disk hash to their pinned integrity', () => {
     const pins = JSON.parse(readFileSync('scripts/release/dependency-pins.json', 'utf8')).packages as Record<string, { resolved: string; integrity: string }>
-    const vendored = [...new Set(Object.values(pins)
-      .filter((pin) => pin.resolved.startsWith('file:vendor/'))
-      .map((pin) => ({ path: pin.resolved.slice('file:'.length), integrity: pin.integrity }))
-      .map((entry) => JSON.stringify(entry)))].map((entry) => JSON.parse(entry) as { path: string; integrity: string })
+    const vendored = [
+      ...new Set(
+        Object.values(pins)
+          .filter((pin) => pin.resolved.startsWith('file:vendor/'))
+          .map((pin) => ({ path: pin.resolved.slice('file:'.length), integrity: pin.integrity }))
+          .map((entry) => JSON.stringify(entry)),
+      ),
+    ].map((entry) => JSON.parse(entry) as { path: string; integrity: string })
 
     expect(vendored.length).toBeGreaterThan(0)
     for (const { path, integrity } of vendored) {

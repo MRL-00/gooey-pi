@@ -10,15 +10,32 @@ import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, 
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const models: PrimeModelDescriptor[] = [{
-  key: 'provider/vision', provider: 'provider', id: 'vision', name: 'Vision', reasoning: true,
-  input: ['text', 'image'], contextWindow: 100_000, maxTokens: 8_000,
-  availableThinkingLevels: ['medium'], fastModeSupported: false, available: true,
-}]
-const providers: PrimeProviderDescriptor[] = [{
-  id: 'provider', name: 'Provider', authMethod: 'api_key', configured: true,
-  modelCount: 1, availableModelCount: 1, enabled: true,
-}]
+const models: PrimeModelDescriptor[] = [
+  {
+    key: 'provider/vision',
+    provider: 'provider',
+    id: 'vision',
+    name: 'Vision',
+    reasoning: true,
+    input: ['text', 'image'],
+    contextWindow: 100_000,
+    maxTokens: 8_000,
+    availableThinkingLevels: ['medium'],
+    fastModeSupported: false,
+    available: true,
+  },
+]
+const providers: PrimeProviderDescriptor[] = [
+  {
+    id: 'provider',
+    name: 'Provider',
+    authMethod: 'api_key',
+    configured: true,
+    modelCount: 1,
+    availableModelCount: 1,
+    enabled: true,
+  },
+]
 const modelsByProvider = groupModelsByProvider(models)
 
 const annotation = (id: string, overrides: Partial<BrowserAnnotation> = {}): BrowserAnnotation => ({
@@ -49,34 +66,40 @@ afterEach(async () => {
 
 interface RenderOptions {
   annotations?: BrowserAnnotation[]
+  sendSignal?: number
   onSend?: Mock<(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent) => Promise<void>>
   onRemoveAnnotation?: Mock<(id: string) => void>
   onClearAnnotations?: Mock<() => void>
 }
 
-function renderComposer({ annotations = [], onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn() }: RenderOptions = {}) {
-  act(() => root.render(<Composer
-    busy={false}
-    model="provider/vision"
-    effort="medium"
-    modelsByProvider={modelsByProvider}
-    providers={providers}
-    reasoningLevels={['medium']}
-    fast={false}
-    fastSupported={false}
-    fastAvailable
-    imageInputSupported
-    messageEnterAction="queue"
-    skills={[]}
-    annotations={annotations}
-    onModelChange={vi.fn()}
-    onEffortChange={vi.fn()}
-    onFastChange={vi.fn()}
-    onSend={onSend}
-    onStop={vi.fn()}
-    onRemoveAnnotation={onRemoveAnnotation}
-    onClearAnnotations={onClearAnnotations}
-  />))
+function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn() }: RenderOptions = {}) {
+  act(() =>
+    root.render(
+      <Composer
+        busy={false}
+        model="provider/vision"
+        effort="medium"
+        modelsByProvider={modelsByProvider}
+        providers={providers}
+        reasoningLevels={['medium']}
+        fast={false}
+        fastSupported={false}
+        fastAvailable
+        imageInputSupported
+        messageEnterAction="queue"
+        skills={[]}
+        annotations={annotations}
+        sendSignal={sendSignal}
+        onModelChange={vi.fn()}
+        onEffortChange={vi.fn()}
+        onFastChange={vi.fn()}
+        onSend={onSend}
+        onStop={vi.fn()}
+        onRemoveAnnotation={onRemoveAnnotation}
+        onClearAnnotations={onClearAnnotations}
+      />,
+    ),
+  )
   return { onSend, onRemoveAnnotation, onClearAnnotations }
 }
 
@@ -110,7 +133,9 @@ describe('Composer annotation attachment', () => {
     const hostile = annotation('a', { comment: '<img src=x onerror=alert(1)> fix this' })
     const { onRemoveAnnotation } = renderComposer({ annotations: [hostile, annotation('b', { stale: true })] })
 
-    await act(async () => { (container.querySelector('.composer-attachment__expand') as HTMLButtonElement).click() })
+    await act(async () => {
+      ;(container.querySelector('.composer-attachment__expand') as HTMLButtonElement).click()
+    })
     const panel = container.querySelector('.composer-annotations')
     expect(panel).not.toBeNull()
     // Untrusted text renders as text, never as markup.
@@ -120,13 +145,17 @@ describe('Composer annotation attachment', () => {
     expect(panel?.textContent).not.toContain('button#a.btn')
     expect(panel?.textContent).toContain('page changed')
 
-    await act(async () => { (container.querySelector('button[aria-label="Remove annotation 2"]') as HTMLButtonElement).click() })
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Remove annotation 2"]') as HTMLButtonElement).click()
+    })
     expect(onRemoveAnnotation).toHaveBeenCalledWith('b')
   })
 
   it('removes the whole attachment through the chip control', async () => {
     const { onClearAnnotations } = renderComposer({ annotations: [annotation('a')] })
-    await act(async () => { (container.querySelector('button[aria-label="Remove page annotations"]') as HTMLButtonElement).click() })
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Remove page annotations"]') as HTMLButtonElement).click()
+    })
     expect(onClearAnnotations).toHaveBeenCalledTimes(1)
   })
 
@@ -157,7 +186,9 @@ describe('Composer annotation attachment', () => {
   })
 
   it('keeps the annotations attached when the send fails', async () => {
-    const onSend = vi.fn(async () => { throw new Error('rejected') })
+    const onSend = vi.fn(async () => {
+      throw new Error('rejected')
+    })
     const { onClearAnnotations } = renderComposer({ annotations: [annotation('a')], onSend })
     await setDraft('Keep these')
     await clickSend()
@@ -171,5 +202,34 @@ describe('Composer annotation attachment', () => {
     renderComposer()
     expect(container.querySelector('.composer-attachment--annotations')).toBeNull()
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
+  })
+})
+
+describe('Composer sendSignal', () => {
+  it('submits the attached annotations immediately when the signal bumps', async () => {
+    const onSend = vi.fn<(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent) => Promise<void>>(async () => undefined)
+    const onClearAnnotations = vi.fn()
+    const options = { annotations: [annotation('a', { comment: 'ship it' })], onSend, onClearAnnotations }
+    renderComposer({ ...options, sendSignal: 0 })
+    expect(onSend).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderComposer({ ...options, sendSignal: 1 })
+    })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    const [prompt] = onSend.mock.calls[0]
+    expect(prompt).toContain('[Page annotations]')
+    expect(prompt).toContain('ship it')
+    expect(onClearAnnotations).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores an unchanged signal on re-render', async () => {
+    const onSend = vi.fn<(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent) => Promise<void>>(async () => undefined)
+    const options = { annotations: [annotation('a')], onSend, sendSignal: 2 }
+    renderComposer(options)
+    await act(async () => {
+      renderComposer(options)
+    })
+    expect(onSend).not.toHaveBeenCalled()
   })
 })

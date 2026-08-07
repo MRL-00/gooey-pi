@@ -10,15 +10,17 @@ import type { BrowserAnnotation } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const capturedPayload = JSON.stringify([{
-  selector: '#cta',
-  tagName: 'BUTTON',
-  id: 'cta',
-  classes: ['btn'],
-  text: 'Join now',
-  href: 'https://example.com/signup',
-  rect: { x: 5, y: 6, width: 100, height: 30 },
-}])
+const capturedPayload = JSON.stringify([
+  {
+    selector: '#cta',
+    tagName: 'BUTTON',
+    id: 'cta',
+    classes: ['btn'],
+    text: 'Join now',
+    href: 'https://example.com/signup',
+    rect: { x: 5, y: 6, width: 100, height: 30 },
+  },
+])
 
 let container: HTMLDivElement
 let root: Root
@@ -80,7 +82,9 @@ const webviewElement = () => container.querySelector('webview') as HTMLElement
 
 const makeDomReady = async () => {
   webviewDomReady = true
-  await act(async () => { webviewElement().dispatchEvent(new Event('dom-ready')) })
+  await act(async () => {
+    webviewElement().dispatchEvent(new Event('dom-ready'))
+  })
 }
 
 const toggleAnnotate = async () => {
@@ -109,7 +113,9 @@ describe('BrowserPanel annotation mode', () => {
     expect(executed).toHaveLength(0)
 
     await makeDomReady()
-    await act(async () => { await vi.advanceTimersByTimeAsync(60) })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60)
+    })
     expect(executed.some((code) => code.includes('__primeAnnotator'))).toBe(true)
   })
 
@@ -122,7 +128,9 @@ describe('BrowserPanel annotation mode', () => {
     expect(container.querySelector('.annotation-hint')).not.toBeNull()
 
     takeResult = capturedPayload
-    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120)
+    })
     takeResult = null
 
     // Selection stops picking (page listeners cleaned up) and opens the comment popover.
@@ -133,7 +141,9 @@ describe('BrowserPanel annotation mode', () => {
     expect(popover?.textContent).not.toContain('button#cta.btn')
 
     await setComment('Make this button blue')
-    await act(async () => { (container.querySelector('.button--primary') as HTMLButtonElement).click() })
+    await act(async () => {
+      ;(container.querySelector('.button--primary') as HTMLButtonElement).click()
+    })
 
     expect(latestApi.annotations).toHaveLength(1)
     expect(latestApi.annotations[0].comment).toBe('Make this button blue')
@@ -148,13 +158,58 @@ describe('BrowserPanel annotation mode', () => {
     expect(markerCall).toContain('"index":1')
   })
 
+  it('saves on Enter and saves-then-sends on Ctrl+Enter in the comment popover', async () => {
+    await act(async () => root.render(<Harness />))
+    await makeDomReady()
+
+    const capture = async () => {
+      await toggleAnnotate()
+      takeResult = capturedPayload
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      takeResult = null
+    }
+    const keydown = async (init: KeyboardEventInit) => {
+      const textarea = container.querySelector('.annotation-popover textarea') as HTMLTextAreaElement
+      await act(async () => {
+        textarea.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+      })
+    }
+
+    await capture()
+    await setComment('plain enter saves')
+    const signalBefore = latestApi.sendSignal
+    await keydown({ key: 'Enter' })
+    expect(latestApi.annotations.map((entry) => entry.comment)).toEqual(['plain enter saves'])
+    expect(container.querySelector('.annotation-popover')).toBeNull()
+    expect(latestApi.sendSignal).toBe(signalBefore)
+
+    await capture()
+    await setComment('ctrl enter sends')
+    await keydown({ key: 'Enter', ctrlKey: true })
+    expect(latestApi.annotations.map((entry) => entry.comment)).toEqual(['plain enter saves', 'ctrl enter sends'])
+    expect(container.querySelector('.annotation-popover')).toBeNull()
+    expect(latestApi.sendSignal).toBe(signalBefore + 1)
+
+    // Enter with an empty comment neither saves nor closes the popover.
+    await capture()
+    await keydown({ key: 'Enter' })
+    expect(latestApi.annotations).toHaveLength(2)
+    expect(container.querySelector('.annotation-popover')).not.toBeNull()
+  })
+
   it('blocks entering annotation mode at the 20-annotation cap with clear feedback', async () => {
     const annotations: BrowserAnnotation[] = Array.from({ length: 20 }, (_, index) => ({
-      id: `a-${index}`, comment: `c-${index}`,
+      id: `a-${index}`,
+      comment: `c-${index}`,
       element: { selector: `#e-${index}`, tagName: 'div', id: '', classes: [], text: '', rect: { x: 0, y: 0, width: 0, height: 0 } },
-      pageUrl: 'https://example.com/', pageTitle: 'Example', stale: false, createdAt: index,
+      pageUrl: 'https://example.com/',
+      pageTitle: 'Example',
+      stale: false,
+      createdAt: index,
     }))
-    const api: BrowserAnnotationsApi = { annotations, atCapacity: true, add: vi.fn(() => false), remove: vi.fn(), clear: vi.fn(), handleNavigation: vi.fn() }
+    const api: BrowserAnnotationsApi = { annotations, atCapacity: true, add: vi.fn(() => false), remove: vi.fn(), clear: vi.fn(), handleNavigation: vi.fn(), sendSignal: 0, requestSend: vi.fn() }
     await act(async () => root.render(<BrowserPanel home="https://example.com/" onOpenExternal={() => undefined} annotations={api} pollIntervalMs={50} />))
     await makeDomReady()
     const injectedBefore = executed.filter((code) => code.includes('__primeAnnotator.start()')).length
@@ -181,7 +236,9 @@ describe('BrowserPanel annotation mode', () => {
     expect(container.querySelector('.annotation-hint')).not.toBeNull()
 
     webviewUrl = 'https://example.com/other'
-    await act(async () => { webviewElement().dispatchEvent(new Event('did-navigate')) })
+    await act(async () => {
+      webviewElement().dispatchEvent(new Event('did-navigate'))
+    })
 
     expect(latestApi.annotations[0].stale).toBe(true)
     expect(container.querySelector('.annotation-hint')).toBeNull()
@@ -189,7 +246,9 @@ describe('BrowserPanel annotation mode', () => {
 
     // Navigating back to the captured page revives the marker.
     webviewUrl = 'https://example.com/'
-    await act(async () => { webviewElement().dispatchEvent(new Event('did-navigate')) })
+    await act(async () => {
+      webviewElement().dispatchEvent(new Event('did-navigate'))
+    })
     expect(latestApi.annotations[0].stale).toBe(false)
     const markerCall = [...executed].reverse().find((code) => code.includes('setMarkers'))
     expect(markerCall).toContain('"selector":"#hero"')
@@ -201,9 +260,13 @@ describe('BrowserPanel annotation mode', () => {
     await toggleAnnotate()
 
     takeResult = JSON.stringify([{ tagName: 'div' }])
-    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120)
+    })
     takeResult = 'not json at all'
-    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120)
+    })
 
     expect(container.querySelector('.annotation-popover')).toBeNull()
     expect(container.querySelector('.annotation-hint')).not.toBeNull()

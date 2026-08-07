@@ -47,7 +47,10 @@ export function sanitizeCapturedElement(raw: unknown): BrowserAnnotationElement 
   const tagName = boundSingleLine(source.tagName, MAX_TAG_LENGTH).toLowerCase()
   if (!selector || !tagName) return null
   const classes = Array.isArray(source.classes)
-    ? source.classes.filter((item): item is string => typeof item === 'string' && item.length > 0).slice(0, MAX_CLASS_COUNT).map((item) => boundSingleLine(item, MAX_CLASS_LENGTH))
+    ? source.classes
+        .filter((item): item is string => typeof item === 'string' && item.length > 0)
+        .slice(0, MAX_CLASS_COUNT)
+        .map((item) => boundSingleLine(item, MAX_CLASS_LENGTH))
     : []
   const href = boundSingleLine(source.href, MAX_URL_LENGTH)
   const src = boundSingleLine(source.src, MAX_URL_LENGTH)
@@ -70,9 +73,7 @@ export interface BrowserAnnotationInput {
   pageTitle: string
 }
 
-export type AddAnnotationResult =
-  | { ok: true; annotations: BrowserAnnotation[] }
-  | { ok: false; reason: 'limit' }
+export type AddAnnotationResult = { ok: true; annotations: BrowserAnnotation[] } | { ok: false; reason: 'limit' }
 
 export function createAnnotation(input: BrowserAnnotationInput, id: string, createdAt: number): BrowserAnnotation {
   return {
@@ -110,7 +111,10 @@ export function reconcileAnnotationsForUrl(annotations: BrowserAnnotation[], cur
 /** Compact plain-text element identity for UI display, e.g. `button#submit.btn.primary`. */
 export function annotationElementLabel(element: BrowserAnnotationElement): string {
   const id = element.id ? `#${element.id}` : ''
-  const classes = element.classes.slice(0, 3).map((name) => `.${name}`).join('')
+  const classes = element.classes
+    .slice(0, 3)
+    .map((name) => `.${name}`)
+    .join('')
   return boundSingleLine(`${element.tagName}${id}${classes}`, 120)
 }
 

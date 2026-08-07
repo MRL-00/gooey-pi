@@ -15,7 +15,13 @@ function imageSource(part: Extract<MessagePart, { type: 'image' }>): string | un
 
 function renderImage(part: Extract<MessagePart, { type: 'image' }>, key: string) {
   const source = imageSource(part)
-  return source ? <img key={key} className="image-part" src={source} alt="User attachment" /> : <div key={key} className="image-part image-part--unavailable">Image attachment unavailable</div>
+  return source ? (
+    <img key={key} className="image-part" src={source} alt="User attachment" />
+  ) : (
+    <div key={key} className="image-part image-part--unavailable">
+      Image attachment unavailable
+    </div>
+  )
 }
 
 function renderNarrative(parts: MessagePart[], keyPrefix: string, streaming = false) {
@@ -34,13 +40,20 @@ function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, sh
     if (current?.activity === activity) current.parts.push(part)
     else groups.push({ activity, parts: [part] })
   }
-  return groups.map((group, index) => group.activity
-    ? <WorkTimeline key={`${keyPrefix}-activity-${index}`} parts={group.parts} showReasoning={showReasoning} showTools={showTools} streaming={streaming} />
-    : <div key={`${keyPrefix}-narrative-${index}`}>{renderNarrative(group.parts, `${keyPrefix}-${index}`, streaming)}</div>)
+  return groups.map((group, index) =>
+    group.activity ? (
+      <WorkTimeline key={`${keyPrefix}-activity-${index}`} parts={group.parts} showReasoning={showReasoning} showTools={showTools} streaming={streaming} />
+    ) : (
+      <div key={`${keyPrefix}-narrative-${index}`}>{renderNarrative(group.parts, `${keyPrefix}-${index}`, streaming)}</div>
+    ),
+  )
 }
 
 function messageText(message: TranscriptMessage): string {
-  return message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n')
+  return message.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
 }
 
 async function writeClipboardText(text: string): Promise<void> {
@@ -70,9 +83,12 @@ function MessageActions({ message, text: suppliedText }: { message: TranscriptMe
   const text = suppliedText ?? messageText(message)
   const role = message.role === 'assistant' ? 'assistant' : message.role === 'agent' ? 'agent' : 'user'
 
-  useEffect(() => () => {
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current)
+    },
+    [],
+  )
 
   if (!text) return null
 
@@ -96,68 +112,100 @@ function MessageActions({ message, text: suppliedText }: { message: TranscriptMe
   )
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
-  const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
-  const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'compaction'
-  const firstActivity = message.parts.findIndex(isActivity)
-  let lastActivity = -1
-  let lastCoreActivity = -1
-  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
-    if (lastActivity < 0 && isActivity(message.parts[index])) lastActivity = index
-    if (isCoreActivity(message.parts[index])) { lastCoreActivity = index; break }
-  }
-  const finalNarrative = lastCoreActivity < 0 ? -1 : message.parts.findIndex((part, index) => index > lastCoreActivity && (part.type === 'text' || part.type === 'image'))
-  const workEnd = finalNarrative >= 0 ? finalNarrative : lastActivity + 1
-  const before = firstActivity < 0 ? message.parts : message.parts.slice(0, firstActivity)
-  const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, workEnd)
-  const after = firstActivity < 0 ? [] : message.parts.slice(workEnd)
-  const hasVisibleActivity = work.some((part) => part.type === 'agentMessage' || part.type === 'compaction' || part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools)
-  const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
-  const copyableNarrative = hasVisibleActivity ? [...before, ...after] : [...before, ...hiddenMiddleNarrative, ...after]
-  const copyableText = copyableNarrative.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')
-  return (
-    <article className="message message--assistant">
-      <div className="assistant-mark"><PrimeMark size={24} /></div>
-      <div className="message__content">
-        {renderNarrative(before, 'before', message.streaming)}
-        {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle', message.streaming)}
-        {renderNarrativeWithActivity(after, 'after', showReasoning, showTools, message.streaming)}
-        {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div> : null}
-        {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
-      </div>
-    </article>
-  )
-}, (previous, next) => previous.message === next.message && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools)
+export const AssistantMessage = memo(
+  function AssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
+    const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
+    const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'compaction'
+    const firstActivity = message.parts.findIndex(isActivity)
+    let lastActivity = -1
+    let lastCoreActivity = -1
+    for (let index = message.parts.length - 1; index >= 0; index -= 1) {
+      if (lastActivity < 0 && isActivity(message.parts[index])) lastActivity = index
+      if (isCoreActivity(message.parts[index])) {
+        lastCoreActivity = index
+        break
+      }
+    }
+    const finalNarrative = lastCoreActivity < 0 ? -1 : message.parts.findIndex((part, index) => index > lastCoreActivity && (part.type === 'text' || part.type === 'image'))
+    const workEnd = finalNarrative >= 0 ? finalNarrative : lastActivity + 1
+    const before = firstActivity < 0 ? message.parts : message.parts.slice(0, firstActivity)
+    const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, workEnd)
+    const after = firstActivity < 0 ? [] : message.parts.slice(workEnd)
+    const hasVisibleActivity = work.some(
+      (part) => part.type === 'agentMessage' || part.type === 'compaction' || (part.type === 'thinking' && showReasoning) || ((part.type === 'toolCall' || part.type === 'toolResult') && showTools),
+    )
+    const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
+    const copyableNarrative = hasVisibleActivity ? [...before, ...after] : [...before, ...hiddenMiddleNarrative, ...after]
+    const copyableText = copyableNarrative.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+    return (
+      <article className="message message--assistant">
+        <div className="assistant-mark">
+          <PrimeMark size={24} />
+        </div>
+        <div className="message__content">
+          {renderNarrative(before, 'before', message.streaming)}
+          {hasVisibleActivity ? (
+            <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} />
+          ) : (
+            renderNarrative(hiddenMiddleNarrative, 'middle', message.streaming)
+          )}
+          {renderNarrativeWithActivity(after, 'after', showReasoning, showTools, message.streaming)}
+          {message.streaming && !hasVisibleActivity ? (
+            <div className="streaming-state" aria-live="polite">
+              <ThinkingDots /> Prime is working
+            </div>
+          ) : null}
+          {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
+        </div>
+      </article>
+    )
+  },
+  (previous, next) => previous.message === next.message && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools,
+)
 
 function UserText({ text }: { text: string }) {
   // Sent prompts can carry a serialized browser-annotation block; keep it
   // collapsed in the transcript — it is verbose, model-facing detail.
   const split = splitAnnotationBlock(text)
   if (!split.block) return <InlineText text={text} />
-  return <>
-    {split.text && split.text !== '[Page annotations]' ? <InlineText text={split.text} /> : null}
-    <details className="user-annotations">
-      <summary>{split.count > 0 ? `${split.count} page annotation${split.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
-      <pre>{split.block}</pre>
-    </details>
-  </>
+  return (
+    <>
+      {split.text && split.text !== '[Page annotations]' ? <InlineText text={split.text} /> : null}
+      <details className="user-annotations">
+        <summary>{split.count > 0 ? `${split.count} page annotation${split.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
+        <pre>{split.block}</pre>
+      </details>
+    </>
+  )
 }
 
 export const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
-  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, index) => part.type === 'text' ? <UserText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null)}</div><MessageActions message={message} /></article>
+  return (
+    <article className="message message--user">
+      <div className="user-bubble">
+        {message.parts.map((part, index) => (part.type === 'text' ? <UserText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null))}
+      </div>
+      <MessageActions message={message} />
+    </article>
+  )
 })
 
 export const ActivityMessage = memo(function ActivityMessage({ message }: { message: TranscriptMessage }) {
-  const sourceParts: MessagePart[] = message.role === 'system' && !message.parts.some((part) => part.type === 'compaction')
-    ? [
-        { type: 'toolCall', id: message.id, name: 'Prime message' },
-        { type: 'toolResult', name: 'Prime message', text: messageText(message), isError: true },
-      ]
-    : message.parts
-  const parts = sourceParts.flatMap((part, index) => part.type === 'toolResult' && sourceParts[index - 1]?.type !== 'toolCall'
-    ? [{ type: 'toolCall' as const, id: `${message.id}-${index}`, name: part.name ?? 'Tool' }, part]
-    : [part])
-  return <article className="message message--activity"><WorkTimeline parts={parts} showReasoning showTools /></article>
+  const sourceParts: MessagePart[] =
+    message.role === 'system' && !message.parts.some((part) => part.type === 'compaction')
+      ? [
+          { type: 'toolCall', id: message.id, name: 'Prime message' },
+          { type: 'toolResult', name: 'Prime message', text: messageText(message), isError: true },
+        ]
+      : message.parts
+  const parts = sourceParts.flatMap((part, index) =>
+    part.type === 'toolResult' && sourceParts[index - 1]?.type !== 'toolCall' ? [{ type: 'toolCall' as const, id: `${message.id}-${index}`, name: part.name ?? 'Tool' }, part] : [part],
+  )
+  return (
+    <article className="message message--activity">
+      <WorkTimeline parts={parts} showReasoning showTools />
+    </article>
+  )
 })
 
 export const AgentMessage = memo(function AgentMessage({ message }: { message: TranscriptMessage }) {
@@ -168,11 +216,17 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: T
   return (
     <article className={`message message--agent ${open ? 'is-open' : ''}`}>
       <button type="button" className="agent-message__summary" aria-expanded={open} aria-controls={contentId} aria-label={label} onClick={() => setOpen((value) => !value)}>
-        <PrimeMark size={18} /><span className="agent-message__label">Message from agent</span>
+        <PrimeMark size={18} />
+        <span className="agent-message__label">Message from agent</span>
         {message.agentName ? <span className="agent-message__name">{message.agentName}</span> : null}
         {open ? <ChevronDown className="agent-message__chevron" size={13} /> : <ChevronRight className="agent-message__chevron" size={13} />}
       </button>
-      {open ? <div className="agent-message__content" id={contentId}><MarkdownText text={boundText(text, 40_000, '\n… [Agent message truncated in the desktop view.]')} /><MessageActions message={message} /></div> : null}
+      {open ? (
+        <div className="agent-message__content" id={contentId}>
+          <MarkdownText text={boundText(text, 40_000, '\n… [Agent message truncated in the desktop view.]')} />
+          <MessageActions message={message} />
+        </div>
+      ) : null}
     </article>
   )
 })
@@ -184,10 +238,17 @@ export const GoalMessage = memo(function GoalMessage({ message }: { message: Tra
   return (
     <article className={`message message--goal ${open ? 'is-open' : ''}`}>
       <button type="button" className="goal-message__summary" aria-expanded={open} aria-controls={contentId} aria-label="Goal summary" onClick={() => setOpen((value) => !value)}>
-        <span className="goal-message__icon"><Target size={15} /></span><span className="goal-message__label">Goal summary</span>
+        <span className="goal-message__icon">
+          <Target size={15} />
+        </span>
+        <span className="goal-message__label">Goal summary</span>
         {open ? <ChevronDown className="goal-message__chevron" size={13} /> : <ChevronRight className="goal-message__chevron" size={13} />}
       </button>
-      {open ? <div className="goal-message__content" id={contentId}><MarkdownText text={boundText(text, 40_000, '\n… [Goal summary truncated in the desktop view.]')} /></div> : null}
+      {open ? (
+        <div className="goal-message__content" id={contentId}>
+          <MarkdownText text={boundText(text, 40_000, '\n… [Goal summary truncated in the desktop view.]')} />
+        </div>
+      ) : null}
     </article>
   )
 })
