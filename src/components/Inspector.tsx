@@ -1,4 +1,5 @@
 import { PanelRightClose } from 'lucide-react'
+import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
 import type { AutomationScheduleRecord, GitStatus, InspectorTab, NativeHeartbeatRecord, ProjectRecord, RuntimeInfo, TranscriptMessage } from '@/types/api'
 import { BrowserPanel } from './inspector/BrowserPanel'
 import { ChangesPanel } from './inspector/ChangesPanel'
@@ -19,6 +20,7 @@ interface InspectorProps {
   heartbeats: NativeHeartbeatRecord[]
   onOpenAutomation(id: string): void
   browserHome: string
+  browserAnnotations: BrowserAnnotationsApi
   onRefreshGit(): Promise<void> | void
   onOpenExternal(url: string): void
   onRevealPath(path: string): void
@@ -27,7 +29,7 @@ interface InspectorProps {
 
 const tabs: Array<{ id: InspectorTab; label: string }> = [{ id: 'summary', label: 'Summary' }, { id: 'changes', label: 'Changes' }, { id: 'browser', label: 'Browser' }, { id: 'files', label: 'Files' }]
 
-export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runtime, messages, git, automations, heartbeats, onOpenAutomation, browserHome, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
+export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runtime, messages, git, automations, heartbeats, onOpenAutomation, browserHome, browserAnnotations, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
   const inspectorRef = useFocusTrap<HTMLElement>(overlay, onClose)
   const moveTab = (current: number, key: string) => {
     let next = current
@@ -49,7 +51,7 @@ export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runti
     <div id={`inspector-panel-${activeTab}`} className="inspector__body" role="tabpanel" aria-labelledby={`inspector-tab-${activeTab}`} tabIndex={0}>
       {activeTab === 'summary' ? <SummaryPanel project={project} runtime={runtime} messages={messages} git={git} automations={automations} heartbeats={heartbeats} onOpenAutomation={onOpenAutomation}/> : null}
       {activeTab === 'changes' ? <ChangesPanel key={cwd ?? 'no-workspace'} cwd={cwd} git={git} onRefreshGit={onRefreshGit}/> : null}
-      {activeTab === 'browser' ? <BrowserPanel home={browserHome} onOpenExternal={onOpenExternal}/> : null}
+      {activeTab === 'browser' ? <BrowserPanel home={browserHome} onOpenExternal={onOpenExternal} annotations={browserAnnotations}/> : null}
       {activeTab === 'files' ? <FilesPanel project={project} git={git} onReveal={onRevealPath}/> : null}
     </div>
   </aside>

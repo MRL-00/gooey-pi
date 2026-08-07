@@ -12,6 +12,20 @@
 .composer-attachment > button { width: 23px; height: 23px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 5px; color: var(--text-tertiary); background: transparent; }
 .composer-attachment > button:hover { color: var(--text); background: var(--surface-hover); }
 .composer-attachment-error { margin: -1px 7px 6px; color: var(--danger); font-size: 10.5px; line-height: 1.35; }
+.composer-attachment--annotations { border-color: color-mix(in srgb, var(--annotation) 35%, var(--border)); background: color-mix(in srgb, var(--annotation) 7%, var(--surface-subtle)); }
+.composer-attachment__expand { height: 100%; display: flex; align-items: center; gap: 5px; padding: 0 2px 0 6px; border-radius: 5px; color: var(--annotation); background: transparent; font-size: 10.5px; font-weight: 550; white-space: nowrap; }
+.composer-attachment__expand:hover { background: color-mix(in srgb, var(--annotation) 10%, transparent); }
+.composer-attachment__expand svg.is-open { transform: rotate(180deg); }
+.composer-annotations { position: absolute; z-index: 50; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 260px; padding: 6px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
+.composer-annotation { display: flex; align-items: flex-start; gap: 8px; padding: 6px 7px; border-radius: 7px; }
+.composer-annotation:hover { background: var(--surface-hover); }
+.composer-annotation__badge { width: 18px; height: 18px; display: grid; place-items: center; flex: 0 0 auto; margin-top: 1px; border-radius: 50%; color: white; background: var(--annotation); font-size: 9.5px; font-weight: 700; }
+.composer-annotation__body { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.composer-annotation__body p { margin: 0; color: var(--text); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.composer-annotation__body small { overflow: hidden; color: var(--text-tertiary); font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+.composer-annotation__body small:first-of-type { font-family: "SFMono-Regular", Menlo, monospace; }
+.composer-annotation > button { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 5px; color: var(--text-tertiary); background: transparent; }
+.composer-annotation > button:hover { color: var(--text); background: var(--surface-hover); }
 .composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .composer__controls, .composer__actions { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .composer__actions { gap: 5px; }
