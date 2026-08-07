@@ -247,7 +247,7 @@ describe('JsonStateStore', () => {
     const path = join(dir, 'state.json')
     writeFileSync(path, '{broken')
     const store = new JsonStateStore(path)
-    expect(store.snapshot().version).toBe(1)
+    expect(store.snapshot().version).toBe(2)
     expect(store.snapshot().projects).toEqual([])
 
     await store.update((state) => { state.archivedSessions.push('after-recovery') })

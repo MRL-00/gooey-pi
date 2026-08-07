@@ -27,7 +27,7 @@ const api: PrimeWorkApi = {
   sessions: {
     list: (projectPath, includeArchived) => ipcRenderer.invoke('sessions:list', projectPath, includeArchived),
     read: (filePath) => ipcRenderer.invoke('sessions:read', filePath),
-    followUp: (filePath, message) => ipcRenderer.invoke('sessions:follow-up', filePath, message),
+    followUp: (filePath, message, intent) => ipcRenderer.invoke('sessions:follow-up', filePath, message, intent),
     rename: (filePath, title) => ipcRenderer.invoke('sessions:rename', filePath, title),
     archive: (filePath, archived) => ipcRenderer.invoke('sessions:archive', filePath, archived),
     onChanged: (callback) => subscribe<SessionChangeEvent>('sessions:changed', callback),

@@ -206,6 +206,7 @@ export interface TerminalDataEvent { terminalId: string; data: string }
 export interface TerminalExitEvent { terminalId: string; exitCode: number; signal?: number }
 
 export type MessageEnterAction = 'queue' | 'steer'
+export type PromptDeliveryIntent = 'queue' | 'steer'
 
 export interface AppSettings {
   theme: ThemeMode
@@ -224,6 +225,41 @@ export interface AppSettings {
   disabledProviders: string[]
 }
 
+export type ScheduleDefinitionStatus = 'active' | 'paused' | 'completed' | 'blocked'
+export type ScheduleRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'interrupted'
+export type ScheduleCreatedBy = 'user' | 'agent'
+
+export type ScheduleTarget =
+  | { kind: 'project'; projectId: string }
+  | { kind: 'session'; projectId: string; sessionId: string }
+
+export type ScheduleTiming =
+  | { kind: 'once'; at: string }
+  | { kind: 'rrule'; dtstartLocal: string; timeZone: string; rrule: string }
+
+export interface ScheduleExecution {
+  model: 'auto' | string
+  thinking: 'auto' | PrimeThinkingLevel
+  speed: 'normal' | 'fast'
+}
+
+export interface ScheduleRunRecord {
+  id: string
+  taskId: string
+  taskRevision: number
+  trigger: 'scheduled' | 'manual'
+  scheduledFor: string
+  queuedAt: string
+  startedAt?: string
+  finishedAt?: string
+  status: ScheduleRunStatus
+  execution: ScheduleExecution
+  sessionId?: string
+  sessionFile?: string
+  error?: string
+  skippedCount?: number
+}
+
 export interface ScheduleRecord {
   id: string
   title: string
@@ -235,13 +271,74 @@ export interface ScheduleRecord {
   runtimeId?: string
 }
 
+export interface AutomationScheduleRecord {
+  schemaVersion: 1
+  id: string
+  revision: number
+  title: string
+  prompt: string
+  target: ScheduleTarget
+  timing: ScheduleTiming
+  execution: ScheduleExecution
+  status: ScheduleDefinitionStatus
+  createdBy: ScheduleCreatedBy
+  createdAt: string
+  updatedAt: string
+  nextRunAt?: string
+  blockedReason?: string
+  runs: ScheduleRunRecord[]
+}
+
+export interface ScheduleInput {
+  title?: string
+  prompt: string
+  target: ScheduleTarget
+  timing: ScheduleTiming
+  execution: ScheduleExecution
+  createdBy?: ScheduleCreatedBy
+}
+
+export interface SchedulePatch {
+  revision: number
+  title?: string
+  prompt?: string
+  target?: ScheduleTarget
+  timing?: ScheduleTiming
+  execution?: ScheduleExecution
+}
+
+export interface SchedulePreview {
+  timing: ScheduleTiming
+  occurrences: string[]
+}
+
+export interface ScheduleChangeEvent {
+  taskId?: string
+  reason: 'created' | 'updated' | 'deleted' | 'run'
+}
+
+export interface NativeHeartbeatRecord {
+  id: string
+  source: 'heartbeat' | 'rlm_heartbeat'
+  status: 'active' | 'paused'
+  prompt: string
+  schedule: string
+  sessionId: string
+  sessionFile: string
+  activeSessionId: string
+  deliveryMode?: 'steer' | 'follow_up'
+  nextRunAt?: string
+  lastRunAt?: string
+  label?: string
+}
+
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
   sessions: {
     list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>
     read(filePath: string): Promise<TranscriptMessage[]>
-    followUp(filePath: string, message: string): Promise<boolean>
+    followUp(filePath: string, message: string, intent?: PromptDeliveryIntent): Promise<boolean>
     rename(filePath: string, title: string): Promise<boolean>
     archive(filePath: string, archived?: boolean): Promise<boolean>
     onChanged(callback: (event: SessionChangeEvent) => void): () => void

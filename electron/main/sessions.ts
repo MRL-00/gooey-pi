@@ -163,14 +163,15 @@ export class SessionService {
     this.transcriptReadQueue.shift()?.()
   }
 
-  async followUp(filePath: string, message: string): Promise<boolean> {
+  async followUp(filePath: unknown, message: unknown, intent: unknown = 'queue'): Promise<boolean> {
+    if (intent !== 'queue' && intent !== 'steer') throw new TypeError('Invalid active-session message intent')
     if (this.followUpsInFlight >= 4) throw new Error('Too many active-session replies are in flight')
     this.followUpsInFlight += 1
-    try { return await this.queueActiveFollowUp(filePath, message) }
+    try { return await this.queueActiveFollowUp(filePath, message, intent) }
     finally { this.followUpsInFlight -= 1 }
   }
 
-  private async queueActiveFollowUp(filePath: string, message: string): Promise<boolean> {
+  private async queueActiveFollowUp(filePath: unknown, message: unknown, intent: 'queue' | 'steer'): Promise<boolean> {
     const safePath = await this.requireSessionPath(filePath)
     const safeMessage = requireString(message, 'message', { min: 1, max: 64 * 1024 })
     if (!this.primeAgentPath) throw new Error('Prime Agent executable was not found')
@@ -201,7 +202,7 @@ export class SessionService {
     if (!Array.isArray(statuses) || statuses.length > 64) throw new Error('Prime Agent returned an invalid daemon status')
     const current = statuses.find((value) => isRecord(value) && value.status === 'current' && value.isDefault === true)
     if (!isRecord(current) || typeof current.socketPath !== 'string') throw new Error('Prime Agent did not report its active daemon socket')
-    await queueDaemonFollowUp(current.socketPath, activeSessionId, safeMessage)
+    await queueDaemonFollowUp(current.socketPath, activeSessionId, safeMessage, intent === 'steer' ? 'steer' : 'follow_up')
     return true
   }
 

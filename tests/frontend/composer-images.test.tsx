@@ -36,9 +36,9 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-function renderComposer(onSend = vi.fn(), imageInputSupported = true) {
+function renderComposer(onSend = vi.fn(), imageInputSupported = true, busy = false, messageEnterAction: 'queue' | 'steer' = 'queue') {
   act(() => root.render(<Composer
-    busy={false}
+    busy={busy}
     model="provider/vision"
     effort="medium"
     models={models}
@@ -48,6 +48,7 @@ function renderComposer(onSend = vi.fn(), imageInputSupported = true) {
     fastSupported={false}
     fastAvailable
     imageInputSupported={imageInputSupported}
+    messageEnterAction={messageEnterAction}
     skills={[]}
     onModelChange={vi.fn()}
     onEffortChange={vi.fn()}
@@ -99,7 +100,7 @@ describe('Composer image paste', () => {
 
     expect(onSend).toHaveBeenCalledWith('[Attached image]', [{
       type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=',
-    }])
+    }], 'queue')
     expect(container.querySelector('.composer-attachment')).toBeNull()
   })
 
@@ -163,4 +164,40 @@ describe('Composer image paste', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('restored')
   })
 
+})
+
+
+describe('Composer message delivery shortcuts', () => {
+  const enterDraft = async (value: string, init: KeyboardEventInit = {}) => {
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, value)
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init }))
+      await Promise.resolve()
+    })
+  }
+
+  it('queues with Enter and steers with Ctrl+Enter while Prime is working', async () => {
+    const onSend = renderComposer(vi.fn(async () => undefined), true, true)
+    await enterDraft('Queue this')
+    await enterDraft('Steer with this', { ctrlKey: true })
+
+    expect(onSend).toHaveBeenNthCalledWith(1, 'Queue this', [], 'queue')
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Steer with this', [], 'steer')
+  })
+
+  it('reverses both shortcuts from the persisted setting and preserves Shift+Enter', async () => {
+    const onSend = renderComposer(vi.fn(async () => undefined), true, true, 'steer')
+    await enterDraft('Steer this')
+    await enterDraft('Queue this', { ctrlKey: true })
+    await enterDraft('Keep editing', { shiftKey: true })
+
+    expect(onSend).toHaveBeenNthCalledWith(1, 'Steer this', [], 'steer')
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Queue this', [], 'queue')
+    expect(onSend).toHaveBeenCalledTimes(2)
+  })
 })

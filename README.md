@@ -99,7 +99,12 @@ Electron Builder uses an available signing identity automatically. Public macOS 
 | `⌘B` | Toggle project sidebar |
 | `⌘J` | Toggle terminal |
 | `⌘,` | Settings |
+| `Enter` | Queue a message while Prime is working |
+| `Ctrl+Enter` | Steer the current turn while Prime is working |
+| `Shift+Enter` | Add a new line in the composer |
 | `Esc` | Close the active palette/modal/overlay |
+
+The Enter and Ctrl+Enter message actions can be swapped in **Settings → Prime Agent → Message shortcuts**.
 
 ## Data and security
 

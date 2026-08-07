@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { applyPrimeEvent, createPrimeEventBuffer } from '../../src/lib/events'
 import type { TranscriptMessage } from '../../src/types/api'
 
@@ -92,6 +92,7 @@ describe('agent transport events', () => {
   })
 
   it('does not duplicate the persisted failure outcome and end event', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_786_074_279_000)
     const events: Record<string, unknown>[] = [
       { type: 'compaction_start', reason: 'threshold' },
       {
@@ -106,6 +107,7 @@ describe('agent transport events', () => {
     expect(buffered.replay([streamingMessage()])).toEqual(sequential)
     expect(sequential.filter((message) => message.parts.some((part) => part.type === 'compaction'))).toHaveLength(1)
     expect(sequential.at(-1)?.parts[0]).toMatchObject({ type: 'compaction', status: 'failed', outcome: 'skipped' })
+    now.mockRestore()
   })
 
   it('does not duplicate a compaction already present in an authoritative reload', () => {

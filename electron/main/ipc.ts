@@ -94,7 +94,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('sessions:list', (_event, projectPath, includeArchived) => services.sessions.list(projectPath as string | undefined, includeArchived))
   handle('sessions:read', (_event, filePath) => services.sessions.read(filePath as string))
-  handle('sessions:follow-up', (_event, filePath, message) => services.sessions.followUp(filePath as string, message as string))
+  handle('sessions:follow-up', (_event, filePath, message, intent) => services.sessions.followUp(filePath, message, intent))
   handle('sessions:rename', (_event, filePath, title) => services.sessions.rename(filePath as string, title as string))
   handle('sessions:archive', (_event, filePath, archived) => services.sessions.archive(filePath as string, archived))
 

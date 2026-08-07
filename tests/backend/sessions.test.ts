@@ -599,7 +599,7 @@ describe('SessionService orchestration', () => {
     const file = join(root, 'active.jsonl')
     writeSession(file, project, 'active')
     const socketPath = join(dir, 'daemon.sock')
-    const followUps: Array<Record<string, unknown>> = []
+    const deliveredMessages: Array<Record<string, unknown>> = []
     const daemon = createServer((socket) => {
       socket.write(`${JSON.stringify({ type: 'daemon_hello', protocol: { name: 'prime-agent.daemon', version: 7 }, serverCapabilities: ['session_input_admission'] })}\n`)
       let buffer = ''
@@ -610,9 +610,9 @@ describe('SessionService orchestration', () => {
           const line = buffer.slice(0, index)
           buffer = buffer.slice(index + 1)
           const envelope = JSON.parse(line) as { id?: string; command?: Record<string, unknown> }
-          if (envelope.command?.type !== 'follow_up') continue
-          followUps.push(envelope)
-          socket.write(`${JSON.stringify({ id: envelope.id, type: 'response', command: 'follow_up', success: true, data: {} })}\n`)
+          if (envelope.command?.type !== 'follow_up' && envelope.command?.type !== 'steer') continue
+          deliveredMessages.push(envelope)
+          socket.write(`${JSON.stringify({ id: envelope.id, type: 'response', command: envelope.command.type, success: true, data: {} })}\n`)
         }
       })
     })
@@ -640,12 +640,17 @@ process.exit(2)
 
     try {
       await expect(service.followUp(file, 'queue this reply')).resolves.toBe(true)
-      expect(followUps).toHaveLength(1)
-      expect(followUps[0]).toMatchObject({
+      await expect(service.followUp(file, 'change direction', 'steer')).resolves.toBe(true)
+      expect(deliveredMessages).toHaveLength(2)
+      expect(deliveredMessages[0]).toMatchObject({
         type: 'command',
         protocol: { name: 'prime-agent.daemon', version: 7 },
         command: { type: 'follow_up', activeSessionId: 'active-worker', message: 'queue this reply' },
       })
+      expect(deliveredMessages[1]).toMatchObject({
+        command: { type: 'steer', activeSessionId: 'active-worker', message: 'change direction' },
+      })
+      await expect(service.followUp(file, 'invalid', 'later')).rejects.toThrow('Invalid active-session message intent')
     } finally {
       await new Promise<void>((resolveClose) => daemon.close(() => resolveClose()))
     }

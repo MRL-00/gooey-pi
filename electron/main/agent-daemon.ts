@@ -9,7 +9,7 @@ const DAEMON_PROTOCOL_NAME = 'prime-agent.daemon'
 const DAEMON_PROTOCOL_VERSION = 7
 const MAX_DAEMON_FRAME_BYTES = 1024 * 1024
 
-export async function queueDaemonFollowUp(socketPath: string, activeSessionId: string, message: string): Promise<void> {
+export async function queueDaemonFollowUp(socketPath: string, activeSessionId: string, message: string, commandType: 'follow_up' | 'steer' = 'follow_up'): Promise<void> {
   if (!isAbsolute(socketPath) || socketPath.includes('\0') || socketPath.length > 4_096) {
     throw new Error('Prime Agent returned an invalid daemon socket path')
   }
@@ -56,7 +56,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
         }
         commandSent = true
         protocolVersion = Math.min(protocol.version, DAEMON_PROTOCOL_VERSION)
-        const command = { id: commandId, type: 'follow_up', activeSessionId, message }
+        const command = { id: commandId, type: commandType, activeSessionId, message }
         write({
           type: 'command',
           id: commandId,
@@ -67,8 +67,8 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
         return
       }
       if (value.type !== 'response' || value.id !== commandId) return
-      if (value.command !== 'follow_up' || value.success !== true) {
-        finish(new Error('Prime Agent rejected the queued reply'))
+      if (value.command !== commandType || value.success !== true) {
+        finish(new Error('Prime Agent rejected the active-session message'))
         return
       }
       const ackId = `prime_work_ack_${randomUUID()}`

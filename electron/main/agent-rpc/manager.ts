@@ -87,6 +87,30 @@ export class AgentRpcManager {
     return response
   }
 
+  async runPromptToCompletion(runtimeId: unknown, messageValue: unknown, timeoutMs = 30 * 60_000): Promise<RuntimeInfo> {
+    const id = requireId(runtimeId, 'runtimeId')
+    const message = requireString(messageValue, 'message', { min: 1, max: 1024 * 1024 })
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60 * 60_000) throw new TypeError('Invalid scheduled run timeout')
+    const runtime = this.requireRuntime(id)
+    const startedAt = Date.now()
+    let observedBusy = runtime.snapshot().isStreaming
+    await this.command(id, { type: 'prompt', message })
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise<void>((resolveDelay) => {
+        const timer = setTimeout(resolveDelay, 200)
+        timer.unref()
+      })
+      this.requireOpen()
+      if (!this.runtimes.has(id)) throw new Error('Scheduled runtime exited before the prompt completed')
+      try { await runtime.command({ type: 'get_state' }) } catch { /* the event snapshot may still be authoritative */ }
+      const snapshot = runtime.snapshot()
+      if (snapshot.isStreaming || snapshot.isCompacting) observedBusy = true
+      if (!snapshot.isStreaming && !snapshot.isCompacting && (observedBusy || Date.now() - startedAt >= 750)) return snapshot
+    }
+    try { await runtime.command({ type: 'abort' }) } catch { /* timeout remains authoritative */ }
+    throw new Error('Scheduled run timed out')
+  }
+
   async stop(runtimeId: unknown): Promise<boolean> {
     const id = requireId(runtimeId, 'runtimeId')
     const runtime = this.runtimes.get(id)

@@ -12,7 +12,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptImage, SkillRecord } from '@/types/api'
+import type { MessageEnterAction, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
 interface ComposerProps {
@@ -29,11 +30,12 @@ interface ComposerProps {
   fastSupported: boolean
   fastAvailable: boolean
   imageInputSupported: boolean
+  messageEnterAction: MessageEnterAction
   skills: SkillRecord[]
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
-  onSend(prompt: string, images: PromptImage[]): Promise<void> | void
+  onSend(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent): Promise<void> | void
   onStop(): Promise<void> | void
 }
 
@@ -66,7 +68,7 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
-export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
+export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -86,10 +88,10 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
   }, [value])
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
-  const submit = async () => {
+  const submit = async (intent: PromptDeliveryIntent = 'queue') => {
     const currentImages = imagesRef.current
     const prompt = value.trim() || (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
-    if ((!value.trim() && currentImages.length === 0) || busy || submitting || loading || disabled || submittingRef.current) return
+    if ((!value.trim() && currentImages.length === 0) || submitting || loading || disabled || submittingRef.current) return
     if (pendingImagesRef.current > 0) {
       setAttachmentError('Wait for the pasted image to finish processing before sending.')
       return
@@ -99,7 +101,7 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
       return
     }
     const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
-    const frame = `${JSON.stringify({ type: 'follow_up', message: prompt, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
+    const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
     if (new TextEncoder().encode(frame).byteLength > MAX_IMAGE_PROMPT_BYTES) {
       setAttachmentError('This message and its images are too large to send. Shorten the message or remove an image.')
       return
@@ -113,7 +115,7 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
     setAttachmentError('')
     setMenu(null)
     try {
-      await onSend(prompt, submittedImages)
+      await onSend(prompt, submittedImages, intent)
     } catch {
       if (mountedRef.current) {
         setValue((current) => current || submittedValue)
@@ -222,10 +224,22 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
               setActiveSuggestion((current) => event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length)
               return
             }
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing && menu && suggestions.length) {
               event.preventDefault()
-              if (menu && suggestions.length) chooseSuggestion(activeSuggestion)
-              else void submit()
+              chooseSuggestion(activeSuggestion)
+              return
+            }
+            const intent = messageActionForKey({
+              key: event.key,
+              ctrlKey: event.ctrlKey,
+              metaKey: event.metaKey,
+              altKey: event.altKey,
+              shiftKey: event.shiftKey,
+              isComposing: event.nativeEvent.isComposing,
+            }, messageEnterAction)
+            if (intent) {
+              event.preventDefault()
+              void submit(intent)
             }
             if (event.key === 'Escape') { event.preventDefault(); setMenu(null) }
           }}
