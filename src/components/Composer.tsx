@@ -128,7 +128,10 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
         }
         setAttachmentError('Message was not sent. Your draft and images were restored.')
       }
-    } finally { submittingRef.current = false }
+    } finally {
+      submittingRef.current = false
+      if (mountedRef.current) textareaRef.current?.focus()
+    }
   }
 
   const addPastedImages = async (files: File[]) => {
@@ -209,7 +212,7 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
         <textarea
           ref={textareaRef}
           value={value}
-          disabled={disabled || submitting || loading}
+          disabled={disabled || loading}
           rows={2}
           placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? 'Starting Prime…' : 'Ask Prime anything, @ for skills, / for commands'}
           aria-label="Message Prime"
