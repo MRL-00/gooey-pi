@@ -1,9 +1,10 @@
-import { ArrowLeft, ArrowRight, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bot, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { createElement, useEffect, useRef, useState } from 'react'
 import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
 import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
-import type { BrowserAnnotationElement } from '@/types/api'
+import type { AgentSlotRect } from '../AgentBrowserLayer'
+import type { AgentBrowserTabRecord, BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
 
 type WebviewElement = HTMLElement & {
@@ -47,11 +48,29 @@ interface BrowserPanelProps {
   home: string
   onOpenExternal(url: string): void
   annotations: BrowserAnnotationsApi
+  /** Agent-controlled tabs for the active session; empty hides the tab strip entirely. */
+  agentTabs?: AgentBrowserTabRecord[]
+  activeAgentTabId?: string | null
+  previewSelected?: boolean
+  onSelectAgentTab?(tabId: string): void
+  onCloseAgentTab?(tabId: string): void
+  onShowPreview?(): void
+  /** Reports the rectangle the always-mounted AgentBrowserLayer should cover, or null when hidden. */
+  onAgentSlotRect?(rect: AgentSlotRect | null): void
   /** Test hook: how often to poll the page for a clicked element while picking. */
   pollIntervalMs?: number
 }
 
-export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs = 350 }: BrowserPanelProps) {
+function agentTabLabel(tab: AgentBrowserTabRecord): string {
+  if (tab.title) return tab.title
+  try {
+    const host = new URL(tab.url).hostname
+    if (host) return host
+  } catch { /* about:blank and friends */ }
+  return 'New tab'
+}
+
+export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, pollIntervalMs = 350 }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
@@ -69,6 +88,39 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
   annotationsRef.current = annotations
   const noticeTimerRef = useRef<number | null>(null)
   const lastMarkersRef = useRef('')
+  const activeAgentTab = agentTabs.find((tab) => tab.tabId === activeAgentTabId) ?? null
+  const showAgentTab = !previewSelected && activeAgentTab !== null
+  const slotRef = useRef<HTMLDivElement | null>(null)
+  const onAgentSlotRectRef = useRef(onAgentSlotRect)
+  onAgentSlotRectRef.current = onAgentSlotRect
+
+  // The agent webviews live in the always-mounted AgentBrowserLayer, not in
+  // this panel; report where the layer should overlay while an agent tab is
+  // shown. Position can shift without a resize (sidebar toggle), so a slow
+  // poll backs up the observer.
+  useEffect(() => {
+    if (!showAgentTab) {
+      onAgentSlotRectRef.current?.(null)
+      return
+    }
+    const report = () => {
+      const slot = slotRef.current
+      if (!slot) return
+      const rect = slot.getBoundingClientRect()
+      onAgentSlotRectRef.current?.({ left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) })
+    }
+    report()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(report)
+    if (observer && slotRef.current) observer.observe(slotRef.current)
+    window.addEventListener('resize', report)
+    const interval = window.setInterval(report, 400)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', report)
+      window.clearInterval(interval)
+      onAgentSlotRectRef.current?.(null)
+    }
+  }, [showAgentTab])
 
   const showNotice = (text: string) => {
     setNotice(text)
@@ -248,6 +300,43 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
 
   return (
     <div className="browser-panel">
+      {agentTabs.length ? (
+        <div className="browser-tabstrip" role="tablist" aria-label="Browser tabs">
+          <button type="button" role="tab" aria-selected={!showAgentTab} className={showAgentTab ? '' : 'is-active'} onClick={() => onShowPreview?.()}>
+            Preview
+          </button>
+          {agentTabs.map((tab) => (
+            <div
+              key={tab.tabId}
+              role="tab"
+              tabIndex={0}
+              aria-selected={showAgentTab && tab.tabId === activeAgentTabId}
+              className={`browser-tabstrip__agent ${showAgentTab && tab.tabId === activeAgentTabId ? 'is-active' : ''}`}
+              title={tab.url}
+              onClick={() => onSelectAgentTab?.(tab.tabId)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                onSelectAgentTab?.(tab.tabId)
+              }}
+            >
+              <Bot size={11} aria-hidden />
+              <span>{agentTabLabel(tab)}</span>
+              <button
+                type="button"
+                aria-label={`Close agent tab ${agentTabLabel(tab)}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCloseAgentTab?.(tab.tabId)
+                }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className={`browser-preview ${showAgentTab ? 'browser-preview--hidden' : ''}`} inert={showAgentTab ? true : undefined}>
       <div className="browser-toolbar">
         <IconButton label="Back" disabled={!canBack} onClick={() => webviewRef.current?.goBack()}>
           <ArrowLeft size={14} />
@@ -372,6 +461,17 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
           </p>
         ) : null}
       </div>
+      </div>
+      {showAgentTab && activeAgentTab ? (
+        <div className="browser-agent-area">
+          <div className="browser-agent-urlbar">
+            <Bot size={12} aria-hidden />
+            <span>{activeAgentTab.url || 'about:blank'}</span>
+            {!activeAgentTab.attached ? <em>connecting…</em> : null}
+          </div>
+          <div className="browser-agent-slot" ref={slotRef} aria-label="Agent-controlled browser tab" />
+        </div>
+      ) : null}
     </div>
   )
 }

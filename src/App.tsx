@@ -8,6 +8,8 @@ import { ResizeHandle } from '@/components/ResizeHandle'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
 import { createSingleFlightAdmission, findProjectForSession, gitStatusForWorkspace, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
 import { SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
+import { AgentBrowserLayer, type AgentSlotRect } from '@/components/AgentBrowserLayer'
+import { useAgentBrowserTabs } from '@/hooks/useAgentBrowserTabs'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
 import { useAppSettings } from '@/hooks/useAppSettings'
 import { useBootstrap } from '@/hooks/useBootstrap'
@@ -141,6 +143,34 @@ export default function App() {
     previousSessionStatusRef.current = activeSessionStatus
     if (shouldRefreshGitOnSessionTransition(previousStatus, activeSessionStatus, locallyOwnedActiveSession)) void refreshGit()
   }, [activeSessionStatus, locallyOwnedActiveSession, refreshGit])
+  const agentBrowser = useAgentBrowserTabs({ bridge, reportError })
+  const [agentPreviewSelected, setAgentPreviewSelected] = useState(true)
+  const [agentSlotRect, setAgentSlotRect] = useState<AgentSlotRect | null>(null)
+  const activeRuntimeSessionFile = workspace.runtime?.sessionFile
+  const activeSessionFilePath = activeSession?.filePath
+  const activeAgentTabs = useMemo(() => {
+    const keys = new Set<string>()
+    if (activeRuntimeSessionFile) keys.add(activeRuntimeSessionFile)
+    if (activeSessionFilePath) keys.add(activeSessionFilePath)
+    return agentBrowser.tabs.filter((tab) => keys.has(tab.sessionFile))
+  }, [agentBrowser.tabs, activeRuntimeSessionFile, activeSessionFilePath])
+  const activeAgentTabId = activeAgentTabs.find((tab) => tab.active)?.tabId ?? activeAgentTabs[0]?.tabId ?? null
+  // When the agent opens a fresh tab in the active thread, surface it: open
+  // the inspector on the Browser tab and switch off the user preview. Session
+  // switches must not re-trigger this, so only genuinely new tab ids count.
+  const knownAgentTabsRef = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const ids = new Set(agentBrowser.tabs.map((tab) => tab.tabId))
+    const known = knownAgentTabsRef.current
+    knownAgentTabsRef.current = ids
+    if (!known) return
+    if (!activeAgentTabs.some((tab) => !known.has(tab.tabId))) return
+    setAgentPreviewSelected(false)
+    settingsState.setInspectorOpen(true)
+    settingsState.selectInspectorTab('browser')
+  }, [agentBrowser.tabs, activeAgentTabs, settingsState.setInspectorOpen, settingsState.selectInspectorTab])
+  useEffect(() => { if (!activeAgentTabs.length) setAgentPreviewSelected(true) }, [activeAgentTabs.length])
+  const agentTabVisible = view === 'session' && settingsState.inspectorOpen && settingsState.inspectorTab === 'browser' && !agentPreviewSelected && activeAgentTabId !== null
   const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
   const pluginSkills = usePluginSkills({ bridge, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
@@ -251,7 +281,7 @@ export default function App() {
             </div>
           </main>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
-          {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} automations={activeSession ? schedules.filter((task) => task.target.kind === 'session' && task.target.sessionId === activeSession.id) : []} heartbeats={activeSession ? heartbeats.filter((heartbeat) => heartbeat.sessionId === activeSession.id || heartbeat.sessionFile === activeSession.filePath) : []} onOpenAutomation={(id) => { setScheduleFocusId(id); setView('scheduled') }} browserHome={settingsState.settings.browserHome} browserAnnotations={browserAnnotations} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}
+          {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} automations={activeSession ? schedules.filter((task) => task.target.kind === 'session' && task.target.sessionId === activeSession.id) : []} heartbeats={activeSession ? heartbeats.filter((heartbeat) => heartbeat.sessionId === activeSession.id || heartbeat.sessionFile === activeSession.filePath) : []} onOpenAutomation={(id) => { setScheduleFocusId(id); setView('scheduled') }} browserHome={settingsState.settings.browserHome} browserAnnotations={browserAnnotations} agentBrowserTabs={activeAgentTabs} activeAgentTabId={activeAgentTabId} agentPreviewSelected={agentPreviewSelected} onSelectAgentTab={(tabId) => { setAgentPreviewSelected(false); agentBrowser.select(tabId) }} onCloseAgentTab={agentBrowser.close} onShowBrowserPreview={() => setAgentPreviewSelected(true)} onAgentSlotRect={setAgentSlotRect} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
         </div>
         {settingsState.terminalOpen ? <Suspense fallback={<LoadingPanel label="terminal" />}><TerminalDrawer cwd={activeCwd} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={toggleTerminal} onError={reportError} /></Suspense> : null}
@@ -261,5 +291,6 @@ export default function App() {
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
     {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}
     {toast ? <div className="toast" role="status">{toast}<button type="button" aria-label="Dismiss" onClick={() => setToast(null)}>×</button></div> : null}
+    {bridge ? <AgentBrowserLayer tabs={agentBrowser.tabs} visibleTabId={agentTabVisible ? activeAgentTabId : null} rect={agentTabVisible ? agentSlotRect : null} onAttach={agentBrowser.attach} /> : null}
   </div>
 }
