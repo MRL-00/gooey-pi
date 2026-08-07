@@ -117,6 +117,7 @@ export class AutomationService {
   private timer: NodeJS.Timeout | null = null
   private closed = false
   private activeRuns = 0
+  private readonly stopWaiters = new Set<() => void>()
   private readonly pending: Array<{ task: AutomationScheduleRecord; runId: string }> = []
 
   constructor(private readonly store: JsonStateStore, private readonly options: AutomationServiceOptions) {
@@ -134,11 +135,17 @@ export class AutomationService {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     this.pending.splice(0)
+    if (this.activeRuns === 0) return
+    await new Promise<void>((resolveStop) => this.stopWaiters.add(resolveStop))
   }
 
   onDidChange(listener: (event: ScheduleChangeEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  hasActiveSchedules(): boolean {
+    return this.store.snapshot().schedules.some((task) => task.status === 'active')
   }
 
   list(): AutomationScheduleRecord[] {
@@ -390,7 +397,14 @@ export class AutomationService {
       const item = this.pending.shift()
       if (!item) return
       this.activeRuns += 1
-      void this.dispatch(item.task, item.runId).finally(() => { this.activeRuns -= 1; this.drain() })
+      void this.dispatch(item.task, item.runId).finally(() => {
+        this.activeRuns -= 1
+        if (this.closed && this.activeRuns === 0) {
+          for (const resolveStop of this.stopWaiters) resolveStop()
+          this.stopWaiters.clear()
+        }
+        this.drain()
+      })
     }
   }
 

@@ -1,4 +1,4 @@
-import type { PrimeThinkingLevel, RuntimeInfo, ScheduleExecution, AutomationScheduleRecord, AutomationScheduleRecord as ScheduleRecord, ScheduleTarget } from '../../../src/types/api'
+import type { RuntimeInfo, ScheduleExecution, AutomationScheduleRecord, ScheduleTarget } from '../../../src/types/api'
 import type { AgentRpcManager } from '../agent-rpc'
 import type { PrimeProviderService } from '../providers'
 import type { ProjectService } from '../projects'
@@ -11,6 +11,8 @@ interface ResolvedTarget {
 }
 
 export class ScheduledRunExecutor {
+  private readonly sessionTails = new Map<string, Promise<void>>()
+
   constructor(
     private readonly projects: ProjectService,
     private readonly sessions: SessionService,
@@ -34,8 +36,22 @@ export class ScheduledRunExecutor {
     const target = await this.resolveTarget(task.target)
     await this.validateExecution(task.execution)
     return target.sessionPath
-      ? this.runInSession(task, target.cwd, target.sessionPath)
+      ? this.withSessionLock(target.sessionPath, () => this.runInSession(task, target.cwd, target.sessionPath!))
       : this.runInNewSession(task, target.cwd)
+  }
+
+  private async withSessionLock<T>(sessionPath: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.sessionTails.get(sessionPath) ?? Promise.resolve()
+    let release = (): void => undefined
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate })
+    const tail = previous.catch(() => undefined).then(() => gate)
+    this.sessionTails.set(sessionPath, tail)
+    await previous.catch(() => undefined)
+    try { return await work() }
+    finally {
+      release()
+      if (this.sessionTails.get(sessionPath) === tail) this.sessionTails.delete(sessionPath)
+    }
   }
 
   private async resolveTarget(target: ScheduleTarget): Promise<ResolvedTarget> {

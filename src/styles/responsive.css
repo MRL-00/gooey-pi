@@ -32,6 +32,11 @@
 }
 
 @media (max-width: 720px) {
+
+  .native-heartbeats__header { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .native-heartbeat { grid-template-columns: 32px minmax(0, 1fr); }
+  .native-heartbeat__actions { grid-column: 2; }
+  .native-heartbeat__actions .button { min-height: 40px; }
   .title-toolbar { padding-inline: 6px; }
   .title-toolbar__nav .icon-button:not(:first-child) { display: none; }
   .traffic-light-clearance--toolbar { width: 64px; flex-basis: 64px; }

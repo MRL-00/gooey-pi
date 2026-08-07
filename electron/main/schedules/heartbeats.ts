@@ -78,6 +78,7 @@ export class HeartbeatService {
         ? normalizeHeartbeat(response.data.heartbeat, runtime.runtimeId)
         : null
       if (updated) return updated
+      if (actionValue === 'stop') return heartbeat
       return { ...heartbeat, status: actionValue === 'pause' ? 'paused' : 'active' }
     }
     if (actionValue === 'stop' && this.primeAgentPath) {

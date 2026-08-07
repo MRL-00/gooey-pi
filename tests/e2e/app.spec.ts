@@ -178,6 +178,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { sessionId: 'fixture-session', sessionFile, isStreaming: false, thinkingLevel: 'medium', model: { provider: 'fixture', id: 'fixture-model', name: 'Fixture Model' } } })
+  } else if (command.type === 'get_session_stats') {
+    send({ type: 'response', id: command.id, command: command.type, success: true, data: { contextUsage: { tokens: 12000, contextWindow: 100000, percent: 12 } } })
   } else if (command.type === 'list_schedules') {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
@@ -297,6 +299,33 @@ test.describe('Prime Work desktop smoke', () => {
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
     fixtureSessionFile = ''
+  })
+
+  test('centers the compact context-usage dial', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const dial = page.locator('.context-usage-dial')
+    await expect(dial).toBeVisible()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Refresh context usage')
+    await composer.press('Enter')
+    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
+    await expect(dial).toHaveText('12')
+    const offset = await dial.evaluate((node) => {
+      const textNode = node.querySelector('span')?.firstChild
+      if (!textNode) throw new Error('Missing context dial text')
+      const dialRect = node.getBoundingClientRect()
+      const range = document.createRange()
+      range.selectNodeContents(textNode)
+      const textRect = range.getBoundingClientRect()
+      return {
+        x: (textRect.left + textRect.right - dialRect.left - dialRect.right) / 2,
+        y: (textRect.top + textRect.bottom - dialRect.top - dialRect.bottom) / 2,
+        size: dialRect.width,
+      }
+    })
+    expect(offset.size).toBeCloseTo(26.4, 1)
+    expect(Math.abs(offset.x)).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(offset.y)).toBeLessThanOrEqual(0.5)
   })
 
   test('loads the sandboxed preload bridge and hermetic service data', async () => {

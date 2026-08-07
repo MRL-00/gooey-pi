@@ -368,8 +368,8 @@ else void app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  // On macOS the broker and active agents stay alive when the last window closes.
-  if (process.platform !== 'darwin') app.quit()
+  // Active Prime Work schedules keep the local broker alive. A second launch reopens the window.
+  if (process.platform !== 'darwin' && !automation?.hasActiveSchedules()) app.quit()
 })
 
 app.on('before-quit', (event) => {
@@ -383,8 +383,13 @@ app.on('before-quit', (event) => {
   agents?.beginShutdown()
   beginProcessShutdown()
   downloads?.cancelAll()
-  const storeDrain = store?.beginShutdown() ?? Promise.resolve()
-
   providerService?.cancelAll()
-  void Promise.all([agentScheduleBridge?.stop() ?? Promise.resolve(), automation?.stop() ?? Promise.resolve(), terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses(), storeDrain]).finally(() => app.quit())
+  const stopServices = Promise.all([
+    agentScheduleBridge?.stop() ?? Promise.resolve(),
+    automation?.stop() ?? Promise.resolve(),
+    terminals?.killAll() ?? Promise.resolve(),
+    agents?.stopAll() ?? Promise.resolve(),
+    stopChildProcesses(),
+  ])
+  void stopServices.then(() => store?.beginShutdown()).finally(() => app.quit())
 })
