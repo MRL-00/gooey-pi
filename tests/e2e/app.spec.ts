@@ -662,10 +662,11 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
     await dialog.getByRole('option', { name: 'Beta' }).click()
     await expect(dialog).toHaveCount(0)
-    await expect.poll(() => existsSync(join(fixtureRoot, 'questionnaire-values.json'))).toBe(true)
-    const values = JSON.parse(readFileSync(join(fixtureRoot, 'questionnaire-values.json'), 'utf8')) as Record<string, string>
-    expect(JSON.parse(values['fixture-question-1'])).toMatchObject({ answer: 'Beta', answerSource: 'option', context: 'For the pilot' })
-    expect(JSON.parse(values['fixture-question-2'])).toMatchObject({ answer: 'A custom priority', answerSource: 'freeform' })
+    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8'))).toMatchObject({
+      type: 'prompt',
+      message: 'Ask me which release channel to use',
+    })
     const worked = page.locator('.work-disclosure__button')
     await expect(worked).toContainText(/^Worked for (?:\d+s|\d+m\d{2}s|\d+h\d{2}m\d{2}s)$/)
     await expect(worked).toHaveAttribute('aria-expanded', 'false')
