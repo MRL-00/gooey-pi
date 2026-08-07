@@ -272,6 +272,13 @@ describe('PluginService discovery', () => {
 })
 
 describe('PluginService MCP connections', () => {
+  it('keeps project settings preparation free of synchronous fs syscalls', () => {
+    // renameSync is the one deliberate exception (kept adjacent to its identity
+    // checks); everything else in the settings path must be fs/promises.
+    const source = readFileSync('electron/main/plugins/mcp.ts', 'utf8')
+    expect(source).not.toMatch(/\b(?:existsSync|lstatSync|mkdirSync|realpathSync|readFileSync|writeFileSync|rmSync)\b/)
+  })
+
   it('connects an HTTP MCP server without treating its URL as a package repository', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')

@@ -139,7 +139,7 @@ export class PluginService {
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsTarget = prepareProjectSettingsPath(projectPath)
+      settingsTarget = await prepareProjectSettingsPath(projectPath)
     } else {
       settingsTarget = join(this.agentDir, 'settings.json')
     }
