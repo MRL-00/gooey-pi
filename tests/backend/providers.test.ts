@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,6 +18,14 @@ function serviceWithAuthPath(): { providerService: PrimeProviderService; authPat
   dirs.push(dir)
   const authPath = join(dir, 'auth.json')
   return { providerService: new PrimeProviderService({ authPath, modelsPath: join(dir, 'models.json') }), authPath }
+}
+
+function serviceWithModels(config: unknown): PrimeProviderService {
+  const dir = mkdtempSync(join(tmpdir(), 'prime-work-provider-models-'))
+  dirs.push(dir)
+  const modelsPath = join(dir, 'models.json')
+  writeFileSync(modelsPath, JSON.stringify(config))
+  return new PrimeProviderService({ authPath: join(dir, 'auth.json'), modelsPath })
 }
 
 describe('Prime provider adapter', () => {
@@ -81,6 +89,22 @@ describe('Prime provider adapter', () => {
 
     expect(anthropic?.enabled).toBe(false)
     expect(typeof anthropic?.configured).toBe('boolean')
+  })
+
+  it('reports DeepSeek V4 Flash non-think, high, and max reasoning levels from custom config', async () => {
+    const catalog = await serviceWithModels({ providers: {
+      'deepseek-linux': {
+        baseUrl: 'http://127.0.0.1:8118/v1', api: 'openai-completions', apiKey: 'prime-local',
+        models: [{
+          id: 'DeepSeek-V4-Flash', reasoning: true,
+          thinkingLevelMap: { minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
+          compat: { supportsDeveloperRole: false, supportsReasoningEffort: true, thinkingFormat: 'deepseek' },
+        }],
+      },
+    }}).catalog(true)
+    const deepseek = catalog.models.find((model) => model.provider === 'deepseek-linux' && model.id === 'DeepSeek-V4-Flash')
+
+    expect(deepseek?.availableThinkingLevels).toEqual(['off', 'high', 'xhigh'])
   })
 
   it('stores API keys through Prime auth storage without exposing them in the catalog', async () => {
