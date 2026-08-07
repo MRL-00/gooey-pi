@@ -1,4 +1,4 @@
-import type { MessageEnterAction, PromptDeliveryIntent } from '@/types/api'
+import type { PromptDeliveryIntent } from '@/types/api'
 
 export interface MessageShortcutEvent {
   key: string
@@ -9,8 +9,7 @@ export interface MessageShortcutEvent {
   isComposing: boolean
 }
 
-export function messageActionForKey(event: MessageShortcutEvent, enterAction: MessageEnterAction): PromptDeliveryIntent | null {
+export function messageActionForKey(event: MessageShortcutEvent): PromptDeliveryIntent | null {
   if (event.key !== 'Enter' || event.isComposing || event.shiftKey || event.metaKey || event.altKey) return null
-  if (!event.ctrlKey) return enterAction
-  return enterAction === 'queue' ? 'steer' : 'queue'
+  return event.ctrlKey ? 'steer' : 'queue'
 }

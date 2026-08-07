@@ -174,17 +174,20 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         return
       }
       if (intent === 'steer') {
+        const sentAt = Date.now()
+        const userMessageId = `user-${sentAt}`
+        workspace.setMessages((items) => [...items, { id: userMessageId, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }])
+        if (currentWorkspace.sessionFile) {
+          const sentAtIso = new Date(sentAt).toISOString()
+          setSessions((items) => items.map((session) => session.filePath === currentWorkspace.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
+        }
         try {
           await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
-          if (workspace.workspaceRef.current.generation !== currentWorkspace.generation) return
-          const sentAt = Date.now()
-          workspace.setMessages((items) => [...items, { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }])
-          if (currentWorkspace.sessionFile) {
-            const sentAtIso = new Date(sentAt).toISOString()
-            setSessions((items) => items.map((session) => session.filePath === currentWorkspace.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
-          }
           return
         } catch (error) {
+          if (workspace.workspaceRef.current.generation === currentWorkspace.generation) {
+            workspace.setMessages((items) => items.filter((message) => message.id !== userMessageId))
+          }
           reportError(error)
           throw error
         }

@@ -7,20 +7,15 @@ const event = (overrides: Partial<MessageShortcutEvent> = {}): MessageShortcutEv
 
 describe('message shortcuts', () => {
   it('defaults Enter to queue and Ctrl+Enter to steer', () => {
-    expect(messageActionForKey(event(), 'queue')).toBe('queue')
-    expect(messageActionForKey(event({ ctrlKey: true }), 'queue')).toBe('steer')
-  })
-
-  it('swaps the actions as one collision-free setting', () => {
-    expect(messageActionForKey(event(), 'steer')).toBe('steer')
-    expect(messageActionForKey(event({ ctrlKey: true }), 'steer')).toBe('queue')
+    expect(messageActionForKey(event())).toBe('queue')
+    expect(messageActionForKey(event({ ctrlKey: true }))).toBe('steer')
   })
 
   it('leaves newlines, composition, and unsupported modifiers alone', () => {
-    expect(messageActionForKey(event({ shiftKey: true }), 'queue')).toBeNull()
-    expect(messageActionForKey(event({ isComposing: true }), 'queue')).toBeNull()
-    expect(messageActionForKey(event({ metaKey: true }), 'queue')).toBeNull()
-    expect(messageActionForKey(event({ altKey: true }), 'queue')).toBeNull()
-    expect(messageActionForKey(event({ key: 'a' }), 'queue')).toBeNull()
+    expect(messageActionForKey(event({ shiftKey: true }))).toBeNull()
+    expect(messageActionForKey(event({ isComposing: true }))).toBeNull()
+    expect(messageActionForKey(event({ metaKey: true }))).toBeNull()
+    expect(messageActionForKey(event({ altKey: true }))).toBeNull()
+    expect(messageActionForKey(event({ key: 'a' }))).toBeNull()
   })
 })

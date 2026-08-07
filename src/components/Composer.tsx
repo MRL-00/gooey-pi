@@ -32,7 +32,8 @@ interface ComposerProps {
   fastSupported: boolean
   fastAvailable: boolean
   imageInputSupported: boolean
-  messageEnterAction: MessageEnterAction
+  /** @deprecated Shortcuts are fixed: Enter queues and Ctrl+Enter steers. */
+  messageEnterAction?: MessageEnterAction
   contextUsage?: PrimeContextUsage
   skills: SkillRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
@@ -105,7 +106,6 @@ export const Composer = memo(function Composer({
   fastSupported,
   fastAvailable,
   imageInputSupported,
-  messageEnterAction,
   contextUsage,
   skills,
   annotations = EMPTY_ANNOTATIONS,
@@ -388,7 +388,6 @@ export const Composer = memo(function Composer({
                 shiftKey: event.shiftKey,
                 isComposing: event.nativeEvent.isComposing,
               },
-              messageEnterAction,
             )
             if (intent) {
               event.preventDefault()

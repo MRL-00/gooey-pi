@@ -182,8 +182,17 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { contextUsage: { tokens: 12000, contextWindow: 100000, percent: 12 } } })
   } else if (command.type === 'list_schedules') {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: { jobs: [] } })
+  } else if (command.type === 'steer') {
+    fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'steer-args.json'))}, JSON.stringify(command))
+    setTimeout(() => send({ type: 'response', id: command.id, command: command.type, success: true, data: {} }), 500)
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
+    if (typeof command.message === 'string' && command.message.includes('stay busy')) {
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
+      send({ type: 'agent_start' })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      return
+    }
     const isQuestionnaire = typeof command.message === 'string' && command.message.includes('two questions')
     pendingQuestionnaire = isQuestionnaire ? { expected: 2, values: {} } : undefined
     fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
@@ -263,7 +272,7 @@ test.describe('Prime Work desktop smoke', () => {
   test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
     app = undefined
-    const activeSession = testInfo.title === 'queues a reply to a session that is active outside Prime Work'
+    const activeSession = testInfo.title === 'defers a reply to a session that is active outside Prime Work'
       || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
     let startupError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -300,6 +309,23 @@ test.describe('Prime Work desktop smoke', () => {
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
     fixtureSessionFile = ''
+  })
+
+  test('steers the active turn with Ctrl+Enter', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('stay busy while I steer')
+    await composer.press('Enter')
+    await expect(page.getByRole('button', { name: 'Stop Prime' })).toBeVisible()
+
+    await composer.fill('change direction now')
+    await composer.press('Control+Enter')
+    await expect(page.locator('.message--user').filter({ hasText: 'change direction now' })).toBeVisible()
+
+    const marker = join(fixtureRoot, 'steer-args.json')
+    await expect.poll(() => existsSync(marker)).toBe(true)
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({ type: 'steer', message: 'change direction now' })
+    await expect(composer).toHaveValue('')
   })
 
   test('centers the compact context-usage dial', async () => {
@@ -410,22 +436,17 @@ test.describe('Prime Work desktop smoke', () => {
     expect(deniedAccess.result).toMatch(/IPC sender is not authorized/i)
   })
 
-  test('queues a reply to a session that is active outside Prime Work', async () => {
+  test('defers a reply to a session that is active outside Prime Work', async () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Queue this follow-up from Prime Work')
     await composer.press('Enter')
 
-    const marker = join(fixtureRoot, 'follow-up-args.json')
-    await expect.poll(() => existsSync(marker)).toBe(true)
-    expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({
-      type: 'follow_up',
-      activeSessionId: 'active-fixture',
-      message: 'Queue this follow-up from Prime Work',
-    })
-    const ackMarker = join(fixtureRoot, 'follow-up-ack.json')
-    await expect.poll(() => existsSync(ackMarker)).toBe(true)
-    expect(JSON.parse(readFileSync(ackMarker, 'utf8'))).toMatchObject({ type: 'ack_result' })
-    await expect(page.locator('.transcript').getByText('The external Prime Agent received the queued reply.')).toBeVisible()
+    const queuedMessages = page.getByRole('region', { name: 'Queued messages' })
+    await expect(queuedMessages.locator('.composer-queue__item')).toHaveCount(1)
+    await expect(queuedMessages).toContainText('Queue this follow-up from Prime Work')
+    expect(existsSync(join(fixtureRoot, 'follow-up-args.json'))).toBe(false)
+    expect(existsSync(join(fixtureRoot, 'follow-up-ack.json'))).toBe(false)
+    await expect(page.locator('.transcript').getByText('The external Prime Agent received the queued reply.')).toHaveCount(0)
     await expect(page.getByText(/Prime Agent RPC exited|Request failed/)).toHaveCount(0)
   })
 
@@ -741,10 +762,10 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toContainText('Question 2 of 2')
 
     await dialog.getByRole('option', { name: 'Safety' }).click()
-    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('Control+ArrowLeft')
     await expect(dialog).toContainText('Question 1 of 2')
     await expect(dialog.getByRole('textbox', { name: 'Additional context' })).toHaveValue('For the pilot')
-    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('Control+ArrowRight')
     await expect(dialog).toContainText('Question 2 of 2')
 
     await dialog.getByRole('option', { name: 'Other (type your own answer)' }).click()
