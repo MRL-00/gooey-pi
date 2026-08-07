@@ -145,7 +145,11 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
 // another entrypoint. A malformed or missing argv[1] must not skip the checks.
 export function invokedAsScript() {
   if (!process.argv[1]) return true
-  try { return import.meta.url === pathToFileURL(resolve(process.argv[1])).href } catch { return true }
+  try {
+    return import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+  } catch {
+    return true
+  }
 }
 
 if (invokedAsScript()) {
