@@ -33,6 +33,20 @@ describe('transcript graph budgets', () => {
     const transcript = await readTranscript(file, false)
     expect(transcript.map((message) => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
   })
+
+  it('renders the last renderable branch when the file ends with a rootless non-renderable record', async () => {
+    const file = makeSessionFile()
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'session-1', cwd: '/tmp' }),
+      JSON.stringify({ type: 'message', id: 'user-1', parentId: null, message: { role: 'user', content: 'question' } }),
+      JSON.stringify({ type: 'message', id: 'assistant-1', parentId: 'user-1', message: { role: 'assistant', content: 'answer' } }),
+      JSON.stringify({ type: 'event', id: 'stray', parentId: null, name: 'housekeeping' }),
+      '',
+    ].join('\n'))
+
+    const transcript = await readTranscript(file, false)
+    expect(transcript.map((message) => message.id)).toEqual(['user-1', 'assistant-1'])
+  })
 })
 
 describe('persisted compaction transcript entries', () => {

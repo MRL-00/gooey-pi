@@ -219,7 +219,6 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       if (oldestEdge === undefined) break
       parentEdges.delete(oldestEdge)
     }
-    leafId = entry.id
     if (entry.type !== 'message' && entry.type !== 'compaction' && !(entry.type === 'custom_message' && entry.display === true)) continue
     const existing = entries.get(entry.id)
     if (existing) {
@@ -229,6 +228,9 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     const bytes = Buffer.byteLength(line, 'utf8')
     entries.set(entry.id, { id: entry.id, parentId, entry, bytes })
     graphBytes += bytes
+    // The leaf is the last *renderable* record: a trailing non-renderable
+    // record (for example one with parentId: null) must not select the branch.
+    leafId = entry.id
     while (entries.size > MAX_TRANSCRIPT_GRAPH_RECORDS || graphBytes > MAX_TRANSCRIPT_GRAPH_BYTES) {
       const oldestId = entries.keys().next().value as string | undefined
       if (oldestId === undefined) break
@@ -248,7 +250,15 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     }
     return collected
   }
-  const branch = walkBranch(leafId)
+  let branch = walkBranch(leafId)
+  if (!branch.length && entries.size) {
+    // The active branch dead-ended before reaching any retained record; fall
+    // back to the most recently retained renderable record instead of
+    // rendering an empty transcript.
+    let fallbackId: string | null = null
+    for (const id of entries.keys()) fallbackId = id
+    branch = walkBranch(fallbackId)
+  }
   branch.reverse()
   const transcript: TranscriptMessage[] = []
   let activeAssistant: TranscriptMessage | undefined
