@@ -80,7 +80,7 @@ export function requireWebUrl(value: unknown, options: { mailto?: boolean; max?:
 export function requireGitPath(value: unknown, label = 'path'): string {
   const input = requireString(value, label, { min: 1, max: 4096 })
   if (isAbsolute(input)) throw new TypeError(`${label} must be a relative path`)
-  const parts = input.split('/')
+  const parts = input.split(/[\\/]/)
   if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new TypeError(`${label} contains an invalid segment`)
   return input
 }

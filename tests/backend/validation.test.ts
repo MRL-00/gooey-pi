@@ -74,12 +74,16 @@ describe('requireGitPath', () => {
     }
   })
 
-  it('splits only on forward slashes, letting backslash segments through', () => {
-    // BUG: pins current behavior. Backslash separators are not treated as
-    // segment boundaries, so "..\\" traversal survives on Windows-style input.
-    // Phase 7 owns the fix (split on /[\\/]/ in requireGitPath).
-    expect(requireGitPath('a\\..\\b')).toBe('a\\..\\b')
-    expect(requireGitPath('..\\evil')).toBe('..\\evil')
+  it('rejects backslash traversal segments', () => {
+    expect(() => requireGitPath('..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src\\..\\..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src/..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('a\\..\\b')).toThrow(/invalid segment/)
+  })
+
+  it('rejects empty and dot segments regardless of separator', () => {
+    expect(() => requireGitPath('src//file.ts')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src\\.\\file.ts')).toThrow(/invalid segment/)
   })
 
   it('rejects non-strings and NUL bytes', () => {
