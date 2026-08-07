@@ -23,4 +23,9 @@ describe('renderer content bounds', () => {
     expect(boundLines('a\nb\nc', 100, 2)).toEqual({ lines: ['a', 'b'], truncated: true })
     expect(boundLines('a\nb', 100, 3)).toEqual({ lines: ['a', 'b'], truncated: false })
   })
+
+  it('does not report truncation when text exactly fills the line limit and ends in a newline', () => {
+    expect(boundLines('a\nb\n', 100, 2)).toEqual({ lines: ['a', 'b'], truncated: false })
+    expect(boundLines('a\nb\n\n', 100, 2)).toEqual({ lines: ['a', 'b'], truncated: true })
+  })
 })
