@@ -15,6 +15,7 @@ import { INSPECTOR_DEFAULT, INSPECTOR_MIN, TERMINAL_DEFAULT, TERMINAL_MIN, usePa
 import { usePluginSkills } from '@/hooks/usePluginSkills'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useSidebarActions } from '@/hooks/useSidebarActions'
+import { useStableCallback } from '@/hooks/useStableCallback'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
 import type { GitStatus, McpConnectionInput, NativeHeartbeatRecord, ProjectRecord, PromptDeliveryIntent, PromptImage, AutomationScheduleRecord, ScheduleInput, SchedulePatch, ScheduleTiming, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 
@@ -396,20 +397,22 @@ export default function App() {
     onArchiveSession: (session) => setSessionArchived(session, true),
   })
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (document.querySelector('.modal[role="dialog"][aria-modal="true"]')) { if (event.metaKey || event.ctrlKey) event.preventDefault(); return }
-      const command = event.metaKey || event.ctrlKey
-      if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(true) }
-      else if (command && event.key.toLowerCase() === 'n') { event.preventDefault(); newSession() }
-      else if (command && event.key.toLowerCase() === 'b' && event.shiftKey) { event.preventDefault(); openBrowser() }
-      else if (command && event.key.toLowerCase() === 'b') { event.preventDefault(); toggleSidebar() }
-      else if (command && event.key.toLowerCase() === 'j') { event.preventDefault(); void toggleTerminal() }
-      else if (event.metaKey && event.key === ',') { event.preventDefault(); navigate('settings') }
-      else if (event.key === 'Escape') setPaletteOpen(false)
-    }
-    window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown)
+  const onAppKeyDown = useStableCallback((event: KeyboardEvent) => {
+    if (document.querySelector('.modal[role="dialog"][aria-modal="true"]')) { if (event.metaKey || event.ctrlKey) event.preventDefault(); return }
+    const command = event.metaKey || event.ctrlKey
+    if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(true) }
+    else if (command && event.key.toLowerCase() === 'n') { event.preventDefault(); newSession() }
+    else if (command && event.key.toLowerCase() === 'b' && event.shiftKey) { event.preventDefault(); openBrowser() }
+    else if (command && event.key.toLowerCase() === 'b') { event.preventDefault(); toggleSidebar() }
+    else if (command && event.key.toLowerCase() === 'j') { event.preventDefault(); void toggleTerminal() }
+    else if (event.metaKey && event.key === ',') { event.preventDefault(); navigate('settings') }
+    else if (event.key === 'Escape') setPaletteOpen(false)
   })
+
+  useEffect(() => {
+    window.addEventListener('keydown', onAppKeyDown)
+    return () => window.removeEventListener('keydown', onAppKeyDown)
+  }, [onAppKeyDown])
 
   const busy = Boolean(workspace.runtime?.isStreaming || workspace.runtime?.isCompacting || workspace.messages.some((message) => message.streaming))
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
