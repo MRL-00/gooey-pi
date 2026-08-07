@@ -159,18 +159,36 @@ function filterDriverFromKey(key: string): string | undefined {
   return match?.[1]
 }
 
-async function filterOverrides(cwd: string): Promise<string[]> {
-  const result = await runGit(cwd, ['config', '--includes', '--null', '--name-only', '--list'], {
+/**
+ * Reads the repository's effective configuration in one spawn. With
+ * `restrictedGitEnvironment` the system and global scopes are disabled, so
+ * this reflects the repository scope (plus its includes and the hardened
+ * command-line overrides). Later values win, matching Git precedence.
+ */
+async function repositoryConfig(cwd: string): Promise<Map<string, string>> {
+  const result = await runGit(cwd, ['config', '--includes', '--null', '--list'], {
     timeoutMs: 5_000,
     maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
   })
-  requireProcessSuccess('Git filter configuration inspection', result)
-  const drivers = new Set<string>()
+  requireProcessSuccess('Git configuration inspection', result)
+  const config = new Map<string, string>()
   let cursor = 0
   while (cursor < result.stdout.length) {
     const field = nextNulField(result.stdout, cursor)
     cursor = field.cursor
-    const driver = filterDriverFromKey(field.value)
+    if (!field.value) continue
+    const separator = field.value.indexOf('\n')
+    const key = separator < 0 ? field.value : field.value.slice(0, separator)
+    const value = separator < 0 ? '' : field.value.slice(separator + 1)
+    config.set(key, value)
+  }
+  return config
+}
+
+function filterOverridesFromConfig(config: ReadonlyMap<string, string>): string[] {
+  const drivers = new Set<string>()
+  for (const key of config.keys()) {
+    const driver = filterDriverFromKey(key)
     if (!driver) continue
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(driver)) throw new Error('Git filter configuration contains an unsafe driver name')
     drivers.add(driver)
@@ -188,46 +206,40 @@ async function filterOverrides(cwd: string): Promise<string[]> {
   return overrides
 }
 
-
-
 function validIdentityValue(value: string): string | undefined {
   const trimmed = value.trim()
   if (!trimmed || trimmed.length > GIT_IDENTITY_VALUE_LIMIT || /[\0\r\n]/.test(trimmed)) return undefined
   return trimmed
 }
 
-async function readConfigValue(
-  cwd: string,
-  scope: '--local' | '--global',
-  key: 'user.name' | 'user.email',
-): Promise<string | undefined> {
+async function readGlobalConfigValue(cwd: string, key: 'user.name' | 'user.email'): Promise<string | undefined> {
   const env = restrictedGitEnvironment()
-  if (scope === '--global') {
-    delete env.GIT_CONFIG_GLOBAL
-    for (const name of process.platform === 'win32' ? ['USERPROFILE', 'HOME', 'XDG_CONFIG_HOME'] : ['HOME', 'XDG_CONFIG_HOME']) {
-      const value = process.env[name]
-      if (value !== undefined) env[name] = value
-    }
+  delete env.GIT_CONFIG_GLOBAL
+  for (const name of process.platform === 'win32' ? ['USERPROFILE', 'HOME', 'XDG_CONFIG_HOME'] : ['HOME', 'XDG_CONFIG_HOME']) {
+    const value = process.env[name]
+    if (value !== undefined) env[name] = value
   }
-  const result = await runProcess('git', hardenedGitArgs(['config', scope, '--no-includes', '--get', key]), {
+  const result = await runProcess('git', hardenedGitArgs(['config', '--global', '--no-includes', '--get', key]), {
     cwd,
     timeoutMs: 5_000,
     maxBytes: GIT_CONFIG_OUTPUT_LIMIT,
     env,
   })
   if (result.code === 1 && !result.timedOut && !result.outputExceeded) return undefined
-  requireProcessSuccess(`Git ${scope.slice(2)} identity inspection`, result)
+  requireProcessSuccess('Git global identity inspection', result)
   return validIdentityValue(result.stdout)
 }
 
-async function commitIdentityOverrides(cwd: string): Promise<string[]> {
-  const [localName, localEmail] = await Promise.all([
-    readConfigValue(cwd, '--local', 'user.name'),
-    readConfigValue(cwd, '--local', 'user.email'),
-  ])
+/**
+ * Derives commit identity from the already-fetched repository configuration;
+ * only a missing repository-scope value costs an extra (global-scope) spawn.
+ */
+async function commitIdentityOverrides(cwd: string, config: ReadonlyMap<string, string>): Promise<string[]> {
+  const localName = validIdentityValue(config.get('user.name') ?? '')
+  const localEmail = validIdentityValue(config.get('user.email') ?? '')
   const [globalName, globalEmail] = await Promise.all([
-    localName ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.name'),
-    localEmail ? Promise.resolve(undefined) : readConfigValue(cwd, '--global', 'user.email'),
+    localName ? Promise.resolve(undefined) : readGlobalConfigValue(cwd, 'user.name'),
+    localEmail ? Promise.resolve(undefined) : readGlobalConfigValue(cwd, 'user.email'),
   ])
   const name = localName ?? globalName
   const email = localEmail ?? globalEmail
@@ -280,8 +292,33 @@ async function rejectFilteredPaths(cwd: string, paths: readonly string[], overri
   throw new Error(`Git operation blocked because clean/smudge filters cannot run safely for: ${suffix}. Use a trusted Git client with the required filter (for example Git LFS).`)
 }
 
+interface RepositoryContext {
+  /** Canonical, authorized repository toplevel; every follow-up command runs here. */
+  cwd: string
+  /** Filter-neutralizing config overrides derived from the repository configuration. */
+  overrides: string[]
+  /** Effective repository configuration from the single per-operation config spawn. */
+  config: Map<string, string>
+}
+
 export class GitService {
   constructor(private readonly authorizeCwd: (cwd: string) => Promise<string>) {}
+
+  /**
+   * Entry guard for every repository operation: authorizes and canonicalizes
+   * the toplevel, fetches the repository configuration once, derives the
+   * filter-neutralizing overrides, and — when the operation names its input
+   * paths up front — rejects paths that require clean/smudge filters. The
+   * whole call graph of one operation reuses this context instead of
+   * re-resolving the toplevel or re-reading the configuration.
+   */
+  private async withRepositoryGuards(cwdValue: unknown, paths?: readonly string[]): Promise<RepositoryContext> {
+    const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    const config = await repositoryConfig(cwd)
+    const overrides = filterOverridesFromConfig(config)
+    if (paths?.length) await rejectFilteredPaths(cwd, paths, overrides)
+    return { cwd, overrides, config }
+  }
 
   async branch(cwd: string): Promise<string | undefined> {
     try {
@@ -295,8 +332,7 @@ export class GitService {
 
   async status(cwdValue: unknown): Promise<GitStatus> {
     try {
-      const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
-      const overrides = await filterOverrides(cwd)
+      const { cwd, overrides } = await this.withRepositoryGuards(cwdValue)
       const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
       requireProcessSuccess('Git status', statusResult)
       await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
@@ -313,16 +349,14 @@ export class GitService {
   }
 
   async diff(cwdValue: unknown, pathValue?: unknown, stagedValue?: unknown): Promise<GitDiff> {
-    const cwd = await this.repositoryCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
     const path = pathValue === undefined ? undefined : requireGitPath(pathValue)
     if (stagedValue !== undefined && typeof stagedValue !== 'boolean') throw new TypeError('staged must be a boolean')
     const staged = stagedValue === true
     const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--ignore-submodules=all']
     if (staged) args.push('--cached')
     if (path) args.push('--', path)
-    const overrides = await filterOverrides(cwd)
-    if (path) await rejectFilteredPaths(cwd, [path], overrides)
-    else {
+    const { cwd, overrides } = await this.withRepositoryGuards(cwdValue, path ? [path] : undefined)
+    if (!path) {
       const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
       requireProcessSuccess('Git status', statusResult)
       await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
@@ -339,13 +373,12 @@ export class GitService {
   }
 
   async stage(cwd: unknown, paths: unknown): Promise<boolean> {
-    return this.mutate(cwd, paths, ['add'], true)
+    return this.mutate(cwd, paths, ['add'])
   }
 
   async unstage(cwdValue: unknown, pathsValue: unknown): Promise<boolean> {
-    const cwd = await this.validCwd(cwdValue)
     const paths = this.validPaths(pathsValue)
-    const overrides = await filterOverrides(cwd)
+    const { cwd, overrides } = await this.withRepositoryGuards(cwdValue)
     const head = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 }, overrides)
     if (head.timedOut || head.outputExceeded || (head.code !== 0 && head.code !== 1)) requireProcessSuccess('Git HEAD inspection', head)
     const args = head.code === 0
@@ -357,14 +390,17 @@ export class GitService {
   }
 
   async restore(cwd: unknown, paths: unknown): Promise<boolean> {
-    return this.mutate(cwd, paths, ['restore', '--worktree'], true)
+    return this.mutate(cwd, paths, ['restore', '--worktree'])
   }
 
   async commit(cwdValue: unknown, messageValue: unknown): Promise<{ ok: boolean; output: string }> {
-    const cwd = await this.validCwd(cwdValue)
     const message = requireString(messageValue, 'commit message', { min: 1, max: 20_000, trim: true })
-    const overrides = [...await filterOverrides(cwd), ...await commitIdentityOverrides(cwd)]
-    const result = await runGit(cwd, ['commit', '--no-verify', '--no-gpg-sign', '--no-status', '-m', message], { timeoutMs: 2 * 60_000, maxBytes: 64 * 1024 }, overrides)
+    // No rejectFilteredPaths here on purpose: commit records already-staged
+    // index content and never runs clean/smudge filters — the mutations that
+    // feed the index (stage/restore/unstage) are the filter-guarded surface.
+    const context = await this.withRepositoryGuards(cwdValue)
+    const overrides = [...context.overrides, ...await commitIdentityOverrides(context.cwd, context.config)]
+    const result = await runGit(context.cwd, ['commit', '--no-verify', '--no-gpg-sign', '--no-status', '-m', message], { timeoutMs: 2 * 60_000, maxBytes: 64 * 1024 }, overrides)
     if (result.outputExceeded) return { ok: false, output: 'Git commit output exceeded the safety limit; the commit result is unknown. Refresh status before retrying.' }
     if (result.timedOut) return { ok: false, output: 'Git commit timed out; the commit result is unknown. Refresh status before retrying.' }
     const output = stripAnsi(`${result.stdout}${result.stderr}`).trim()
@@ -380,20 +416,14 @@ export class GitService {
     return this.authorizeCwd(repositoryRoot)
   }
 
-  private async validCwd(value: unknown): Promise<string> {
-    return this.repositoryCwd(requireString(value, 'cwd', { min: 1, max: 4096 }))
-  }
-
   private validPaths(value: unknown): string[] {
     if (!Array.isArray(value) || value.length < 1 || value.length > 500) throw new TypeError('paths must be a non-empty array of at most 500 paths')
     return value.map((path, index) => requireGitPath(path, `paths[${index}]`))
   }
 
-  private async mutate(cwdValue: unknown, pathsValue: unknown, command: string[], neutralizeFilters: boolean): Promise<boolean> {
-    const cwd = await this.validCwd(cwdValue)
+  private async mutate(cwdValue: unknown, pathsValue: unknown, command: string[]): Promise<boolean> {
     const paths = this.validPaths(pathsValue)
-    const overrides = neutralizeFilters ? await filterOverrides(cwd) : []
-    if (neutralizeFilters) await rejectFilteredPaths(cwd, paths, overrides)
+    const { cwd, overrides } = await this.withRepositoryGuards(cwdValue, paths)
     const result = await runGit(cwd, [...command, '--', ...paths], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
     requireProcessSuccess(`Git ${command[0]}`, result)
     return true
