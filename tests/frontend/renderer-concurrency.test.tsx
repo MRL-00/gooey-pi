@@ -11,7 +11,7 @@ import { useExtensionUi } from '../../src/hooks/useExtensionUi'
 import { usePluginSkills } from '../../src/hooks/usePluginSkills'
 import { useWorkspaceRuntime } from '../../src/hooks/useWorkspaceRuntime'
 import { DEFAULT_SETTINGS } from '../../src/lib/data'
-import type { AppSettings, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, SkillRecord, TranscriptMessage } from '../../src/types/api'
+import type { AppSettings, PluginCatalog, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, SkillRecord, TranscriptMessage } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -481,7 +481,7 @@ describe('extension UI runtime ownership', () => {
 
 describe('plugin request ownership', () => {
   it('rejects stale global, project, refresh, generation, and path completions', async () => {
-    const requests = Array.from({ length: 4 }, () => deferred<SkillRecord[]>())
+    const requests = Array.from({ length: 4 }, () => deferred<PluginCatalog>())
     const list = vi.fn()
     requests.forEach((request) => list.mockImplementationOnce(() => request.promise))
     const bridge = { plugins: { list } } as unknown as PrimeWorkApi
@@ -497,17 +497,17 @@ describe('plugin request ownership', () => {
     await act(async () => { root.render(<PluginProbe scope="/project" generation={1} />) })
     expect(list).toHaveBeenNthCalledWith(2, '/project')
 
-    await act(async () => { requests[0].resolve([skill('stale-global')]); await requests[0].promise })
+    await act(async () => { requests[0].resolve({ skills: [skill('stale-global')], warnings: [] }); await requests[0].promise })
     expect(state.skills).toEqual([])
-    await act(async () => { requests[1].resolve([skill('project-one')]); await requests[1].promise })
+    await act(async () => { requests[1].resolve({ skills: [skill('project-one')], warnings: [] }); await requests[1].promise })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-one'])
 
     let refresh!: Promise<void>
     await act(async () => { refresh = state.refresh(); await Promise.resolve() })
     await act(async () => { root.render(<PluginProbe scope="/project" generation={2} />) })
-    await act(async () => { requests[2].resolve([skill('stale-refresh')]); await refresh })
+    await act(async () => { requests[2].resolve({ skills: [skill('stale-refresh')], warnings: [] }); await refresh })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-one'])
-    await act(async () => { requests[3].resolve([skill('project-two')]); await requests[3].promise })
+    await act(async () => { requests[3].resolve({ skills: [skill('project-two')], warnings: [] }); await requests[3].promise })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-two'])
     expect(reportError).not.toHaveBeenCalled()
   })

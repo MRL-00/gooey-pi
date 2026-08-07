@@ -22,7 +22,7 @@ describe('PluginService discovery', () => {
     const duplicate = service.refresh()
 
     expect(duplicate).toBe(first)
-    await expect(first).resolves.toEqual(expect.any(Array))
+    await expect(first).resolves.toEqual({ skills: expect.any(Array), warnings: [] })
   })
 
   it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
@@ -34,7 +34,7 @@ describe('PluginService discovery', () => {
     let discoveries = 0
     const service = new PluginService(null, async (path) => realpathSync(path), {
       agentDir,
-      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return [] },
+      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return { skills: [], warnings: [] } },
     })
 
     await Promise.all([service.list(project), service.list(alias)])
@@ -79,10 +79,10 @@ describe('PluginService discovery', () => {
         discoveries += 1
         discoveredRoots.add(projectPath)
         await discoveryGate
-        return [{
+        return { skills: [{
           id: 'project-prompt', name: 'Project prompt', description: '', kind: 'prompt',
           location: 'project', path: realpathSync(pluginPrompt), enabled: true,
-        }]
+        }], warnings: [] }
       },
     })
 
@@ -110,7 +110,7 @@ describe('PluginService discovery', () => {
         active += 1
         await discoveryGate
         active -= 1
-        return []
+        return { skills: [], warnings: [] }
       },
     })
 
@@ -141,13 +141,34 @@ describe('PluginService discovery', () => {
         peak = Math.max(peak, active)
         await new Promise((resolveWait) => setTimeout(resolveWait, 20))
         active -= 1
-        return []
+        return { skills: [], warnings: [] }
       },
     })
 
     await Promise.all(Array.from({ length: 8 }, (_, index) => service.list(join(root, `project-${index}`))))
 
     expect(peak).toBe(2)
+  })
+
+  it('surfaces a structured warning for invalid settings.json instead of silently hiding plugins', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const skillDir = join(agentDir, 'skills', 'local')
+    mkdirSync(skillDir, { recursive: true }); mkdirSync(projectAgentDir, { recursive: true })
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: local\n---\nLocal skill')
+    writeFileSync(join(agentDir, 'settings.json'), '{ this is not json')
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify(['not', 'an', 'object']))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const catalog = await service.list(project)
+
+    expect(catalog.warnings).toEqual([
+      { scope: 'user', path: join(agentDir, 'settings.json'), message: 'settings.json invalid — plugins hidden' },
+      { scope: 'project', path: join(realpathSync(project), '.prime', 'agent', 'settings.json'), message: 'settings.json invalid — plugins hidden' },
+    ])
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'local', kind: 'skill' }))
   })
 
   it('retains reveal authorization independently for user and project catalogs', async () => {
@@ -217,8 +238,8 @@ describe('PluginService discovery', () => {
     const service = new PluginService(null, async (path) => realpathSync(path), {
       agentDir,
       discover: async (_agentDirectory, safeProjectPath) => safeProjectPath
-        ? [{ id: `skill-${safeProjectPath}`, name: 'Prompt', description: '', kind: 'prompt', location: 'project', path: join(safeProjectPath, 'prompt.md'), enabled: true }]
-        : [],
+        ? { skills: [{ id: `skill-${safeProjectPath}`, name: 'Prompt', description: '', kind: 'prompt', location: 'project', path: join(safeProjectPath, 'prompt.md'), enabled: true }], warnings: [] }
+        : { skills: [], warnings: [] },
     })
 
     for (const project of projects) await service.list(project)
@@ -240,7 +261,7 @@ describe('PluginService discovery', () => {
     writeFileSync(ancestorSkill, '---\nname: ancestor\n---\nAncestor skill')
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
 
-    const records = await service.list(project)
+    const { skills: records } = await service.list(project)
 
     expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
     expect(records.some((record) => record.path === realpathSync(ancestorSkill))).toBe(false)
@@ -264,7 +285,7 @@ describe('PluginService discovery', () => {
     }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
 
-    const records = await service.list(project)
+    const { skills: records } = await service.list(project)
 
     expect(records).toContainEqual(expect.objectContaining({ kind: 'prompt', location: 'project', path: realpathSync(inside) }))
     expect(records.some((record) => record.path === outside || record.path === join(notes, 'linked-outside.md'))).toBe(false)
@@ -297,7 +318,7 @@ describe('PluginService MCP connections', () => {
     const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
     expect(settings.defaultModel).toBe('test/model')
     expect(settings.mcpServers['local-studio']).toEqual({ type: 'http', url: 'http://127.0.0.1:3333/mcp', enabled: true })
-    const record = (await service.list()).find((item) => item.name === 'local-studio')
+    const record = (await service.list()).skills.find((item) => item.name === 'local-studio')
     expect(record).toMatchObject({ kind: 'mcp', location: 'user', enabled: true, source: 'http://127.0.0.1:3333' })
     expect(record?.description).not.toContain('/mcp')
   })
@@ -329,7 +350,7 @@ describe('PluginService MCP connections', () => {
       args: ['-y', '@modelcontextprotocol/server-filesystem', project],
       enabled: true,
     })
-    expect((await service.list(project)).find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
+    expect((await service.list(project)).skills.find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
   })
 
   it('rejects project MCP settings paths that traverse repository symlinks', async () => {

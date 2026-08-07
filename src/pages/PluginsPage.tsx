@@ -1,6 +1,6 @@
-import { BookOpen, Check, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react'
+import { AlertTriangle, BookOpen, Check, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { McpConnectionInput, SkillRecord } from '@/types/api'
+import type { McpConnectionInput, PluginWarning, SkillRecord } from '@/types/api'
 import { EmptyState, Modal, Segmented } from '@/components/ui'
 
 type DirectoryTab = 'plugins' | 'skills'
@@ -21,6 +21,7 @@ function SkillIcon({ skill }: { skill: SkillRecord }) {
 
 interface PluginsPageProps {
   skills: SkillRecord[]
+  warnings: PluginWarning[]
   loading: boolean
   activeProjectPath?: string
   onRefresh(): Promise<void>
@@ -28,7 +29,7 @@ interface PluginsPageProps {
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
 }
 
-export function PluginsPage({ skills, loading, activeProjectPath, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
+export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -107,6 +108,11 @@ export function PluginsPage({ skills, loading, activeProjectPath, onRefresh, onI
             <option value="all">All sources</option><option value="installed">Installed</option><option value="bundled">Bundled</option><option value="user">Personal</option><option value="project">Project</option><option value="system">System</option>
           </select>
         </div>
+        {warnings.map((warning) => (
+          <p key={`${warning.scope}:${warning.path}`} className="page-inline-error" role="alert">
+            <AlertTriangle size={13} /> {warning.scope === 'project' ? 'Project' : 'Personal'} {warning.message} ({warning.path})
+          </p>
+        ))}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Plugins' : 'Skills'}</h2><span>{visible.length} available</span></div>
         {visible.length ? (
           <div className="directory-list">{visible.map((skill) => (
