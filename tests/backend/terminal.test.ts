@@ -103,4 +103,51 @@ describe('TerminalService', () => {
     expect(await service.kill(owner, created.terminalId)).toBe(false)
   })
 
+  it('short-circuits kill for a terminal that already exited on its own', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-exited-')); dirs.push(cwd)
+    const exits: unknown[] = []
+    const owner = {
+      id: 45,
+      isDestroyed: () => false,
+      send: vi.fn((channel: string, payload: unknown) => { if (channel === 'terminal:exit') exits.push(payload) }),
+    } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => testShell)
+    const created = await service.create(owner, { cwd, shell: testShell, cols: 80, rows: 24 })
+    service.input(owner, created.terminalId, 'exit\r')
+    await waitFor(() => exits.length > 0)
+
+    // The exit handler already removed the terminal, so kill neither finds it
+    // nor runs the HUP/TERM/KILL escalation ladder.
+    const started = Date.now()
+    expect(await service.kill(owner, created.terminalId)).toBe(false)
+    expect(Date.now() - started).toBeLessThan(100)
+    expect(exits).toHaveLength(1)
+    expect(exits[0]).toMatchObject({ terminalId: created.terminalId })
+
+    // Shutdown after a natural exit has nothing left to escalate either.
+    await service.killAll()
+  }, 15_000)
+
+  it('deduplicates overlapping kill requests for the same terminal', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-dedupe-')); dirs.push(cwd)
+    const owner = { id: 46, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => testShell)
+    const created = await service.create(owner, { cwd, shell: testShell, cols: 80, rows: 24 })
+
+    // terminate() removes the terminal from the registry synchronously, so a
+    // second kill issued while the first escalation ladder is still running
+    // short-circuits to false instead of signaling the process tree again.
+    const first = service.kill(owner, created.terminalId)
+    const second = service.kill(owner, created.terminalId)
+    await expect(second).resolves.toBe(false)
+    await expect(first).resolves.toBe(true)
+  }, 15_000)
+
+  // NOTE(Phase 6 item 6): the win32 termination branch has no
+  // killProcessTree/taskkill implementation on this base (Phase 5.2 has not
+  // merged); processTree() returns [] on win32 and signalTerminalTree() falls
+  // back to terminal.kill(). A mocked-taskkill unit test is deferred until
+  // that path exists. The current escalation ladder also snapshots the
+  // descendant tree once before SIGHUP and reuses it for SIGTERM/SIGKILL
+  // (no re-snapshot before SIGKILL exists to test on this base).
 })

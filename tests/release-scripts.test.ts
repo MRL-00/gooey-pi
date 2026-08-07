@@ -109,16 +109,80 @@ describe('release preflight', () => {
     })
   })
 
-  test('pins actions and limits workflow secrets to release steps', () => {
-    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
-    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
-    for (const workflow of [releaseWorkflow, ciWorkflow]) {
-      expect(workflow).not.toMatch(/uses: actions\/[^@\s]+@v\d/)
-      expect(workflow).not.toMatch(/uses: actions\/[^@\s]+@(main|master)/)
+  interface WorkflowStep {
+    job: string
+    name: string | undefined
+    uses: string | undefined
+    secretLines: string[]
+    lines: string[]
+  }
+
+  /** Minimal structural read of a GitHub workflow: jobs and their step blocks. */
+  function parseWorkflowSteps(source: string): WorkflowStep[] {
+    const steps: WorkflowStep[] = []
+    let job = ''
+    let inJobs = false
+    let current: WorkflowStep | undefined
+    for (const line of source.split('\n')) {
+      if (/^jobs:\s*$/.test(line)) {
+        inJobs = true
+        continue
+      }
+      if (!inJobs) continue
+      const jobMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*$/)
+      if (jobMatch) {
+        job = jobMatch[1]
+        current = undefined
+        continue
+      }
+      if (/^      - /.test(line)) {
+        current = { job, name: undefined, uses: undefined, secretLines: [], lines: [] }
+        steps.push(current)
+      }
+      if (!current) continue
+      current.lines.push(line)
+      const name = line.match(/^\s*(?:- )?name:\s*(.+?)\s*$/)
+      if (name && current.name === undefined) current.name = name[1]
+      const uses = line.match(/^\s*(?:- )?uses:\s*(\S+)/)
+      if (uses && current.uses === undefined) current.uses = uses[1]
+      if (line.includes('secrets.')) current.secretLines.push(line)
     }
-    expect(releaseWorkflow).not.toMatch(/^    env:/m)
-    expect(releaseWorkflow.match(/secrets\./g)).toHaveLength(12)
-    expect(releaseWorkflow.match(/^        env:$/gm)).toHaveLength(2)
+    return steps
+  }
+
+  test('pins every workflow action, including third-party owners, to a full commit SHA', () => {
+    for (const path of ['.github/workflows/release.yml', '.github/workflows/ci.yml']) {
+      const steps = parseWorkflowSteps(readFileSync(path, 'utf8'))
+      expect(steps.length).toBeGreaterThan(0)
+      for (const step of steps) {
+        if (step.uses === undefined) continue
+        // Every `uses:` reference must be `owner/repo[/path]@<40-hex sha>`,
+        // regardless of owner - tags and branches are movable for actions/*
+        // and third-party owners alike.
+        expect(step.uses, `${path} ${step.job}: ${step.uses}`).toMatch(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[0-9a-f]{40}$/)
+      }
+    }
+  })
+
+  test('confines workflow secrets to the signing and notarization release steps', () => {
+    const releaseSteps = parseWorkflowSteps(readFileSync('.github/workflows/release.yml', 'utf8'))
+    const secretSteps = releaseSteps.filter((step) => step.secretLines.length > 0)
+    expect(secretSteps.map((step) => `${step.job}: ${step.name}`).sort()).toEqual([
+      'package: Build, sign, notarize, and verify release packages',
+      'package: Fail closed unless every release credential is configured',
+    ])
+    for (const step of secretSteps) {
+      // Secrets may only be consumed as env-var assignments inside the step's
+      // env block - never interpolated into run commands or action inputs.
+      expect(step.lines.some((line) => /^\s*env:\s*$/.test(line))).toBe(true)
+      for (const line of step.secretLines) {
+        expect(line).toMatch(/^\s+[A-Z][A-Z0-9_]*: \$\{\{ secrets\.[A-Z][A-Z0-9_]* \}\}$/)
+      }
+      expect(step.lines.join('\n')).not.toMatch(/run:.*secrets\./)
+    }
+
+    const ciSteps = parseWorkflowSteps(readFileSync('.github/workflows/ci.yml', 'utf8'))
+    expect(ciSteps.filter((step) => step.secretLines.length > 0)).toEqual([])
   })
 
   test('gates packaging regressions on every pull request', () => {
