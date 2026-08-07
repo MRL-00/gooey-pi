@@ -26,7 +26,6 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
     const clientId = `prime-work-${randomUUID()}`
     let commandSent = false
     let settled = false
-    let protocolVersion = DAEMON_PROTOCOL_VERSION
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
@@ -55,12 +54,13 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
           return
         }
         commandSent = true
-        protocolVersion = Math.min(protocol.version, DAEMON_PROTOCOL_VERSION)
+        // The hello guard above rejects protocol.version < DAEMON_PROTOCOL_VERSION,
+        // so the negotiated version is always exactly ours.
         const command = { id: commandId, type: commandType, activeSessionId, message }
         write({
           type: 'command',
           id: commandId,
-          protocol: { name: DAEMON_PROTOCOL_NAME, version: protocolVersion },
+          protocol: { name: DAEMON_PROTOCOL_NAME, version: DAEMON_PROTOCOL_VERSION },
           clientId,
           command,
         })
@@ -75,7 +75,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
       const ack = {
         type: 'command',
         id: ackId,
-        protocol: { name: DAEMON_PROTOCOL_NAME, version: protocolVersion },
+        protocol: { name: DAEMON_PROTOCOL_NAME, version: DAEMON_PROTOCOL_VERSION },
         clientId,
         command: { id: ackId, type: 'ack_result', commandId },
       }
