@@ -228,7 +228,7 @@ function addSettingsMetadata(settings: Record<string, unknown>, location: 'user'
   }
 }
 
-export async function bundledSkillsDirectory(primeAgentPath: string | null): Promise<string | null> {
+async function bundledSkillsDirectory(primeAgentPath: string | null): Promise<string | null> {
   if (!primeAgentPath) return null
   try {
     const executable = await realpath(primeAgentPath)
