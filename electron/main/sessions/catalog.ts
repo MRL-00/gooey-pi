@@ -85,6 +85,11 @@ export class SessionMetadataCatalog {
     this.catalogCache = null
   }
 
+  /** Live Prime Agent session records keyed by canonical session file path. */
+  liveSessions(): Promise<ReadonlyMap<string, JsonRecord>> {
+    return this.liveCatalog()
+  }
+
   async all(): Promise<SessionMetadata[]> {
     const revision = this.catalogRevision
     if (this.sessionScanRequest?.revision === revision) return this.sessionScanRequest.promise
