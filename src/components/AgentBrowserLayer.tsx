@@ -58,19 +58,18 @@ interface AgentTabViewProps {
   onAttach(tabId: string, webContentsId: number): void
 }
 
-const AgentTabView = memo(function AgentTabView({ tabId, visible, pointerEvent, onAttach }: AgentTabViewProps) {
-  const viewRef = useRef<AgentWebviewElement | null>(null)
-  const reportedRef = useRef(false)
-  const onAttachRef = useRef(onAttach)
-  onAttachRef.current = onAttach
+/**
+ * Synthetic cursor overlay: an arrow pointer that animates along the exact
+ * path and duration the main process used for the real input glide, a trail
+ * line that draws and fades behind it, and a ripple pulse on clicks. Mounted
+ * over both agent tabs and the user's Preview webview.
+ */
+export function AgentCursorOverlay({ pointerEvent }: { pointerEvent: StampedPointerEvent | null }) {
   const cursorRef = useRef<HTMLDivElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const trailRef = useRef<SVGSVGElement | null>(null)
   const idleTimerRef = useRef<number | null>(null)
 
-  // Animate the synthetic cursor along the exact path and duration the main
-  // process used for the real input glide: slide the dot A to B, draw a
-  // fading trail line behind it, and pulse a ripple on clicks.
   useEffect(() => {
     const event = pointerEvent
     const cursor = cursorRef.current
@@ -133,6 +132,24 @@ const AgentTabView = memo(function AgentTabView({ tabId, visible, pointerEvent, 
     if (idleTimerRef.current !== null) window.clearTimeout(idleTimerRef.current)
   }, [])
 
+  return (
+    <div ref={overlayRef} className="agent-cursor-layer" aria-hidden>
+      <svg ref={trailRef} className="agent-cursor-trail" />
+      <div ref={cursorRef} className="agent-cursor">
+        <svg className="agent-cursor__arrow" viewBox="0 0 20 22" width="20" height="22">
+          <path d="M4 1.4 L4 17.2 L8.1 13.6 L10.7 19.6 L13.5 18.4 L10.9 12.5 L16.3 12.5 Z" />
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+const AgentTabView = memo(function AgentTabView({ tabId, visible, pointerEvent, onAttach }: AgentTabViewProps) {
+  const viewRef = useRef<AgentWebviewElement | null>(null)
+  const reportedRef = useRef(false)
+  const onAttachRef = useRef(onAttach)
+  onAttachRef.current = onAttach
+
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
@@ -161,12 +178,7 @@ const AgentTabView = memo(function AgentTabView({ tabId, visible, pointerEvent, 
         partition: 'persist:prime-work-browser',
         webpreferences: 'contextIsolation=yes,sandbox=yes,nodeIntegration=no',
       })}
-      <div ref={overlayRef} className="agent-cursor-layer" aria-hidden>
-        <svg ref={trailRef} className="agent-cursor-trail" />
-        <div ref={cursorRef} className="agent-cursor">
-          <span className="agent-cursor__dot" />
-        </div>
-      </div>
+      <AgentCursorOverlay pointerEvent={pointerEvent} />
     </div>
   )
 })
