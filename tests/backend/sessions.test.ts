@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -238,6 +238,48 @@ process.exit(2)
     expect(record?.filePath).toBe(realpathSync(file))
     expect(record?.status).toBe('running')
     expect(record?.updatedAt).toBe('2025-02-01T00:00:00.000Z')
+  })
+
+  it('rate limits the live-catalog CLI spawn independently of change events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-catalog-throttle-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'burst.jsonl')
+    writeSession(file, project, 'burst')
+    const spawnLog = join(dir, 'spawns.log')
+    writeFileSync(spawnLog, '')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+require('node:fs').appendFileSync(${JSON.stringify(spawnLog)}, 'spawn\\n')
+process.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(file)}, isStreaming: true }] }))
+process.exit(0)
+`)
+    chmodSync(executable, 0o755)
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      executable,
+      20,
+      async (filePath) => metadata(filePath, project, 'burst'),
+    )
+    const spawnCount = () => readFileSync(spawnLog, 'utf8').split('\n').filter(Boolean).length
+
+    expect((await catalog.all())[0]?.status).toBe('running')
+    expect(spawnCount()).toBe(1)
+    // A burst of change events within the throttle window serves the previous
+    // live snapshot instead of respawning the CLI.
+    for (let round = 0; round < 5; round += 1) {
+      appendFileSync(file, `${JSON.stringify({ type: 'message', id: `burst-${round}`, message: { role: 'user', content: 'burst' } })}\n`)
+      catalog.invalidateLiveCatalog()
+      expect((await catalog.all())[0]?.status).toBe('running')
+    }
+    expect(spawnCount()).toBe(1)
+
+    // Once the minimum spawn interval elapses, the next stale read respawns.
+    const throttleHarness = catalog as unknown as { lastCatalogSpawnAt: number }
+    throttleHarness.lastCatalogSpawnAt = Date.now() - 60_000
+    catalog.invalidateLiveCatalog()
+    await catalog.all()
+    expect(spawnCount()).toBe(2)
   })
 
   it('does not let an in-flight pre-append scan satisfy a post-invalidation refresh', async () => {
