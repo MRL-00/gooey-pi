@@ -183,6 +183,45 @@ describe('SessionService catalog scaling', () => {
     expect(readMetadata).toHaveBeenCalledTimes(maxSessionFiles)
     expect(inspect.mock.calls.flat().join(' ')).not.toContain(sessionName(0))
   })
+
+  it('re-canonicalizes only entries whose file identity changed between scans', async () => {
+    const root = '/sessions'
+    const identities = new Map<string, { dev: number; ino: number }>([
+      ['a.jsonl', { dev: 1, ino: 10 }],
+      ['b.jsonl', { dev: 1, ino: 11 }],
+    ])
+    const canonicalize = vi.fn(async (path: string) => path)
+    const io: SessionCatalogIo = {
+      readDirectory: vi.fn(async () => [...identities.keys()].map((name) => ({ name }))),
+      canonicalize,
+      inspect: vi.fn(async (path: string) => {
+        const name = path.slice(path.lastIndexOf('/') + 1)
+        const identity = identities.get(name) ?? { dev: 1, ino: 99 }
+        return { isFile: () => true, mtimeMs: 1, size: 100, dev: identity.dev, ino: identity.ino } as Stats
+      }),
+    }
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      null,
+      20,
+      async (filePath) => metadata(filePath, '/project', filePath.slice(filePath.lastIndexOf('/') + 1)),
+      io,
+    )
+
+    await catalog.all()
+    // Root plus one call per newly discovered entry.
+    expect(canonicalize).toHaveBeenCalledTimes(3)
+
+    await catalog.all()
+    // Unchanged identities reuse the cached canonical paths.
+    expect(canonicalize).toHaveBeenCalledTimes(4)
+    expect(canonicalize.mock.calls.slice(3).flat()).toEqual([root])
+
+    identities.set('b.jsonl', { dev: 1, ino: 12 })
+    await catalog.all()
+    expect(canonicalize).toHaveBeenCalledTimes(6)
+    expect(canonicalize.mock.calls.slice(4).flat().sort()).toEqual([root, `${root}/b.jsonl`])
+  })
 })
 
 describe('incremental session metadata reads', () => {

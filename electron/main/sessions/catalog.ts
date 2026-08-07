@@ -75,6 +75,7 @@ export class SessionMetadataCatalog {
   private sessionScanRequest: { revision: number; promise: Promise<SessionMetadata[]> } | null = null
   private readonly metadataCache = new Map<string, SessionMetadata>()
   private readonly metadataRequests = new Map<string, Promise<SessionMetadata>>()
+  private readonly canonicalByName = new Map<string, { canonical: string; dev: number; ino: number }>()
 
   constructor(
     private readonly sessionRoot: () => string,
@@ -125,13 +126,31 @@ export class SessionMetadataCatalog {
     )
     const discovered = await mapLimit(names, 32, async (name): Promise<SessionFileCandidate | null> => {
       try {
-        const filePath = await this.io.canonicalize(join(root, name))
+        // stat() follows symlinks, so an unchanged dev/ino identity lets the
+        // cached canonical path stand in for a realpath call per entry.
+        const fileStat = await this.io.inspect(join(root, name))
+        if (!fileStat.isFile()) {
+          this.canonicalByName.delete(name)
+          return null
+        }
+        const known = this.canonicalByName.get(name)
+        const filePath = known && known.dev === fileStat.dev && known.ino === fileStat.ino
+          ? known.canonical
+          : await this.io.canonicalize(join(root, name))
+        this.canonicalByName.set(name, { canonical: filePath, dev: fileStat.dev, ino: fileStat.ino })
         if (!isPathWithin(root, filePath)) return null
-        const fileStat = await this.io.inspect(filePath)
-        if (!fileStat.isFile()) return null
         return { filePath, fileStat, fingerprint: `${filePath}\0${fileStat.mtimeMs}\0${fileStat.size}` }
-      } catch { return null }
+      } catch {
+        this.canonicalByName.delete(name)
+        return null
+      }
     })
+    if (this.canonicalByName.size > names.length) {
+      const listed = new Set(names)
+      for (const name of this.canonicalByName.keys()) {
+        if (!listed.has(name)) this.canonicalByName.delete(name)
+      }
+    }
     const byCanonicalPath = new Map<string, SessionFileCandidate>()
     for (const candidate of discovered) byCanonicalPath.set(candidate.filePath, candidate)
     const selected = [...byCanonicalPath.values()]
