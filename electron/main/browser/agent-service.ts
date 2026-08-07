@@ -6,7 +6,7 @@ import { requireRecord, requireString } from '../validation'
 
 /** The user's own Preview webview, adoptable by the active thread's agent. */
 export const PREVIEW_TAB_ID = 'preview'
-import { evaluateScript, pageInfoScript, readPageScript, refPointScript, scrollByScript } from './page-scripts'
+import { cursorMarkerScript, elementAtPointScript, evaluateScript, pageInfoScript, readPageScript, refPointScript, removeCursorMarkerScript, scrollByScript } from './page-scripts'
 
 const MAX_TABS_PER_SESSION = 6
 const MAX_TABS_TOTAL = 24
@@ -172,15 +172,38 @@ export class AgentBrowserService {
   // ---- renderer-facing API -------------------------------------------------
 
   state(): AgentBrowserState {
-    const tabs: AgentBrowserTabRecord[] = [...this.tabs.values()].map((tab) => ({
-      tabId: tab.tabId,
-      sessionFile: tab.sessionKey,
-      url: tab.url,
-      title: tab.title,
-      attached: tab.webContentsId !== null,
-      active: this.activeBySession.get(tab.sessionKey) === tab.tabId,
-    }))
+    const tabs: AgentBrowserTabRecord[] = [...this.tabs.values()].map((tab) => {
+      const guest = tab.webContentsId === null ? undefined : this.options.getGuest(tab.webContentsId)
+      const alive = guest !== undefined && !guest.isDestroyed()
+      return {
+        tabId: tab.tabId,
+        sessionFile: tab.sessionKey,
+        url: tab.url,
+        title: tab.title,
+        attached: tab.webContentsId !== null,
+        active: this.activeBySession.get(tab.sessionKey) === tab.tabId,
+        canGoBack: alive && guest.canGoBack(),
+        canGoForward: alive && guest.canGoForward(),
+      }
+    })
     return { tabs }
+  }
+
+  /** User-initiated navigation from the tab strip toolbar and address bar. */
+  navigateTab(tabIdValue: unknown, actionValue: unknown, urlValue?: unknown): boolean {
+    const tab = this.requireTab(tabIdValue)
+    const action = requireString(actionValue, 'action', { min: 1, max: 16, trim: true })
+    const guest = tab.webContentsId === null ? undefined : this.options.getGuest(tab.webContentsId)
+    if (!guest || guest.isDestroyed()) return false
+    if (action === 'back') { if (guest.canGoBack()) guest.goBack() }
+    else if (action === 'forward') { if (guest.canGoForward()) guest.goForward() }
+    else if (action === 'reload') guest.reload()
+    else if (action === 'url') {
+      const url = requireString(urlValue, 'url', { min: 1, max: 2048, trim: true })
+      if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the Prime Work browser')
+      guest.loadURL(url).catch(() => undefined)
+    } else throw new TypeError('action must be back, forward, reload, or url')
+    return true
   }
 
   attachTab(tabIdValue: unknown, webContentsIdValue: unknown): boolean {
@@ -355,24 +378,34 @@ export class AgentBrowserService {
   async screenshot(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withTab(sessionKey, params, async (tab, guest) => {
       const info = await this.pageInfo(guest)
-      let image = await guest.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      // Show the agent its own pointer in the capture so it can calibrate.
+      if (tab.pointer) await guest.executeJavaScript(cursorMarkerScript(tab.pointer.x, tab.pointer.y)).catch(() => undefined)
+      let image: Electron.NativeImage
+      try {
+        image = await guest.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      } finally {
+        if (tab.pointer) void guest.executeJavaScript(removeCursorMarkerScript()).catch(() => undefined)
+      }
       const size = image.getSize()
       if (!size.width || !size.height) throw new Error('The browser tab has no visible content to capture yet')
+      // capturePage reports DIP dimensions but encodes at device pixels
+      // (2x on Retina); always resize to the CSS viewport so screenshot
+      // pixels map 1:1 onto click coordinates regardless of display scale.
       const targetWidth = info.innerWidth > 0 ? Math.min(info.innerWidth, size.width) : size.width
-      if (size.width !== targetWidth) image = image.resize({ width: targetWidth })
+      const targetHeight = info.innerHeight > 0 ? Math.min(info.innerHeight, size.height) : size.height
+      image = image.resize({ width: targetWidth, height: targetHeight })
       let quality = SCREENSHOT_JPEG_QUALITY
       let buffer = image.toJPEG(quality)
       while (buffer.byteLength > MAX_SCREENSHOT_BYTES && quality > 30) {
         quality -= 20
         buffer = image.toJPEG(quality)
       }
-      const finalSize = image.getSize()
       return {
         ...await this.describe(tab, guest),
         mimeType: 'image/jpeg',
         data: buffer.toString('base64'),
-        width: finalSize.width,
-        height: finalSize.height,
+        width: targetWidth,
+        height: targetHeight,
       }
     })
   }
@@ -385,14 +418,24 @@ export class AgentBrowserService {
       const clickCount = params.double === true ? 2 : 1
       guest.focus()
       await this.glidePointer(tab, guest, point, 'click')
+      // Hovering along the glide can shift layout (menus, sticky headers);
+      // for ref clicks re-resolve the element position before pressing.
+      let target = point
+      if (params.ref !== undefined) {
+        try {
+          target = await this.resolvePoint(guest, params, false)
+          tab.pointer = { ...target }
+        } catch { /* the pre-glide point remains the best estimate */ }
+      }
+      const hit = await this.elementAt(guest, target)
       for (let press = 0; press < clickCount; press += 1) {
-        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, buttons: CDP_BUTTON_MASKS[button], clickCount: press + 1 })
-        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, buttons: 0, clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button, buttons: CDP_BUTTON_MASKS[button], clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button, buttons: 0, clickCount: press + 1 })
       }
       // A click may start a navigation; give the page a moment before reporting.
       await delay(SETTLE_MS)
       await this.waitForLoad(guest, 2_000)
-      return this.describe(tab, guest)
+      return { ...await this.describe(tab, guest), clicked: hit ?? undefined }
     })
   }
 
@@ -665,7 +708,19 @@ export class AgentBrowserService {
     tab.url = info?.url ?? tab.url
     tab.title = info?.title ?? tab.title
     this.push()
-    return { url: tab.url, title: tab.title, viewport: info ? { width: info.innerWidth, height: info.innerHeight } : undefined }
+    return {
+      url: tab.url,
+      title: tab.title,
+      viewport: info ? { width: info.innerWidth, height: info.innerHeight } : undefined,
+      pointer: tab.pointer ? { ...tab.pointer } : undefined,
+    }
+  }
+
+  private async elementAt(guest: WebContents, point: { x: number; y: number }): Promise<Record<string, unknown> | null> {
+    try {
+      const payload = parseScriptJson(await guest.executeJavaScript(elementAtPointScript(point.x, point.y)), 'element at point')
+      return typeof payload.tag === 'string' ? { tag: payload.tag, name: typeof payload.name === 'string' ? payload.name : '' } : null
+    } catch { return null }
   }
 
   private async resolvePoint(guest: WebContents, params: Record<string, unknown>, focus: boolean): Promise<{ x: number; y: number }> {
