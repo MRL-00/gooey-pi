@@ -3,6 +3,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AgentRpcManager } from '../../electron/main/agent-rpc'
 import { ProjectService } from '../../electron/main/projects'
 import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
 import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
@@ -704,6 +705,50 @@ process.exit(9)
 
     await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
   })
+
+  it('marks a session running and stops its runtime when the agent reports the file via a symlinked root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-sessions-symlink-')); dirs.push(dir)
+    const realRoot = join(dir, 'real-sessions'); mkdirSync(realRoot)
+    const aliasRoot = join(dir, 'alias-sessions'); symlinkSync(realRoot, aliasRoot)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(realRoot, 'runtime.jsonl')
+    writeSession(file, project, 'runtime')
+    const aliasFile = join(aliasRoot, 'runtime.jsonl')
+
+    const executable = join(dir, 'symlink-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'runtime', sessionFile: ${JSON.stringify(aliasFile)}, isStreaming: true } })
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: 'abort', success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    const manager = new AgentRpcManager(executable, async (cwd) => cwd, async (path) => path)
+    try {
+      const runtime = await manager.start({ cwd: project })
+      expect(runtime.sessionFile).toBe(realpathSync(file))
+
+      const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), null)
+      Object.defineProperty(service, 'sessionRoot', { value: realRoot })
+      service.bindRuntimeHooks({
+        get: (path) => manager.getForSession(path),
+        stop: async (path) => { await manager.stopForSession(path) },
+        rename: async () => false,
+      })
+
+      expect((await service.list())[0]?.status).toBe('running')
+      await expect(service.archive(file)).resolves.toBe(true)
+      await waitUntil(() => manager.list().length === 0, 8_000)
+    } finally {
+      await manager.stopAll()
+    }
+  }, 15_000)
 
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {
     const { root, project, service } = setup()

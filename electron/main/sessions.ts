@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
 import { queueDaemonFollowUp } from './agent-daemon'
 import { runProcess } from './process-utils'
+import { canonicalSessionPath } from './session-paths'
 import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
 import { readSessionMetadata, type SessionMetadata } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
@@ -187,9 +188,7 @@ export class SessionService {
     for (const value of parsed.sessions) {
       if (!isRecord(value) || value.lifecycle !== 'live' || value.isSessionActive !== true
         || typeof value.sessionFile !== 'string' || value.sessionFile.length > 4_096) continue
-      let candidate: string
-      try { candidate = await realpath(value.sessionFile) } catch { continue }
-      if (candidate === safePath) { active = value; break }
+      if (canonicalSessionPath(value.sessionFile) === safePath) { active = value; break }
     }
     if (!active) return false
     const activeSessionId = requireId(active.activeSessionId ?? active.id, 'activeSessionId')

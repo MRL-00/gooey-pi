@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { safeChildEnvironment } from '../process-utils'
+import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
 import { FramedRpcTransport, type QueuedRpcWrite } from './transport'
@@ -291,7 +292,9 @@ export class RpcRuntime {
   private updateFromState(raw: unknown): void {
     if (!isRecord(raw)) return
     if (typeof raw.sessionId === 'string') this.info.sessionId = raw.sessionId
-    if (typeof raw.sessionFile === 'string') this.info.sessionFile = raw.sessionFile
+    // Canonicalize once at the boundary (cached): every later comparison
+    // against catalog and validator paths uses the canonical form.
+    if (typeof raw.sessionFile === 'string') this.info.sessionFile = canonicalSessionPath(raw.sessionFile)
     if (typeof raw.isStreaming === 'boolean') this.info.isStreaming = raw.isStreaming
     if (typeof raw.isCompacting === 'boolean') this.info.isCompacting = raw.isCompacting
     if (typeof raw.thinkingLevel === 'string') this.info.thinkingLevel = raw.thinkingLevel

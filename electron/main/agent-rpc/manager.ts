@@ -1,5 +1,5 @@
-import { resolve } from 'node:path'
 import type { PrimeEventEnvelope, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
+import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { RpcRuntime } from './runtime'
@@ -132,15 +132,15 @@ export class AgentRpcManager {
   list(): RuntimeInfo[] { return [...this.runtimes.values()].map((runtime) => runtime.snapshot()) }
 
   getForSession(filePath: string): RuntimeInfo | undefined {
-    const wanted = resolve(filePath)
-    return this.list().find((runtime) => runtime.sessionFile && resolve(runtime.sessionFile) === wanted)
+    const wanted = canonicalSessionPath(filePath)
+    return this.list().find((runtime) => runtime.sessionFile && canonicalSessionPath(runtime.sessionFile) === wanted)
   }
 
   async stopForSession(filePath: string): Promise<void> {
-    const wanted = resolve(filePath)
+    const wanted = canonicalSessionPath(filePath)
     const matches = [...this.runtimes.values()].filter((runtime) => {
       const path = runtime.snapshot().sessionFile
-      return path !== undefined && resolve(path) === wanted
+      return path !== undefined && canonicalSessionPath(path) === wanted
     })
     await Promise.all(matches.map((runtime) => runtime.stop()))
   }
@@ -152,10 +152,10 @@ export class AgentRpcManager {
 
   async renameForSession(filePath: string, title: string): Promise<boolean> {
     this.requireOpen()
-    const wanted = resolve(filePath)
+    const wanted = canonicalSessionPath(filePath)
     const runtime = [...this.runtimes.values()].find((candidate) => {
       const path = candidate.snapshot().sessionFile
-      return path !== undefined && resolve(path) === wanted
+      return path !== undefined && canonicalSessionPath(path) === wanted
     })
     if (!runtime) return false
     const response = await runtime.command({ type: 'set_session_name', name: title })
