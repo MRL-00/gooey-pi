@@ -22,6 +22,7 @@ export class AgentEventForwarder {
   private eventCount = 0
   private criticalEventCount = 0
   private windowBytes = 0
+  private runtimeExitDelivered = false
   private readonly reportedLimits = new Set<string>()
 
   constructor(
@@ -34,8 +35,13 @@ export class AgentEventForwarder {
 
   emit(event: RpcObject): void {
     this.resetWindowIfNeeded()
-    const critical = event.type === 'runtime_exit' || event.type === 'agent_start' || event.type === 'agent_end'
-    if (critical) {
+    // runtime_exit is the renderer's only signal that the agent is gone; it is
+    // exempt from the rate caps and always delivered exactly once.
+    const isRuntimeExit = event.type === 'runtime_exit'
+    const critical = isRuntimeExit || event.type === 'agent_start' || event.type === 'agent_end'
+    if (isRuntimeExit) {
+      if (this.runtimeExitDelivered) return
+    } else if (critical) {
       this.criticalEventCount += 1
       if (this.criticalEventCount > 32) { this.reportLimit('critical-count', 'Prime Agent lifecycle event rate exceeded the desktop limit'); return }
     } else {
@@ -49,13 +55,16 @@ export class AgentEventForwarder {
       this.reportLimit('envelope', 'Prime Agent event exceeded the desktop envelope byte limit')
       return
     }
-    const reserve = Math.min(64 * 1024, Math.floor(this.limits.maxWindowBytes / 4))
-    const byteLimit = critical ? this.limits.maxWindowBytes : this.limits.maxWindowBytes - reserve
-    if (this.windowBytes + bytes > byteLimit) {
-      this.reportLimit('bytes', 'Prime Agent event byte rate exceeded the desktop limit')
-      return
+    if (!isRuntimeExit) {
+      const reserve = Math.min(64 * 1024, Math.floor(this.limits.maxWindowBytes / 4))
+      const byteLimit = critical ? this.limits.maxWindowBytes : this.limits.maxWindowBytes - reserve
+      if (this.windowBytes + bytes > byteLimit) {
+        this.reportLimit('bytes', 'Prime Agent event byte rate exceeded the desktop limit')
+        return
+      }
     }
     this.windowBytes += bytes
+    if (isRuntimeExit) this.runtimeExitDelivered = true
     this.onEvent(envelope)
   }
 
