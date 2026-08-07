@@ -174,6 +174,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('browser:attach-tab', (_event, tabId, webContentsId) => services.browser.attachTab(tabId, webContentsId))
   handle('browser:select-tab', (_event, tabId) => services.browser.selectTab(tabId))
   handle('browser:close-tab', (_event, tabId) => services.browser.closeTab(tabId))
+  handle('browser:set-preview-context', (_event, webContentsId, sessionFile) => services.browser.setPreviewContext(webContentsId, sessionFile))
 
   handle('heartbeats:list', () => services.heartbeats.list())
   handle('heartbeats:manage', (_event, id, action) => services.heartbeats.manage(id, action))

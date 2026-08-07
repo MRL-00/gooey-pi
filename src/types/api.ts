@@ -483,6 +483,7 @@ export interface PrimeWorkApi {
     attachTab(tabId: string, webContentsId: number): Promise<boolean>
     selectTab(tabId: string): Promise<boolean>
     closeTab(tabId: string): Promise<boolean>
+    setPreviewContext(webContentsId: number | null, sessionFile: string | null): Promise<boolean>
     onChanged(callback: (state: AgentBrowserState) => void): () => void
     onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
   }

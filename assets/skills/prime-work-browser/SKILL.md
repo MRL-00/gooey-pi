@@ -19,9 +19,13 @@ This thread has its own tabs in the Prime Work Browser panel. The user sees ever
 - `browser_screenshot` — JPEG whose pixels map 1:1 to click coordinates
 - `browser_evaluate` — run JavaScript (async function body, use `return`) for extraction
 
+## The user's Preview tab
+
+When the user has the Browser panel's Preview open for this thread, `browser_tabs {"action":"list"}` shows it as tab id `preview`, and it is the default target while you have no agent tab. If the user asks about "this page" or the page they are viewing is the one you need, act on `preview` directly - do not open a duplicate tab. You cannot close the Preview tab, and it disappears if the user closes the panel.
+
 ## Workflow
 
-1. `browser_tabs {"action":"open","url":"..."}` once per site; reuse the tab afterwards.
+1. `browser_tabs {"action":"list"}` first; open a tab with `browser_tabs {"action":"open","url":"..."}` only if the page you need is not already open. Reuse tabs.
 2. Prefer `browser_read_page` refs for clicking and typing — they are exact. Refs go stale after any navigation; re-read the page first.
 3. Use `browser_screenshot` to verify visual state, before/after coordinate clicks, and whenever a page behaves unexpectedly.
 4. For forms: `browser_type` with `ref`, then `submit:true` or click the submit control.

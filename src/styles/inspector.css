@@ -143,7 +143,9 @@
 .agent-cursor { position: absolute; left: 0; top: 0; opacity: 0; transition: opacity 280ms ease; will-change: transform; }
 .agent-cursor.is-active { opacity: 1; }
 .agent-cursor.is-idle { opacity: 0; }
-.agent-cursor__dot { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 50%; background: var(--annotation); box-shadow: 0 1px 4px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.12); }
+/* Arrow tip is at path point (4,1.4); offset so the translate origin is the hotspot. */
+.agent-cursor__arrow { display: block; margin: -1.4px 0 0 -4px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--annotation) 70%, transparent)) drop-shadow(0 1px 2.5px rgba(0,0,0,.4)); }
+.agent-cursor__arrow path { fill: #17171a; stroke: #fff; stroke-width: 1.4; stroke-linejoin: round; }
 .agent-cursor-ripple { position: absolute; width: 34px; height: 34px; border: 2px solid var(--annotation); border-radius: 50%; opacity: 0; pointer-events: none; }
 
 /* Files */

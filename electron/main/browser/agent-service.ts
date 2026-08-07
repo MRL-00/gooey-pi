@@ -1,7 +1,11 @@
 import type { WebContents } from 'electron'
 import { randomBytes } from 'node:crypto'
 import type { AgentBrowserPointerEvent, AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
+import { canonicalSessionPath } from '../session-paths'
 import { requireRecord, requireString } from '../validation'
+
+/** The user's own Preview webview, adoptable by the active thread's agent. */
+export const PREVIEW_TAB_ID = 'preview'
 import { evaluateScript, pageInfoScript, readPageScript, refPointScript, scrollByScript } from './page-scripts'
 
 const MAX_TABS_PER_SESSION = 6
@@ -17,12 +21,32 @@ const MAX_READ_ELEMENTS = 300
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
 const SCREENSHOT_JPEG_QUALITY = 70
 
-const PRESS_KEYS: Record<string, string> = {
-  enter: 'Return', tab: 'Tab', escape: 'Escape', backspace: 'Backspace', delete: 'Delete',
-  arrowup: 'Up', arrowdown: 'Down', arrowleft: 'Left', arrowright: 'Right',
-  home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown', space: 'Space',
+interface CdpKey {
+  key: string
+  code: string
+  keyCode: number
+  text?: string
 }
-const PRESS_MODIFIERS = new Set(['shift', 'control', 'alt', 'meta'])
+
+const PRESS_KEYS: Record<string, CdpKey> = {
+  enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
+  tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
+  escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
+  delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  arrowup: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+  arrowdown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+  arrowleft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+  arrowright: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+  home: { key: 'Home', code: 'Home', keyCode: 36 },
+  end: { key: 'End', code: 'End', keyCode: 35 },
+  pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
+  pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+}
+// DevTools protocol modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+const PRESS_MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 }
+const CDP_BUTTON_MASKS: Record<string, number> = { left: 1, right: 2, middle: 4 }
 
 interface TabState {
   tabId: string
@@ -90,6 +114,7 @@ function parseScriptJson(payload: unknown, label: string): Record<string, unknow
 export class AgentBrowserService {
   private readonly tabs = new Map<string, TabState>()
   private readonly activeBySession = new Map<string, string>()
+  private previewTab: TabState | null = null
   private readonly approvedGuests = new Set<number>()
   private readonly changeListeners = new Set<(state: AgentBrowserState) => void>()
   private readonly pointerListeners = new Set<(event: AgentBrowserPointerEvent) => void>()
@@ -111,6 +136,7 @@ export class AgentBrowserService {
     this.activeBySession.clear()
     this.changeListeners.clear()
     this.pointerListeners.clear()
+    this.previewTab = null
   }
 
   /** Called from the will/did-attach-webview hardening path for every guest of the trusted partition. */
@@ -119,6 +145,7 @@ export class AgentBrowserService {
     this.approvedGuests.add(contents.id)
     contents.once('destroyed', () => {
       this.approvedGuests.delete(contents.id)
+      if (this.previewTab?.webContentsId === contents.id) this.previewTab = null
       for (const tab of this.tabs.values()) {
         if (tab.webContentsId === contents.id) this.detachTab(tab)
       }
@@ -184,6 +211,38 @@ export class AgentBrowserService {
     return true
   }
 
+  /**
+   * The renderer reports which session's workspace currently owns the user's
+   * Preview webview (and which guest it is). Null clears the binding. Agent
+   * calls resolve the binding at call time, so a session switch immediately
+   * moves control.
+   */
+  setPreviewContext(webContentsIdValue: unknown, sessionFileValue: unknown): boolean {
+    if (this.closed) return false
+    if (webContentsIdValue === null || sessionFileValue === null || sessionFileValue === undefined) {
+      this.previewTab = null
+      return true
+    }
+    if (!Number.isSafeInteger(webContentsIdValue)) throw new TypeError('webContentsId must be an integer')
+    const webContentsId = webContentsIdValue as number
+    if (!this.approvedGuests.has(webContentsId)) throw new Error('The web contents is not an approved browser guest')
+    const sessionKey = canonicalSessionPath(requireString(sessionFileValue, 'sessionFile', { min: 1, max: 4096 }))
+    const previous = this.previewTab
+    if (previous && previous.webContentsId === webContentsId && previous.sessionKey === sessionKey) return true
+    this.previewTab = {
+      tabId: PREVIEW_TAB_ID,
+      sessionKey,
+      webContentsId,
+      url: '',
+      title: '',
+      pointer: previous?.webContentsId === webContentsId ? previous.pointer : null,
+      queue: previous?.queue ?? Promise.resolve(),
+      attachWaiters: [],
+      unbindGuest: null,
+    }
+    return true
+  }
+
   closeTab(tabIdValue: unknown): boolean {
     const tab = this.requireTab(tabIdValue)
     this.removeTab(tab)
@@ -224,25 +283,45 @@ export class AgentBrowserService {
   }
 
   async listTabs(sessionKey: string): Promise<Record<string, unknown>> {
-    const tabs = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey).map((tab) => ({
+    const active = this.activeBySession.get(sessionKey)
+    const tabs: Array<Record<string, unknown>> = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey).map((tab) => ({
       tabId: tab.tabId,
       url: tab.url,
       title: tab.title,
       attached: tab.webContentsId !== null,
-      active: this.activeBySession.get(sessionKey) === tab.tabId,
+      active: active === tab.tabId,
     }))
+    const preview = this.previewFor(sessionKey)
+    if (preview) {
+      tabs.unshift({
+        tabId: PREVIEW_TAB_ID,
+        url: preview.guest.getURL(),
+        title: preview.guest.getTitle(),
+        attached: true,
+        active: active === PREVIEW_TAB_ID || active === undefined,
+        note: "The user's own Preview tab; prefer it when the page you need is already open here.",
+      })
+    }
     return { tabs }
   }
 
   async closeTabScoped(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
+    const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+    if (tabId === PREVIEW_TAB_ID) throw new Error('The Preview tab belongs to the user and cannot be closed by the agent')
+    const tab = this.requireSessionTab(sessionKey, tabId)
     this.removeTab(tab)
     return this.listTabs(sessionKey)
   }
 
   async selectTabScoped(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
-    this.activeBySession.set(sessionKey, tab.tabId)
+    const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+    if (tabId === PREVIEW_TAB_ID) {
+      if (!this.previewFor(sessionKey)) throw new Error("The user's Preview tab is not open for this thread right now")
+      this.activeBySession.set(sessionKey, PREVIEW_TAB_ID)
+    } else {
+      const tab = this.requireSessionTab(sessionKey, tabId)
+      this.activeBySession.set(sessionKey, tab.tabId)
+    }
     this.push()
     return this.listTabs(sessionKey)
   }
@@ -299,8 +378,8 @@ export class AgentBrowserService {
       guest.focus()
       await this.glidePointer(tab, guest, point, 'click')
       for (let press = 0; press < clickCount; press += 1) {
-        guest.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
-        guest.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, buttons: CDP_BUTTON_MASKS[button], clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, buttons: 0, clickCount: press + 1 })
       }
       // A click may start a navigation; give the page a moment before reporting.
       await delay(SETTLE_MS)
@@ -317,10 +396,14 @@ export class AgentBrowserService {
         await this.glidePointer(tab, guest, point, 'move')
       }
       guest.focus()
-      await guest.insertText(text)
+      try {
+        await this.dispatchInput(guest, 'Input.insertText', { text })
+      } catch {
+        await guest.insertText(text)
+      }
       if (params.submit === true) {
         await delay(50)
-        this.sendKey(guest, 'Return', [])
+        await this.sendKey(guest, PRESS_KEYS.enter, [])
         await delay(SETTLE_MS)
         await this.waitForLoad(guest, 2_000)
       }
@@ -331,19 +414,21 @@ export class AgentBrowserService {
   async pressKey(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withTab(sessionKey, params, async (tab, guest) => {
       const rawKey = requireString(params.key, 'key', { min: 1, max: 24, trim: true })
-      const keyCode = rawKey.length === 1 ? rawKey : PRESS_KEYS[rawKey.toLowerCase()]
-      if (!keyCode) throw new TypeError(`key must be a single character or one of: ${Object.keys(PRESS_KEYS).join(', ')}`)
+      const key = rawKey.length === 1
+        ? { key: rawKey, code: '', keyCode: rawKey.toUpperCase().charCodeAt(0), text: rawKey }
+        : PRESS_KEYS[rawKey.toLowerCase()]
+      if (!key) throw new TypeError(`key must be a single character or one of: ${Object.keys(PRESS_KEYS).join(', ')}`)
       const modifiers: string[] = []
       if (params.modifiers !== undefined) {
         if (!Array.isArray(params.modifiers)) throw new TypeError('modifiers must be an array')
         for (const modifier of params.modifiers.slice(0, 4)) {
           const name = requireString(modifier, 'modifier', { min: 1, max: 12, trim: true }).toLowerCase()
-          if (!PRESS_MODIFIERS.has(name)) throw new TypeError('modifiers may only include shift, control, alt, meta')
+          if (PRESS_MODIFIER_BITS[name] === undefined) throw new TypeError('modifiers may only include shift, control, alt, meta')
           modifiers.push(name)
         }
       }
       guest.focus()
-      this.sendKey(guest, keyCode, modifiers)
+      await this.sendKey(guest, key, modifiers)
       await delay(SETTLE_MS)
       await this.waitForLoad(guest, 2_000)
       return this.describe(tab, guest)
@@ -363,9 +448,10 @@ export class AgentBrowserService {
       const deltaY = direction === 'up' ? -amount : direction === 'down' ? amount : 0
       if (Number.isSafeInteger(params.x) && Number.isSafeInteger(params.y)) {
         // A wheel event at a point reaches nested scroll containers that
-        // window.scrollBy cannot; wheel deltas are inverted relative to page motion.
+        // window.scrollBy cannot; CDP wheel deltas follow DOM semantics
+        // (positive scrolls down/right).
         await this.glidePointer(tab, guest, { x: params.x as number, y: params.y as number }, 'scroll')
-        guest.sendInputEvent({ type: 'mouseWheel', x: params.x as number, y: params.y as number, deltaX: -deltaX, deltaY: -deltaY, canScroll: true })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: params.x as number, y: params.y as number, deltaX, deltaY })
         await delay(SETTLE_MS)
         return this.describe(tab, guest)
       }
@@ -415,12 +501,22 @@ export class AgentBrowserService {
   ): Promise<Record<string, unknown>> {
     this.requireOpen()
     let tab: TabState
-    if (params.tabId !== undefined) tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
-    else {
+    if (params.tabId !== undefined) {
+      const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+      if (tabId === PREVIEW_TAB_ID) {
+        const preview = this.previewFor(sessionKey)
+        if (!preview) throw new Error("The user's Preview tab is not open for this thread right now. Open a tab with browser_tabs instead.")
+        tab = preview.tab
+      } else tab = this.requireSessionTab(sessionKey, tabId)
+    } else {
       const activeId = this.activeBySession.get(sessionKey)
-      const active = activeId ? this.tabs.get(activeId) : undefined
-      if (!active) throw new Error('This thread has no browser tab yet. Open one with browser_tabs {"action":"open"} first.')
-      tab = active
+      const active = activeId === PREVIEW_TAB_ID ? this.previewFor(sessionKey)?.tab : activeId ? this.tabs.get(activeId) : undefined
+      // With no agent tab selected, fall back to the user's Preview tab: when
+      // the page is already on screen the agent should act on it rather than
+      // opening a duplicate.
+      const fallback = active ?? this.previewFor(sessionKey)?.tab
+      if (!fallback) throw new Error('This thread has no browser tab yet. Open one with browser_tabs {"action":"open"} first.')
+      tab = fallback
     }
     // Serialize actions per tab so concurrent tool calls cannot interleave input events.
     const run = tab.queue.then(async () => {
@@ -431,9 +527,20 @@ export class AgentBrowserService {
     return run
   }
 
+  private previewFor(sessionKey: string): { tab: TabState; guest: WebContents } | null {
+    const tab = this.previewTab
+    if (!tab || tab.sessionKey !== sessionKey || tab.webContentsId === null) return null
+    const guest = this.options.getGuest(tab.webContentsId)
+    if (!guest || guest.isDestroyed()) return null
+    return { tab, guest }
+  }
+
   private async waitForGuest(tab: TabState): Promise<WebContents> {
     const existing = tab.webContentsId === null ? undefined : this.options.getGuest(tab.webContentsId)
     if (existing && !existing.isDestroyed()) return existing
+    // The Preview guest is renderer-owned and never re-attaches under the same
+    // tab record; fail fast instead of waiting.
+    if (tab.tabId === PREVIEW_TAB_ID) throw new Error("The user's Preview tab closed. Open a tab with browser_tabs instead.")
     await new Promise<void>((resolveAttach, reject) => {
       const waiter = {
         resolve: resolveAttach,
@@ -577,24 +684,40 @@ export class AgentBrowserService {
       for (let step = 1; step <= steps; step += 1) {
         const progress = step / steps
         const eased = progress * progress * (3 - 2 * progress)
-        guest.sendInputEvent({
-          type: 'mouseMove',
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
           x: Math.round(from.x + (to.x - from.x) * eased),
           y: Math.round(from.y + (to.y - from.y) * eased),
         })
         await delay(durationMs / steps)
       }
     } else {
-      guest.sendInputEvent({ type: 'mouseMove', x: to.x, y: to.y })
+      await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: to.x, y: to.y })
     }
     tab.pointer = { x: to.x, y: to.y }
   }
 
-  private sendKey(guest: WebContents, keyCode: string, modifiers: string[]): void {
-    const eventModifiers = modifiers as Array<'shift' | 'control' | 'alt' | 'meta'>
-    guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers: eventModifiers })
-    guest.sendInputEvent({ type: 'char', keyCode, modifiers: eventModifiers })
-    guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers: eventModifiers })
+  /**
+   * webContents.sendInputEvent does not reach OOPIF-based webview guests
+   * (input routing happens in the embedder); the DevTools protocol Input
+   * domain dispatches with real hit-testing, so all synthetic input goes
+   * through the debugger instead.
+   */
+  private async dispatchInput(guest: WebContents, method: string, params: Record<string, unknown>): Promise<void> {
+    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3')
+    await guest.debugger.sendCommand(method, params)
+  }
+
+  private async sendKey(guest: WebContents, key: CdpKey, modifiers: string[]): Promise<void> {
+    const bits = modifiers.reduce((mask, name) => mask | (PRESS_MODIFIER_BITS[name] ?? 0), 0)
+    const base = { modifiers: bits, key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode }
+    // A key with text uses keyDown so the page also receives the character;
+    // keys without text (arrows, tab) and chorded shortcuts (ctrl/alt/meta
+    // held) use rawKeyDown.
+    const chorded = (bits & (PRESS_MODIFIER_BITS.alt | PRESS_MODIFIER_BITS.control | PRESS_MODIFIER_BITS.meta)) !== 0
+    if (key.text && !chorded) await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'keyDown', text: key.text })
+    else await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'rawKeyDown' })
+    await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
   }
 
   private push(): void {

@@ -14,9 +14,21 @@ class FakeGuest extends EventEmitter {
   loading = false
   throttling: boolean | null = null
   readonly loadedUrls: string[] = []
+  /** CDP commands dispatched through the debugger, flattened as {method, ...params}. */
   readonly inputEvents: Array<Record<string, unknown>> = []
   readonly insertedText: string[] = []
   readonly executedScripts: string[] = []
+  debuggerAttached = false
+  readonly debugger = {
+    isAttached: () => this.debuggerAttached,
+    attach: () => { this.debuggerAttached = true },
+    detach: () => { this.debuggerAttached = false },
+    sendCommand: async (method: string, params: Record<string, unknown>) => {
+      if (!this.debuggerAttached) throw new Error('Debugger is not attached')
+      if (method === 'Input.insertText') { this.insertedText.push(String(params.text)); return }
+      this.inputEvents.push({ method, ...params })
+    },
+  }
   scriptResult: (code: string) => unknown = (code) => {
     if (code.includes('readyState')) {
       return JSON.stringify({ url: this.url, title: this.title, innerWidth: 640, innerHeight: 480, scrollY: 0, scrollHeight: 900, readyState: 'complete' })
@@ -42,7 +54,7 @@ class FakeGuest extends EventEmitter {
     this.emit('did-navigate')
   }
   async insertText(value: string) { this.insertedText.push(value) }
-  sendInputEvent(event: Record<string, unknown>) { this.inputEvents.push(event) }
+  sendInputEvent() { throw new Error('sendInputEvent does not reach webview guests; use the debugger') }
   async executeJavaScript(code: string) {
     this.executedScripts.push(code)
     return this.scriptResult(code)
@@ -155,8 +167,9 @@ describe('AgentBrowserService', () => {
     }
     await service.click('/sessions/a.jsonl', { ref: 3 })
     const types = guest.inputEvents.map((event) => event.type)
-    expect(types).toEqual(expect.arrayContaining(['mouseMove', 'mouseDown', 'mouseUp']))
-    expect(guest.inputEvents.find((event) => event.type === 'mouseDown')).toMatchObject({ x: 12, y: 34, button: 'left' })
+    expect(types).toEqual(expect.arrayContaining(['mouseMoved', 'mousePressed', 'mouseReleased']))
+    expect(guest.inputEvents.every((event) => event.method === 'Input.dispatchMouseEvent')).toBe(true)
+    expect(guest.inputEvents.find((event) => event.type === 'mousePressed')).toMatchObject({ x: 12, y: 34, button: 'left', buttons: 1, clickCount: 1 })
   })
 
   it('glides the pointer between clicks and emits synchronized pointer events', async () => {
@@ -171,13 +184,13 @@ describe('AgentBrowserService', () => {
     expect(glide).toMatchObject({ from: { x: 20, y: 30 }, to: { x: 320, y: 230 }, action: 'click' })
     expect(glide.durationMs).toBeGreaterThan(0)
     expect(glide.sessionFile).toBe('/sessions/a.jsonl')
-    // The glide sends a trail of intermediate mouseMove events ending at the target.
-    const moves = guest.inputEvents.filter((event) => event.type === 'mouseMove')
+    // The glide sends a trail of intermediate mouseMoved events ending at the target.
+    const moves = guest.inputEvents.filter((event) => event.type === 'mouseMoved')
     expect(moves.length).toBeGreaterThanOrEqual(5)
     expect(moves.at(-1)).toMatchObject({ x: 320, y: 230 })
     expect(moves[0]).not.toMatchObject({ x: 320, y: 230 })
-    const beforeDown = guest.inputEvents.findIndex((event) => event.type === 'mouseDown')
-    expect(guest.inputEvents.slice(0, beforeDown).every((event) => event.type === 'mouseMove')).toBe(true)
+    const beforeDown = guest.inputEvents.findIndex((event) => event.type === 'mousePressed')
+    expect(guest.inputEvents.slice(0, beforeDown).every((event) => event.type === 'mouseMoved')).toBe(true)
     // Focusing a field for typing also moves the cursor there.
     guest.scriptResult = (code) => {
       if (code.includes('__primeWorkAgentRefs')) return JSON.stringify({ x: 40, y: 50 })
@@ -192,7 +205,9 @@ describe('AgentBrowserService', () => {
     const { guest } = await openAttached('/sessions/a.jsonl', 'https://example.com/')
     await service.type('/sessions/a.jsonl', { text: 'hello world', submit: true })
     expect(guest.insertedText).toEqual(['hello world'])
-    expect(guest.inputEvents.filter((event) => event.keyCode === 'Return').map((event) => event.type)).toEqual(['keyDown', 'char', 'keyUp'])
+    const enterEvents = guest.inputEvents.filter((event) => event.method === 'Input.dispatchKeyEvent' && event.key === 'Enter')
+    expect(enterEvents.map((event) => event.type)).toEqual(['keyDown', 'keyUp'])
+    expect(enterEvents[0]).toMatchObject({ text: '\r', windowsVirtualKeyCode: 13 })
   })
 
   it('captures screenshots resized to the CSS viewport', async () => {
@@ -213,6 +228,37 @@ describe('AgentBrowserService', () => {
     expect(service.state().tabs.find((tab) => tab.tabId === second.tabId)).toMatchObject({ attached: false })
     service.closeTab(second.tabId)
     expect(service.state().tabs.find((tab) => tab.tabId === first.tabId)?.active).toBe(true)
+  })
+
+  it('adopts the user preview tab as the default target for its session', async () => {
+    const { service, newGuest } = fixture()
+    const preview = newGuest()
+    preview.url = 'https://dev.local/app'
+    expect(service.setPreviewContext(preview.id, '/sessions/a.jsonl')).toBe(true)
+    const listed = await service.listTabs('/sessions/a.jsonl')
+    expect(listed.tabs).toEqual([expect.objectContaining({ tabId: 'preview', url: 'https://dev.local/app', attached: true, active: true })])
+    // With no agent tab open, actions land on the preview guest.
+    await service.click('/sessions/a.jsonl', { x: 15, y: 25 })
+    expect(preview.inputEvents.find((event) => event.type === 'mousePressed')).toMatchObject({ x: 15, y: 25 })
+    // Other sessions cannot see or use it.
+    expect((await service.listTabs('/sessions/b.jsonl')).tabs).toEqual([])
+    await expect(service.click('/sessions/b.jsonl', { x: 1, y: 1 })).rejects.toThrow(/no browser tab yet/)
+    await expect(service.click('/sessions/b.jsonl', { tabId: 'preview', x: 1, y: 1 })).rejects.toThrow(/not open for this thread/)
+    // Agents cannot close the user's tab; clearing the context revokes access.
+    await expect(service.closeTabScoped('/sessions/a.jsonl', { tabId: 'preview' })).rejects.toThrow(/belongs to the user/)
+    expect(service.setPreviewContext(null, null)).toBe(true)
+    await expect(service.click('/sessions/a.jsonl', { x: 1, y: 1 })).rejects.toThrow(/no browser tab yet/)
+  })
+
+  it('rejects unapproved preview guests and clears the binding when the guest dies', async () => {
+    const { service, guests, newGuest } = fixture()
+    const rogue = new FakeGuest()
+    guests.set(rogue.id, rogue)
+    expect(() => service.setPreviewContext(rogue.id, '/sessions/a.jsonl')).toThrow(/not an approved browser guest/)
+    const preview = newGuest()
+    service.setPreviewContext(preview.id, '/sessions/a.jsonl')
+    preview.destroy()
+    expect((await service.listTabs('/sessions/a.jsonl')).tabs).toEqual([])
   })
 
   it('rejects malformed keys, scroll directions, and coordinates', async () => {
