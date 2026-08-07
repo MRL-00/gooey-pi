@@ -483,6 +483,21 @@ describe('cross-platform packaging repair', () => {
   })
 })
 
+describe('DMG verification cleanup', () => {
+  test('detach failures are logged instead of masking the original error and cleanup always runs', () => {
+    const source = readFileSync('scripts/release/verify-package.mjs', 'utf8')
+    const verifyDmg = source.slice(source.indexOf('async function verifyDmg'), source.indexOf('export async function verifyPackage'))
+    // hdiutil detach runs inside its own try/catch that only logs.
+    expect(verifyDmg).toMatch(/try\s*\{\s*run\('hdiutil', \['detach', mountPoint\]\)\s*\}\s*catch \(detachError\)\s*\{\s*console\.error/)
+    // The rmSync cleanup is attempted unconditionally after the detach attempt.
+    const finallyIndex = verifyDmg.indexOf('} finally {')
+    const cleanupIndex = verifyDmg.indexOf("rmSync(mountPoint, { recursive: true, force: true })")
+    expect(finallyIndex).toBeGreaterThan(-1)
+    expect(cleanupIndex).toBeGreaterThan(finallyIndex)
+    expect(verifyDmg.slice(cleanupIndex)).not.toContain('detach')
+  })
+})
+
 describe('release size budgets', () => {
   test('measures deterministic build-output fixtures', () => {
     const directory = createBundleSizeFixture()

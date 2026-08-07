@@ -110,7 +110,15 @@ async function verifyDmg(dmg, options, artifacts) {
     const payload = await verifyApp({ ...options, app: findSingleApp(mountPoint, basename(dmg)), artifact: dmg })
     return assertArtifactSizeBudgets(payload, artifacts)
   } finally {
-    if (mounted) run('hdiutil', ['detach', mountPoint])
+    // A detach failure is logged rather than thrown so it can never mask the
+    // original verification error, and the mount-point cleanup always runs.
+    if (mounted) {
+      try {
+        run('hdiutil', ['detach', mountPoint])
+      } catch (detachError) {
+        console.error(`hdiutil detach failed for ${mountPoint}: ${detachError instanceof Error ? detachError.message : String(detachError)}`)
+      }
+    }
     rmSync(mountPoint, { recursive: true, force: true })
   }
 }
