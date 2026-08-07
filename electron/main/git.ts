@@ -141,15 +141,12 @@ function parseStatus(output: string, staged: ParsedNumstat, unstaged: ParsedNums
 
 function capDiffLines(text: string): { text: string; truncated: boolean } {
   let lines = 1
-  let lastAllowedBoundary = -1
   for (let index = 0; index < text.length; index += 1) {
     if (text.charCodeAt(index) !== 10) continue
     lines += 1
-    if (lines === GIT_DIFF_LINE_LIMIT) lastAllowedBoundary = index
     if (lines > GIT_DIFF_LINE_LIMIT) {
-      const boundary = lastAllowedBoundary >= 0 ? lastAllowedBoundary : index
       return {
-        text: `${text.slice(0, boundary)}
+        text: `${text.slice(0, index)}
 [Prime Work: diff truncated at ${GIT_DIFF_LINE_LIMIT.toLocaleString('en-US')} lines.]`,
         truncated: true,
       }

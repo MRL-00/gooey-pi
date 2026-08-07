@@ -297,7 +297,9 @@ printf 'mutated by filter\n'
     expect(diff.truncated).toBe(true)
     expect(diff.error).toMatch(/lines.*truncated/i)
     expect(diff.text).toContain('[Prime Work: diff truncated')
-    expect(diff.text.split('\n').length).toBeLessThanOrEqual(GIT_DIFF_LINE_LIMIT)
+    const outputLines = diff.text.split('\n')
+    expect(outputLines).toHaveLength(GIT_DIFF_LINE_LIMIT + 1)
+    expect(outputLines[outputLines.length - 1]).toContain('[Prime Work: diff truncated')
   }, 30_000)
 
   it('reports isRepo false only for a genuine not-a-repository failure', async () => {
