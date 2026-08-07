@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reduceMotion: false,
   showReasoningSummaries: true,
   showToolCalls: true,
+  messageEnterAction: 'queue',
   telemetry: false,
   disabledProviders: [],
 }

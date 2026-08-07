@@ -42,6 +42,18 @@ describe('JsonStateStore', () => {
     expect(JSON.parse(readFileSync(path, 'utf8')).archivedSessions).toHaveLength(20)
   })
 
+  it('defaults and validates the configurable message Enter action', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    const settings = { ...defaultSettings(), messageEnterAction: 'steer' }
+    writeFileSync(path, JSON.stringify({ version: 1, projects: [], settings, archivedSessions: [], dismissedProjectPaths: [] }))
+    expect(new JsonStateStore(path).snapshot().settings.messageEnterAction).toBe('steer')
+
+    settings.messageEnterAction = 'invalid' as typeof settings.messageEnterAction
+    writeFileSync(path, JSON.stringify({ version: 1, projects: [], settings, archivedSessions: [], dismissedProjectPaths: [] }))
+    expect(new JsonStateStore(path).snapshot().settings.messageEnterAction).toBe('queue')
+  })
+
   it('stops update admission and drains a write when shutdown starts immediately', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')

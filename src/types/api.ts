@@ -205,6 +205,8 @@ export interface TerminalSpawnOptions { cwd: string; shell?: string; cols?: numb
 export interface TerminalDataEvent { terminalId: string; data: string }
 export interface TerminalExitEvent { terminalId: string; exitCode: number; signal?: number }
 
+export type MessageEnterAction = 'queue' | 'steer'
+
 export interface AppSettings {
   theme: ThemeMode
   sidebarOpen: boolean
@@ -217,6 +219,7 @@ export interface AppSettings {
   reduceMotion: boolean
   showReasoningSummaries: boolean
   showToolCalls: boolean
+  messageEnterAction: MessageEnterAction
   telemetry: boolean
   disabledProviders: string[]
 }

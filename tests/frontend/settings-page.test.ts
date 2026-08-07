@@ -154,6 +154,7 @@ describe('settings field ownership', () => {
       reduceMotion: 'appearance',
       showReasoningSummaries: 'agent',
       showToolCalls: 'agent',
+      messageEnterAction: 'agent',
       telemetry: 'privacy',
       disabledProviders: 'providers',
     })

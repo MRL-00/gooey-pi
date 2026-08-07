@@ -25,6 +25,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   reduceMotion: 'appearance',
   showReasoningSummaries: 'agent',
   showToolCalls: 'agent',
+  messageEnterAction: 'agent',
   telemetry: 'privacy',
   disabledProviders: 'providers',
 } as const satisfies Record<keyof AppSettings, SettingsSection>

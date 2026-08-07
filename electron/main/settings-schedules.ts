@@ -12,7 +12,7 @@ export class SettingsService {
 
   async update(raw: unknown): Promise<AppSettings> {
     if (!isRecord(raw)) throw new TypeError('settings patch must be an object')
-    const keys: Array<keyof AppSettings> = ['theme', 'sidebarOpen', 'inspectorOpen', 'terminalOpen', 'defaultInspectorTab', 'browserHome', 'browserAskForDownloads', 'terminalShell', 'reduceMotion', 'showReasoningSummaries', 'showToolCalls', 'telemetry', 'disabledProviders']
+    const keys: Array<keyof AppSettings> = ['theme', 'sidebarOpen', 'inspectorOpen', 'terminalOpen', 'defaultInspectorTab', 'browserHome', 'browserAskForDownloads', 'terminalShell', 'reduceMotion', 'showReasoningSummaries', 'showToolCalls', 'messageEnterAction', 'telemetry', 'disabledProviders']
     rejectUnknownKeys(raw, keys, 'settings patch')
     const patch: Partial<AppSettings> = {}
     if (raw.theme !== undefined) {
@@ -25,6 +25,10 @@ export class SettingsService {
     if (raw.defaultInspectorTab !== undefined) {
       if (raw.defaultInspectorTab !== 'summary' && raw.defaultInspectorTab !== 'changes' && raw.defaultInspectorTab !== 'browser' && raw.defaultInspectorTab !== 'files') throw new TypeError('Invalid inspector tab')
       patch.defaultInspectorTab = raw.defaultInspectorTab
+    }
+    if (raw.messageEnterAction !== undefined) {
+      if (raw.messageEnterAction !== 'queue' && raw.messageEnterAction !== 'steer') throw new TypeError('Invalid message Enter action')
+      patch.messageEnterAction = raw.messageEnterAction
     }
     if (raw.browserHome !== undefined) patch.browserHome = requireWebUrl(raw.browserHome)
     if (raw.terminalShell !== undefined) patch.terminalShell = this.validateShell(raw.terminalShell)

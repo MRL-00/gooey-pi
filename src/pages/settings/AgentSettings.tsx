@@ -1,4 +1,5 @@
-import { Bot, ShieldCheck } from 'lucide-react'
+import { Bot, Keyboard, ShieldCheck } from 'lucide-react'
+import type { AppSettings } from '@/types/api'
 import type { SettingsMetaSectionProps } from './contracts'
 import { SettingsToggle } from './SettingsToggle'
 
@@ -21,6 +22,18 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
         <h2>Transcript</h2>
         <SettingsToggle checked={settings.showReasoningSummaries} onChange={(showReasoningSummaries) => { void onUpdate({ showReasoningSummaries }) }} label="Show reasoning summaries" description="Display reasoning summaries and traces while Prime works. Completed work stays collapsed." />
         <SettingsToggle checked={settings.showToolCalls} onChange={(showToolCalls) => { void onUpdate({ showToolCalls }) }} label="Show tool calls" description="Display compact tool activity, arguments, and expandable results." />
+      </section>
+      <section className="settings-group">
+        <h2>Message shortcuts</h2>
+        <label className="settings-row">
+          <span><strong>Enter while Prime is working</strong><small>Choose the default action. Shift+Enter adds a new line.</small></span>
+          <select value={settings.messageEnterAction} onChange={(event) => { void onUpdate({ messageEnterAction: event.target.value as AppSettings['messageEnterAction'] }) }}>
+            <option value="queue">Queue message</option>
+            <option value="steer">Steer current turn</option>
+          </select>
+        </label>
+        <div className="shortcut-row"><span><Keyboard size={14} />Queue message</span><kbd>{settings.messageEnterAction === 'queue' ? 'Enter' : 'Ctrl Enter'}</kbd></div>
+        <div className="shortcut-row"><span><Keyboard size={14} />Steer current turn</span><kbd>{settings.messageEnterAction === 'steer' ? 'Enter' : 'Ctrl Enter'}</kbd></div>
       </section>
       <section className="settings-group">
         <h2>Permissions</h2>
