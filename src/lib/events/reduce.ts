@@ -302,74 +302,10 @@ export function createPrimeEventBuffer(): PrimeEventBuffer {
   }
 }
 
+/**
+ * Sequential application is a batch of one: there is exactly one reducer, so
+ * single-event and batched replay cannot diverge for any event type.
+ */
 export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<string, unknown>): TranscriptMessage[] {
-  const type = string(raw.type) ?? string(raw.event)
-  if (!type) return messages
-  const compaction = applyCompactionEvent(messages, raw)
-  if (compaction) return compaction
-  if (type === 'agent_start' || type === 'turn_start') {
-    if (messages.some((message) => message.role === 'assistant' && message.streaming)) return messages
-    if (messages.at(-1)?.role === 'assistant') {
-      return messages.map((message, index) => index === messages.length - 1
-        ? { ...message, streaming: true, completedAt: undefined }
-        : message)
-    }
-    const startedAt = Date.now()
-    return [...messages, { id: nextTranscriptId('assistant'), role: 'assistant', timestamp: startedAt, startedAt, streaming: true, parts: [] }]
-  }
-  if (type === 'message_update') {
-    const delta = record(raw.assistantMessageEvent) ?? record(raw.delta)
-    const deltaType = string(delta?.type)
-    const text = string(delta?.delta) ?? ''
-    if ((deltaType === 'text_delta' || deltaType === 'thinking_delta') && text) return updateLastAssistant(messages, (message) => ({ ...message, parts: appendDelta(message.parts, deltaType === 'text_delta' ? 'text' : 'thinking', text) }))
-    if (deltaType === 'toolcall_end') {
-      const tool = record(delta?.toolCall)
-      return updateLastAssistant(messages, (message) => ({ ...message, parts: upsertTool(message.parts, string(tool?.id), string(tool?.name) ?? 'Tool', tool?.arguments ?? tool?.args) }))
-    }
-    return messages
-  }
-  if (type === 'tool_execution_start') {
-    const id = string(raw.toolCallId)
-    const name = string(raw.toolName) ?? 'Tool'
-    return updateLastAssistant(messages, (message) => ({ ...message, parts: upsertTool(message.parts, id, name, raw.args) }))
-  }
-  if (type === 'tool_execution_update') {
-    const id = string(raw.toolCallId)
-    const name = string(raw.toolName) ?? 'Tool'
-    return updateLastAssistant(messages, (message) => {
-      const parts = upsertTool(message.parts, id, name, raw.args)
-      const callIndex = parts.findIndex((part) => part.type === 'toolCall' && part.id === id)
-      const partial: MessagePart = { type: 'toolResult', name, text: resultText(raw.partialResult) }
-      if (callIndex >= 0 && parts[callIndex + 1]?.type === 'toolResult') return { ...message, parts: parts.map((part, index) => index === callIndex + 1 ? { ...partial, partId: part.partId } : part) }
-      return { ...message, parts: [...parts.slice(0, callIndex + 1), withPartId(partial), ...parts.slice(callIndex + 1)] }
-    })
-  }
-  if (type === 'tool_execution_end') {
-    const id = string(raw.toolCallId)
-    const name = string(raw.toolName) ?? 'Tool'
-    return updateLastAssistant(messages, (message) => ({ ...message, parts: finishTool(message.parts, id, name, raw.result, raw.isError === true) }))
-  }
-  if (type === 'custom_message') {
-    const part = agentMessagePart(raw)
-    return part ? updateLastAssistant(messages, (message) => ({ ...message, parts: [...message.parts, withPartId(part)] })) : messages
-  }
-  if (type === 'agent_end') {
-    const completedAt = Date.now()
-    return messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt, parts: message.parts.length ? message.parts : [withPartId({ type: 'text', text: 'Completed without a text response.' })] } : message)
-  }
-  if (type === 'extension_error' || type === 'error' || type === 'transport_error') {
-    const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
-    const completedAt = Date.now()
-    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
-    if (finalized.at(-1)?.role === 'system') return finalized
-    return [...finalized, { id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [withPartId({ type: 'text', text })] }]
-  }
-  if (type === 'runtime_exit') {
-    const completedAt = Date.now()
-    const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
-    if (raw.expected === true || finalized.at(-1)?.role === 'system') return finalized
-    const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
-    return [...finalized, { id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [withPartId({ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` })] }]
-  }
-  return messages
+  return replayPrimeEvents(messages, [raw])
 }
