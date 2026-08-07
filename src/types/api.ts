@@ -52,6 +52,36 @@ export interface PromptImage {
   data: string
 }
 
+export interface BrowserAnnotationRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Element info captured from the embedded browser page. Every field is untrusted page data: bounded on capture, rendered as plain text only. */
+export interface BrowserAnnotationElement {
+  selector: string
+  tagName: string
+  id: string
+  classes: string[]
+  text: string
+  href?: string
+  src?: string
+  rect: BrowserAnnotationRect
+}
+
+export interface BrowserAnnotation {
+  id: string
+  comment: string
+  element: BrowserAnnotationElement
+  pageUrl: string
+  pageTitle: string
+  /** True once the page navigated away after capture: the live marker is gone but the captured info remains valid. */
+  stale: boolean
+  createdAt: number
+}
+
 export type PrimeCompactionReason = 'manual' | 'threshold' | 'overflow' | 'requested'
 export type PrimeCompactionStatus = 'running' | 'done' | 'failed' | 'cancelled'
 export type PrimeCompactionOutcome = 'failed' | 'cancelled' | 'skipped'
