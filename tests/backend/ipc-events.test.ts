@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electronMocks = vi.hoisted(() => ({
   app: {},
@@ -83,5 +87,129 @@ describe('session change IPC', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1)
     notify?.({ filePath: '/tmp/later.jsonl' })
     expect(trusted.send).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('shell-facing app handlers', () => {
+  const expectedUrl = 'prime-work://app/'
+  const dirs: string[] = []
+  let handlers: Map<string, (event: unknown, ...args: unknown[]) => unknown>
+  let sender: { id: number; isDestroyed: () => boolean; getURL: () => string; mainFrame: { url: string } }
+  let event: { sender: typeof sender; senderFrame: { url: string } }
+
+  function register(overrides: Record<string, unknown> = {}) {
+    handlers = new Map()
+    electronMocks.ipcMain.handle.mockImplementation((channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
+      handlers.set(channel, listener)
+    })
+    const services = {
+      meta: {},
+      projects: serviceStub(),
+      sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
+      agents: serviceStub(),
+      terminals: serviceStub(),
+      git: serviceStub(),
+      plugins: serviceStub(),
+      settings: serviceStub(),
+      schedules: serviceStub(),
+      ...overrides,
+    }
+    const registration = registerIpc(services as never, expectedUrl)
+    registration.authorize(sender as never)
+    return registration
+  }
+
+  beforeEach(() => {
+    const mainFrame = { url: expectedUrl }
+    sender = { id: 11, isDestroyed: () => false, getURL: () => expectedUrl, mainFrame }
+    event = { sender, senderFrame: mainFrame }
+    electronMocks.shell.openExternal.mockReset()
+    electronMocks.shell.showItemInFolder.mockReset()
+    electronMocks.ipcMain.handle.mockReset()
+  })
+
+  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+
+  it('opens validated web and mailto URLs through the shell', async () => {
+    const registration = register()
+    electronMocks.shell.openExternal.mockResolvedValue(undefined)
+    await expect(handlers.get('app:open-external')!(event, 'https://example.com')).resolves.toBe(true)
+    expect(electronMocks.shell.openExternal).toHaveBeenCalledWith('https://example.com/', { activate: true })
+    await expect(handlers.get('app:open-external')!(event, 'mailto:team@example.com')).resolves.toBe(true)
+    expect(electronMocks.shell.openExternal).toHaveBeenCalledWith('mailto:team@example.com', { activate: true })
+    registration.dispose()
+  })
+
+  it('refuses disallowed URLs without ever reaching the shell', async () => {
+    const registration = register()
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'https://user:pass@example.com/', 42, `https://example.com/${'a'.repeat(8192)}`]) {
+      await expect(handlers.get('app:open-external')!(event, url), String(url)).resolves.toBe(false)
+    }
+    expect(electronMocks.shell.openExternal).not.toHaveBeenCalled()
+    registration.dispose()
+  })
+
+  it('reports failure when the shell itself rejects the launch', async () => {
+    const registration = register()
+    electronMocks.shell.openExternal.mockRejectedValue(new Error('no handler'))
+    await expect(handlers.get('app:open-external')!(event, 'https://example.com')).resolves.toBe(false)
+    expect(electronMocks.shell.openExternal).toHaveBeenCalledTimes(1)
+    registration.dispose()
+  })
+
+  it('reveals a path only after project authorization succeeds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-reveal-')); dirs.push(dir)
+    const file = join(dir, 'file.txt'); writeFileSync(file, 'data')
+    const canonical = await realpath(file)
+    const authorizePath = vi.fn(async (path: string) => path)
+    const registration = register({ projects: { ...serviceStub(), authorizePath } })
+    await expect(handlers.get('app:reveal-path')!(event, file)).resolves.toBe(true)
+    expect(authorizePath).toHaveBeenCalledWith(canonical)
+    expect(electronMocks.shell.showItemInFolder).toHaveBeenCalledWith(canonical)
+    registration.dispose()
+  })
+
+  it('falls back to session and then plugin authorization in order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-reveal-')); dirs.push(dir)
+    const file = join(dir, 'file.txt'); writeFileSync(file, 'data')
+    const canonical = await realpath(file)
+    const authorizePath = vi.fn(async () => { throw new Error('outside projects') })
+    const requireSessionPath = vi.fn(async () => { throw new Error('not a session file') })
+    const authorizeReveal = vi.fn(() => canonical)
+    const registration = register({
+      projects: { ...serviceStub(), authorizePath },
+      sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath },
+      plugins: { ...serviceStub(), authorizeReveal },
+    })
+    await expect(handlers.get('app:reveal-path')!(event, file)).resolves.toBe(true)
+    expect(requireSessionPath).toHaveBeenCalledWith(canonical)
+    expect(authorizeReveal).toHaveBeenCalledWith(canonical)
+    expect(electronMocks.shell.showItemInFolder).toHaveBeenCalledWith(canonical)
+    registration.dispose()
+  })
+
+  it('denies reveal when every authorizer refuses the path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-reveal-')); dirs.push(dir)
+    const file = join(dir, 'file.txt'); writeFileSync(file, 'data')
+    const registration = register({
+      projects: { ...serviceStub(), authorizePath: vi.fn(async () => { throw new Error('denied') }) },
+      sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath: vi.fn(async () => { throw new Error('denied') }) },
+      plugins: { ...serviceStub(), authorizeReveal: vi.fn(() => { throw new Error('denied') }) },
+    })
+    await expect(handlers.get('app:reveal-path')!(event, file)).resolves.toBe(false)
+    expect(electronMocks.shell.showItemInFolder).not.toHaveBeenCalled()
+    registration.dispose()
+  })
+
+  it('denies reveal for nonexistent or relative paths before consulting authorizers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-reveal-')); dirs.push(dir)
+    const authorizePath = vi.fn(async (path: string) => path)
+    const registration = register({ projects: { ...serviceStub(), authorizePath } })
+    await expect(handlers.get('app:reveal-path')!(event, join(dir, 'missing.txt'))).resolves.toBe(false)
+    await expect(handlers.get('app:reveal-path')!(event, 'relative/path.txt')).resolves.toBe(false)
+    await expect(handlers.get('app:reveal-path')!(event, 42)).resolves.toBe(false)
+    expect(authorizePath).not.toHaveBeenCalled()
+    expect(electronMocks.shell.showItemInFolder).not.toHaveBeenCalled()
+    registration.dispose()
   })
 })
