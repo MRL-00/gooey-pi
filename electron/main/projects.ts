@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, relative, resolve } from 'node:path'
 import { lstat, readdir } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
-import type { ProjectFileEntry, ProjectRecord, SessionRecord } from '../../src/types/api'
+import type { ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId } from './validation'
 
@@ -275,15 +276,24 @@ export class ProjectService {
     })
   }
 
-  async listFiles(rootValue: unknown): Promise<ProjectFileEntry[]> {
+  async listFiles(rootValue: unknown): Promise<ProjectFileListing> {
     const root = await this.authorizeCwd(rootValue as string)
     const entries: ProjectFileEntry[] = []
+    let skipped = 0
     const ignoredDirectories = new Set(['.git', 'node_modules', 'out', 'dist', 'build', 'release', 'coverage', '.next', '.venv'])
     const maxEntries = 5_000
 
     const visit = async (directory: string): Promise<void> => {
       if (entries.length >= maxEntries) return
-      const children = await readdir(directory, { withFileTypes: true })
+      let children: Dirent[]
+      try {
+        children = await readdir(directory, { withFileTypes: true })
+      } catch {
+        // An unreadable directory (permissions, races) must not fail the whole
+        // listing; report it so the UI can note the gap.
+        skipped += 1
+        return
+      }
       children.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
       for (const child of children) {
         if (entries.length >= maxEntries) break
@@ -298,7 +308,7 @@ export class ProjectService {
     }
 
     await visit(root)
-    return entries
+    return { entries, skipped }
   }
 
   private async authorizedRootFor(path: string): Promise<string> {

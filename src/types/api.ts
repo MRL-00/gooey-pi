@@ -188,6 +188,7 @@ export type McpConnectionInput = {
 )
 
 export interface ProjectFileEntry { path: string; type: 'file' | 'directory' }
+export interface ProjectFileListing { entries: ProjectFileEntry[]; skipped: number }
 
 export interface GitFileChange {
   path: string
@@ -342,7 +343,7 @@ export interface NativeHeartbeatRecord {
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
-  projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileEntry[]>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
+  projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileListing>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
   sessions: {
     list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>
     read(filePath: string): Promise<TranscriptMessage[]>

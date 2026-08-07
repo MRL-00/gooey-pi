@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -30,11 +30,33 @@ describe('ProjectService file listing', () => {
     await store.update((state) => { state.projects.push({ id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root) }) })
 
     await service.list()
-    expect(await service.listFiles(root)).toEqual([
-      { path: 'src', type: 'directory' },
-      { path: 'src/index.ts', type: 'file' },
-      { path: 'README.md', type: 'file' },
-    ])
+    expect(await service.listFiles(root)).toEqual({
+      entries: [
+        { path: 'src', type: 'directory' },
+        { path: 'src/index.ts', type: 'file' },
+        { path: 'README.md', type: 'file' },
+      ],
+      skipped: 0,
+    })
+  })
+
+  it('skips unreadable directories and reports how many were skipped', async () => {
+    const { root, service, store } = setup()
+    mkdirSync(join(root, 'readable'))
+    writeFileSync(join(root, 'readable', 'kept.txt'), 'kept')
+    mkdirSync(join(root, 'unreadable'))
+    writeFileSync(join(root, 'unreadable', 'hidden.txt'), 'hidden')
+    chmodSync(join(root, 'unreadable'), 0o000)
+    await store.update((state) => { state.projects.push({ id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root) }) })
+    await service.list()
+    try {
+      const listing = await service.listFiles(root)
+      expect(listing.entries).toContainEqual({ path: 'readable/kept.txt', type: 'file' })
+      expect(listing.entries.some((entry) => entry.path === 'unreadable/hidden.txt')).toBe(false)
+      expect(listing.skipped).toBe(1)
+    } finally {
+      chmodSync(join(root, 'unreadable'), 0o700)
+    }
   })
 
   it('rejects paths that have not been added as projects', async () => {
@@ -50,7 +72,7 @@ describe('ProjectService file listing', () => {
       createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
     }) })
 
-    expect(await service.listFiles(root)).toEqual([{ path: 'README.md', type: 'file' }])
+    expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'README.md', type: 'file' }], skipped: 0 })
     expect(store.snapshot().projects[0].folderIdentities).toEqual(identities(root))
   })
 
