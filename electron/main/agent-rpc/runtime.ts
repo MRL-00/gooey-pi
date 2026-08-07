@@ -67,7 +67,8 @@ export class RpcRuntime {
     })
   }
 
-  snapshot(): RuntimeInfo { return structuredClone(this.info) }
+  /** Frozen shallow copy: nested state is replaced wholesale on update, and the IPC boundary clones for the renderer. */
+  snapshot(): RuntimeInfo { return Object.freeze({ ...this.info }) }
 
   async handshake(): Promise<RuntimeInfo> {
     const response = await this.request({ type: 'get_state' }, 60_000)

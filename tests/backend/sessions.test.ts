@@ -553,12 +553,12 @@ describe('SessionService transcript read admission', () => {
     const results = await Promise.all([first, duplicate, aliased, second, third, fourth])
     expect(transcriptReader).toHaveBeenCalledTimes(4)
     expect(peak).toBeLessThanOrEqual(2)
-    expect(results[0]).not.toBe(results[1])
-    expect(results[0][0]).not.toBe(results[1][0])
-    const firstPart = results[0][0]?.parts[0]
-    if (firstPart?.type === 'text') firstPart.text = 'mutated'
-    expect(results[1][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
-    expect(results[2][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
+    // Coalesced canonical reads share one immutable result: the IPC boundary
+    // clones per renderer, so main-side pre-clones would be redundant copies.
+    expect(results[0]).toBe(results[1])
+    expect(results[0]).toBe(results[2])
+    expect(results[3]).not.toBe(results[0])
+    expect(results[0][0]?.parts).toEqual([{ type: 'text', text: 'original' }])
   })
 })
 
@@ -881,6 +881,23 @@ process.exit(9)
     Object.defineProperty(service, 'sessionRoot', { value: root })
 
     await expect(service.followUp(file, 'start normally instead')).resolves.toBe(false)
+  })
+
+  it('snapshots runtimes once per list() instead of once per session', async () => {
+    const { root, project, service } = setup()
+    for (let index = 0; index < 5; index += 1) writeSession(join(root, `snapshot-${index}.jsonl`), project, `snapshot-${index}`)
+    const running = await service.requireSessionPath(join(root, 'snapshot-0.jsonl'))
+    const get = vi.fn(() => undefined)
+    const all = vi.fn(() => [{ sessionFile: running, isStreaming: true }])
+    service.bindRuntimeHooks({ get, all, stop: async () => undefined, rename: async () => false })
+
+    const records = await service.list()
+
+    expect(records).toHaveLength(5)
+    expect(records.find((record) => record.filePath === running)?.status).toBe('running')
+    expect(records.filter((record) => record.status === 'running')).toHaveLength(1)
+    expect(all).toHaveBeenCalledTimes(1)
+    expect(get).not.toHaveBeenCalled()
   })
 
   it('overlays runtime state and preserves archive and rename hook semantics', async () => {
