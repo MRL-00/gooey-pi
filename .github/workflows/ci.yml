@@ -2,11 +2,17 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
@@ -43,6 +49,39 @@ jobs:
         with:
           name: playwright-results
           path: test-results/
+
+  packaging-smoke:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: mac
+            arch: arm64
+            extra_args: --config.mac.identity=null
+          - runner: ubuntu-22.04
+            target: linux
+            arch: x64
+            extra_args: ''
+          - runner: windows-2022
+            target: win
+            arch: x64
+            extra_args: ''
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - run: npm ci
+      - run: npm run build:bundle
+      - run: npm exec -- electron-builder --dir --${{ matrix.target }} --${{ matrix.arch }} --publish never --config.directories.output=release/${{ matrix.target }}/${{ matrix.arch }} ${{ matrix.extra_args }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - if: matrix.target != 'mac'
+        run: node scripts/release/verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only
 
   local-qa-package:
     if: github.event_name == 'workflow_dispatch'

@@ -120,6 +120,16 @@ describe('release preflight', () => {
     expect(releaseWorkflow.match(/secrets\./g)).toHaveLength(12)
     expect(releaseWorkflow.match(/^        env:$/gm)).toHaveLength(2)
   })
+
+  test('gates packaging regressions on every pull request', () => {
+    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
+    expect(ciWorkflow).toMatch(/on:\n  push:\n    branches:\n      - main/)
+    expect(ciWorkflow).toContain('cancel-in-progress: true')
+    expect(ciWorkflow).toMatch(/packaging-smoke:\n    if: github\.event_name == 'pull_request'/)
+    for (const runner of ['macos-14', 'ubuntu-22.04', 'windows-2022']) expect(ciWorkflow).toContain(`runner: ${runner}`)
+    expect(ciWorkflow).toContain('electron-builder --dir')
+    expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')
+  })
 })
 
 describe('fuse hardening configuration', () => {
