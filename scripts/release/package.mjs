@@ -14,7 +14,6 @@ const skipVerify = args.has('--skip-verify')
 const platformIndex = process.argv.indexOf('--platform')
 const platform = platformIndex === -1 ? undefined : process.argv[platformIndex + 1]
 const archIndex = process.argv.indexOf('--arch')
-const requestedArch = archIndex === -1 ? undefined : process.argv[archIndex + 1]
 const platformHosts = { mac: 'darwin', linux: 'linux', win: 'win32' }
 const nativeArchitectures = { arm64: 'arm64', x64: 'x64' }
 if (isPublic === isQa) {
@@ -25,9 +24,12 @@ if (!platform || !(platform in platformHosts)) {
   console.error('Choose a supported platform: --platform mac, linux, or win')
   process.exit(2)
 }
+// An explicit --arch is authoritative; only its absence falls back to the
+// build machine's architecture, so a malformed flag fails instead of silently
+// packaging the host arch.
 const defaultArch = process.arch === 'arm64' ? 'arm64' : 'x64'
-const arch = requestedArch ?? defaultArch
-if (!(arch in nativeArchitectures)) {
+const arch = archIndex === -1 ? defaultArch : process.argv[archIndex + 1]
+if (!arch || !(arch in nativeArchitectures)) {
   console.error('Choose a supported architecture: --arch arm64 or x64')
   process.exit(2)
 }
@@ -53,7 +55,7 @@ try {
   if (platform === 'mac') {
     run(
       'node',
-      ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa', '--release-directory', resolve('release', platform, arch)],
+      ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa', '--arch', arch, '--release-directory', resolve('release', platform, arch)],
       withoutReleaseCredentials(process.env, ['RELEASE_SIGNING_TEAM_ID']),
     )
   } else {
