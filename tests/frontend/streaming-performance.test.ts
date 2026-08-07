@@ -259,6 +259,28 @@ describe('linear event batches', () => {
     expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
   })
 
+  it('pairs id-less tool executions onto one tool row instead of adding a phantom row', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-02T03:04:05.000Z'))
+    const events: Record<string, unknown>[] = [
+      { type: 'agent_start' },
+      { type: 'tool_execution_start', toolName: 'Anonymous', args: { path: 'a' } },
+      { type: 'tool_execution_end', toolName: 'Anonymous', result: 'done' },
+      { type: 'agent_end' },
+    ]
+    resetTranscriptIdsForTests()
+    const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
+    const batched = replayPrimeEvents(transcript(), events)
+
+    expect(batched).toEqual(sequential)
+    const parts = batched[0]?.parts ?? []
+    expect(parts.filter((part) => part.type === 'toolCall')).toHaveLength(1)
+    expect(parts.filter((part) => part.type === 'toolResult')).toHaveLength(1)
+    const call = parts.find((part) => part.type === 'toolCall')
+    expect(call && 'id' in call ? call.id : undefined).toBeTruthy()
+  })
+
   it('matches single-event semantics for deterministic mixed-event permutations', () => {
     vi.spyOn(Date, 'now').mockReturnValue(7)
     const pool: Record<string, unknown>[] = [
