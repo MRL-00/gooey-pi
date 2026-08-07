@@ -3,40 +3,6 @@ import { applyCompactionEvent, isCompactionEvent } from './compaction'
 import { nextTranscriptId, withPartId } from './ids'
 import { agentMessagePart, record, resultText, string } from './parse'
 
-function updateLastAssistant(messages: TranscriptMessage[], updater: (message: TranscriptMessage) => TranscriptMessage): TranscriptMessage[] {
-  let index = -1
-  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
-    if (messages[cursor].role === 'assistant' && messages[cursor].streaming) { index = cursor; break }
-  }
-  if (index < 0 && messages.at(-1)?.role === 'assistant') index = messages.length - 1
-  if (index < 0) return [...messages, updater({ id: nextTranscriptId('stream'), role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [] })]
-  return messages.map((message, messageIndex) => messageIndex === index
-    ? updater(message.streaming ? message : { ...message, streaming: true, completedAt: undefined })
-    : message)
-}
-
-function appendDelta(parts: MessagePart[], type: 'text' | 'thinking', delta: string): MessagePart[] {
-  const last = parts.at(-1)
-  if (last?.type === type) return [...parts.slice(0, -1), { ...last, text: last.text + delta }]
-  return [...parts, withPartId({ type, text: delta })]
-}
-
-function upsertTool(parts: MessagePart[], id: string | undefined, name: string, args: unknown): MessagePart[] {
-  const index = id ? parts.findIndex((part) => part.type === 'toolCall' && part.id === id) : -1
-  const next: MessagePart = { type: 'toolCall', id, name, args }
-  if (index < 0) return [...parts, withPartId(next)]
-  return parts.map((part, partIndex) => partIndex === index ? { ...next, partId: part.partId } : part)
-}
-
-function finishTool(parts: MessagePart[], id: string | undefined, name: string, result: unknown, isError: boolean): MessagePart[] {
-  const callIndex = id ? parts.findIndex((part) => part.type === 'toolCall' && part.id === id) : -1
-  const resultPart: MessagePart = { type: 'toolResult', name, text: resultText(result), isError }
-  if (callIndex < 0) return [...parts, withPartId({ type: 'toolCall', id, name }), withPartId(resultPart)]
-  const after = parts[callIndex + 1]
-  if (after?.type === 'toolResult') return parts.map((part, index) => index === callIndex + 1 ? { ...resultPart, partId: part.partId } : part)
-  return [...parts.slice(0, callIndex + 1), withPartId(resultPart), ...parts.slice(callIndex + 1)]
-}
-
 export interface PrimeEventReplayStats {
   messageScans: number
   eventScans: number
