@@ -13,6 +13,7 @@ export default defineConfig({
         'electron/main/lib/**/*.ts',
         'electron/main/plugins/**/*.ts',
         'electron/main/agent-rpc/**/*.ts',
+        'electron/main/browser/**/*.ts',
         'electron/main/sessions/**/*.ts',
         'src/lib/{events,extension-ui,render-bounds,workspace}.ts',
         'src/lib/events/**/*.ts',
