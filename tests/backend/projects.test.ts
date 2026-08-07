@@ -77,6 +77,38 @@ describe('ProjectService file listing', () => {
     await expect(restarted.authorizeCwd(root)).rejects.toThrow(/identity changed/)
   })
 
+  it('serves authorization from the previous complete map while a list refresh is in flight', async () => {
+    const { root, service, store } = setup()
+    const second = `${root}-second`
+    mkdirSync(second)
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push(
+      { id: 'project-a', name: 'A', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(root) },
+      { id: 'project-b', name: 'B', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(second) },
+    ) })
+    let armed = false
+    let markEntered!: () => void
+    let releaseBranch!: () => void
+    const entered = new Promise<void>((resolveEntered) => { markEntered = resolveEntered })
+    const release = new Promise<void>((resolveRelease) => { releaseBranch = resolveRelease })
+    service.bindProviders({ sessions: async () => [], branch: async (cwd) => {
+      if (armed && cwd === root) { markEntered(); await release }
+      return 'main'
+    } })
+
+    await service.list()
+    armed = true
+    const refresh = service.list()
+    await entered
+    // The refresh is parked inside branch enrichment: lookups must keep
+    // resolving against a complete authorization map.
+    await expect(service.authorizeCwd(second)).resolves.toBe(realpathSync(second))
+    await expect(service.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+    releaseBranch()
+    const records = await refresh
+    expect(records.find((record) => record.id === 'project-a')?.gitBranch).toBe('main')
+  })
+
   it('revokes a grant when a different directory is recreated at the same path', async () => {
     const { root, service, store } = setup()
     await store.update((state) => { state.projects.push({

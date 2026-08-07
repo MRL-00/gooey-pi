@@ -12,7 +12,9 @@ function inferredId(path: string): string {
 }
 
 export class ProjectService {
-  private readonly authorizedRoots = new Map<string, FolderIdentity>()
+  // Reassigned wholesale (build-new-map-then-swap) so authorization reads are
+  // never served from a partially repopulated map.
+  private authorizedRoots = new Map<string, FolderIdentity>()
   private readonly removalRoots = new Set<string>()
   private authorizationRevision = 0
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
@@ -89,7 +91,8 @@ export class ProjectService {
     })))
     const records: ProjectRecord[] = []
     const represented = new Set<string>()
-    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.clear()
+    const nextAuthorized = new Map<string, FolderIdentity>()
+    const branchTargets: Array<{ record: ProjectRecord; cwd: string }> = []
 
     for (const project of persisted) {
       const folderSet = new Set<string>()
@@ -105,16 +108,22 @@ export class ProjectService {
         represented.add(canonical)
         if (verified && expected) {
           if (configured === resolve(project.primaryFolder)) primaryGranted = true
-          if (authorizationRevision === this.authorizationRevision) this.authorizedRoots.set(configured, expected)
+          nextAuthorized.set(configured, expected)
         }
       }
-      records.push({
+      const record: ProjectRecord = {
         id: project.id, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
         pinned: project.pinned, createdAt: project.createdAt, lastOpenedAt: project.lastOpenedAt,
         sessionCount: sessions.filter((session) => folderSet.has(sessionProjectPaths.get(session)!)).length,
-        gitBranch: primaryGranted ? await this.branchProvider(project.primaryFolder) : undefined,
-      })
+        gitBranch: undefined,
+      }
+      records.push(record)
+      if (primaryGranted) branchTargets.push({ record, cwd: project.primaryFolder })
     }
+
+    // Swap the fully built map in one step; the previous map keeps serving
+    // authorization checks while this refresh was collecting identities.
+    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
 
     for (const projectPath of [...new Set(sessions.map((session) => session.projectPath).filter(Boolean))]) {
       let canonical: string
@@ -139,6 +148,9 @@ export class ProjectService {
         inferred: true,
       })
     }
+    // Branch enrichment runs after the swap: authorization must never wait on
+    // git subprocesses.
+    for (const target of branchTargets) target.record.gitBranch = await this.branchProvider(target.cwd)
     return records.sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.lastOpenedAt) - Date.parse(a.lastOpenedAt))
   }
 
@@ -249,20 +261,26 @@ export class ProjectService {
       return true
     })
     if (removed && authorizationRevision === this.authorizationRevision) {
-      this.authorizedRoots.clear()
-      for (const project of this.store.snapshot().projects) {
-        for (const folder of project.folders) {
-          if (authorizationRevision !== this.authorizationRevision) break
-          const configured = resolve(folder)
-          let canonical = configured
-          try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
-          const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
-          const verified = await this.verifyFolderIdentity(configured, expected)
-          if (verified && expected) this.authorizedRoots.set(configured, expected)
-        }
-      }
+      await this.rebuildAuthorizedRoots(authorizationRevision)
     }
     return removed
+  }
+
+  /** Rebuilds authorization into a fresh map and swaps it in one step. */
+  private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
+    const nextAuthorized = new Map<string, FolderIdentity>()
+    for (const project of this.store.snapshot().projects) {
+      for (const folder of project.folders) {
+        if (authorizationRevision !== this.authorizationRevision) return
+        const configured = resolve(folder)
+        let canonical = configured
+        try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
+        const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
+        const verified = await this.verifyFolderIdentity(configured, expected)
+        if (verified && expected) nextAuthorized.set(configured, expected)
+      }
+    }
+    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
   }
 
   async touch(idValue: unknown): Promise<boolean> {
@@ -306,10 +324,13 @@ export class ProjectService {
     if (!this.authorizedRoots.size) await this.list()
     const authorizationRevision = this.authorizationRevision
     const roots: string[] = []
-    for (const [configured, expected] of this.authorizedRoots) {
+    // Snapshot the map: a concurrent refresh may swap this.authorizedRoots
+    // mid-iteration, and stale-entry eviction must target the map iterated.
+    const authorized = this.authorizedRoots
+    for (const [configured, expected] of authorized) {
       const verified = await this.verifyFolderIdentity(configured, expected)
       if (verified) roots.push(verified)
-      else this.authorizedRoots.delete(configured)
+      else authorized.delete(configured)
     }
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
