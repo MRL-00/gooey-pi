@@ -3,7 +3,8 @@ import { createElement, useEffect, useRef, useState } from 'react'
 import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
 import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
-import type { AgentSlotRect } from '../AgentBrowserLayer'
+import type { StampedPointerEvent } from '@/hooks/useAgentBrowserTabs'
+import { AgentCursorOverlay, type AgentSlotRect } from '../AgentBrowserLayer'
 import type { AgentBrowserTabRecord, BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
 
@@ -11,6 +12,7 @@ type WebviewElement = HTMLElement & {
   loadURL(url: string): Promise<void>
   getURL(): string
   getTitle(): string
+  getWebContentsId(): number
   goBack(): void
   goForward(): void
   canGoBack(): boolean
@@ -57,6 +59,12 @@ interface BrowserPanelProps {
   onShowPreview?(): void
   /** Reports the rectangle the always-mounted AgentBrowserLayer should cover, or null when hidden. */
   onAgentSlotRect?(rect: AgentSlotRect | null): void
+  /** Session key of the active thread, so the agent can adopt the Preview webview as its "preview" tab. */
+  agentSessionKey?: string
+  /** Reports the Preview webview identity and owning session to the main process (null on teardown). */
+  onPreviewContext?(webContentsId: number | null, sessionFile: string | null): void
+  /** Latest agent pointer movement targeting the "preview" tab, for the cursor overlay. */
+  previewPointerEvent?: StampedPointerEvent | null
   /** Test hook: how often to poll the page for a clicked element while picking. */
   pollIntervalMs?: number
 }
@@ -70,7 +78,7 @@ function agentTabLabel(tab: AgentBrowserTabRecord): string {
   return 'New tab'
 }
 
-export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, pollIntervalMs = 350 }: BrowserPanelProps) {
+export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, pollIntervalMs = 350 }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
@@ -93,6 +101,17 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
   const slotRef = useRef<HTMLDivElement | null>(null)
   const onAgentSlotRectRef = useRef(onAgentSlotRect)
   onAgentSlotRectRef.current = onAgentSlotRect
+  const [previewWebContentsId, setPreviewWebContentsId] = useState<number | null>(null)
+  const onPreviewContextRef = useRef(onPreviewContext)
+  onPreviewContextRef.current = onPreviewContext
+
+  // Bind the Preview guest to the active thread so its agent can adopt it as
+  // the "preview" tab; clear the binding when the panel goes away.
+  useEffect(() => {
+    if (previewWebContentsId === null || !agentSessionKey) return
+    onPreviewContextRef.current?.(previewWebContentsId, agentSessionKey)
+  }, [previewWebContentsId, agentSessionKey])
+  useEffect(() => () => { onPreviewContextRef.current?.(null, null) }, [])
 
   // The agent webviews live in the always-mounted AgentBrowserLayer, not in
   // this panel; report where the layer should overlay while an agent tab is
@@ -176,6 +195,7 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
     const onDomReady = () => {
       setDomReady(true)
       lastMarkersRef.current = ''
+      try { setPreviewWebContentsId(view.getWebContentsId()) } catch { /* guest not attached yet */ }
     }
     view.addEventListener('dom-ready', onDomReady)
     view.addEventListener('did-start-loading', didStart)
@@ -460,6 +480,7 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
             {notice}
           </p>
         ) : null}
+        <AgentCursorOverlay pointerEvent={previewPointerEvent} />
       </div>
       </div>
       {showAgentTab && activeAgentTab ? (

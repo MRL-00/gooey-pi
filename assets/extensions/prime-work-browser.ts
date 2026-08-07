@@ -56,9 +56,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: 'browser_tabs',
     label: 'Browser tabs',
-    description: 'Manage this thread\'s tabs in the Prime Work in-app browser: list open tabs, open a new tab (optionally at a URL), close a tab, or select which tab later browser_* calls target. The user can watch and interact with these tabs in the Browser panel.',
+    description: 'Manage this thread\'s tabs in the Prime Work in-app browser: list open tabs, open a new tab (optionally at a URL), close a tab, or select which tab later browser_* calls target. The user can watch and interact with these tabs in the Browser panel. When the user\'s own Preview pane is open for this thread it appears as tab id "preview" and is the default target while no agent tab exists - prefer acting on it when the page the user is talking about is already open there, instead of opening a duplicate tab.',
     promptGuidelines: [
-      'Use browser_tabs {"action":"open"} before any other browser_* tool when the thread has no tab yet.',
+      'Use browser_tabs {"action":"list"} first: if the page you need is already open as the "preview" tab, act on it directly instead of opening a new tab.',
+      'Use browser_tabs {"action":"open"} only when the thread has no suitable tab yet.',
       'Keep browser_tabs tab count small: close tabs with browser_tabs {"action":"close"} when finished with them.',
     ],
     parameters: Type.Object({

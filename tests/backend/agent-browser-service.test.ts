@@ -230,6 +230,37 @@ describe('AgentBrowserService', () => {
     expect(service.state().tabs.find((tab) => tab.tabId === first.tabId)?.active).toBe(true)
   })
 
+  it('adopts the user preview tab as the default target for its session', async () => {
+    const { service, newGuest } = fixture()
+    const preview = newGuest()
+    preview.url = 'https://dev.local/app'
+    expect(service.setPreviewContext(preview.id, '/sessions/a.jsonl')).toBe(true)
+    const listed = await service.listTabs('/sessions/a.jsonl')
+    expect(listed.tabs).toEqual([expect.objectContaining({ tabId: 'preview', url: 'https://dev.local/app', attached: true, active: true })])
+    // With no agent tab open, actions land on the preview guest.
+    await service.click('/sessions/a.jsonl', { x: 15, y: 25 })
+    expect(preview.inputEvents.find((event) => event.type === 'mousePressed')).toMatchObject({ x: 15, y: 25 })
+    // Other sessions cannot see or use it.
+    expect((await service.listTabs('/sessions/b.jsonl')).tabs).toEqual([])
+    await expect(service.click('/sessions/b.jsonl', { x: 1, y: 1 })).rejects.toThrow(/no browser tab yet/)
+    await expect(service.click('/sessions/b.jsonl', { tabId: 'preview', x: 1, y: 1 })).rejects.toThrow(/not open for this thread/)
+    // Agents cannot close the user's tab; clearing the context revokes access.
+    await expect(service.closeTabScoped('/sessions/a.jsonl', { tabId: 'preview' })).rejects.toThrow(/belongs to the user/)
+    expect(service.setPreviewContext(null, null)).toBe(true)
+    await expect(service.click('/sessions/a.jsonl', { x: 1, y: 1 })).rejects.toThrow(/no browser tab yet/)
+  })
+
+  it('rejects unapproved preview guests and clears the binding when the guest dies', async () => {
+    const { service, guests, newGuest } = fixture()
+    const rogue = new FakeGuest()
+    guests.set(rogue.id, rogue)
+    expect(() => service.setPreviewContext(rogue.id, '/sessions/a.jsonl')).toThrow(/not an approved browser guest/)
+    const preview = newGuest()
+    service.setPreviewContext(preview.id, '/sessions/a.jsonl')
+    preview.destroy()
+    expect((await service.listTabs('/sessions/a.jsonl')).tabs).toEqual([])
+  })
+
   it('rejects malformed keys, scroll directions, and coordinates', async () => {
     const { service, openAttached } = fixture()
     await openAttached('/sessions/a.jsonl')

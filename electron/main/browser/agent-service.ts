@@ -1,7 +1,11 @@
 import type { WebContents } from 'electron'
 import { randomBytes } from 'node:crypto'
 import type { AgentBrowserPointerEvent, AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
+import { canonicalSessionPath } from '../session-paths'
 import { requireRecord, requireString } from '../validation'
+
+/** The user's own Preview webview, adoptable by the active thread's agent. */
+export const PREVIEW_TAB_ID = 'preview'
 import { evaluateScript, pageInfoScript, readPageScript, refPointScript, scrollByScript } from './page-scripts'
 
 const MAX_TABS_PER_SESSION = 6
@@ -110,6 +114,7 @@ function parseScriptJson(payload: unknown, label: string): Record<string, unknow
 export class AgentBrowserService {
   private readonly tabs = new Map<string, TabState>()
   private readonly activeBySession = new Map<string, string>()
+  private previewTab: TabState | null = null
   private readonly approvedGuests = new Set<number>()
   private readonly changeListeners = new Set<(state: AgentBrowserState) => void>()
   private readonly pointerListeners = new Set<(event: AgentBrowserPointerEvent) => void>()
@@ -131,6 +136,7 @@ export class AgentBrowserService {
     this.activeBySession.clear()
     this.changeListeners.clear()
     this.pointerListeners.clear()
+    this.previewTab = null
   }
 
   /** Called from the will/did-attach-webview hardening path for every guest of the trusted partition. */
@@ -139,6 +145,7 @@ export class AgentBrowserService {
     this.approvedGuests.add(contents.id)
     contents.once('destroyed', () => {
       this.approvedGuests.delete(contents.id)
+      if (this.previewTab?.webContentsId === contents.id) this.previewTab = null
       for (const tab of this.tabs.values()) {
         if (tab.webContentsId === contents.id) this.detachTab(tab)
       }
@@ -204,6 +211,38 @@ export class AgentBrowserService {
     return true
   }
 
+  /**
+   * The renderer reports which session's workspace currently owns the user's
+   * Preview webview (and which guest it is). Null clears the binding. Agent
+   * calls resolve the binding at call time, so a session switch immediately
+   * moves control.
+   */
+  setPreviewContext(webContentsIdValue: unknown, sessionFileValue: unknown): boolean {
+    if (this.closed) return false
+    if (webContentsIdValue === null || sessionFileValue === null || sessionFileValue === undefined) {
+      this.previewTab = null
+      return true
+    }
+    if (!Number.isSafeInteger(webContentsIdValue)) throw new TypeError('webContentsId must be an integer')
+    const webContentsId = webContentsIdValue as number
+    if (!this.approvedGuests.has(webContentsId)) throw new Error('The web contents is not an approved browser guest')
+    const sessionKey = canonicalSessionPath(requireString(sessionFileValue, 'sessionFile', { min: 1, max: 4096 }))
+    const previous = this.previewTab
+    if (previous && previous.webContentsId === webContentsId && previous.sessionKey === sessionKey) return true
+    this.previewTab = {
+      tabId: PREVIEW_TAB_ID,
+      sessionKey,
+      webContentsId,
+      url: '',
+      title: '',
+      pointer: previous?.webContentsId === webContentsId ? previous.pointer : null,
+      queue: previous?.queue ?? Promise.resolve(),
+      attachWaiters: [],
+      unbindGuest: null,
+    }
+    return true
+  }
+
   closeTab(tabIdValue: unknown): boolean {
     const tab = this.requireTab(tabIdValue)
     this.removeTab(tab)
@@ -244,25 +283,45 @@ export class AgentBrowserService {
   }
 
   async listTabs(sessionKey: string): Promise<Record<string, unknown>> {
-    const tabs = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey).map((tab) => ({
+    const active = this.activeBySession.get(sessionKey)
+    const tabs: Array<Record<string, unknown>> = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey).map((tab) => ({
       tabId: tab.tabId,
       url: tab.url,
       title: tab.title,
       attached: tab.webContentsId !== null,
-      active: this.activeBySession.get(sessionKey) === tab.tabId,
+      active: active === tab.tabId,
     }))
+    const preview = this.previewFor(sessionKey)
+    if (preview) {
+      tabs.unshift({
+        tabId: PREVIEW_TAB_ID,
+        url: preview.guest.getURL(),
+        title: preview.guest.getTitle(),
+        attached: true,
+        active: active === PREVIEW_TAB_ID || active === undefined,
+        note: "The user's own Preview tab; prefer it when the page you need is already open here.",
+      })
+    }
     return { tabs }
   }
 
   async closeTabScoped(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
+    const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+    if (tabId === PREVIEW_TAB_ID) throw new Error('The Preview tab belongs to the user and cannot be closed by the agent')
+    const tab = this.requireSessionTab(sessionKey, tabId)
     this.removeTab(tab)
     return this.listTabs(sessionKey)
   }
 
   async selectTabScoped(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
-    this.activeBySession.set(sessionKey, tab.tabId)
+    const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+    if (tabId === PREVIEW_TAB_ID) {
+      if (!this.previewFor(sessionKey)) throw new Error("The user's Preview tab is not open for this thread right now")
+      this.activeBySession.set(sessionKey, PREVIEW_TAB_ID)
+    } else {
+      const tab = this.requireSessionTab(sessionKey, tabId)
+      this.activeBySession.set(sessionKey, tab.tabId)
+    }
     this.push()
     return this.listTabs(sessionKey)
   }
@@ -442,12 +501,22 @@ export class AgentBrowserService {
   ): Promise<Record<string, unknown>> {
     this.requireOpen()
     let tab: TabState
-    if (params.tabId !== undefined) tab = this.requireSessionTab(sessionKey, requireString(params.tabId, 'tabId', { min: 1, max: 64 }))
-    else {
+    if (params.tabId !== undefined) {
+      const tabId = requireString(params.tabId, 'tabId', { min: 1, max: 64 })
+      if (tabId === PREVIEW_TAB_ID) {
+        const preview = this.previewFor(sessionKey)
+        if (!preview) throw new Error("The user's Preview tab is not open for this thread right now. Open a tab with browser_tabs instead.")
+        tab = preview.tab
+      } else tab = this.requireSessionTab(sessionKey, tabId)
+    } else {
       const activeId = this.activeBySession.get(sessionKey)
-      const active = activeId ? this.tabs.get(activeId) : undefined
-      if (!active) throw new Error('This thread has no browser tab yet. Open one with browser_tabs {"action":"open"} first.')
-      tab = active
+      const active = activeId === PREVIEW_TAB_ID ? this.previewFor(sessionKey)?.tab : activeId ? this.tabs.get(activeId) : undefined
+      // With no agent tab selected, fall back to the user's Preview tab: when
+      // the page is already on screen the agent should act on it rather than
+      // opening a duplicate.
+      const fallback = active ?? this.previewFor(sessionKey)?.tab
+      if (!fallback) throw new Error('This thread has no browser tab yet. Open one with browser_tabs {"action":"open"} first.')
+      tab = fallback
     }
     // Serialize actions per tab so concurrent tool calls cannot interleave input events.
     const run = tab.queue.then(async () => {
@@ -458,9 +527,20 @@ export class AgentBrowserService {
     return run
   }
 
+  private previewFor(sessionKey: string): { tab: TabState; guest: WebContents } | null {
+    const tab = this.previewTab
+    if (!tab || tab.sessionKey !== sessionKey || tab.webContentsId === null) return null
+    const guest = this.options.getGuest(tab.webContentsId)
+    if (!guest || guest.isDestroyed()) return null
+    return { tab, guest }
+  }
+
   private async waitForGuest(tab: TabState): Promise<WebContents> {
     const existing = tab.webContentsId === null ? undefined : this.options.getGuest(tab.webContentsId)
     if (existing && !existing.isDestroyed()) return existing
+    // The Preview guest is renderer-owned and never re-attaches under the same
+    // tab record; fail fast instead of waiting.
+    if (tab.tabId === PREVIEW_TAB_ID) throw new Error("The user's Preview tab closed. Open a tab with browser_tabs instead.")
     await new Promise<void>((resolveAttach, reject) => {
       const waiter = {
         resolve: resolveAttach,
