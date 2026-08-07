@@ -125,15 +125,28 @@ export function useFocusTrap<T extends HTMLElement>(active: boolean, onEscape?: 
   return containerRef
 }
 
+// Overlays (modals, the command palette) share one refcount so stacked or
+// sibling overlays only toggle the app shell's inert state on 0<->1 transitions.
+let appShellOverlayCount = 0
+
+export function useAppShellOverlay(active: boolean): void {
+  useEffect(() => {
+    if (!active) return
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    if (!shell) return
+    appShellOverlayCount += 1
+    if (appShellOverlayCount === 1) { shell.inert = true; shell.setAttribute('aria-hidden', 'true') }
+    return () => {
+      appShellOverlayCount -= 1
+      if (appShellOverlayCount === 0) { shell.inert = false; shell.removeAttribute('aria-hidden') }
+    }
+  }, [active])
+}
+
 export function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose(): void; footer?: ReactNode }) {
   const titleId = useId()
   const modalRef = useFocusTrap<HTMLElement>(true, onClose)
-  useEffect(() => {
-    const shell = document.querySelector<HTMLElement>('.app-shell')
-    if (!shell) return
-    shell.inert = true; shell.setAttribute('aria-hidden', 'true')
-    return () => { shell.inert = false; shell.removeAttribute('aria-hidden') }
-  }, [])
+  useAppShellOverlay(true)
   return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section ref={modalRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>

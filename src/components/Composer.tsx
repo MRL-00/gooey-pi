@@ -14,6 +14,7 @@ import {
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
@@ -71,7 +72,7 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
 }
 
 export const Composer = memo(function Composer({ busy, submitting = false, loading = false, disabled, model, effort, modelsByProvider, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(takeComposerDraft)
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [images, setImages] = useState<ComposerImage[]>([])
@@ -127,7 +128,10 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
         }
         setAttachmentError('Message was not sent. Your draft and images were restored.')
       }
-    } finally { submittingRef.current = false }
+    } finally {
+      submittingRef.current = false
+      if (mountedRef.current) textareaRef.current?.focus()
+    }
   }
 
   const addPastedImages = async (files: File[]) => {
@@ -216,7 +220,7 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
         <textarea
           ref={textareaRef}
           value={value}
-          disabled={disabled || submitting || loading}
+          disabled={disabled || loading}
           rows={2}
           placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? 'Starting Prime…' : 'Ask Prime anything, @ for skills, / for commands'}
           aria-label="Message Prime"

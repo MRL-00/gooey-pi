@@ -83,6 +83,7 @@ export class PrimeProviderService {
   private readonly registry: ModelRegistry
   private cachedCatalog: PrimeModelCatalog | null = null
   private cachedAt = 0
+  private catalogRefresh: Promise<PrimeModelCatalog> | null = null
   private readonly flows = new Map<string, OAuthFlow>()
   private eventSink: (event: ProviderAuthEvent) => void = () => undefined
   private readonly openExternal: (url: string) => Promise<void>
@@ -99,7 +100,15 @@ export class PrimeProviderService {
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
       return this.withEnabledState(this.cachedCatalog, disabledProviders)
     }
+    // Single-flight: concurrent callers share one refresh instead of racing
+    // duplicate registry work; the in-flight promise is cleared in finally.
+    if (!this.catalogRefresh) {
+      this.catalogRefresh = this.refreshCatalog().finally(() => { this.catalogRefresh = null })
+    }
+    return this.withEnabledState(await this.catalogRefresh, disabledProviders)
+  }
 
+  private async refreshCatalog(): Promise<PrimeModelCatalog> {
     const snapshot = await this.registry.refreshModelCatalog()
     let executableModels: Model<Api>[] = []
     let executableDiscoveryWarning: string | undefined
@@ -148,7 +157,7 @@ export class PrimeProviderService {
       warning: warnings.length ? warnings.join(' ') : undefined,
     }
     this.cachedAt = Date.now()
-    return this.withEnabledState(this.cachedCatalog, disabledProviders)
+    return this.cachedCatalog
   }
 
   async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
@@ -285,6 +294,10 @@ export class PrimeProviderService {
 
   private abortFlow(flow: OAuthFlow, message: string): void {
     const error = new Error(message)
+    // Release the flow slot immediately so cancel -> retry always works, even
+    // when the underlying login ignores the abort signal and never settles.
+    clearTimeout(flow.timer)
+    this.flows.delete(flow.id)
     flow.abort.abort(error)
     flow.pending?.reject(error)
     flow.pending = undefined

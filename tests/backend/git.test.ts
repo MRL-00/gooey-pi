@@ -174,7 +174,7 @@ exit 1
 
       const service = new GitService(async () => cwd)
       const status = await service.status(cwd)
-      expect(status.isRepo).toBe(false)
+      expect(status.isRepo).toBe(true)
       expect(status.error).toMatch(/clean\/smudge filters cannot run safely.*file\.txt/i)
       await expect(service.diff(cwd, 'file.txt', false)).rejects.toThrow(/clean\/smudge filters cannot run safely.*file\.txt/i)
       await expect(service.stage(cwd, ['file.txt'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*file\.txt/i)
@@ -218,7 +218,7 @@ exit 1
 
     const service = new GitService(async () => cwd)
     const status = await service.status(cwd)
-    expect(status.isRepo).toBe(false)
+    expect(status.isRepo).toBe(true)
     expect(status.error).toMatch(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
     await expect(service.diff(cwd, undefined, false)).rejects.toThrow(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
     await expect(service.stage(cwd, ['zz-filtered.bin'])).rejects.toThrow(/clean\/smudge filters cannot run safely.*zz-filtered\.bin/i)
@@ -261,7 +261,7 @@ printf 'mutated by filter\n'
     })
 
     const status = await service.status(inner)
-    expect(status.isRepo).toBe(false)
+    expect(status.isRepo).toBe(true)
     expect(status.error).toMatch(/repository root is outside the authorized folder/i)
     await expect(service.diff(inner, 'nested.txt', false)).rejects.toThrow(/repository root is outside the authorized folder/i)
     await expect(service.stage(inner, ['nested.txt'])).rejects.toThrow(/repository root is outside the authorized folder/i)
@@ -298,4 +298,21 @@ printf 'mutated by filter\n'
     expect(diff.text).toContain('[Prime Work: diff truncated')
     expect(diff.text.split('\n').length).toBeLessThanOrEqual(GIT_DIFF_LINE_LIMIT)
   }, 30_000)
+
+  it('reports isRepo false only for a genuine not-a-repository failure', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-norepo-')); dirs.push(cwd)
+    const service = new GitService(async () => cwd)
+    const status = await service.status(cwd)
+    expect(status.isRepo).toBe(false)
+    expect(status.error).toMatch(/not a git repository/i)
+  })
+
+  it('keeps isRepo true when status fails for a reason other than a missing repository', async () => {
+    const cwd = repository('prime-work-git-authz-')
+    const service = new GitService(async () => { throw new TypeError('path is not inside an added Prime Work project') })
+    const status = await service.status(cwd)
+    expect(status.isRepo).toBe(true)
+    expect(status.files).toEqual([])
+    expect(status.error).toContain('not inside an added Prime Work project')
+  })
 })

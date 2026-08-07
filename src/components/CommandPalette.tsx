@@ -2,7 +2,7 @@ import { Bell, CalendarClock, Folder, LayoutPanelLeft, PackageOpen, Plus, Search
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WorkspaceView } from '@/types/api'
-import { BrowserGlobe, useFocusTrap } from './ui'
+import { BrowserGlobe, useAppShellOverlay, useFocusTrap } from './ui'
 
 interface Command { id:string; label:string; detail:string; shortcut?:string; icon:ReactNode; run():void }
 
@@ -25,7 +25,7 @@ export function CommandPalette({ open, onClose, onNavigate, onNewSession, onTogg
   const visible=commands.filter((command)=>`${command.label} ${command.detail}`.toLowerCase().includes(query.toLowerCase()))
   useEffect(()=>{if(open){setQuery('');setActive(0);requestAnimationFrame(()=>inputRef.current?.focus())}},[open])
   useEffect(()=>setActive(0),[query])
-  useEffect(()=>{if(!open)return;const shell=document.querySelector<HTMLElement>('.app-shell');if(!shell)return;shell.inert=true;shell.setAttribute('aria-hidden','true');return()=>{shell.inert=false;shell.removeAttribute('aria-hidden')}},[open])
+  useAppShellOverlay(open)
   if(!open)return null
   const choose=(command?:Command)=>{if(!command)return;command.run();onClose()}
   return createPortal(<div className="palette-backdrop" onMouseDown={(event)=>event.target===event.currentTarget&&onClose()}><div ref={paletteRef} className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1}><div className="command-search"><Search size={16}/><input ref={inputRef} value={query} role="combobox" aria-expanded="true" aria-controls="command-results" aria-activedescendant={visible[active] ? `command-${visible[active].id}` : undefined} onChange={(event)=>setQuery(event.target.value)} placeholder="Search commands, projects, and sessions" onKeyDown={(event)=>{if(event.key==='ArrowDown'){event.preventDefault();setActive((value)=>Math.min(visible.length-1,value+1))}if(event.key==='ArrowUp'){event.preventDefault();setActive((value)=>Math.max(0,value-1))}if(event.key==='Enter'){event.preventDefault();choose(visible[active])}if(event.key==='Escape')onClose()}}/><button type="button" onClick={onClose} aria-label="Close command palette"><kbd>esc</kbd></button></div><div id="command-results" className="command-results" role="listbox" aria-label="Commands"><div className="command-section-label">Commands</div>{visible.map((command,index)=><button id={`command-${command.id}`} type="button" role="option" aria-selected={index===active} key={command.id} className={index===active?'is-active':''} onMouseEnter={()=>setActive(index)} onClick={()=>choose(command)}><span>{command.icon}</span><span><strong>{command.label}</strong><small>{command.detail}</small></span>{command.shortcut?<kbd>{command.shortcut}</kbd>:null}</button>)}{visible.length===0?<p>No commands match “{query}”.</p>:null}</div><footer><span>↑↓ Navigate</span><span>↵ Open</span><span>esc Close</span></footer> </div></div>,document.body)

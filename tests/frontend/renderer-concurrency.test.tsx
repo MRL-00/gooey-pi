@@ -3,6 +3,8 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AGENT_EVENT_FLUSH_CHUNK, AGENT_EVENT_QUEUE_LIMIT } from '../../src/app/agent-events'
+import { useAgentEvents } from '../../src/hooks/useAgentEvents'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
 import { useBootstrap } from '../../src/hooks/useBootstrap'
 import { useExtensionUi } from '../../src/hooks/useExtensionUi'
@@ -57,8 +59,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  Reflect.deleteProperty(document, 'visibilityState')
   vi.restoreAllMocks()
 })
+
+function setDocumentVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+}
 
 function Probe({ children }: { children?: ReactNode }) { return <>{children}</> }
 
@@ -197,6 +204,124 @@ describe('transcript read ownership', () => {
   })
 })
 
+describe('agent event frame queue', () => {
+  function mountWorkspace(read: ReturnType<typeof vi.fn>) {
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    return { render: () => root.render(<WorkspaceProbe />), state: () => state }
+  }
+
+  const delta = (text: string) => ({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: text } })
+  const messageText = (state: ReturnType<typeof useWorkspaceRuntime>) => (state.messages[0]?.parts[0] as { text?: string } | undefined)?.text ?? ''
+
+  it('cancels the pending animation frame before a synchronous flush', async () => {
+    const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame')
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    await act(async () => { state.queueAgentEvent(delta('live')) })
+    const cancelledBefore = cancelSpy.mock.calls.length
+    await act(async () => { state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'agent_end' }); await Promise.resolve() })
+    expect(cancelSpy.mock.calls.length).toBeGreaterThan(cancelledBefore)
+    expect(messageText(workspace.state())).toBe('loaded:')
+  })
+
+  it('falls back to an authoritative read on the next visibilitychange after the queue bound is exceeded', async () => {
+    const read = vi.fn()
+      .mockResolvedValueOnce([message('loaded:')])
+      .mockResolvedValueOnce([message('fresh')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    setDocumentVisibility('hidden')
+    await act(async () => {
+      for (let index = 0; index <= AGENT_EVENT_QUEUE_LIMIT; index += 1) state.queueAgentEvent(delta('x'))
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+    setDocumentVisibility('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(messageText(workspace.state())).toBe('fresh')
+  })
+
+  it('drains a large hidden-window queue in chunks on visibilitychange', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    setDocumentVisibility('hidden')
+    await act(async () => {
+      for (let index = 0; index < AGENT_EVENT_FLUSH_CHUNK + 1; index += 1) state.queueAgentEvent(delta('x'))
+    })
+    setDocumentVisibility('visible')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK)}`)
+    await act(async () => { await new Promise((resolveWait) => setTimeout(resolveWait, 0)) })
+    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK + 1)}`)
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('agent event git refresh timer', () => {
+  it('coalesces terminal-event git refreshes and clears the timer on cleanup', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let handler!: (payload: { runtimeId: string; event: Record<string, unknown> }) => void
+      const unsubscribe = vi.fn()
+      const bridge = {
+        agent: { onEvent: (callback: typeof handler) => { handler = callback; return unsubscribe } },
+      } as unknown as PrimeWorkApi
+      const refreshGit = vi.fn(async () => undefined)
+      function AgentEventsProbe() {
+        useAgentEvents({
+          bridge,
+          runtimeIdRef: { current: 'runtime' },
+          runtimeSessionsRef: { current: new Map([['runtime', session.filePath]]) },
+          runtimeOwnerRef: { current: null },
+          workspaceRef: { current: { generation: 0, sessionFile: session.filePath, cwd: '/project' } },
+          setSessions: vi.fn(),
+          setRuntime: vi.fn(),
+          queueAgentEvent: vi.fn(),
+          reconcileTranscriptForEvent: vi.fn(),
+          showExtensionUi: vi.fn(),
+          clearExtensionUi: vi.fn(),
+          refreshGit,
+          refreshGitOnTerminalEvent: true,
+          activeSessionVisible: true,
+        })
+        return <Probe />
+      }
+      await act(async () => { root.render(<AgentEventsProbe />) })
+      act(() => {
+        handler({ runtimeId: 'runtime', event: { type: 'agent_end' } })
+        handler({ runtimeId: 'runtime', event: { type: 'error' } })
+      })
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(refreshGit).toHaveBeenCalledTimes(1)
+
+      act(() => { handler({ runtimeId: 'runtime', event: { type: 'agent_end' } }) })
+      await act(async () => root.unmount())
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(refreshGit).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('bootstrap critical path', () => {
   it('selects projects and sessions before runtime discovery resolves', async () => {
     const runtimes = deferred<RuntimeInfo[]>()
@@ -239,6 +364,44 @@ describe('bootstrap critical path', () => {
     expect(attached).toEqual([])
     await act(async () => { runtimes.resolve([runtime]); await runtimes.promise; await Promise.resolve() })
     expect(attached).toEqual([runtime])
+  })
+
+  it('merges runtime discovery into sessions learned from live events', async () => {
+    const runtimes = deferred<RuntimeInfo[]>()
+    const bridge = {
+      projects: { list: async () => [project] },
+      sessions: { list: async () => [session], onChanged: () => () => undefined },
+      agent: { list: () => runtimes.promise },
+      app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
+      schedules: { list: async () => [] },
+    } as unknown as PrimeWorkApi
+    const runtimeSessionsRef = { current: new Map<string, string>() }
+    const workspaceRef = { current: { generation: 0 } }
+    const setProjects = vi.fn()
+    const setSessions = vi.fn()
+    const setSchedules = vi.fn()
+    const setScheduleError = vi.fn()
+    const attachRuntime = vi.fn()
+    const reportError = vi.fn()
+    const activateWorkspace = () => 1
+    function BootstrapProbe() {
+      useBootstrap({
+        bridge, setProjects, setSessions, setSchedules, setScheduleError,
+        runtimeSessionsRef, workspaceRef,
+        activateWorkspace, attachRuntime, reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<BootstrapProbe />); await Promise.resolve(); await Promise.resolve() })
+    // A live event arrives while agent.list() is still in flight.
+    runtimeSessionsRef.current.set('live-runtime', '/sessions/live.jsonl')
+    await act(async () => {
+      runtimes.resolve([{ runtimeId: 'listed-runtime', cwd: '/project', sessionFile: '/sessions/listed.jsonl', isStreaming: false }])
+      await runtimes.promise
+      await Promise.resolve()
+    })
+    expect(runtimeSessionsRef.current.get('live-runtime')).toBe('/sessions/live.jsonl')
+    expect(runtimeSessionsRef.current.get('listed-runtime')).toBe('/sessions/listed.jsonl')
   })
 })
 

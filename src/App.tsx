@@ -409,18 +409,20 @@ export default function App() {
     onArchiveSession: (session) => setSessionArchived(session, true),
   })
 
+  const onAppKeyDown = useStableCallback(createAppKeydownHandler({
+    'open-palette': () => setPaletteOpen(true),
+    'new-session': () => newSession(),
+    'open-browser': () => openBrowser(),
+    'toggle-sidebar': () => toggleSidebar(),
+    'toggle-terminal': () => { void toggleTerminal() },
+    'open-settings': () => navigate('settings'),
+    'close-palette': () => setPaletteOpen(false),
+  }))
+
   useEffect(() => {
-    const onKeyDown = createAppKeydownHandler({
-      'open-palette': () => setPaletteOpen(true),
-      'new-session': () => newSession(),
-      'open-browser': () => openBrowser(),
-      'toggle-sidebar': () => toggleSidebar(),
-      'toggle-terminal': () => { void toggleTerminal() },
-      'open-settings': () => navigate('settings'),
-      'close-palette': () => setPaletteOpen(false),
-    })
-    window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown)
-  })
+    window.addEventListener('keydown', onAppKeyDown)
+    return () => window.removeEventListener('keydown', onAppKeyDown)
+  }, [onAppKeyDown])
 
   const busy = Boolean(workspace.runtime?.isStreaming || workspace.runtime?.isCompacting || workspace.messages.some((message) => message.streaming))
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />

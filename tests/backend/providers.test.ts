@@ -83,6 +83,32 @@ describe('Prime provider adapter', () => {
     expect(gpt56?.availableThinkingLevels).not.toContain('minimal')
   })
 
+  it('single-flights concurrent catalog refreshes and clears the in-flight promise', async () => {
+    const providerService = service()
+    const registry = (providerService as unknown as { registry: { refreshModelCatalog(): Promise<unknown> } }).registry
+    const original = registry.refreshModelCatalog.bind(registry)
+    let refreshes = 0
+    registry.refreshModelCatalog = async () => {
+      refreshes += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return original()
+    }
+
+    const [first, second, third] = await Promise.all([
+      providerService.catalog(true),
+      providerService.catalog(true),
+      providerService.catalog(true, new Set(['anthropic'])),
+    ])
+    expect(refreshes).toBe(1)
+    expect(first.models.length).toBe(second.models.length)
+    expect(third.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(false)
+    expect(first.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(true)
+
+    // After settling, a forced refresh runs again (the in-flight slot was cleared).
+    await providerService.catalog(true)
+    expect(refreshes).toBe(2)
+  })
+
   it('keeps provider enablement as a desktop policy separate from authentication', async () => {
     const catalog = await service().catalog(true, new Set(['anthropic']))
     const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic')
@@ -123,6 +149,32 @@ describe('Prime provider adapter', () => {
 
     await providerService.logout('openai')
     expect((await providerService.catalog(true)).providers.find((provider) => provider.id === 'openai')?.configured).toBe(false)
+  })
+
+  it('always allows retrying a provider login after cancel, even when login hangs', async () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+      flows: Map<string, { timer: NodeJS.Timeout }>
+    }
+    // A login that ignores the abort signal and never settles.
+    internals.authStorage.login = () => new Promise<void>(() => undefined)
+
+    const catalog = await providerService.catalog(true)
+    const oauthProvider = catalog.providers.find((provider) => provider.authMethod === 'oauth')
+    expect(oauthProvider).toBeDefined()
+
+    const first = await providerService.startOAuth(oauthProvider!.id)
+    await expect(providerService.startOAuth(oauthProvider!.id)).rejects.toThrow(/already active/)
+    expect(providerService.cancelOAuth(first.flowId)).toBe(true)
+    expect(internals.flows.size).toBe(0)
+
+    // Cancel then retry must succeed immediately.
+    const second = await providerService.startOAuth(oauthProvider!.id)
+    expect(second.flowId).not.toBe(first.flowId)
+    expect(providerService.cancelOAuth(second.flowId)).toBe(true)
+    // A second cancel of the same flow is a no-op.
+    expect(providerService.cancelOAuth(second.flowId)).toBe(false)
   })
 
   it('rejects OAuth for providers that do not own an OAuth flow', async () => {

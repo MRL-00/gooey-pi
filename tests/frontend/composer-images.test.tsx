@@ -206,6 +206,51 @@ describe('Composer message delivery shortcuts', () => {
 })
 
 
+describe('Composer submission lifecycle', () => {
+  const setDraft = async (value: string) => {
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, value)
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    return textarea
+  }
+  const pressEnter = async (textarea: HTMLTextAreaElement) => {
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+
+  it('keeps the textarea editable while a submission is starting', () => {
+    act(() => root.render(<Composer
+      busy={false} submitting model="provider/vision" effort="medium" modelsByProvider={modelsByProvider} providers={providers}
+      reasoningLevels={['medium']} fast={false} fastSupported={false} fastAvailable imageInputSupported
+      messageEnterAction="queue" skills={[]}
+      onModelChange={vi.fn()} onEffortChange={vi.fn()} onFastChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()}
+    />))
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.disabled).toBe(false)
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
+  })
+
+  it('guards double submission in the handler and refocuses after send resolves', async () => {
+    let resolveSend!: () => void
+    const onSend = vi.fn(() => new Promise<void>((resolve) => { resolveSend = resolve }))
+    renderComposer(onSend)
+    const textarea = await setDraft('First message')
+    await pressEnter(textarea)
+    // Typing and pressing Enter again while the first send is in flight must
+    // not double-submit, because the textarea stays enabled.
+    await setDraft('Second attempt')
+    await pressEnter(textarea)
+    expect(onSend).toHaveBeenCalledTimes(1)
+
+    await act(async () => { resolveSend(); await Promise.resolve() })
+    expect(document.activeElement).toBe(container.querySelector('textarea'))
+  })
+})
+
 describe('Composer context usage and stop control', () => {
   it('shows the exact context usage in a filled dial before the send button', () => {
     renderComposer(vi.fn(), true, false, 'queue', { tokens: 50_000, contextWindow: 100_000, percent: 50 })

@@ -49,6 +49,10 @@ function requireProcessSuccess(operation: string, result: ProcessResult): void {
   if (result.code !== 0 || result.timedOut || result.outputExceeded) throw processError(operation, result)
 }
 
+export function isNotARepositoryFailure(error: unknown): boolean {
+  return /not a git repository/i.test(errorMessage(error))
+}
+
 function nextNulField(output: string, cursor: number): { value: string; cursor: number } {
   const end = output.indexOf('\0', cursor)
   if (end < 0) return { value: output.slice(cursor), cursor: output.length }
@@ -308,7 +312,12 @@ export class GitService {
       requireProcessSuccess('Git staged statistics', stagedResult)
       return parseStatus(statusResult.stdout, parseNumstat(stagedResult.stdout), parseNumstat(unstagedResult.stdout))
     } catch (error) {
-      return { isRepo: false, files: [], error: errorMessage(error).slice(0, GIT_ERROR_LIMIT) || 'Not a Git repository' }
+      const message = errorMessage(error).slice(0, GIT_ERROR_LIMIT)
+      // Only a genuine "not a repository" detection may claim there is no repo.
+      // Every other failure (authorization, filter guard, timeout, output limit)
+      // reports a repo whose status could not be read.
+      if (isNotARepositoryFailure(error)) return { isRepo: false, files: [], error: message || 'Not a Git repository' }
+      return { isRepo: true, files: [], error: message || 'Git status failed' }
     }
   }
 

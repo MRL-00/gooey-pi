@@ -91,7 +91,14 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
     } catch (error) { setActionError(error instanceof Error ? error.message : String(error)) }
   }
 
-  if (!git.isRepo) return <EmptyState icon={<GitBranch size={24} />} title="No Git repository">{git.error ?? 'Open a project backed by Git to review, stage, and commit changes.'}</EmptyState>
+  if (!git.isRepo) return <EmptyState icon={<GitBranch size={24} />} title="No Git repository">Open a project backed by Git to review, stage, and commit changes.</EmptyState>
+  if (git.error) {
+    return <EmptyState
+      icon={<GitBranch size={24} />}
+      title="Git status unavailable"
+      action={<button type="button" className="button" onClick={() => void onRefreshGit()}><RefreshCw size={13} /> Try again</button>}
+    >{git.error}</EmptyState>
+  }
   return (
     <div className="changes-panel">
       <div className="changes-toolbar">
