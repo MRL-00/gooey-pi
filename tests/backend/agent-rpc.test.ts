@@ -1,10 +1,15 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentRpcManager } from '../../electron/main/agent-rpc'
 import { validateRpcCommand } from '../../electron/main/agent-rpc/command-schema'
 import { MAX_RPC_WRITE_FRAME_BYTES, rpcRequestFrameBytes } from '../../electron/main/agent-rpc/limits'
+import { RpcRuntime } from '../../electron/main/agent-rpc/runtime'
+import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
+import type { RpcObject } from '../../electron/main/agent-rpc/types'
 import { PrimeProviderService } from '../../electron/main/providers'
 
 const dirs: string[] = []
@@ -215,6 +220,82 @@ setInterval(() => {}, 1000)
     expect(processExists(pid)).toBe(false)
   }, 12_000)
 
+
+  it('cancels a queued write on timeout so the line never reaches the child and its budget is released', async () => {
+    const heldWrites: Array<{ line: string; finish: (error?: Error | null) => void }> = []
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = {
+      stdout, stderr,
+      stdin: {
+        writable: true,
+        write: (line: string, finish: (error?: Error | null) => void) => { heldWrites.push({ line, finish }); return true },
+        end: () => undefined,
+        destroy: () => undefined,
+      },
+    } as unknown as ChildProcessWithoutNullStreams
+    const transport = new FramedRpcTransport(child, () => undefined, () => undefined, () => true, 60_000)
+    const budget = () => (transport as unknown as { queuedWriteBytes: number }).queuedWriteBytes
+
+    const first = transport.enqueue('{"type":"first"}\n')
+    const second = transport.enqueue('{"type":"second"}\n')
+    await new Promise((resolveTick) => setImmediate(resolveTick))
+    expect(heldWrites.map((held) => held.line)).toEqual(['{"type":"first"}\n'])
+    expect(budget()).toBeGreaterThan(Buffer.byteLength('{"type":"first"}\n'))
+
+    expect(second.cancel()).toBe('cancelled')
+    expect(budget()).toBe(Buffer.byteLength('{"type":"first"}\n'))
+    expect(first.cancel()).toBe('flushed')
+
+    heldWrites[0].finish(null)
+    await expect(first.done).resolves.toBeUndefined()
+    await expect(second.done).rejects.toThrow('cancelled before it was sent')
+    expect(heldWrites.map((held) => held.line)).toEqual(['{"type":"first"}\n'])
+    expect(budget()).toBe(0)
+  })
+
+  it('fails the transport within the write deadline when the child stops reading stdin', async () => {
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = {
+      stdout, stderr,
+      stdin: { writable: true, write: () => true, end: () => undefined, destroy: () => undefined },
+    } as unknown as ChildProcessWithoutNullStreams
+    const onFailure = vi.fn()
+    const transport = new FramedRpcTransport(child, () => undefined, onFailure, () => true, 50)
+
+    await expect(transport.enqueue('{"type":"stuck"}\n').done).rejects.toThrow('stopped reading RPC input')
+    expect(onFailure).toHaveBeenCalledTimes(1)
+    expect((transport as unknown as { queuedWriteBytes: number }).queuedWriteBytes).toBe(0)
+  })
+
+  it('reports delivery-uncertain timeouts and consumes the late response instead of orphaning it', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-uncertain-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'sleepy-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'sleepy') {
+    setTimeout(() => send({ id: command.id, type: 'response', command: 'sleepy', success: true }), 300)
+  }
+})
+setInterval(() => {}, 1000)
+`)
+    chmodSync(executable, 0o755)
+    const events: Array<{ event: { type?: unknown } }> = []
+    const runtime = new RpcRuntime(executable, [], cwd, (envelope) => events.push(envelope as unknown as { event: { type?: unknown } }), () => undefined)
+    try {
+      const request = (runtime as unknown as { request(command: RpcObject, timeoutMs: number): Promise<RpcObject> }).request.bind(runtime)
+      await expect(request({ type: 'sleepy' }, 100)).rejects.toThrow(/timed out after delivery.*do not retry automatically/)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 400))
+      expect(events.some((envelope) => envelope.event.type === 'orphan_response')).toBe(false)
+    } finally {
+      await runtime.stop()
+    }
+  }, 10_000)
 
   it('stops only runtimes whose cwd is inside a removed project root', async () => {
     const project = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
