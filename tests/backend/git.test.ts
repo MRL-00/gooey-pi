@@ -279,6 +279,7 @@ printf 'mutated by filter\n'
 
     const commit = await service.commit(cwd, 'nothing to commit')
     expect(commit.ok).toBe(false)
+    expect(commit.reason).toBe('exit')
     expect(commit.output).toMatch(/nothing to commit|no changes added/i)
   })
 

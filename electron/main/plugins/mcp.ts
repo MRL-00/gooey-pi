@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync } from 'node:fs'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { McpConnectionInput } from '../../../src/types/api'
+import type { McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
 import { isPathWithin, isRecord, requireString } from '../validation'
 import { errorCode, readAtMost } from './file-io'
 
@@ -334,7 +334,7 @@ export async function updateMcpSettings(
   target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
-): Promise<{ ok: boolean; output: string }> {
+): Promise<ProcessOutcome> {
   const settingsPath = typeof target === 'string' ? target : target.path
   const verify = typeof target === 'string' ? undefined : target.verify
   const release = await acquireSettingsLock(settingsPath, verify)
@@ -347,7 +347,7 @@ export async function updateMcpSettings(
       if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
       const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
       if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
-        return { ok: false, output: `An MCP server named “${input.name}” already exists in this scope.` }
+        return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
       const config = input.type === 'http'
         ? { type: 'http', url: input.url, enabled: true }

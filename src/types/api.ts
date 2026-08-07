@@ -210,6 +210,15 @@ export interface GitStatus {
 }
 export interface GitDiff { path?: string; staged: boolean; text: string; truncated: boolean; error?: string }
 
+/**
+ * The one result shape for subprocess-backed operations (git commit, package
+ * install, MCP settings updates). `reason` classifies failures: the subprocess
+ * timed out, exceeded its output limit, exited non-zero, or the operation was
+ * blocked before or instead of running the subprocess.
+ */
+export type ProcessFailureReason = 'timeout' | 'overflow' | 'exit' | 'blocked'
+export interface ProcessOutcome { ok: boolean; output: string; reason?: ProcessFailureReason }
+
 export interface TerminalSpawnOptions { cwd: string; shell?: string; cols?: number; rows?: number }
 export interface TerminalDataEvent { terminalId: string; data: string }
 export interface TerminalExitEvent { terminalId: string; exitCode: number; signal?: number }
@@ -378,8 +387,8 @@ export interface PrimeWorkApi {
     onData(callback: (event: TerminalDataEvent) => void): () => void
     onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
-  git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<{ ok: boolean; output: string }> }
-  plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<{ ok: boolean; output: string }>; connectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>; refresh(): Promise<SkillRecord[]> }
+  git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
+  plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<SkillRecord[]> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>

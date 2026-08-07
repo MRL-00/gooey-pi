@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { isAbsolute } from 'node:path'
+import { DAEMON_FRAME_LIMIT_BYTES } from './jsonl-limits'
 import { StrictJsonlDecoder } from './jsonl'
 import { isRecord } from './validation'
 
 const DAEMON_PROTOCOL_NAME = 'prime-agent.daemon'
 const DAEMON_PROTOCOL_VERSION = 7
-const MAX_DAEMON_FRAME_BYTES = 1024 * 1024
 
 export async function queueDaemonFollowUp(socketPath: string, activeSessionId: string, message: string, commandType: 'follow_up' | 'steer' = 'follow_up'): Promise<void> {
   if (!isAbsolute(socketPath) || socketPath.includes('\0') || socketPath.length > 4_096) {
@@ -81,7 +81,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
       }
       try { socket.end(`${JSON.stringify(ack)}\n`, () => finish()) }
       catch { finish(new Error('Prime Work could not acknowledge the queued reply')) }
-    }, MAX_DAEMON_FRAME_BYTES)
+    }, DAEMON_FRAME_LIMIT_BYTES)
 
     socket.on('data', (chunk: Buffer) => {
       try { decoder.push(chunk) } catch { finish(new Error('Prime Agent daemon response exceeded its limit')) }

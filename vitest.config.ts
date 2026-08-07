@@ -10,11 +10,12 @@ export default defineConfig({
       provider: 'v8',
       include: [
         'electron/main/{browser-downloads,git,jsonl,plugins,process-utils,projects,providers,sessions,settings-schedules,store,terminal,validation}.ts',
+        'electron/main/lib/**/*.ts',
         'electron/main/plugins/**/*.ts',
         'electron/main/agent-rpc/**/*.ts',
-        'electron/main/plugins/**/*.ts',
         'electron/main/sessions/**/*.ts',
         'src/lib/{events,extension-ui,render-bounds,workspace}.ts',
+        'src/lib/events/**/*.ts',
         'src/hooks/useProviderCatalog.ts',
         'scripts/release/lib.mjs',
       ],

@@ -1,7 +1,8 @@
 import type { Readable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
+import { SESSION_FILE_RECORD_LIMIT_BYTES } from './jsonl-limits'
 
-const MAX_UNFRAMED_BYTES = 64 * 1024 * 1024
+const MAX_UNFRAMED_BYTES = SESSION_FILE_RECORD_LIMIT_BYTES
 
 class FragmentedLineBuffer {
   private fragments: string[] = []

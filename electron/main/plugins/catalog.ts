@@ -3,6 +3,7 @@ import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import type { SkillRecord } from '../../../src/types/api'
+import { mapLimit } from '../lib/async'
 import { isPathWithin, isRecord } from '../validation'
 import { readAtMost } from './file-io'
 
@@ -174,39 +175,30 @@ function displayName(candidate: Candidate, metadata: { name?: string }): string 
 }
 
 async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: string): Promise<SkillRecord[]> {
-  const result: SkillRecord[] = []
   const seenPaths = new Set<string>()
-  let cursor = 0
-  const worker = async () => {
-    while (true) {
-      const candidate = candidates[cursor]
-      cursor += 1
-      if (!candidate) return
-      let path: string
-      try { path = await realpath(candidate.path) } catch { continue }
-      if (candidate.location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, path))) continue
-      const extension = extname(path).toLowerCase()
-      if (candidate.kind === 'prompt' && extension !== '.md') continue
-      if (candidate.kind === 'skill' && extension !== '.md') continue
-      if (candidate.kind === 'extension' && !['.ts', '.js', '.mjs', '.cjs'].includes(extension)) continue
-      const key = `${candidate.kind}:${path}`
-      if (seenPaths.has(key)) continue
-      seenPaths.add(key)
-      const metadata = candidate.kind === 'extension' ? { description: 'Prime Agent extension' } : await markdownMetadata(path)
-      const name = displayName(candidate, metadata)
-      result.push({
-        id: idFor(candidate.kind, path),
-        name,
-        description: metadata.description || `${candidate.kind[0].toUpperCase()}${candidate.kind.slice(1)} ${name}`,
-        kind: candidate.kind,
-        location: candidate.location,
-        path,
-        enabled: true,
-      })
+  return mapLimit(candidates, METADATA_CONCURRENCY, async (candidate): Promise<SkillRecord | null> => {
+    let path: string
+    try { path = await realpath(candidate.path) } catch { return null }
+    if (candidate.location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, path))) return null
+    const extension = extname(path).toLowerCase()
+    if (candidate.kind === 'prompt' && extension !== '.md') return null
+    if (candidate.kind === 'skill' && extension !== '.md') return null
+    if (candidate.kind === 'extension' && !['.ts', '.js', '.mjs', '.cjs'].includes(extension)) return null
+    const key = `${candidate.kind}:${path}`
+    if (seenPaths.has(key)) return null
+    seenPaths.add(key)
+    const metadata = candidate.kind === 'extension' ? { description: 'Prime Agent extension' } : await markdownMetadata(path)
+    const name = displayName(candidate, metadata)
+    return {
+      id: idFor(candidate.kind, path),
+      name,
+      description: metadata.description || `${candidate.kind[0].toUpperCase()}${candidate.kind.slice(1)} ${name}`,
+      kind: candidate.kind,
+      location: candidate.location,
+      path,
+      enabled: true,
     }
-  }
-  await Promise.all(Array.from({ length: Math.min(METADATA_CONCURRENCY, candidates.length) }, worker))
-  return result
+  })
 }
 
 function addSettingsMetadata(settings: Record<string, unknown>, location: 'user' | 'project', output: SkillRecord[]): void {

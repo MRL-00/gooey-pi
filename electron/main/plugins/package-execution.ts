@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { runProcess } from '../process-utils'
+import type { ProcessOutcome } from '../../../src/types/api'
+import { processOutcome, runProcess } from '../process-utils'
 import { requireString, stripAnsi } from '../validation'
 
 export function validatePackageSource(value: unknown): string {
@@ -40,10 +41,7 @@ export function validatePackageSource(value: unknown): string {
   throw new TypeError('Package source must be npm:, git:, a protocol URL, or an existing absolute path')
 }
 
-export async function executePackageInstall(primeAgentPath: string, source: string): Promise<{ ok: boolean; output: string }> {
+export async function executePackageInstall(primeAgentPath: string, source: string): Promise<ProcessOutcome> {
   const result = await runProcess(primeAgentPath, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
-  return {
-    ok: result.code === 0 && !result.timedOut && !result.outputExceeded,
-    output: stripAnsi(`${result.stdout}${result.stderr}`).trim(),
-  }
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }

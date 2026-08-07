@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import * as pty from 'node-pty'
 import type { TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
-import { safeChildEnvironment } from './process-utils'
+import { killProcessTree, safeChildEnvironment } from './process-utils'
 import { isPathWithin, rejectUnknownKeys, requireInteger, requireRecord, requireString } from './validation'
 
 interface OwnedTerminal {
@@ -69,22 +69,6 @@ async function processTree(rootPid: number): Promise<number[]> {
   visit(rootPid)
   return descendants
 }
-
-function signalPids(pids: number[], signal: NodeJS.Signals): void {
-  for (const pid of pids) { try { process.kill(pid, signal) } catch { /* already exited */ } }
-}
-
-function signalTerminalTree(owned: OwnedTerminal, descendants: number[], signal: NodeJS.Signals): void {
-  if (process.platform === 'win32') {
-    try { owned.terminal.kill() } catch { /* already exited */ }
-    return
-  }
-  signalPids(descendants, signal)
-  try { process.kill(-owned.terminal.pid, signal) } catch { /* no shell process group */ }
-  try { owned.terminal.kill(signal) } catch { /* already exited */ }
-}
-
-const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 
 function shellArguments(shell: string): string[] {
   if (process.platform !== 'win32') return ['-l']
@@ -224,25 +208,33 @@ export class TerminalService {
     if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
     this.flushOutput(id, owned)
     if (owned.exited) return
+    // Shell children can detach from the process group, so signal a snapshot of
+    // the descendant tree alongside the group at every rung.
     const descendants = await processTree(owned.terminal.pid)
-    if (process.platform === 'win32') {
-      signalTerminalTree(owned, descendants, 'SIGTERM')
-      return
-    }
-    signalTerminalTree(owned, descendants, 'SIGHUP')
-    await delay(150)
-    signalTerminalTree(owned, descendants, 'SIGTERM')
-    await delay(350)
+    const graceful = await killProcessTree(owned.terminal.pid, {
+      ladder: [
+        { signal: 'SIGHUP', waitMs: 150 },
+        { signal: 'SIGTERM', waitMs: 350 },
+      ],
+      hasExited: () => owned.exited,
+      descendants,
+      signalDirect: (signal) => owned.terminal.kill(process.platform === 'win32' ? undefined : signal),
+    })
+    if (process.platform === 'win32') return
     // Re-snapshot before the SIGKILL rung: only descendants still parented
     // under this pty may be force-killed, which narrows the window in which a
     // recycled PID could be hit with the stale snapshot.
     const survivors = new Set(await processTree(owned.terminal.pid))
     const remaining = descendants.filter((pid) => survivors.has(pid))
-    if (owned.exited) {
-      signalPids(remaining, 'SIGKILL')
+    if (graceful || owned.exited) {
+      for (const pid of remaining) { try { process.kill(pid, 'SIGKILL') } catch { /* already exited */ } }
       return
     }
-    signalTerminalTree(owned, remaining, 'SIGKILL')
+    await killProcessTree(owned.terminal.pid, {
+      ladder: [{ signal: 'SIGKILL', waitMs: 0 }],
+      descendants: remaining,
+      signalDirect: (signal) => owned.terminal.kill(signal),
+    })
   }
 
   private owned(owner: WebContents, idValue: unknown): OwnedTerminal {

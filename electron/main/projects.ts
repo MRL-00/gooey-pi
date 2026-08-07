@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, relative, resolve } from 'node:path'
-import { lstat, readdir } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import type { ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
-import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId } from './validation'
+import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId, requireString } from './validation'
 
 function inferredId(path: string): string {
   return `inferred-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`
@@ -25,10 +25,12 @@ export class ProjectService {
   constructor(private readonly store: JsonStateStore, private readonly windowProvider: () => BrowserWindow | null) {}
 
   private async captureFolderIdentity(pathValue: string): Promise<{ path: string; identity: FolderIdentity }> {
-    const configured = resolve(pathValue)
-    const path = await requireExistingDirectory(configured, 'project folder')
+    const configured = resolve(requireString(pathValue, 'project folder', { min: 1, max: 4096 }))
+    // One lstat both validates the folder and captures its identity; the
+    // canonical path then needs only the realpath call (not a second stat).
     const info = await lstat(configured, { bigint: true })
     if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError('Project folder must be a stable directory')
+    const path = await realpath(configured)
     return { path, identity: { dev: info.dev.toString(), ino: info.ino.toString() } }
   }
 
@@ -38,6 +40,24 @@ export class ProjectService {
       const current = await this.captureFolderIdentity(pathValue)
       return current.identity.dev === expected.dev && current.identity.ino === expected.ino ? current.path : undefined
     } catch { return undefined }
+  }
+
+  /**
+   * The one verify-and-authorize resolution for a persisted project folder:
+   * lexical (configured) path, canonical path when it still exists, the
+   * recorded identity for either spelling, and the verified canonical path
+   * when the on-disk identity still matches the grant.
+   */
+  private async resolveFolderAuthorization(
+    project: Pick<PersistedProject, 'folderIdentities'>,
+    folder: string,
+  ): Promise<{ configured: string; canonical: string; expected?: FolderIdentity; verified?: string }> {
+    const configured = resolve(folder)
+    let canonical = configured
+    try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* Keep stale lexical path visible. */ }
+    const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
+    const verified = await this.verifyFolderIdentity(configured, expected)
+    return { configured, canonical, expected, verified }
   }
 
   bindProviders(providers: {
@@ -99,11 +119,7 @@ export class ProjectService {
       const folderSet = new Set<string>()
       let primaryGranted = false
       for (const folder of project.folders) {
-        const configured = resolve(folder)
-        let canonical = configured
-        try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* Keep stale lexical path visible. */ }
-        const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
-        const verified = await this.verifyFolderIdentity(configured, expected)
+        const { configured, canonical, expected, verified } = await this.resolveFolderAuthorization(project, folder)
         folderSet.add(canonical)
         represented.add(configured)
         represented.add(canonical)
@@ -278,11 +294,7 @@ export class ProjectService {
     for (const project of this.store.snapshot().projects) {
       for (const folder of project.folders) {
         if (authorizationRevision !== this.authorizationRevision) return
-        const configured = resolve(folder)
-        let canonical = configured
-        try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* stale */ }
-        const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
-        const verified = await this.verifyFolderIdentity(configured, expected)
+        const { configured, expected, verified } = await this.resolveFolderAuthorization(project, folder)
         if (verified && expected) nextAuthorized.set(configured, expected)
       }
     }

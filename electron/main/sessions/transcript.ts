@@ -1,11 +1,11 @@
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import type { MessagePart, TranscriptMessage } from '../../../src/types/api'
+import { SESSION_FILE_RECORD_LIMIT_BYTES } from '../jsonl-limits'
 import { strictJsonLines } from '../jsonl'
 import { isRecord } from '../validation'
 import type { JsonRecord } from './metadata'
 
-const MAX_TRANSCRIPT_RECORD_BYTES = 8 * 1024 * 1024
 const MAX_TRANSCRIPT_GRAPH_BYTES = 16 * 1024 * 1024
 const MAX_TRANSCRIPT_GRAPH_RECORDS = 10_000
 const MAX_TRANSCRIPT_MESSAGES = 400
@@ -205,7 +205,9 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
   let graphBytes = 0
   let leafId: string | null = null
   let recordCount = 0
-  for await (const line of strictJsonLines(createReadStream(filePath), MAX_TRANSCRIPT_RECORD_BYTES)) {
+  // The metadata reader of the same file MUST share this per-record tolerance:
+  // a record the catalog accepts must never make the transcript unopenable.
+  for await (const line of strictJsonLines(createReadStream(filePath), SESSION_FILE_RECORD_LIMIT_BYTES)) {
     if (!line) continue
     if (++recordCount > 200_000) throw new Error('Session transcript has too many records')
     let entry: unknown
