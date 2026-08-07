@@ -23,7 +23,24 @@ interface UseBootstrapOptions {
   reportError(error: unknown): void
 }
 
-function mergeSessionCatalog(
+function sessionRecordChanged(previous: SessionRecord, record: SessionRecord): boolean {
+  return previous.id !== record.id
+    || previous.projectPath !== record.projectPath
+    || previous.title !== record.title
+    || previous.createdAt !== record.createdAt
+    || previous.updatedAt !== record.updatedAt
+    || previous.lastUserMessageAt !== record.lastUserMessageAt
+    || previous.status !== record.status
+    || previous.model !== record.model
+    || previous.provider !== record.provider
+    || previous.thinkingLevel !== record.thinkingLevel
+    || previous.depth !== record.depth
+    || previous.pinned !== record.pinned
+    || previous.preview !== record.preview
+    || previous.archived !== record.archived
+}
+
+export function mergeSessionCatalog(
   current: SessionRecord[],
   records: SessionRecord[],
   activeFile: string | undefined,
@@ -35,12 +52,14 @@ function mergeSessionCatalog(
     const previous = previousByPath.get(record.filePath)
     const needsAttention = (record.status === 'waiting' || record.status === 'complete')
       && previous?.status !== record.status
-    const syncRevision = changedFiles.get(record.filePath) ?? (catalogRevision || (previous?.syncRevision ?? record.syncRevision))
-    return {
-      ...record,
-      unread: record.filePath === activeFile ? false : needsAttention ? true : previous?.unread ?? record.unread,
-      syncRevision,
-    }
+    const recordChanged = !previous || sessionRecordChanged(previous, record)
+    // A session's sync revision only advances when its own file changed:
+    // catalog-wide ticks must not re-sync (or re-render) untouched sessions.
+    const syncRevision = changedFiles.get(record.filePath)
+      ?? (catalogRevision && recordChanged ? catalogRevision : previous?.syncRevision ?? record.syncRevision)
+    const unread = record.filePath === activeFile ? false : needsAttention ? true : previous?.unread ?? record.unread
+    if (previous && !recordChanged && previous.unread === unread && previous.syncRevision === syncRevision) return previous
+    return { ...record, unread, syncRevision }
   })
 }
 

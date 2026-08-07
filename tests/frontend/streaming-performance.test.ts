@@ -10,7 +10,10 @@ import {
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
 import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, type PrimeEventReplayStats } from '../../src/lib/events'
+import { reconcileTranscripts } from '../../src/app/transcript-reconcile'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
+import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
+import { shouldRefreshGitOnSessionTransition } from '../../src/lib/workspace'
 import type { ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
 Object.defineProperty(globalThis, 'self', { value: globalThis })
@@ -297,6 +300,103 @@ describe('linear event batches', () => {
     }
     expect(commits).toBe(50)
     expect(transcriptText([state[499]])).toHaveLength(10_000)
+  })
+})
+
+describe('external sync reconciliation', () => {
+  const syncTranscript = (): TranscriptMessage[] => [
+    { id: 'user-1', role: 'user', timestamp: 1, parts: [{ type: 'text', text: 'question' }] },
+    { id: 'assistant-1', role: 'assistant', timestamp: 2, parts: [{ type: 'text', text: 'answer' }, { type: 'toolCall', id: 'tool-1', name: 'Read', args: { path: 'a' } }] },
+    { id: 'assistant-2', role: 'assistant', timestamp: 3, streaming: true, parts: [{ type: 'text', text: 'stream' }] },
+  ]
+
+  it('keeps object identity for unchanged messages across a sync tick so memoized rows skip re-rendering', () => {
+    const current = syncTranscript()
+    const fromDisk = structuredClone(current)
+    const streamedPart = fromDisk[2]!.parts[0]
+    if (streamedPart?.type === 'text') streamedPart.text = 'stream-extended'
+
+    const merged = reconcileTranscripts(current, fromDisk)
+
+    expect(merged[0]).toBe(current[0])
+    expect(merged[1]).toBe(current[1])
+    expect(merged[2]).not.toBe(current[2])
+    expect(merged[2]).toBe(fromDisk[2])
+  })
+
+  it('returns the current array identity when a re-read changes nothing', () => {
+    const current = syncTranscript()
+    expect(reconcileTranscripts(current, structuredClone(current))).toBe(current)
+  })
+
+  it('treats absent optional fields and undefined values as equal, but not content changes', () => {
+    const current = syncTranscript()
+    const fromDisk = structuredClone(current)
+    fromDisk[0]!.agentName = undefined
+    expect(reconcileTranscripts(current, fromDisk)[0]).toBe(current[0])
+
+    const changedArgs = structuredClone(current)
+    const tool = changedArgs[1]!.parts[1]
+    if (tool?.type === 'toolCall') tool.args = { path: 'b' }
+    expect(reconcileTranscripts(current, changedArgs)[1]).toBe(changedArgs[1])
+  })
+
+  it('adopts reordered and new messages from the authoritative read', () => {
+    const current = syncTranscript()
+    const fromDisk = [...structuredClone(current), { id: 'assistant-3', role: 'assistant' as const, timestamp: 4, parts: [] }]
+    const merged = reconcileTranscripts(current, fromDisk)
+    expect(merged).toHaveLength(4)
+    expect(merged[0]).toBe(current[0])
+    expect(merged[3]).toBe(fromDisk[3])
+  })
+})
+
+describe('catalog tick session identity', () => {
+  const record = (filePath: string, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
+    id: filePath, projectPath: '/project', filePath, title: 'Session',
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    status: 'idle', depth: 0, ...overrides,
+  })
+
+  it('bumps syncRevision only for sessions whose file changed and keeps identity for the rest', () => {
+    const current = [record('/a.jsonl', { syncRevision: 3 }), record('/b.jsonl', { syncRevision: 5 })]
+    const merged = mergeSessionCatalog(
+      current,
+      [record('/a.jsonl'), record('/b.jsonl')],
+      undefined,
+      new Map([['/a.jsonl', 7]]),
+      0,
+    )
+    expect(merged[0]?.syncRevision).toBe(7)
+    expect(merged[0]).not.toBe(current[0])
+    expect(merged[1]).toBe(current[1])
+    expect(merged[1]?.syncRevision).toBe(5)
+  })
+
+  it('does not spread a catalog-only revision onto untouched sessions', () => {
+    const current = [record('/a.jsonl', { syncRevision: 3 }), record('/b.jsonl', { syncRevision: 5 })]
+    const merged = mergeSessionCatalog(
+      current,
+      [record('/a.jsonl', { updatedAt: '2026-01-02T00:00:00.000Z' }), record('/b.jsonl')],
+      undefined,
+      new Map(),
+      9,
+    )
+    expect(merged[0]?.syncRevision).toBe(9)
+    expect(merged[1]).toBe(current[1])
+    expect(merged[1]?.syncRevision).toBe(5)
+  })
+})
+
+describe('git refresh scheduling', () => {
+  it('fires once when an externally running session stops, never per catalog tick', () => {
+    expect(shouldRefreshGitOnSessionTransition('running', 'running', false)).toBe(false)
+    expect(shouldRefreshGitOnSessionTransition('running', 'complete', false)).toBe(true)
+    expect(shouldRefreshGitOnSessionTransition('complete', 'complete', false)).toBe(false)
+    expect(shouldRefreshGitOnSessionTransition('idle', 'complete', false)).toBe(false)
+    expect(shouldRefreshGitOnSessionTransition(undefined, 'complete', false)).toBe(false)
+    expect(shouldRefreshGitOnSessionTransition('running', undefined, false)).toBe(false)
+    expect(shouldRefreshGitOnSessionTransition('running', 'complete', true)).toBe(false)
   })
 })
 
