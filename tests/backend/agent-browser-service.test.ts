@@ -88,6 +88,8 @@ function fixture() {
   service.onDidChange((state) => states.push(state))
   const pointerEvents: AgentBrowserPointerEvent[] = []
   service.onPointer((event) => pointerEvents.push(event))
+  const activityEvents: Array<{ sessionFile: string; tabId: string }> = []
+  service.onActivity((event) => activityEvents.push(event))
   const newGuest = () => {
     const guest = new FakeGuest()
     guests.set(guest.id, guest)
@@ -105,7 +107,7 @@ function fixture() {
     const result = await opening
     return { guest, tabId: result.tabId as string, result }
   }
-  return { service, states, pointerEvents, guests, newGuest, openAttached }
+  return { service, states, pointerEvents, activityEvents, guests, newGuest, openAttached }
 }
 
 describe('AgentBrowserService', () => {
@@ -248,6 +250,19 @@ describe('AgentBrowserService', () => {
     await expect(service.closeTabScoped('/sessions/a.jsonl', { tabId: 'preview' })).rejects.toThrow(/belongs to the user/)
     expect(service.setPreviewContext(null, null)).toBe(true)
     await expect(service.click('/sessions/a.jsonl', { x: 1, y: 1 })).rejects.toThrow(/no browser tab yet/)
+  })
+
+  it('announces every agent action so the UI can surface the Browser panel', async () => {
+    const { service, activityEvents, newGuest, openAttached } = fixture()
+    const { tabId } = await openAttached('/sessions/a.jsonl', 'https://example.com/')
+    expect(activityEvents).toEqual([{ sessionFile: '/sessions/a.jsonl', tabId }])
+    await service.readPage('/sessions/a.jsonl', {})
+    expect(activityEvents.at(-1)).toEqual({ sessionFile: '/sessions/a.jsonl', tabId })
+    // Actions on the adopted preview tab announce with the preview id.
+    const preview = newGuest()
+    service.setPreviewContext(preview.id, '/sessions/b.jsonl')
+    await service.readPage('/sessions/b.jsonl', {})
+    expect(activityEvents.at(-1)).toEqual({ sessionFile: '/sessions/b.jsonl', tabId: 'preview' })
   })
 
   it('rejects unapproved preview guests and clears the binding when the guest dies', async () => {

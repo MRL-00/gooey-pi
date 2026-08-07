@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { randomBytes } from 'node:crypto'
-import type { AgentBrowserPointerEvent, AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
+import type { AgentBrowserActivityEvent, AgentBrowserPointerEvent, AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
 import { canonicalSessionPath } from '../session-paths'
 import { requireRecord, requireString } from '../validation'
 
@@ -118,6 +118,7 @@ export class AgentBrowserService {
   private readonly approvedGuests = new Set<number>()
   private readonly changeListeners = new Set<(state: AgentBrowserState) => void>()
   private readonly pointerListeners = new Set<(event: AgentBrowserPointerEvent) => void>()
+  private readonly activityListeners = new Set<(event: AgentBrowserActivityEvent) => void>()
   private readonly attachTimeoutMs: number
   private readonly loadTimeoutMs: number
   private closed = false
@@ -136,6 +137,7 @@ export class AgentBrowserService {
     this.activeBySession.clear()
     this.changeListeners.clear()
     this.pointerListeners.clear()
+    this.activityListeners.clear()
     this.previewTab = null
   }
 
@@ -160,6 +162,11 @@ export class AgentBrowserService {
   onPointer(listener: (event: AgentBrowserPointerEvent) => void): () => void {
     this.pointerListeners.add(listener)
     return () => { this.pointerListeners.delete(listener) }
+  }
+
+  onActivity(listener: (event: AgentBrowserActivityEvent) => void): () => void {
+    this.activityListeners.add(listener)
+    return () => { this.activityListeners.delete(listener) }
   }
 
   // ---- renderer-facing API -------------------------------------------------
@@ -271,6 +278,7 @@ export class AgentBrowserService {
     }
     this.tabs.set(tab.tabId, tab)
     this.activeBySession.set(sessionKey, tab.tabId)
+    this.emitActivity(tab)
     this.push()
     try {
       const guest = await this.waitForGuest(tab)
@@ -518,6 +526,9 @@ export class AgentBrowserService {
       if (!fallback) throw new Error('This thread has no browser tab yet. Open one with browser_tabs {"action":"open"} first.')
       tab = fallback
     }
+    // Every agent action announces itself so the UI can bring the Browser
+    // panel and the acting tab into view.
+    this.emitActivity(tab)
     // Serialize actions per tab so concurrent tool calls cannot interleave input events.
     const run = tab.queue.then(async () => {
       const guest = await this.waitForGuest(tab)
@@ -525,6 +536,13 @@ export class AgentBrowserService {
     })
     tab.queue = run.catch(() => undefined)
     return run
+  }
+
+  private emitActivity(tab: TabState): void {
+    const event: AgentBrowserActivityEvent = { sessionFile: tab.sessionKey, tabId: tab.tabId }
+    for (const listener of this.activityListeners) {
+      try { listener(event) } catch { /* one bad listener must not break the rest */ }
+    }
   }
 
   private previewFor(sessionKey: string): { tab: TabState; guest: WebContents } | null {

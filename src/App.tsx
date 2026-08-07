@@ -155,20 +155,17 @@ export default function App() {
     return agentBrowser.tabs.filter((tab) => keys.has(tab.sessionFile))
   }, [agentBrowser.tabs, activeRuntimeSessionFile, activeSessionFilePath])
   const activeAgentTabId = activeAgentTabs.find((tab) => tab.active)?.tabId ?? activeAgentTabs[0]?.tabId ?? null
-  // When the agent opens a fresh tab in the active thread, surface it: open
-  // the inspector on the Browser tab and switch off the user preview. Session
-  // switches must not re-trigger this, so only genuinely new tab ids count.
-  const knownAgentTabsRef = useRef<Set<string> | null>(null)
+  // Every agent browser action in the active thread surfaces the Browser
+  // panel: open the inspector, select the Browser tab, and show the tab being
+  // driven (the user's Preview or an agent tab), whatever was showing before.
   useEffect(() => {
-    const ids = new Set(agentBrowser.tabs.map((tab) => tab.tabId))
-    const known = knownAgentTabsRef.current
-    knownAgentTabsRef.current = ids
-    if (!known) return
-    if (!activeAgentTabs.some((tab) => !known.has(tab.tabId))) return
-    setAgentPreviewSelected(false)
+    const activity = agentBrowser.activityEvent
+    if (!activity) return
+    if (activity.sessionFile !== activeRuntimeSessionFile && activity.sessionFile !== activeSessionFilePath) return
+    setAgentPreviewSelected(activity.tabId === 'preview')
     settingsState.setInspectorOpen(true)
     settingsState.selectInspectorTab('browser')
-  }, [agentBrowser.tabs, activeAgentTabs, settingsState.setInspectorOpen, settingsState.selectInspectorTab])
+  }, [agentBrowser.activityEvent, activeRuntimeSessionFile, activeSessionFilePath, settingsState.setInspectorOpen, settingsState.selectInspectorTab])
   useEffect(() => { if (!activeAgentTabs.length) setAgentPreviewSelected(true) }, [activeAgentTabs.length])
   const agentTabVisible = view === 'session' && settingsState.inspectorOpen && settingsState.inspectorTab === 'browser' && !agentPreviewSelected && activeAgentTabId !== null
   const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined

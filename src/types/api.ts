@@ -427,6 +427,12 @@ export interface AgentBrowserState {
   tabs: AgentBrowserTabRecord[]
 }
 
+/** Emitted for every agent browser action, so the UI can surface the Browser panel while the agent works. */
+export interface AgentBrowserActivityEvent {
+  sessionFile: string
+  tabId: string
+}
+
 /** Emitted when the agent moves the pointer in a tab, so the UI can animate a synthetic cursor along the same path on the same clock. */
 export interface AgentBrowserPointerEvent {
   tabId: string
@@ -486,6 +492,7 @@ export interface PrimeWorkApi {
     setPreviewContext(webContentsId: number | null, sessionFile: string | null): Promise<boolean>
     onChanged(callback: (state: AgentBrowserState) => void): () => void
     onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
+    onActivity(callback: (event: AgentBrowserActivityEvent) => void): () => void
   }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>
