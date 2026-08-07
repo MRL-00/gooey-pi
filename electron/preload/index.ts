@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentBrowserState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { AgentBrowserPointerEvent, AgentBrowserState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -82,6 +82,7 @@ const api: PrimeWorkApi = {
     selectTab: (tabId) => ipcRenderer.invoke('browser:select-tab', tabId),
     closeTab: (tabId) => ipcRenderer.invoke('browser:close-tab', tabId),
     onChanged: (callback) => subscribe<AgentBrowserState>('browser:changed', callback),
+    onPointer: (callback) => subscribe<AgentBrowserPointerEvent>('browser:pointer', callback),
   },
   heartbeats: {
     list: () => ipcRenderer.invoke('heartbeats:list'),

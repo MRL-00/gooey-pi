@@ -484,6 +484,7 @@ export interface PrimeWorkApi {
     selectTab(tabId: string): Promise<boolean>
     closeTab(tabId: string): Promise<boolean>
     onChanged(callback: (state: AgentBrowserState) => void): () => void
+    onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
   }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>

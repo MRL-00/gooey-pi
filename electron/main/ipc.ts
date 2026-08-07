@@ -211,6 +211,14 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     }
   })
   const unsubscribeBrowserChanges = typeof browserSubscription === 'function' ? browserSubscription : () => undefined
+  const pointerSubscription = services.browser.onPointer((event) => {
+    for (const [id, contents] of authorized) {
+      if (contents.isDestroyed()) { authorized.delete(id); continue }
+      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
+        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:pointer', event)
+    }
+  })
+  const unsubscribeBrowserPointer = typeof pointerSubscription === 'function' ? pointerSubscription : () => undefined
 
   const registration: IpcRegistration = {
     authorize(webContents) { if (!closed) authorized.set(webContents.id, webContents) },
@@ -223,6 +231,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       unsubscribeSessionChanges()
       if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
       if (typeof unsubscribeBrowserChanges === 'function') unsubscribeBrowserChanges()
+      if (typeof unsubscribeBrowserPointer === 'function') unsubscribeBrowserPointer()
       for (const channel of invokeChannels) ipcMain.removeHandler(channel)
       // Event listeners are removed wholesale only for our private fixed channels.
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)
