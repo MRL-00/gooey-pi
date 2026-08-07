@@ -427,6 +427,18 @@ export interface AgentBrowserState {
   tabs: AgentBrowserTabRecord[]
 }
 
+/** Emitted when the agent moves the pointer in a tab, so the UI can animate a synthetic cursor along the same path on the same clock. */
+export interface AgentBrowserPointerEvent {
+  tabId: string
+  sessionFile: string
+  /** Previous pointer position, or null when the cursor first appears in a tab. */
+  from: { x: number; y: number } | null
+  to: { x: number; y: number }
+  action: 'move' | 'click' | 'scroll'
+  /** How long the glide takes; 0 means the cursor appears in place. */
+  durationMs: number
+}
+
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileListing>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }

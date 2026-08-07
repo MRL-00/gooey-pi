@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { randomBytes } from 'node:crypto'
-import type { AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
+import type { AgentBrowserPointerEvent, AgentBrowserState, AgentBrowserTabRecord } from '../../../src/types/api'
 import { requireRecord, requireString } from '../validation'
 import { evaluateScript, pageInfoScript, readPageScript, refPointScript, scrollByScript } from './page-scripts'
 
@@ -30,10 +30,16 @@ interface TabState {
   webContentsId: number | null
   url: string
   title: string
+  /** Last known pointer position in guest CSS pixels; null until the first pointer action. */
+  pointer: { x: number; y: number } | null
   queue: Promise<unknown>
   attachWaiters: Array<{ resolve(): void; reject(error: Error): void; timer: NodeJS.Timeout }>
   unbindGuest: (() => void) | null
 }
+
+const GLIDE_MAX_MS = 550
+const GLIDE_MIN_MS = 160
+const GLIDE_STEP_MS = 28
 
 export interface PageInfo {
   url: string
@@ -86,6 +92,7 @@ export class AgentBrowserService {
   private readonly activeBySession = new Map<string, string>()
   private readonly approvedGuests = new Set<number>()
   private readonly changeListeners = new Set<(state: AgentBrowserState) => void>()
+  private readonly pointerListeners = new Set<(event: AgentBrowserPointerEvent) => void>()
   private readonly attachTimeoutMs: number
   private readonly loadTimeoutMs: number
   private closed = false
@@ -103,6 +110,7 @@ export class AgentBrowserService {
     this.tabs.clear()
     this.activeBySession.clear()
     this.changeListeners.clear()
+    this.pointerListeners.clear()
   }
 
   /** Called from the will/did-attach-webview hardening path for every guest of the trusted partition. */
@@ -120,6 +128,11 @@ export class AgentBrowserService {
   onDidChange(listener: (state: AgentBrowserState) => void): () => void {
     this.changeListeners.add(listener)
     return () => { this.changeListeners.delete(listener) }
+  }
+
+  onPointer(listener: (event: AgentBrowserPointerEvent) => void): () => void {
+    this.pointerListeners.add(listener)
+    return () => { this.pointerListeners.delete(listener) }
   }
 
   // ---- renderer-facing API -------------------------------------------------
@@ -192,6 +205,7 @@ export class AgentBrowserService {
       webContentsId: null,
       url,
       title: '',
+      pointer: null,
       queue: Promise.resolve(),
       attachWaiters: [],
       unbindGuest: null,
@@ -283,7 +297,7 @@ export class AgentBrowserService {
       if (!['left', 'right', 'middle'].includes(button)) throw new TypeError('button must be left, right, or middle')
       const clickCount = params.double === true ? 2 : 1
       guest.focus()
-      guest.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+      await this.glidePointer(tab, guest, point, 'click')
       for (let press = 0; press < clickCount; press += 1) {
         guest.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
         guest.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
@@ -298,7 +312,10 @@ export class AgentBrowserService {
   async type(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withTab(sessionKey, params, async (tab, guest) => {
       const text = requireString(params.text, 'text', { min: 0, max: MAX_TYPE_CHARS })
-      if (params.ref !== undefined) await this.resolvePoint(guest, params, true)
+      if (params.ref !== undefined) {
+        const point = await this.resolvePoint(guest, params, true)
+        await this.glidePointer(tab, guest, point, 'move')
+      }
       guest.focus()
       await guest.insertText(text)
       if (params.submit === true) {
@@ -347,6 +364,7 @@ export class AgentBrowserService {
       if (Number.isSafeInteger(params.x) && Number.isSafeInteger(params.y)) {
         // A wheel event at a point reaches nested scroll containers that
         // window.scrollBy cannot; wheel deltas are inverted relative to page motion.
+        await this.glidePointer(tab, guest, { x: params.x as number, y: params.y as number }, 'scroll')
         guest.sendInputEvent({ type: 'mouseWheel', x: params.x as number, y: params.y as number, deltaX: -deltaX, deltaY: -deltaY, canScroll: true })
         await delay(SETTLE_MS)
         return this.describe(tab, guest)
@@ -538,6 +556,38 @@ export class AgentBrowserService {
     const y = params.y as number
     if (x < 0 || y < 0 || x > 20_000 || y > 20_000) throw new TypeError('x and y must be within the page viewport')
     return { x, y }
+  }
+
+  /**
+   * Moves the pointer from its last position to the target as a smooth eased
+   * glide of real mouseMove events (so pages get genuine hover states), and
+   * emits a pointer event on the same clock so the renderer's synthetic
+   * cursor can animate the identical path.
+   */
+  private async glidePointer(tab: TabState, guest: WebContents, to: { x: number; y: number }, action: AgentBrowserPointerEvent['action']): Promise<void> {
+    const from = tab.pointer
+    const distance = from ? Math.hypot(to.x - from.x, to.y - from.y) : 0
+    const durationMs = from && distance > 2 ? Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, Math.round(distance * 0.9))) : 0
+    const event: AgentBrowserPointerEvent = { tabId: tab.tabId, sessionFile: tab.sessionKey, from, to: { ...to }, action, durationMs }
+    for (const listener of this.pointerListeners) {
+      try { listener(event) } catch { /* one bad listener must not break the rest */ }
+    }
+    if (from && durationMs > 0) {
+      const steps = Math.min(18, Math.max(5, Math.round(durationMs / GLIDE_STEP_MS)))
+      for (let step = 1; step <= steps; step += 1) {
+        const progress = step / steps
+        const eased = progress * progress * (3 - 2 * progress)
+        guest.sendInputEvent({
+          type: 'mouseMove',
+          x: Math.round(from.x + (to.x - from.x) * eased),
+          y: Math.round(from.y + (to.y - from.y) * eased),
+        })
+        await delay(durationMs / steps)
+      }
+    } else {
+      guest.sendInputEvent({ type: 'mouseMove', x: to.x, y: to.y })
+    }
+    tab.pointer = { x: to.x, y: to.y }
   }
 
   private sendKey(guest: WebContents, keyCode: string, modifiers: string[]): void {

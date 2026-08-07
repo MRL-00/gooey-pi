@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { AgentBrowserService } from '../../electron/main/browser/agent-service'
-import type { AgentBrowserState } from '../../src/types/api'
+import type { AgentBrowserPointerEvent, AgentBrowserState } from '../../src/types/api'
 
 let nextGuestId = 1000
 
@@ -74,6 +74,8 @@ function fixture() {
   })
   const states: AgentBrowserState[] = []
   service.onDidChange((state) => states.push(state))
+  const pointerEvents: AgentBrowserPointerEvent[] = []
+  service.onPointer((event) => pointerEvents.push(event))
   const newGuest = () => {
     const guest = new FakeGuest()
     guests.set(guest.id, guest)
@@ -91,7 +93,7 @@ function fixture() {
     const result = await opening
     return { guest, tabId: result.tabId as string, result }
   }
-  return { service, states, guests, newGuest, openAttached }
+  return { service, states, pointerEvents, guests, newGuest, openAttached }
 }
 
 describe('AgentBrowserService', () => {
@@ -155,6 +157,34 @@ describe('AgentBrowserService', () => {
     const types = guest.inputEvents.map((event) => event.type)
     expect(types).toEqual(expect.arrayContaining(['mouseMove', 'mouseDown', 'mouseUp']))
     expect(guest.inputEvents.find((event) => event.type === 'mouseDown')).toMatchObject({ x: 12, y: 34, button: 'left' })
+  })
+
+  it('glides the pointer between clicks and emits synchronized pointer events', async () => {
+    const { service, pointerEvents, openAttached } = fixture()
+    const { guest } = await openAttached('/sessions/a.jsonl', 'https://example.com/')
+    await service.click('/sessions/a.jsonl', { x: 20, y: 30 })
+    // First action: cursor appears in place, no glide.
+    expect(pointerEvents.at(-1)).toMatchObject({ from: null, to: { x: 20, y: 30 }, action: 'click', durationMs: 0 })
+    guest.inputEvents.length = 0
+    await service.click('/sessions/a.jsonl', { x: 320, y: 230 })
+    const glide = pointerEvents.at(-1)!
+    expect(glide).toMatchObject({ from: { x: 20, y: 30 }, to: { x: 320, y: 230 }, action: 'click' })
+    expect(glide.durationMs).toBeGreaterThan(0)
+    expect(glide.sessionFile).toBe('/sessions/a.jsonl')
+    // The glide sends a trail of intermediate mouseMove events ending at the target.
+    const moves = guest.inputEvents.filter((event) => event.type === 'mouseMove')
+    expect(moves.length).toBeGreaterThanOrEqual(5)
+    expect(moves.at(-1)).toMatchObject({ x: 320, y: 230 })
+    expect(moves[0]).not.toMatchObject({ x: 320, y: 230 })
+    const beforeDown = guest.inputEvents.findIndex((event) => event.type === 'mouseDown')
+    expect(guest.inputEvents.slice(0, beforeDown).every((event) => event.type === 'mouseMove')).toBe(true)
+    // Focusing a field for typing also moves the cursor there.
+    guest.scriptResult = (code) => {
+      if (code.includes('__primeWorkAgentRefs')) return JSON.stringify({ x: 40, y: 50 })
+      return JSON.stringify({ url: guest.url, title: guest.title, innerWidth: 640, innerHeight: 480, scrollY: 0, scrollHeight: 900, readyState: 'complete' })
+    }
+    await service.type('/sessions/a.jsonl', { text: 'hi', ref: 1 })
+    expect(pointerEvents.at(-1)).toMatchObject({ to: { x: 40, y: 50 }, action: 'move' })
   })
 
   it('types into the page and submits with Enter', async () => {
