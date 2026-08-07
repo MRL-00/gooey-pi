@@ -44,7 +44,6 @@ interface TranscriptProps {
   suggestionsDisabled?: boolean
 }
 
-const EMPTY_GIT: GitStatus = { isRepo: false, files: [] }
 
 function ActiveAssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
   const visibleActivity = message.parts.some((part) => part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools || part.type === 'agentMessage')
@@ -98,7 +97,7 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
           {message.role === 'user' ? <UserMessage message={message} />
             : message.role === 'assistant' ? message.streaming || message.id === activeAssistantId
               ? <ActiveAssistantMessage message={message} showReasoning={showReasoning} showTools={showTools} />
-              : <AssistantMessage message={message} git={EMPTY_GIT} isLast={false} showReasoning={showReasoning} showTools={showTools} onOpenChanges={onOpenChanges} />
+              : <AssistantMessage message={message} showReasoning={showReasoning} showTools={showTools} />
             : message.role === 'agent' ? <AgentMessage message={message} />
             : message.role === 'goal' ? <GoalMessage message={message} />
             : message.role === 'tool' || message.role === 'system' ? <ActivityMessage message={message} />
