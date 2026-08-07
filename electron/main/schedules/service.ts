@@ -6,13 +6,13 @@ import type {
   ScheduleInput,
   SchedulePatch,
   SchedulePreview,
-  AutomationScheduleRecord, AutomationScheduleRecord as ScheduleRecord,
+  AutomationScheduleRecord, 
   ScheduleRunRecord,
   ScheduleTarget,
   ScheduleTiming,
 } from '../../../src/types/api'
 import type { JsonStateStore } from '../store'
-import { isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
+import { rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import {
   countMissedOccurrences,
   nextScheduleOccurrence,
@@ -348,7 +348,7 @@ export class AutomationService {
     }
     await this.store.update((state) => {
       const task = state.schedules.find((candidate) => candidate.id === snapshot.id)
-      if (!task || task.status !== 'active' || task.nextRunAt !== scheduledFor) return
+      if (task?.status !== 'active' || task.nextRunAt !== scheduledFor) return
       this.pushRun(task, run)
       const next = nextScheduleOccurrence(task.timing, now)
       if (next) task.nextRunAt = next
@@ -364,7 +364,7 @@ export class AutomationService {
     let claimed: AutomationScheduleRecord | undefined
     await this.store.update((state) => {
       const task = state.schedules.find((candidate) => candidate.id === snapshot.id)
-      if (!task || task.status !== 'active' || task.nextRunAt !== scheduledFor) return
+      if (task?.status !== 'active' || task.nextRunAt !== scheduledFor) return
       const next = nextScheduleOccurrence(task.timing, new Date(Date.parse(scheduledFor) + 1))
       if (next) task.nextRunAt = next
       else { task.nextRunAt = undefined; task.status = 'completed' }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { renameSync } from 'node:fs'
+import { renameSync, type BigIntStats, type Stats } from 'node:fs'
 import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
@@ -303,7 +303,7 @@ export async function prepareProjectSettingsPath(projectPath: string): Promise<P
   let directory = projectRoot
   for (const segment of ['.prime', 'agent']) {
     const candidate = join(directory, segment)
-    let existing
+    let existing: Stats | undefined
     try {
       existing = await lstat(candidate)
     } catch (error) {
@@ -321,13 +321,13 @@ export async function prepareProjectSettingsPath(projectPath: string): Promise<P
   const settingsPath = join(directory, 'settings.json')
   const verify = async (): Promise<void> => {
     for (const [path, expected] of pinnedDirectories) {
-      let stat
+      let stat: BigIntStats
       try { stat = await lstat(path, { bigint: true }) } catch { throw new TypeError('Project MCP configuration directory changed during update') }
       if (stat.isSymbolicLink() || !stat.isDirectory() || stat.dev.toString() !== expected.dev || stat.ino.toString() !== expected.ino) {
         throw new TypeError('Project MCP configuration directory changed during update')
       }
     }
-    let settingsStat
+    let settingsStat: Stats | undefined
     try {
       settingsStat = await lstat(settingsPath)
     } catch (error) {
@@ -355,7 +355,7 @@ export async function updateMcpSettings(
       const settings = snapshot.settings
       if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
       const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
-      if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
+      if (Object.hasOwn(currentServers, input.name)) {
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
       const config = input.type === 'http'

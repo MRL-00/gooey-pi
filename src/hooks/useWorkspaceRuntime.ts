@@ -32,7 +32,6 @@ interface UseWorkspaceRuntimeOptions {
   bridge: PrimeWorkApi | null
   initialProject?: ProjectRecord
   initialSession?: SessionRecord
-  projects: ProjectRecord[]
   sessions: SessionRecord[]
   initialMessages: TranscriptMessage[]
   reportError(error: unknown): void
@@ -42,7 +41,6 @@ export function useWorkspaceRuntime({
   bridge,
   initialProject,
   initialSession,
-  projects,
   sessions,
   initialMessages,
   reportError,

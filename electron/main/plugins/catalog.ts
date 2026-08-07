@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Dir } from 'node:fs'
 import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
@@ -132,7 +133,7 @@ async function collectDirectory(
     } catch { return }
   }
 
-  let directory
+  let directory: Dir
   try {
     directory = await opendir(root)
     budget.directories += 1

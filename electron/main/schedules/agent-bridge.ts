@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { AutomationScheduleRecord, ScheduleInput, SchedulePatch, ScheduleTarget } from '../../../src/types/api'
 import type { AutomationService } from './service'
-import { isRecord, requireRecord, requireString } from '../validation'
+import { requireRecord, requireString } from '../validation'
 
 const MAX_BODY_BYTES = 1_100_000
 const TOKEN_TTL_MS = 24 * 60 * 60_000

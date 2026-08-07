@@ -44,7 +44,7 @@ export class RpcRuntime {
     executable: string,
     args: string[],
     cwd: string,
-    private readonly onEvent: (envelope: PrimeEventEnvelope) => void,
+    onEvent: (envelope: PrimeEventEnvelope) => void,
     private readonly onExit: (runtime: RpcRuntime) => void,
     extraEnvironment: NodeJS.ProcessEnv = {},
   ) {

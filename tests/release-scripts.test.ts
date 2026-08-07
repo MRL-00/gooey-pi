@@ -129,13 +129,13 @@ describe('release preflight', () => {
         continue
       }
       if (!inJobs) continue
-      const jobMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*$/)
+      const jobMatch = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/)
       if (jobMatch) {
         job = jobMatch[1]
         current = undefined
         continue
       }
-      if (/^      - /.test(line)) {
+      if (/^ {6}- /.test(line)) {
         current = { job, name: undefined, uses: undefined, secretLines: [], lines: [] }
         steps.push(current)
       }
@@ -187,9 +187,9 @@ describe('release preflight', () => {
 
   test('gates packaging regressions on every pull request', () => {
     const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
-    expect(ciWorkflow).toMatch(/on:\n  push:\n    branches:\n      - main/)
+    expect(ciWorkflow).toMatch(/on:\n {2}push:\n {4}branches:\n {6}- main/)
     expect(ciWorkflow).toContain('cancel-in-progress: true')
-    expect(ciWorkflow).toMatch(/packaging-smoke:\n    if: github\.event_name == 'pull_request'/)
+    expect(ciWorkflow).toMatch(/packaging-smoke:\n {4}if: github\.event_name == 'pull_request'/)
     for (const runner of ['macos-14', 'ubuntu-22.04', 'windows-2022']) expect(ciWorkflow).toContain(`runner: ${runner}`)
     expect(ciWorkflow).toContain('electron-builder --dir')
     expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')

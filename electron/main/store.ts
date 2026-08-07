@@ -24,7 +24,7 @@ export interface DesktopState {
 export function defaultSettings(): AppSettings {
   const defaultShell = process.platform === 'win32'
     ? (process.env.ComSpec && isAbsolute(process.env.ComSpec) ? process.env.ComSpec : 'C:\\Windows\\System32\\cmd.exe')
-    : (process.env.SHELL && process.env.SHELL.startsWith('/') ? process.env.SHELL : '/bin/zsh')
+    : (process.env.SHELL?.startsWith('/') ? process.env.SHELL : '/bin/zsh')
   return {
     theme: 'system',
     sidebarOpen: true,
@@ -302,11 +302,9 @@ export class JsonStateStore {
         try { await directory.sync() } finally { await directory.close() }
       } catch { /* Some filesystems do not allow fsync on a directory. */ }
     } finally {
-      try {
-        await this.fileSystem.unlink(temp)
-      } catch (error) {
+      await this.fileSystem.unlink(temp).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      }
+      })
     }
   }
 }

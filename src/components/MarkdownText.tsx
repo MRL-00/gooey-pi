@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'

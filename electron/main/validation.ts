@@ -90,5 +90,6 @@ export function errorMessage(error: unknown): string {
 }
 
 export function stripAnsi(input: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the ANSI escape introducer is a control character by definition
   return input.replace(/\u001B(?:[@-_]|\[[0-?]*[ -/]*[@-~])/g, '')
 }

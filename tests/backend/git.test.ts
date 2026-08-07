@@ -291,7 +291,7 @@ printf 'mutated by filter\n'
     expect(status.files).toHaveLength(GIT_STATUS_ENTRY_LIMIT)
     expect(status.truncated).toBe(true)
 
-    const large = Array.from({ length: GIT_DIFF_LINE_LIMIT + 20 }, (_, index) => `line-${index}`).join('\n') + '\n'
+    const large = `${Array.from({ length: GIT_DIFF_LINE_LIMIT + 20 }, (_, index) => `line-${index}`).join('\n')}\n`
     writeFileSync(join(cwd, 'file.txt'), large)
     const diff = await service.diff(cwd, 'file.txt', false)
     expect(diff.truncated).toBe(true)

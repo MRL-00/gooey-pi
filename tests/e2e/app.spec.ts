@@ -259,6 +259,7 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
 
 
 test.describe('Prime Work desktop smoke', () => {
+  // biome-ignore lint/correctness/noEmptyPattern: Playwright derives fixture usage from this destructuring pattern
   test.beforeEach(async ({}, testInfo) => {
     actionableErrors = []
     app = undefined

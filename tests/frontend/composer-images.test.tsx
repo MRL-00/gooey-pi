@@ -25,7 +25,10 @@ let root: Root
 
 beforeEach(() => {
   let id = 0
-  vi.stubGlobal('crypto', { randomUUID: () => `image-${id += 1}` })
+  vi.stubGlobal('crypto', { randomUUID: () => {
+    id += 1
+    return `image-${id}`
+  } })
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)

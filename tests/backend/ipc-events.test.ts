@@ -17,9 +17,6 @@ const electronMocks = vi.hoisted(() => ({
 
 vi.mock('electron', () => electronMocks)
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { registerIpc } from '../../electron/main/ipc'
 
 function serviceStub(): Record<string, unknown> {

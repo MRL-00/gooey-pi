@@ -483,7 +483,7 @@ describe('plugin request ownership', () => {
   it('rejects stale global, project, refresh, generation, and path completions', async () => {
     const requests = Array.from({ length: 4 }, () => deferred<PluginCatalog>())
     const list = vi.fn()
-    requests.forEach((request) => list.mockImplementationOnce(() => request.promise))
+    for (const request of requests) list.mockImplementationOnce(() => request.promise)
     const bridge = { plugins: { list } } as unknown as PrimeWorkApi
     const reportError = vi.fn()
     const skill = (id: string): SkillRecord => ({ id, name: id, description: id, kind: 'skill', location: 'project', enabled: true })
