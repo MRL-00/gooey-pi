@@ -141,7 +141,7 @@ describe('transcript read ownership', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError: vi.fn(),
       })
       return <Probe />
@@ -177,7 +177,7 @@ describe('transcript read ownership', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError,
       })
       return <Probe />
@@ -211,7 +211,7 @@ describe('agent event frame queue', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError,
       })
       return <Probe />
@@ -332,7 +332,7 @@ describe('bootstrap critical path', () => {
       app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
       schedules: { list: async () => [] },
     } as unknown as PrimeWorkApi
-    const workspaceRef = { current: { generation: 0 } }
+    const workspaceRef = { current: { generation: 0 } as { generation: number; project?: ProjectRecord; session?: SessionRecord; cwd?: string; sessionFile?: string } }
     const activated: Array<{ project?: ProjectRecord; session?: SessionRecord }> = []
     const attached: RuntimeInfo[] = []
     const setProjects = vi.fn()
@@ -417,7 +417,7 @@ describe('extension UI runtime ownership', () => {
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe({ activeRuntimeId }: { activeRuntimeId: string }) {
       runtimeIdRef.current = activeRuntimeId
-      state = useExtensionUi({ bridge, activeRuntimeId, runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId, runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
     await act(async () => { root.render(<ExtensionProbe activeRuntimeId="active" />) })
@@ -437,14 +437,13 @@ describe('extension UI runtime ownership', () => {
   it('groups ask_user question requests and responds to every pending question', async () => {
     const command = vi.fn().mockResolvedValue({})
     const bridge = { agent: { command } } as unknown as PrimeWorkApi
-    const runtimeIdRef = { current: 'runtime' as string | null }
     const runtimeSessionsRef = { current: new Map<string, string>() }
     const setSessions = vi.fn()
     const setRuntime = vi.fn()
     const reportError = vi.fn()
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe() {
-      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
 

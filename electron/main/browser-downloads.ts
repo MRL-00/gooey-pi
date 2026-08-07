@@ -9,7 +9,7 @@ const WINDOW_MS = 60 * 60 * 1000
 
 interface ActiveDownload { item: DownloadItem; ownerId: number; receivedBytes: number; outstandingDeclaredBytes: number }
 
-export function automaticDownloadPath(downloadDirectory: string, filename: string, suffix = randomUUID()): string {
+export function automaticDownloadPath(downloadDirectory: string, filename: string, suffix: string = randomUUID()): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately strips control characters from untrusted download filenames
   const leaf = basename(filename).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 180) || 'download'
   const extension = extname(leaf).slice(0, 24)

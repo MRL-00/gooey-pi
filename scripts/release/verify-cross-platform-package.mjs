@@ -91,7 +91,7 @@ export function verifyPackage(target, architecture, { unpackedOnly = false } = {
   if (!existsSync(asar) || !lstatSync(asar).isFile()) throw new Error('Packaged application must contain resources/app.asar')
   if (existsSync(join(resources, 'app'))) throw new Error('Packaged application contains forbidden loose resources/app')
   if (!existsSync(unpacked)) throw new Error('Packaged application must contain resources/app.asar.unpacked')
-  assertAsarLayout(listPackage(asar))
+  assertAsarLayout(listPackage(asar, { isPack: false }))
   assertUnpackedNativeLayout(unpacked, target, architecture)
   const scope = unpackedOnly ? 'unpacked directory build' : 'installable artifacts'
   console.log(`Verified ${target}/${architecture} package: ${scope}, ASAR runtime layout, and exact native unpack allowlist.`)

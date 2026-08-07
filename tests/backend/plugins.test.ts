@@ -62,9 +62,9 @@ describe('PluginService discovery', () => {
     await projects.list()
 
     let authorized = 0
-    let signalAuthorized = () => undefined
+    let signalAuthorized: () => void = () => undefined
     const allAuthorized = new Promise<void>((resolveWait) => { signalAuthorized = resolveWait })
-    let releaseDiscovery = () => undefined
+    let releaseDiscovery: () => void = () => undefined
     const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
     let discoveries = 0
     const discoveredRoots = new Set<string | undefined>()
@@ -101,7 +101,7 @@ describe('PluginService discovery', () => {
     const root = temp()
     const agentDir = join(root, 'agent')
     mkdirSync(agentDir)
-    let releaseDiscovery = () => undefined
+    let releaseDiscovery: () => void = () => undefined
     const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
     let active = 0
     const service = new PluginService(null, async (path) => resolve(path), {

@@ -61,7 +61,7 @@ async function verifyApp({ app, artifact, mode, expectedTeam }) {
   const looseApp = join(resources, 'app')
   if (!existsSync(asar)) throw new Error(`${basename(artifact)} application must contain Resources/app.asar`)
   if (existsSync(looseApp)) throw new Error(`${basename(artifact)} contains forbidden loose Resources/app`)
-  assertAsarLayout(listPackage(asar))
+  assertAsarLayout(listPackage(asar, { isPack: false }))
 
   const appArchitectures = parseArchitectures(run('lipo', ['-archs', executable]))
   assertExactArchitectures(appArchitectures, artifactArchitectures(artifact), basename(artifact))

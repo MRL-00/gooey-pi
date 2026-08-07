@@ -127,7 +127,7 @@ describe('agent transport events', () => {
       expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length)
     }
 
-    assertDistinctIds(events.reduce((current, event) => applyPrimeEvent(current, event), []))
+    assertDistinctIds(events.reduce<TranscriptMessage[]>((current, event) => applyPrimeEvent(current, event), []))
     assertDistinctIds(replayPrimeEvents([], events))
     now.mockRestore()
   })

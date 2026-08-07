@@ -7,7 +7,7 @@ function installHandler() {
   const actions = Object.fromEntries(
     (['open-palette', 'new-session', 'open-browser', 'toggle-sidebar', 'toggle-terminal', 'open-settings', 'close-palette'] as const).map((action) => [
       action,
-      () => calls.push(action),
+      () => { calls.push(action) },
     ]),
   ) as Record<AppShortcutAction, () => void>
   const handler = createAppKeydownHandler(actions)

@@ -273,7 +273,7 @@ test.describe('Prime Work desktop smoke', () => {
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable),
+          env: hermeticEnvironment(fixture.home, fixture.executable) as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
