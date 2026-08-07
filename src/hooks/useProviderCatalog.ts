@@ -3,6 +3,19 @@ import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, Prime
 
 type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
 
+/** Stable fallback identities so consumers can memoize on prop equality. */
+const DEFAULT_REASONING_LEVELS: PrimeThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+export function groupModelsByProvider(models: readonly PrimeModelDescriptor[] | undefined): Map<string, PrimeModelDescriptor[]> {
+  const grouped = new Map<string, PrimeModelDescriptor[]>()
+  for (const model of models ?? []) {
+    const bucket = grouped.get(model.provider)
+    if (bucket) bucket.push(model)
+    else grouped.set(model.provider, [model])
+  }
+  return grouped
+}
+
 interface UseProviderCatalogOptions {
   bridge: PrimeWorkApi | null
   runtime: RuntimeInfo | null
@@ -66,7 +79,9 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     if (model !== 'auto') return catalog?.models.find((candidate) => candidate.key === model)
     return catalog?.models.find((candidate) => candidate.provider === runtime?.model?.provider && candidate.id === runtime?.model?.id)
   }, [catalog, model, runtime?.model?.id, runtime?.model?.provider])
-  const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+  const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? DEFAULT_REASONING_LEVELS
+  // Group once per catalog identity so the composer's <option> tree can memoize.
+  const modelsByProvider = useMemo(() => groupModelsByProvider(catalog?.models), [catalog?.models])
 
   useEffect(() => {
     if (reasoningLevels.includes(effort)) return
@@ -201,7 +216,7 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   }, [authEvent, bridge, reportError])
 
   return {
-    model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels,
+    model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels, modelsByProvider,
     refresh, changeModel, changeEffort, changeFast,
     saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, startOAuth, respondOAuth, cancelOAuth,
   }

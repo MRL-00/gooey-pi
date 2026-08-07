@@ -11,7 +11,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
 import { messageActionForKey } from '@/lib/message-shortcuts'
@@ -24,7 +24,7 @@ interface ComposerProps {
   disabled?: boolean
   model: string
   effort: PrimeThinkingLevel
-  models: PrimeModelDescriptor[]
+  modelsByProvider: ReadonlyMap<string, PrimeModelDescriptor[]>
   providers: PrimeProviderDescriptor[]
   reasoningLevels: PrimeThinkingLevel[]
   fast: boolean
@@ -70,7 +70,7 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
-export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
+export const Composer = memo(function Composer({ busy, submitting = false, loading = false, disabled, model, effort, modelsByProvider, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -193,6 +193,14 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
 
   useEffect(() => { setActiveSuggestion(0) }, [menu, value, suggestions.length])
   const chooseSuggestion = (index: number) => suggestions[index]?.choose()
+  // The option tree only depends on catalog identity, not on per-keystroke state.
+  const modelOptions = useMemo(() => providers.filter((provider) => provider.enabled && provider.modelCount > 0).map((provider) => (
+    <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
+      {(modelsByProvider.get(provider.id) ?? []).map((candidate) => (
+        <option key={candidate.key} value={candidate.key} disabled={!candidate.available}>{candidate.name}{candidate.available ? '' : ' · connect provider'}</option>
+      ))}
+    </optgroup>
+  )), [modelsByProvider, providers])
   const contextPercent = contextUsage?.percent === null || contextUsage?.percent === undefined
     ? null
     : Math.min(100, Math.max(0, contextUsage.percent))
@@ -280,13 +288,7 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
             <IconButton label="Add skill" aria-expanded={menu === 'add'} aria-controls={menu === 'add' ? menuId : undefined} onClick={() => { setMenu((current) => current === 'add' ? null : 'add'); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Plus size={17} /></IconButton>
             <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option>
-              {providers.filter((provider) => provider.enabled && provider.modelCount > 0).map((provider) => (
-                <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
-                  {models.filter((candidate) => candidate.provider === provider.id).map((candidate) => (
-                    <option key={candidate.key} value={candidate.key} disabled={!candidate.available}>{candidate.name}{candidate.available ? '' : ' · connect provider'}</option>
-                  ))}
-                </optgroup>
-              ))}
+              {modelOptions}
             </SelectControl>
             <SelectControl label="Reasoning effort" compact icon={<Gauge size={12} />} value={effort} onChange={(event) => onEffortChange(event.target.value as PrimeThinkingLevel)}>
               {reasoningLevels.map((level) => <option key={level} value={level}>{reasoningLabels[level]}</option>)}
@@ -316,4 +318,4 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
       <p className="composer-note">Prime can make mistakes. Review commands and changes before committing.</p>
     </div>
   )
-}
+})
