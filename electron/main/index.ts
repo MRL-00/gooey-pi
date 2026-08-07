@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, protocol, session, shell, webContents } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -18,6 +18,8 @@ import { ScheduledRunExecutor } from './schedules/executor'
 import { HeartbeatService } from './schedules/heartbeats'
 import { AutomationService } from './schedules/service'
 import { AgentScheduleBridge } from './schedules/agent-bridge'
+import { AgentBrowserBridge } from './browser/agent-bridge'
+import { AgentBrowserService } from './browser/agent-service'
 import { SessionService } from './sessions'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
@@ -33,6 +35,8 @@ let providerService: PrimeProviderService | null = null
 let store: JsonStateStore | null = null
 let automation: AutomationService | null = null
 let agentScheduleBridge: AgentScheduleBridge | null = null
+let agentBrowser: AgentBrowserService | null = null
+let agentBrowserBridge: AgentBrowserBridge | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -127,6 +131,9 @@ export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string =
     contents.on('will-redirect', (event) => { if (!isAllowedBrowserUrl(event.url)) event.preventDefault() })
     contents.on('will-frame-navigate', (event) => { if (!isAllowedBrowserUrl(event.url)) event.preventDefault() })
     contents.once('destroyed', () => downloads?.cancelOwner(contents.id))
+    // Guests reaching this point passed the will-attach-webview partition and
+    // URL gates above, which makes them eligible for agent control.
+    agentBrowser?.approveGuest(contents)
   })
   window.webContents.on('will-navigate', (event, target) => {
     const current = window.webContents.getURL()
@@ -319,11 +326,18 @@ async function bootstrap(): Promise<void> {
   const scheduleSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'prime-work-schedules')
     : join(app.getAppPath(), 'assets', 'skills', 'prime-work-schedules')
+  const browserSkillPath = app.isPackaged
+    ? join(process.resourcesPath, 'skills', 'prime-work-browser')
+    : join(app.getAppPath(), 'assets', 'skills', 'prime-work-browser')
   const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
       id: 'prime-work-schedules', name: 'Prime Work schedules',
       description: 'Create and manage durable project and thread schedules from an agent.',
       kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
+    }, {
+      id: 'prime-work-browser', name: 'Prime Work browser',
+      description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
+      kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
     }],
   })
   const heartbeats = new HeartbeatService(agents, executable)
@@ -359,7 +373,21 @@ async function bootstrap(): Promise<void> {
   })
   await scheduleBridge.start()
   agentScheduleBridge = scheduleBridge
-  agents.setRuntimeEnvironmentProvider((scope) => scheduleBridge.environmentFor(scope))
+  const browserService = new AgentBrowserService({
+    getGuest: (webContentsId) => {
+      const contents = webContents.fromId(webContentsId)
+      return contents && !contents.isDestroyed() ? contents : undefined
+    },
+  })
+  agentBrowser = browserService
+  const browserExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'prime-work-browser.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'prime-work-browser.ts')
+  const browserBridge = new AgentBrowserBridge({ service: browserService, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
+  await browserBridge.start()
+  agentBrowserBridge = browserBridge
+  agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
+  agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   const detectedPrimeVersion = await primeVersion(executable)
   if (shutdownStarted) return
   const meta: AppMeta = {
@@ -370,7 +398,7 @@ async function bootstrap(): Promise<void> {
     primeAgentVersion: detectedPrimeVersion,
   }
   trustedRendererUrl = resolveRendererUrl()
-  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules }, trustedRendererUrl)
+  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService }, trustedRendererUrl)
   agents.setEventSink((envelope) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
@@ -441,8 +469,10 @@ app.on('before-quit', (event) => {
   beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
   providerService?.cancelAll()
+  agentBrowser?.beginShutdown()
   void settleShutdown([
     agentScheduleBridge?.stop() ?? Promise.resolve(),
+    agentBrowserBridge?.stop() ?? Promise.resolve(),
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),

@@ -38,6 +38,7 @@ describe('app:reveal-path authorization', () => {
       settings: serviceStub(),
       heartbeats: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
+      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
     }
     electronMocks.ipcMain.handle.mockClear()
     electronMocks.shell.showItemInFolder.mockClear()
@@ -124,6 +125,7 @@ describe('session change IPC', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: serviceStub(),
+      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
     }
     const expectedUrl = 'prime-work://app/'
     const trusted = {
@@ -192,6 +194,7 @@ describe('shell-facing app handlers', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: serviceStub(),
+      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
       ...overrides,
     }
     const registration = registerIpc(services as never, expectedUrl)
@@ -306,6 +309,7 @@ describe('IPC registration lifecycle', () => {
       plugins: serviceStub(),
       settings: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
+      browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
     }
   }
 

@@ -10,6 +10,7 @@ export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
   private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv = () => ({})
+  private runtimeStartListener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void = () => undefined
   private closed = false
 
   constructor(
@@ -24,6 +25,11 @@ export class AgentRpcManager {
 
   setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv): void {
     this.runtimeEnvironmentProvider = provider
+  }
+
+  /** Called once per successfully started runtime with the environment it was spawned with, so capability bridges can bind their claims to the runtime's session. */
+  setRuntimeStartListener(listener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void): void {
+    this.runtimeStartListener = listener
   }
 
   beginShutdown(): void { this.closed = true }
@@ -60,14 +66,18 @@ export class AgentRpcManager {
     this.requireOpen()
     if (this.runtimes.size >= 4) throw new Error('Prime Work supports at most four concurrent agent runtimes')
     const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath })
-    const skillPath = runtimeEnvironment.PRIME_WORK_SCHEDULE_SKILL_PATH
-    if (skillPath && !skillPath.startsWith('-') && !/[\r\n]/.test(skillPath)) args.push('--skill', skillPath)
+    for (const skillPath of [runtimeEnvironment.PRIME_WORK_SCHEDULE_SKILL_PATH, runtimeEnvironment.PRIME_WORK_BROWSER_SKILL_PATH]) {
+      if (skillPath && !skillPath.startsWith('-') && !/[\r\n]/.test(skillPath)) args.push('--skill', skillPath)
+    }
+    const extensionPath = runtimeEnvironment.PRIME_WORK_BROWSER_EXTENSION_PATH
+    if (extensionPath && !extensionPath.startsWith('-') && !/[\r\n]/.test(extensionPath)) args.push('--extension', extensionPath)
     const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId), runtimeEnvironment)
     this.runtimes.set(runtime.runtimeId, runtime)
     try {
       await runtime.handshake()
       await this.decorate(runtime)
       if (runtime.snapshot().fastModeSupported && options.fast === true) await runtime.setServiceTier('priority', true)
+      try { this.runtimeStartListener(runtimeEnvironment, runtime.snapshot()) } catch { /* capability binding must never fail a start */ }
       return runtime.snapshot()
     } catch (error) {
       // Release the runtime slot explicitly: the close-event cleanup may never

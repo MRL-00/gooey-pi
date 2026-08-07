@@ -410,6 +410,23 @@ export interface NativeHeartbeatRecord {
   runtimeId?: string
 }
 
+/** One agent-controlled browser tab. The registry lives in the main process; the renderer hosts the webview guests and mirrors this state. */
+export interface AgentBrowserTabRecord {
+  tabId: string
+  /** Canonical session file path of the thread this tab belongs to. */
+  sessionFile: string
+  url: string
+  title: string
+  /** Whether a live webview guest is currently bound to this tab. */
+  attached: boolean
+  /** Whether this is the session's currently targeted tab. */
+  active: boolean
+}
+
+export interface AgentBrowserState {
+  tabs: AgentBrowserTabRecord[]
+}
+
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileListing>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
@@ -449,6 +466,13 @@ export interface PrimeWorkApi {
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
   plugins: { list(projectPath?: string): Promise<PluginCatalog>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<PluginCatalog> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
+  browser: {
+    state(): Promise<AgentBrowserState>
+    attachTab(tabId: string, webContentsId: number): Promise<boolean>
+    selectTab(tabId: string): Promise<boolean>
+    closeTab(tabId: string): Promise<boolean>
+    onChanged(callback: (state: AgentBrowserState) => void): () => void
+  }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>
     manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord>
