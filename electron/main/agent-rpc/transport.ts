@@ -28,6 +28,14 @@ export class FramedRpcTransport {
       try { this.decoder.end() } catch (error) { onFatalFrameError(error) }
     })
     this.child.stderr.on('data', () => { /* stderr can contain secrets; never forward it to the renderer */ })
+    // A SIGKILLed child surfaces EPIPE/ECONNRESET on its pipes; without listeners that error crashes the whole app.
+    const failPipe = (error: unknown): void => {
+      if (this.frameFailed) return
+      this.frameFailed = true
+      onFatalFrameError(error)
+    }
+    this.child.stdout.on('error', failPipe)
+    this.child.stderr.on('error', failPipe)
   }
 
   writable(): boolean { return this.isAvailable() && this.child.stdin.writable }

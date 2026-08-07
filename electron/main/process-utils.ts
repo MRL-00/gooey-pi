@@ -221,12 +221,22 @@ export function runProcess(file: string, args: readonly string[], options: {
         if (limitKillTimer) clearTimeout(limitKillTimer)
         drainProcessQueue()
       }
-      child.once('error', (error) => {
+      const fail = (error: Error): void => {
         if (settled) return
         settled = true
         finish()
         reject(error)
-      })
+      }
+      child.once('error', fail)
+      // Read-pipe errors (EPIPE/ECONNRESET from a killed child) would otherwise be
+      // uncaught 'error' events that crash the main process.
+      const failPipe = (error: Error): void => {
+        if (settled) return
+        terminateChild(child, 'SIGTERM')
+        fail(error)
+      }
+      child.stdout?.on('error', failPipe)
+      child.stderr?.on('error', failPipe)
       child.once('close', (code, signal) => {
         if (settled) return
         settled = true
