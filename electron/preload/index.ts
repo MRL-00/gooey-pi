@@ -82,6 +82,7 @@ const api: PrimeWorkApi = {
     selectTab: (tabId) => ipcRenderer.invoke('browser:select-tab', tabId),
     closeTab: (tabId) => ipcRenderer.invoke('browser:close-tab', tabId),
     setPreviewContext: (webContentsId, sessionFile) => ipcRenderer.invoke('browser:set-preview-context', webContentsId, sessionFile),
+    navigateTab: (tabId, action, url) => ipcRenderer.invoke('browser:navigate-tab', tabId, action, url),
     onChanged: (callback) => subscribe<AgentBrowserState>('browser:changed', callback),
     onPointer: (callback) => subscribe<AgentBrowserPointerEvent>('browser:pointer', callback),
     onActivity: (callback) => subscribe<AgentBrowserActivityEvent>('browser:activity', callback),

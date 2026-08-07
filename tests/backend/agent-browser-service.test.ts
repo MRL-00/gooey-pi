@@ -212,13 +212,22 @@ describe('AgentBrowserService', () => {
     expect(enterEvents[0]).toMatchObject({ text: '\r', windowsVirtualKeyCode: 13 })
   })
 
-  it('captures screenshots resized to the CSS viewport', async () => {
+  it('captures screenshots at CSS pixel scale with the pointer marker drawn in', async () => {
     const { service, openAttached } = fixture()
-    await openAttached('/sessions/a.jsonl', 'https://example.com/')
+    const { guest } = await openAttached('/sessions/a.jsonl', 'https://example.com/')
     const shot = await service.screenshot('/sessions/a.jsonl', {})
+    // Retina captures report DIP size but encode 2x pixels; the resize to the
+    // CSS viewport must happen unconditionally.
     expect(shot.mimeType).toBe('image/jpeg')
     expect(shot.width).toBe(640)
+    expect(shot.height).toBe(480)
     expect(Buffer.from(shot.data as string, 'base64').toString()).toBe('resized-jpeg')
+    // With a pointer, the capture brackets an in-page cursor marker.
+    await service.click('/sessions/a.jsonl', { x: 10, y: 10 })
+    guest.executedScripts.length = 0
+    await service.screenshot('/sessions/a.jsonl', {})
+    expect(guest.executedScripts.some((code) => code.includes('__primeWorkAgentCursorMarker') && code.includes("style.left = '10px'"))).toBe(true)
+    expect(guest.executedScripts.some((code) => code.includes('marker.remove()'))).toBe(true)
   })
 
   it('marks tabs detached when their guest is destroyed and reactivates a sibling on close', async () => {

@@ -110,6 +110,50 @@ export function scrollByScript(deltaX: number, deltaY: number): string {
   })()`
 }
 
+/**
+ * Places (or moves) a small in-page cursor marker so screenshots show where
+ * the agent's pointer currently is; removed again right after capture.
+ */
+export function cursorMarkerScript(x: number, y: number): string {
+  const px = boundedInt(x, 0, 100_000, 'x')
+  const py = boundedInt(y, 0, 100_000, 'y')
+  return `(() => {
+    let marker = document.getElementById('__primeWorkAgentCursorMarker')
+    if (!marker) {
+      marker = document.createElement('div')
+      marker.id = '__primeWorkAgentCursorMarker'
+      marker.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:14px;height:14px;margin:-7px 0 0 -7px;border:2.5px solid #fff;border-radius:50%;background:#2488ff;box-shadow:0 0 0 1.5px rgba(0,0,0,.55), 0 0 8px rgba(36,136,255,.9)'
+      if (document.documentElement) document.documentElement.appendChild(marker)
+    }
+    marker.style.left = '${px}px'
+    marker.style.top = '${py}px'
+    return true
+  })()`
+}
+
+export function removeCursorMarkerScript(): string {
+  return `(() => {
+    const marker = document.getElementById('__primeWorkAgentCursorMarker')
+    if (marker) marker.remove()
+    return true
+  })()`
+}
+
+/** Describes the element that a click at the given viewport point would hit. */
+export function elementAtPointScript(x: number, y: number): string {
+  const px = boundedInt(x, 0, 100_000, 'x')
+  const py = boundedInt(y, 0, 100_000, 'y')
+  return `(() => {
+    const el = document.elementFromPoint(${px}, ${py})
+    if (!el) return JSON.stringify({})
+    const bound = (value) => typeof value === 'string' ? value.replace(/\\s+/g, ' ').trim().slice(0, 120) : ''
+    return JSON.stringify({
+      tag: el.tagName.toLowerCase(),
+      name: bound(el.getAttribute('aria-label') || el.textContent || el.getAttribute('title') || ''),
+    })
+  })()`
+}
+
 export function pageInfoScript(): string {
   return `(() => JSON.stringify({
     url: String(location.href).slice(0, 2000),

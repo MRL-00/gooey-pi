@@ -97,8 +97,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: 'browser_screenshot',
     label: 'Browser screenshot',
-    description: 'Capture a screenshot of the Prime Work in-app browser tab. The image is scaled so its pixel coordinates match the coordinates browser_click and browser_scroll accept.',
-    promptGuidelines: ['Use browser_screenshot to see the current page before and after visual interactions; its pixels map 1:1 to browser_click x/y coordinates.'],
+    description: 'Capture a screenshot of the Prime Work in-app browser tab. The image is scaled so its pixel coordinates match the coordinates browser_click and browser_scroll accept, and the agent cursor\'s current position appears in it as a small blue circular marker.',
+    promptGuidelines: ['Use browser_screenshot to see the current page before and after visual interactions; its pixels map 1:1 to browser_click x/y coordinates, and the blue circle marker shows where your cursor currently is - use it to correct your aim if a click missed.'],
     parameters: Type.Object({ tab_id: tabId }),
     async execute(_toolCallId, params) {
       const result = await call('screenshot', { tabId: params.tab_id })
@@ -135,8 +135,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: 'browser_click',
     label: 'Browser click',
-    description: 'Click in the Prime Work in-app browser tab, either on an element ref from browser_read_page or at x/y screenshot coordinates. Supports left/right/middle button and double-click.',
-    promptGuidelines: ['Use browser_click with a ref from browser_read_page when possible; fall back to x/y from browser_screenshot for canvas-like UIs.'],
+    description: 'Click in the Prime Work in-app browser tab, either on an element ref from browser_read_page or at x/y screenshot coordinates. Supports left/right/middle button and double-click. The result includes "clicked": the element actually under the click point - verify it is what you intended.',
+    promptGuidelines: [
+      'Use browser_click with a ref from browser_read_page when possible; fall back to x/y from browser_screenshot for canvas-like UIs.',
+      'Always check the "clicked" element in the browser_click result; if it is not the element you intended, take a fresh browser_read_page or browser_screenshot and correct your aim rather than guessing.',
+    ],
     parameters: Type.Object({
       ref: Type.Optional(Type.Number({ description: 'Element ref from browser_read_page' })),
       x: Type.Optional(Type.Number()),

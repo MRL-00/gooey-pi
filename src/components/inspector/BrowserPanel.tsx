@@ -67,6 +67,8 @@ interface BrowserPanelProps {
   onPreviewContext?(webContentsId: number | null, sessionFile: string | null): void
   /** Latest agent pointer movement targeting the "preview" tab, for the cursor overlay. */
   previewPointerEvent?: StampedPointerEvent | null
+  /** User navigation on an agent tab; routed through the main process to the guest. */
+  onNavigateAgentTab?(tabId: string, action: 'back' | 'forward' | 'reload' | 'url', url?: string): void
   /** Test hook: how often to poll the page for a clicked element while picking. */
   pollIntervalMs?: number
 }
@@ -80,7 +82,7 @@ function agentTabLabel(tab: AgentBrowserTabRecord): string {
   return 'New tab'
 }
 
-export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, pollIntervalMs = 350 }: BrowserPanelProps) {
+export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, onNavigateAgentTab, pollIntervalMs = 350 }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
@@ -106,6 +108,14 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
   const [previewWebContentsId, setPreviewWebContentsId] = useState<number | null>(null)
   const onPreviewContextRef = useRef(onPreviewContext)
   onPreviewContextRef.current = onPreviewContext
+  const [agentAddress, setAgentAddress] = useState('')
+  const agentAddressEditingRef = useRef(false)
+
+  // Keep the agent tab's address field following the page unless the user is
+  // actively editing it.
+  useEffect(() => {
+    if (!agentAddressEditingRef.current) setAgentAddress(activeAgentTab?.url ?? '')
+  }, [activeAgentTab?.url, activeAgentTabId])
 
   // Bind the Preview guest to the active thread so its agent can adopt it as
   // the "preview" tab; clear the binding when the panel goes away.
@@ -496,8 +506,35 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
       {showAgentTab && activeAgentTab ? (
         <div className="browser-agent-area">
           <div className="browser-agent-urlbar">
-            <Bot size={12} aria-hidden />
-            <span>{activeAgentTab.url || 'about:blank'}</span>
+            <IconButton label="Back" disabled={!activeAgentTab.canGoBack} onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'back')}>
+              <ArrowLeft size={14} />
+            </IconButton>
+            <IconButton label="Forward" disabled={!activeAgentTab.canGoForward} onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'forward')}>
+              <ArrowRight size={14} />
+            </IconButton>
+            <IconButton label="Reload" onClick={() => onNavigateAgentTab?.(activeAgentTab.tabId, 'reload')}>
+              <RefreshCw size={14} />
+            </IconButton>
+            <form
+              className="address-field"
+              onSubmit={(event) => {
+                event.preventDefault()
+                agentAddressEditingRef.current = false
+                onNavigateAgentTab?.(activeAgentTab.tabId, 'url', normalizeUrl(agentAddress))
+              }}
+            >
+              <Bot size={12} aria-hidden />
+              <input
+                value={agentAddress}
+                onChange={(event) => {
+                  agentAddressEditingRef.current = true
+                  setAgentAddress(event.target.value)
+                }}
+                onBlur={() => { agentAddressEditingRef.current = false }}
+                aria-label="Agent tab address"
+                spellCheck={false}
+              />
+            </form>
             {!activeAgentTab.attached ? <em>connecting…</em> : null}
           </div>
           <div className="browser-agent-slot" ref={slotRef} aria-label="Agent-controlled browser tab" />
