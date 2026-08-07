@@ -8,8 +8,24 @@ const args = new Set(process.argv.slice(2))
 const isPublic = args.has('--public')
 const isQa = args.has('--qa')
 const dryRun = args.has('--dry-run')
+const platformIndex = process.argv.indexOf('--platform')
+const platform = platformIndex === -1 ? undefined : process.argv[platformIndex + 1]
+const archIndex = process.argv.indexOf('--arch')
+const requestedArch = archIndex === -1 ? undefined : process.argv[archIndex + 1]
+const platformHosts = { mac: 'darwin', linux: 'linux', win: 'win32' }
+const nativeArchitectures = { arm64: 'arm64', x64: 'x64' }
 if (isPublic === isQa) {
   console.error('Choose exactly one release mode: --public or --qa')
+  process.exit(2)
+}
+if (!platform || !(platform in platformHosts)) {
+  console.error('Choose a supported platform: --platform mac, linux, or win')
+  process.exit(2)
+}
+const defaultArch = process.arch === 'arm64' ? 'arm64' : 'x64'
+const arch = requestedArch ?? defaultArch
+if (!(arch in nativeArchitectures)) {
+  console.error('Choose a supported architecture: --arch arm64 or x64')
   process.exit(2)
 }
 
@@ -23,17 +39,26 @@ function run(command, commandArgs, env = process.env) {
 
 try {
   assertSupportedNode()
-  if (process.platform !== 'darwin') throw new Error('macOS packaging must run on macOS')
-  if (isPublic) validateReleaseCredentials(process.env)
-  run('npm', ['run', 'release:verify'], withoutReleaseCredentials(process.env))
-  if (!dryRun) rmSync(resolve('release'), { recursive: true, force: true })
+  if (process.platform !== platformHosts[platform]) throw new Error(`${platform} packaging must run natively on ${platformHosts[platform]}`)
+  if (isPublic && platform === 'mac') validateReleaseCredentials(process.env)
+  const verifyScript = platform === 'mac' ? 'release:verify' : 'release:verify:package'
+  run('npm', ['run', verifyScript], withoutReleaseCredentials(process.env))
+  if (!dryRun) rmSync(resolve('release', platform, arch), { recursive: true, force: true })
 
-  const builderArgs = ['exec', '--', 'electron-builder', '--mac', '--publish', 'never']
+  const builderArgs = ['exec', '--', 'electron-builder', `--${platform}`, `--${arch}`, '--publish', 'never', `--config.directories.output=release/${platform}/${arch}`]
   const builderEnv = isQa ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' } : process.env
-  if (isQa) builderArgs.push('-c.mac.identity=null', '-c.mac.notarize=false')
+  if (isQa && platform === 'mac') builderArgs.push('--config.mac.identity=null', '--config.mac.notarize=false')
   run('npm', builderArgs, builderEnv)
-  run('node', ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa'], withoutReleaseCredentials(process.env, ['RELEASE_SIGNING_TEAM_ID']))
-  console.log(`\n${isPublic ? 'Public' : 'Local QA'} package pipeline passed.`)
+  if (platform === 'mac') {
+    run(
+      'node',
+      ['scripts/release/verify-package.mjs', '--mode', isPublic ? 'public' : 'qa', '--release-directory', resolve('release', platform, arch)],
+      withoutReleaseCredentials(process.env, ['RELEASE_SIGNING_TEAM_ID']),
+    )
+  } else {
+    run('node', ['scripts/release/verify-cross-platform-package.mjs', '--platform', platform, '--arch', arch], withoutReleaseCredentials(process.env))
+  }
+  console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
 } catch (error) {
   console.error(`\nPackaging failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 1

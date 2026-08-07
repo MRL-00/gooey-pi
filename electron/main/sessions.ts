@@ -11,7 +11,7 @@ import { readTranscript } from './sessions/transcript'
 import type { JsonStateStore } from './store'
 import { isPathWithin, isRecord, requireBoolean, requireExistingDirectory, requireId, requireString } from './validation'
 
-interface RuntimeSessionState { isStreaming: boolean }
+interface RuntimeSessionState { isStreaming: boolean; isCompacting?: boolean }
 
 const MAX_SESSION_FILES = 5_000
 const MAX_CONCURRENT_TRANSCRIPT_READS = 2
@@ -106,7 +106,7 @@ export class SessionService {
       const isArchived = archived.has(resolve(metadata.filePath))
       if ((isArchived && !includeArchived) || (project && resolve(metadata.projectPath) !== project)) continue
       const runtime = this.runtimeForSession(metadata.filePath)
-      if (runtime) metadata.status = runtime.isStreaming ? 'running' : 'idle'
+      if (runtime) metadata.status = runtime.isStreaming || runtime.isCompacting ? 'running' : 'idle'
       const { sessionName: _sessionName, ...record } = metadata
       records.push({ ...record, archived: isArchived })
     }
@@ -125,7 +125,8 @@ export class SessionService {
     if (existing) return structuredClone(await existing)
 
     const operation = this.admitTranscriptRead(async () => {
-      return this.transcriptReader(safePath, this.runtimeForSession(safePath)?.isStreaming === true)
+      const runtime = this.runtimeForSession(safePath)
+      return this.transcriptReader(safePath, runtime?.isStreaming === true || runtime?.isCompacting === true)
     })
     this.transcriptReadsByCanonicalPath.set(safePath, operation)
     try {

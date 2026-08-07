@@ -52,6 +52,10 @@ export interface PromptImage {
   data: string
 }
 
+export type PrimeCompactionReason = 'manual' | 'threshold' | 'overflow' | 'requested'
+export type PrimeCompactionStatus = 'running' | 'done' | 'failed' | 'cancelled'
+export type PrimeCompactionOutcome = 'failed' | 'cancelled' | 'skipped'
+
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
@@ -59,6 +63,18 @@ export type MessagePart =
   | { type: 'toolResult'; name?: string; text: string; isError?: boolean }
   | { type: 'agentMessage'; text: string; agentName?: string }
   | { type: 'image'; mimeType?: string; data?: string; dataTruncated?: boolean }
+  | {
+      type: 'compaction'
+      status: PrimeCompactionStatus
+      reason?: PrimeCompactionReason
+      outcome?: PrimeCompactionOutcome
+      tokensBefore?: number
+      firstKeptEntryId?: string
+      summary?: string
+      error?: string
+      customInstructions?: string
+      willRetry?: boolean
+    }
 
 export interface TranscriptMessage {
   id: string
@@ -77,6 +93,7 @@ export interface RuntimeInfo {
   sessionFile?: string
   cwd: string
   isStreaming: boolean
+  isCompacting?: boolean
   model?: { provider?: string; id?: string; name?: string } | null
   thinkingLevel?: string
   availableThinkingLevels?: PrimeThinkingLevel[]

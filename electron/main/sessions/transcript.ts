@@ -165,6 +165,13 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
           argsBudget -= Math.min(serialized.length, argsBudget)
         }
         next = { ...part, args }
+      } else if (part.type === 'compaction') {
+        next = {
+          ...part,
+          summary: part.summary ? boundedString(part.summary, textBudget) : undefined,
+          error: part.error ? boundedString(part.error, textBudget) : undefined,
+          customInstructions: part.customInstructions ? boundedString(part.customInstructions, textBudget) : undefined,
+        }
       } else {
         let data: string | undefined
         if (part.data && imageBudget > 0) {
@@ -218,7 +225,7 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     visited.add(leafId)
     const node = entries.get(leafId)
     if (!node) break
-    if (node.entry.type === 'message' || (node.entry.type === 'custom_message' && node.entry.display === true)) branch.push(node)
+    if (node.entry.type === 'message' || node.entry.type === 'compaction' || (node.entry.type === 'custom_message' && node.entry.display === true)) branch.push(node)
     leafId = node.parentId
   }
   branch.reverse()
@@ -226,10 +233,45 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
   let activeAssistant: TranscriptMessage | undefined
   for (const { id, entry } of branch) {
     const safeId = boundedString(id, 1_024)
+    if (entry.type === 'compaction') {
+      const timestamp = typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined
+      const tokensBefore = typeof entry.tokensBefore === 'number' && Number.isFinite(entry.tokensBefore) && entry.tokensBefore >= 0 ? entry.tokensBefore : undefined
+      const summary = typeof entry.summary === 'string' ? boundedString(entry.summary, MAX_PART_TEXT_CHARS) : undefined
+      const firstKeptEntryId = typeof entry.firstKeptEntryId === 'string' ? boundedString(entry.firstKeptEntryId, 1_024) : undefined
+      const customInstructions = typeof entry.customInstructions === 'string' ? boundedString(entry.customInstructions, MAX_PART_TEXT_CHARS) : undefined
+      transcript.push({
+        id: safeId,
+        role: 'system',
+        timestamp,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        parts: [{ type: 'compaction', status: 'done', tokensBefore, summary, firstKeptEntryId, customInstructions }],
+      })
+      activeAssistant = undefined
+      continue
+    }
     if (entry.type === 'custom_message') {
       const details = isRecord(entry.details) ? entry.details : undefined
       const from = isRecord(details?.from) ? details.from : undefined
       const customType = typeof entry.customType === 'string' ? boundedString(entry.customType, 200) : 'activity'
+      if (customType === 'compaction_outcome') {
+        const outcome = details?.outcome === 'cancelled' ? 'cancelled' : details?.outcome === 'skipped' ? 'skipped' : 'failed'
+        const reason = details?.reason === 'manual' || details?.reason === 'threshold' || details?.reason === 'overflow' || details?.reason === 'requested'
+          ? details.reason
+          : undefined
+        const timestamp = typeof entry.timestamp === 'string' ? boundedString(entry.timestamp, 128) : undefined
+        const text = boundedString(textFromContent(entry.content), MAX_PART_TEXT_CHARS)
+        transcript.push({
+          id: safeId,
+          role: 'system',
+          timestamp,
+          startedAt: timestamp,
+          completedAt: timestamp,
+          parts: [{ type: 'compaction', status: outcome === 'cancelled' ? 'cancelled' : 'failed', outcome, reason, error: text }],
+        })
+        activeAssistant = undefined
+        continue
+      }
       const isAgentMessage = customType === 'agent_message'
       const isGoalSummary = customType === 'goal_context'
       const detailMessage = typeof details?.message === 'string' ? details.message : undefined

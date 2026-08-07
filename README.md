@@ -1,6 +1,6 @@
 # Prime Work
 
-Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with Prime Agent's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
+Prime Work is a macOS, Linux, and Windows desktop workspace for [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with Prime Agent's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
 
 ![Prime Work session workspace](research/prime-work-final-light.png)
 
@@ -16,13 +16,13 @@ Prime Work is a macOS desktop workspace for [Prime Agent](https://github.com/Pri
 - Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
 - Extension-driven question dialogs through the separately installable [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins) package
 - Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
-- macOS keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
+- Native keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
 
 ## Requirements
 
-- Apple Silicon macOS
+- macOS (Apple Silicon or Intel), a supported Linux distribution, or Windows 10/11 x64
 - Node.js 22.12.0 or newer and npm 10.9.0 or newer
-- Prime Agent installed on `PATH` (Homebrew installations at `/opt/homebrew/bin/prime-agent` are detected)
+- Prime Agent installed on `PATH` (`prime-agent.exe` on Windows). If it lives elsewhere, set the absolute `PRIME_AGENT_BINARY` path before launching Prime Work.
 - A configured Prime Agent provider/login
 
 Verify the harness before launching:
@@ -72,15 +72,23 @@ npm run build           # main, CommonJS preload, and renderer bundles
 
 The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and macOS last-window recreation.
 
-## Build for macOS
+## Build installable packages
+
+Build on the target operating system so `node-pty` is rebuilt for that runtime. Each command produces artifacts in `release/<platform>/<arch>/`.
 
 ```bash
 npm run package:mac
+npm run package:linux
+npm run package:win
 ```
 
-Artifacts are written to `release/` as an arm64 `.app`, DMG, and ZIP. Only the `node-pty` native binary and spawn helper are unpacked from ASAR and rebuilt for the bundled Electron ABI.
+Pass `-- --arch x64` or `-- --arch arm64` when building for a supported non-default native architecture. The default is the build machine's architecture. The macOS release path emits a signed, notarized DMG and ZIP; it needs the Apple credentials described below. Linux emits AppImage, DEB, and RPM packages. Windows emits an NSIS installer and ZIP.
 
-Electron Builder uses an available signing identity automatically. Public distribution additionally requires Apple notarization credentials supported by Electron Builder (Apple ID/app-specific password/team ID or App Store Connect API key). A locally signed but unnotarized build will be rejected by Gatekeeper on another Mac; this repository does not contain release credentials.
+For local unsigned smoke packages, use `npm run package:<platform>:local-qa` instead. macOS local QA packages deliberately do not pass Gatekeeper on another Mac.
+
+For users, ship the conventional installer for their operating system: DMG on macOS, DEB/RPM (or portable AppImage) on Linux, and the NSIS setup executable on Windows. The Windows package should be Authenticode-signed before public distribution; macOS remains subject to Developer ID signing and notarization.
+
+Electron Builder uses an available signing identity automatically. Public macOS distribution additionally requires Apple notarization credentials supported by Electron Builder (Apple ID/app-specific password/team ID or App Store Connect API key). A locally signed but unnotarized build will be rejected by Gatekeeper on another Mac; this repository does not contain release credentials.
 
 ## Keyboard shortcuts
 
@@ -97,7 +105,7 @@ Electron Builder uses an available signing identity automatically. Public distri
 
 Prime session/auth/config files remain authoritative. Prime Work stores only UI settings, project bookmarks, and local archive metadata in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer is served from a secure custom `prime-work://` scheme rather than privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
 
-Prime Agent tools, extensions, skills, packages, and terminals run with your macOS user permissions. Review projects, commands, and third-party packages before running them. See [`docs/security.md`](docs/security.md) for the complete trust boundary.
+Prime Agent tools, extensions, skills, packages, and terminals run with your OS user permissions. Review projects, commands, and third-party packages before running them. See [`docs/security.md`](docs/security.md) for the complete trust boundary.
 
 ## Current scope
 

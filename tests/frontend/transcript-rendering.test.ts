@@ -111,6 +111,23 @@ describe('transcript rendering', () => {
     expect(html).not.toContain('thinking-dots')
   })
 
+  it('renders adjacent assistant continuations as one work disclosure', () => {
+    const html = render([
+      {
+        id: 'first-segment', role: 'assistant', timestamp: 1_000, startedAt: 1_000, completedAt: 2_000,
+        parts: [{ type: 'thinking', text: 'First activity segment.' }],
+      },
+      {
+        id: 'second-segment', role: 'assistant', timestamp: 2_000, startedAt: 2_000, completedAt: 5_000,
+        parts: [{ type: 'toolCall', id: 'read', name: 'read_file', args: { path: 'next.ts' } }, { type: 'toolResult', name: 'read_file', text: 'done' }],
+      },
+    ])
+
+    expect(html.match(/class="message message--assistant"/g)).toHaveLength(1)
+    expect(html.match(/Worked for/g)).toHaveLength(1)
+    expect(html).toContain('Worked for 4s')
+  })
+
 
   it('renders one file changes card in the pinned transcript footer', () => {
     const html = renderToStaticMarkup(createElement(Transcript, {
@@ -200,6 +217,20 @@ describe('transcript rendering', () => {
     expect(html).toContain('aria-expanded="false"')
     expect(html).not.toContain('Request failed with details.')
     expect(html).not.toContain('message--system')
+  })
+
+  it('renders compaction activity and completion separately from system failures', () => {
+    const html = render([{
+      id: 'compaction',
+      role: 'system',
+      parts: [{ type: 'compaction', status: 'done', reason: 'overflow', tokensBefore: 99_175, summary: 'The earlier work was summarized.' }],
+    }])
+    expect(html).toContain('activity-line--compaction')
+    expect(html).toContain('Context compacted')
+    expect(html).toContain('overflow recovery')
+    expect(html).toContain('99,175 tokens before')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Prime message')
   })
 
   it('renders standalone informational output as a collapsed tool row', () => {

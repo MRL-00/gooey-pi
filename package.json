@@ -21,12 +21,17 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "npm run build && npm run test:e2e:hermetic",
     "test:e2e:hermetic": "playwright test",
-    "release:verify": "npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run release:bundle-size && npm run test:e2e:hermetic",
+    "release:verify": "npm run release:verify:package && npm run test:e2e:hermetic",
+    "release:verify:package": "npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run release:bundle-size",
     "release:bundle-size": "node scripts/release/verify-bundle-size.mjs",
-    "package:mac": "node scripts/release/package.mjs --public",
-    "package:mac:local-qa": "node scripts/release/package.mjs --qa",
+    "package:mac": "node scripts/release/package.mjs --public --platform mac",
+    "package:mac:local-qa": "node scripts/release/package.mjs --qa --platform mac",
+    "package:linux": "node scripts/release/package.mjs --public --platform linux",
+    "package:linux:local-qa": "node scripts/release/package.mjs --qa --platform linux",
+    "package:win": "node scripts/release/package.mjs --public --platform win",
+    "package:win:local-qa": "node scripts/release/package.mjs --qa --platform win",
     "release:preflight": "node scripts/release/preflight.mjs",
-    "postinstall": "PYTHON=/usr/bin/python3 electron-builder install-app-deps"
+    "postinstall": "node scripts/release/install-app-deps.mjs"
   },
   "dependencies": {
     "node-pty": "^1.0.0",
@@ -64,11 +69,6 @@
     "asar": {
       "smartUnpack": false
     },
-    "asarUnpack": [
-      "**/node_modules/node-pty/build/Release/pty.node",
-      "**/node_modules/node-pty/build/Release/spawn-helper",
-      "**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node"
-    ],
     "files": [
       "out/**/*",
       "package.json"
@@ -83,7 +83,44 @@
       "icon": "assets/icon.icns",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
-      "notarize": true
+      "notarize": true,
+      "asarUnpack": [
+        "**/node_modules/node-pty/build/Release/pty.node",
+        "**/node_modules/node-pty/build/Release/spawn-helper",
+        "**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "icon": "assets/icon.png",
+      "asarUnpack": [
+        "**/node_modules/node-pty/build/Release/pty.node",
+        "**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "icon": "assets/icon.png",
+      "asarUnpack": [
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/pty.node",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty.node",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty_console_list.node",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/winpty-agent.exe",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/winpty.dll",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/OpenConsole.exe",
+        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/conpty.dll",
+        "**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node"
+      ]
     },
     "directories": {
       "output": "release"

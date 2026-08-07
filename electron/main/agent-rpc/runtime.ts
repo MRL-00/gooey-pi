@@ -37,7 +37,7 @@ export class RpcRuntime {
     private readonly onEvent: (envelope: PrimeEventEnvelope) => void,
     private readonly onExit: (runtime: RpcRuntime) => void,
   ) {
-    this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false }
+    this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false }
     this.exited = new Promise((resolveExit) => { this.resolveExited = resolveExit })
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
@@ -120,7 +120,7 @@ export class RpcRuntime {
   }
 
   private async performStop(): Promise<boolean> {
-    if (this.info.isStreaming) {
+    if (this.info.isStreaming || this.info.isCompacting) {
       try { await this.request({ type: 'abort' }, 5_000) } catch { /* close stdin and escalate below */ }
     }
     this.stopped = true
@@ -223,8 +223,14 @@ export class RpcRuntime {
       pending.resolve(value)
       return
     }
-    if (value.type === 'agent_start') this.info.isStreaming = true
-    else if (value.type === 'agent_end') this.info.isStreaming = false
+    if (value.type === 'agent_start') {
+      this.info.isStreaming = true
+      this.info.isCompacting = false
+    } else if (value.type === 'agent_end') {
+      this.info.isStreaming = false
+      this.info.isCompacting = false
+    } else if (value.type === 'compaction_start') this.info.isCompacting = true
+    else if (value.type === 'compaction_end') this.info.isCompacting = false
     this.emit(value)
   }
 
@@ -233,6 +239,7 @@ export class RpcRuntime {
     if (typeof raw.sessionId === 'string') this.info.sessionId = raw.sessionId
     if (typeof raw.sessionFile === 'string') this.info.sessionFile = raw.sessionFile
     if (typeof raw.isStreaming === 'boolean') this.info.isStreaming = raw.isStreaming
+    if (typeof raw.isCompacting === 'boolean') this.info.isCompacting = raw.isCompacting
     if (typeof raw.thinkingLevel === 'string') this.info.thinkingLevel = raw.thinkingLevel
     if (raw.serviceTier === 'default' || raw.serviceTier === 'priority') {
       this.info.serviceTier = raw.serviceTier

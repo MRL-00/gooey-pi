@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ExtensionUiResponse } from '@/components/ExtensionUiModal'
 import { parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
-import type { PrimeWorkApi, SessionRecord } from '@/types/api'
+import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
 
 interface UseExtensionUiOptions {
   bridge: PrimeWorkApi | null
   activeRuntimeId?: string
   runtimeSessionsRef: React.RefObject<Map<string, string>>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
+  setRuntime: React.Dispatch<React.SetStateAction<RuntimeInfo | null>>
   reportError(error: unknown): void
 }
 
@@ -37,6 +38,7 @@ export function useExtensionUi({
   activeRuntimeId,
   runtimeSessionsRef,
   setSessions,
+  setRuntime,
   reportError,
 }: UseExtensionUiOptions) {
   const [extensionUi, setExtensionUi] = useState<PendingExtensionUi | null>(null)
@@ -79,6 +81,7 @@ export function useExtensionUi({
   const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
     const pending = extensionUiRef.current
     if (!pending) return
+    setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: true } : current)
     clearExtensionUi(pending.runtimeId)
     const pendingSession = runtimeSessionsRef.current.get(pending.runtimeId)
     if (pendingSession) {
@@ -114,9 +117,10 @@ export function useExtensionUi({
         ...response,
       })
     } catch (error) {
+      setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: false } : current)
       if (activeRuntimeIdRef.current === pending.runtimeId) reportError(error)
     }
-  }, [bridge, clearExtensionUi, reportError, runtimeSessionsRef, setSessions])
+  }, [bridge, clearExtensionUi, reportError, runtimeSessionsRef, setRuntime, setSessions])
 
   const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(rawEvent)

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PROCESS_CONCURRENCY_LIMIT, runProcess, stopChildProcesses } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, primeAgentCandidates, primeAgentExecutableName, runProcess, stopChildProcesses } from '../../electron/main/process-utils'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -85,4 +85,27 @@ setInterval(() => {}, 1000)
     expect(completed.every((result) => result.signal === 'SIGKILL' || result.signal === 'SIGTERM')).toBe(true)
     expect(readdirSync(dir)).not.toContain('queued-ran')
   }, 15_000)
+})
+
+describe('Prime Agent discovery candidates', () => {
+  it('uses native executable names and absolute paths for every supported desktop platform', () => {
+    expect(primeAgentExecutableName('darwin')).toBe('prime-agent')
+    expect(primeAgentExecutableName('linux')).toBe('prime-agent')
+    expect(primeAgentExecutableName('win32')).toBe('prime-agent.exe')
+    expect(isAbsolutePathForPlatform('/opt/prime-agent', 'linux')).toBe(true)
+    expect(isAbsolutePathForPlatform('C:\\Tools\\prime-agent.exe', 'win32')).toBe(true)
+    expect(isAbsolutePathForPlatform('prime-agent.exe', 'win32')).toBe(false)
+  })
+
+  it('accepts explicit Windows binaries and searches the Windows PATH without shell execution', () => {
+    const candidates = primeAgentCandidates({
+      PRIME_AGENT_BINARY: 'C:\\Tools\\prime-agent.exe',
+      Path: 'C:\\Program Files\\Prime Agent;D:\\bin',
+      LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local',
+    }, 'win32')
+    expect(candidates).toContain('C:\\Tools\\prime-agent.exe')
+    expect(candidates).toContain('C:\\Program Files\\Prime Agent\\prime-agent.exe')
+    expect(candidates).toContain('D:\\bin\\prime-agent.exe')
+    expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\Programs\\Prime Agent\\prime-agent.exe')
+  })
 })

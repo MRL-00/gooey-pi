@@ -19,6 +19,7 @@ export interface TranscriptReconciliationMarker {
 
 const TERMINAL_TRANSCRIPT_EVENTS = new Set([
   'agent_end',
+  'compaction_end',
   'extension_error',
   'error',
   'runtime_exit',

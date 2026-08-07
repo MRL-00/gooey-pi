@@ -39,4 +39,11 @@ describe('session lifecycle attention', () => {
     expect(failed).toMatchObject({ status: 'failed', eventRevision: 1 })
     expect(sessionAttentionSignature(failed)).toBeUndefined()
   })
+
+  it('finishes a manual compaction when no continuation is scheduled', () => {
+    const running = applySessionLifecycleEvent(session(), { type: 'compaction_start', reason: 'manual' }, true, 1)
+    const completed = applySessionLifecycleEvent(running, { type: 'compaction_end', reason: 'manual', willRetry: false }, true, 2)
+    expect(running.status).toBe('running')
+    expect(completed).toMatchObject({ status: 'complete', unread: false, eventRevision: 2 })
+  })
 })

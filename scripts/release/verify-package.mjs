@@ -135,7 +135,9 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
 if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   const modeIndex = process.argv.indexOf('--mode')
   const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : undefined
-  verifyPackage({ mode }).catch((error) => {
+  const releaseDirectoryIndex = process.argv.indexOf('--release-directory')
+  const releaseDirectory = releaseDirectoryIndex >= 0 ? process.argv[releaseDirectoryIndex + 1] : undefined
+  verifyPackage({ mode, ...(releaseDirectory ? { releaseDirectory } : {}) }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
   })

@@ -214,11 +214,12 @@ describe('extension UI runtime ownership', () => {
     const runtimeIdRef = { current: 'active' as string | null }
     const runtimeSessionsRef = { current: new Map<string, string>() }
     const setSessions = vi.fn()
+    const setRuntime = vi.fn()
     const reportError = vi.fn()
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe({ activeRuntimeId }: { activeRuntimeId: string }) {
       runtimeIdRef.current = activeRuntimeId
-      state = useExtensionUi({ bridge, activeRuntimeId, runtimeIdRef, runtimeSessionsRef, setSessions, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId, runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
     await act(async () => { root.render(<ExtensionProbe activeRuntimeId="active" />) })
@@ -241,10 +242,11 @@ describe('extension UI runtime ownership', () => {
     const runtimeIdRef = { current: 'runtime' as string | null }
     const runtimeSessionsRef = { current: new Map<string, string>() }
     const setSessions = vi.fn()
+    const setRuntime = vi.fn()
     const reportError = vi.fn()
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe() {
-      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeIdRef, runtimeSessionsRef, setSessions, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
 
@@ -272,6 +274,9 @@ describe('extension UI runtime ownership', () => {
 
     expect(command).toHaveBeenNthCalledWith(1, 'runtime', { type: 'extension_ui_response', id: 'question-1', value: JSON.stringify({ answer: 'B', answerSource: 'option' }) })
     expect(command).toHaveBeenNthCalledWith(2, 'runtime', { type: 'extension_ui_response', id: 'question-2', value: JSON.stringify({ answer: 'D', answerSource: 'option', context: 'Because it is safer.' }) })
+    expect(setRuntime).toHaveBeenCalledTimes(1)
+    const resumeRuntime = setRuntime.mock.calls[0][0] as (current: RuntimeInfo | null) => RuntimeInfo | null
+    expect(resumeRuntime(runtime)).toMatchObject({ runtimeId: 'runtime', isStreaming: true })
   })
 })
 

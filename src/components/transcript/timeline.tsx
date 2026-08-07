@@ -7,6 +7,7 @@ import {
   FileCode2,
   Github,
   Globe2,
+  Layers3,
   LoaderCircle,
   MessageCircle,
   MessageCircleQuestion,
@@ -126,10 +127,47 @@ function AgentActivityPart({ part }: { part: Extract<MessagePart, { type: 'agent
   </div>
 }
 
+function compactionReasonLabel(reason: Extract<MessagePart, { type: 'compaction' }>['reason']): string {
+  if (reason === 'threshold') return 'automatic threshold'
+  if (reason === 'overflow') return 'overflow recovery'
+  if (reason === 'requested') return 'requested'
+  if (reason === 'manual') return 'manual'
+  return 'context'
+}
+
+function CompactionPart({ part }: { part: Extract<MessagePart, { type: 'compaction' }> }) {
+  const [open, setOpen] = useState(false)
+  const canExpand = Boolean(part.summary || part.error)
+  const label = part.status === 'running'
+    ? 'Compacting context'
+    : part.status === 'done'
+      ? 'Context compacted'
+      : part.status === 'cancelled' ? 'Context compaction cancelled' : part.outcome === 'skipped' ? 'Context compaction skipped' : 'Context compaction failed'
+  const state = part.status === 'running'
+    ? <><LoaderCircle className="spin" size={12} /> running</>
+    : part.status === 'done'
+      ? <><Check size={12} /> {part.willRetry ? 'continuing' : 'done'}</>
+      : <><CircleAlert size={12} /> {part.status === 'cancelled' ? 'cancelled' : 'needs attention'}</>
+  const details = part.error || part.summary
+  const tokenLabel = part.tokensBefore === undefined ? '' : `${part.tokensBefore.toLocaleString()} tokens before`
+  return <div className={`activity-line activity-line--compaction is-${part.status}`}>
+    <button type="button" className="activity-tool__summary" disabled={!canExpand} onClick={() => setOpen((value) => !value)} aria-expanded={canExpand ? open : undefined}>
+      <span className="activity-line__icon">{part.status === 'running' ? <LoaderCircle className="spin" size={13} /> : part.status === 'done' ? <Layers3 size={13} /> : <CircleAlert size={13} />}</span>
+      <span className="activity-line__kind">{label}</span>
+      <span className="activity-compaction__reason">{compactionReasonLabel(part.reason)}</span>
+      {tokenLabel ? <span className="activity-compaction__tokens">{tokenLabel}</span> : null}
+      <span className="activity-tool__state">{state}</span>
+      {canExpand ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}
+    </button>
+    {open && details ? <div className={`activity-compaction__details ${part.status === 'done' ? '' : 'is-error'}`}><MarkdownText text={boundText(details, 40_000, '\n… [Compaction details truncated in the desktop view.]')} /></div> : null}
+  </div>
+}
+
 export function WorkTimeline({ parts, showReasoning, showTools }: { parts: MessagePart[]; showReasoning: boolean; showTools: boolean }) {
   const pairedResults = new Set<number>()
   return <div className="work-timeline">{parts.map((part, index) => {
     if (part.type === 'toolResult' && pairedResults.has(index)) return null
+    if (part.type === 'compaction') return <CompactionPart key={index} part={part} />
     if (part.type === 'thinking') return showReasoning ? <ReasoningPart key={index} part={part} /> : null
     if (part.type === 'toolCall') {
       if (!showTools) return null

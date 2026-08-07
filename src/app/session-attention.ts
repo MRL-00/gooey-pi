@@ -9,6 +9,8 @@ export function sessionLifecycleChange(event: Record<string, unknown>): SessionL
   const type = typeof event.type === 'string' ? event.type : ''
   if (type === 'extension_ui_request') return { status: 'waiting', markUnread: true }
   if (type === 'agent_start' || type === 'turn_start') return { status: 'running', markUnread: false }
+  if (type === 'compaction_start') return { status: 'running', markUnread: false }
+  if (type === 'compaction_end' && event.willRetry !== true && (event.reason === 'manual' || event.reason === 'requested')) return { status: 'complete', markUnread: false }
   if (type === 'agent_end') return { status: 'complete', markUnread: true }
   if (type === 'extension_error' || type === 'error' || type === 'transport_error') return { status: 'failed' }
   if (type === 'runtime_exit') return { status: event.expected === true ? 'complete' : 'failed', markUnread: event.expected === true }

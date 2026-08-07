@@ -21,6 +21,7 @@ describe('authoritative transcript reconciliation', () => {
     expect(isTranscriptTerminalEvent({ type: 'error' })).toBe(true)
     expect(isTranscriptTerminalEvent({ type: 'extension_error' })).toBe(true)
     expect(isTranscriptTerminalEvent({ type: 'runtime_exit' })).toBe(true)
+    expect(isTranscriptTerminalEvent({ type: 'compaction_end' })).toBe(true)
   })
 
   it('requires the same generation, runtime, and session before starting the reread', () => {

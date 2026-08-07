@@ -87,7 +87,7 @@ export default function App() {
   })
   const extension = useExtensionUi({
     bridge, activeRuntimeId: workspace.runtime?.runtimeId, runtimeSessionsRef: workspace.runtimeSessionsRef,
-    setSessions, reportError,
+    setSessions, setRuntime: workspace.setRuntime, reportError,
   })
 
   const refreshGit = useCallback(async () => {
@@ -360,7 +360,7 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown)
   })
 
-  const busy = Boolean(workspace.runtime?.isStreaming || workspace.messages.some((message) => message.streaming))
+  const busy = Boolean(workspace.runtime?.isStreaming || workspace.runtime?.isCompacting || workspace.messages.some((message) => message.streaming))
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage schedules={schedules} error={scheduleError} canCreate={Boolean(workspace.runtime)} onAdd={addSchedule} onCancel={cancelSchedule} />

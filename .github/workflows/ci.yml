@@ -46,7 +46,23 @@ jobs:
 
   local-qa-package:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            package: npm run package:mac:local-qa
+            artifact: prime-work-local-qa-macos
+            path: release/mac/
+          - runner: ubuntu-22.04
+            package: npm run package:linux:local-qa
+            artifact: prime-work-local-qa-linux
+            path: release/linux/
+          - runner: windows-2022
+            package: npm run package:win:local-qa
+            artifact: prime-work-local-qa-windows
+            path: release/win/
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -54,10 +70,8 @@ jobs:
           node-version: 22.12.0
           cache: npm
       - run: npm ci
-      - run: npm run package:mac:local-qa
+      - run: ${{ matrix.package }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: prime-work-local-qa
-          path: |
-            release/*.dmg
-            release/*.zip
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}

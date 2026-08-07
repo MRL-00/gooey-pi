@@ -61,7 +61,13 @@ export function useAgentEvents({
       queueAgentEvent(event)
       reconcileTranscriptForEvent(runtimeId, event)
       if (type === 'agent_start') {
-        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true } : current)
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true, isCompacting: false } : current)
+      }
+      if (type === 'compaction_start') {
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isCompacting: true } : current)
+      }
+      if (type === 'compaction_end') {
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isCompacting: false } : current)
       }
       if (type === 'runtime_exit') {
         clearExtensionUi(runtimeId)
@@ -70,7 +76,7 @@ export function useAgentEvents({
         runtimeOwnerRef.current = null
         setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
       } else if (type === 'agent_end' || type === 'extension_error' || type === 'error' || type === 'transport_error') {
-        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false } : current)
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false, isCompacting: false } : current)
         if (refreshGitOnTerminalEvent) window.setTimeout(() => void refreshGit(), 160)
       }
     })

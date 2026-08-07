@@ -10,6 +10,27 @@ import { ThinkingDots, WorkDisclosure } from './transcript/timeline'
 export { classifyTool, formatWorkedDuration } from './transcript/timeline'
 export { tokenizeSyntax } from './transcript/syntax'
 
+export function coalesceAssistantTurns(messages: TranscriptMessage[]): TranscriptMessage[] {
+  let changed = false
+  const grouped: TranscriptMessage[] = []
+  for (const message of messages) {
+    const previous = grouped.at(-1)
+    if (message.role !== 'assistant' || previous?.role !== 'assistant') {
+      grouped.push(message)
+      continue
+    }
+    changed = true
+    const streaming = Boolean(previous.streaming || message.streaming)
+    grouped[grouped.length - 1] = {
+      ...previous,
+      completedAt: streaming ? undefined : message.completedAt ?? previous.completedAt,
+      streaming,
+      parts: [...previous.parts, ...message.parts],
+    }
+  }
+  return changed ? grouped : messages
+}
+
 interface TranscriptProps {
   messages: TranscriptMessage[]
   git: GitStatus
@@ -52,8 +73,9 @@ function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): 
 }
 
 export function Transcript({ messages, git, loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled }: TranscriptProps) {
-  const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(messages)
-  const activeAssistantId = useMemo(() => active && messages.at(-1)?.role === 'assistant' ? messages.at(-1)?.id : undefined, [active, messages])
+  const groupedMessages = useMemo(() => coalesceAssistantTurns(messages), [messages])
+  const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(groupedMessages)
+  const activeAssistantId = useMemo(() => active && groupedMessages.at(-1)?.role === 'assistant' ? groupedMessages.at(-1)?.id : undefined, [active, groupedMessages])
 
   return <>
     <div ref={scrollRef} className={`transcript scroll-area ${git.files.length ? 'has-pinned-changes' : ''}`} aria-busy={loading} onScroll={updatePinnedState}>

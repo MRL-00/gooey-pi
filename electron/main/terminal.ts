@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +24,15 @@ interface OwnedTerminal {
 }
 
 function systemShells(): Set<string> {
+  if (process.platform === 'win32') {
+    const shells = new Set<string>()
+    if (process.env.ComSpec && isAbsolute(process.env.ComSpec)) shells.add(process.env.ComSpec)
+    if (process.env.SystemRoot && isAbsolute(process.env.SystemRoot)) {
+      shells.add(join(process.env.SystemRoot, 'System32', 'cmd.exe'))
+      shells.add(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
+    }
+    return shells
+  }
   const shells = new Set<string>(['/bin/zsh', '/bin/bash', '/bin/sh'])
   try {
     for (const line of readFileSync('/etc/shells', 'utf8').split(/\r?\n/)) {
@@ -42,6 +51,7 @@ const MAX_TERMINAL_IPC_CHUNK_BYTES = 1024 * 1024
 const execFileAsync = promisify(execFile)
 
 async function processTree(rootPid: number): Promise<number[]> {
+  if (process.platform === 'win32') return []
   let output = ''
   try {
     const result = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024 })
@@ -64,12 +74,24 @@ function signalPids(pids: number[], signal: NodeJS.Signals): void {
 }
 
 function signalTerminalTree(owned: OwnedTerminal, descendants: number[], signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    try { owned.terminal.kill() } catch { /* already exited */ }
+    return
+  }
   signalPids(descendants, signal)
   try { process.kill(-owned.terminal.pid, signal) } catch { /* no shell process group */ }
   try { owned.terminal.kill(signal) } catch { /* already exited */ }
 }
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+
+function shellArguments(shell: string): string[] {
+  if (process.platform !== 'win32') return ['-l']
+  const name = basename(shell).toLowerCase()
+  if (name === 'cmd.exe') return ['/K']
+  if (name === 'powershell.exe' || name === 'pwsh.exe') return ['-NoLogo']
+  return []
+}
 
 export class TerminalService {
   private readonly terminals = new Map<string, OwnedTerminal>()
@@ -85,7 +107,7 @@ export class TerminalService {
 
   validateShell(value: unknown): string {
     const requested = requireString(value, 'shell', { min: 1, max: 4096 })
-    if (!requested.startsWith('/')) throw new TypeError('shell must be an absolute path')
+    if (!isAbsolute(requested)) throw new TypeError('shell must be an absolute path')
     let canonical: string
     try {
       canonical = realpathSync(requested)
@@ -94,10 +116,10 @@ export class TerminalService {
     } catch { throw new TypeError('shell is not executable') }
     const allowedCanonical = new Set<string>()
     for (const shell of this.allowedShells) {
-      if (!shell?.startsWith('/') || !existsSync(shell)) continue
+      if (!shell || !isAbsolute(shell) || !existsSync(shell)) continue
       try { allowedCanonical.add(realpathSync(shell)) } catch { /* ignore */ }
     }
-    if (!allowedCanonical.has(canonical)) throw new TypeError('shell is not listed in /etc/shells')
+    if (!allowedCanonical.has(canonical)) throw new TypeError(process.platform === 'win32' ? 'shell is not an approved Windows shell' : 'shell is not listed in /etc/shells')
     return canonical
   }
 
@@ -111,7 +133,7 @@ export class TerminalService {
     const cols = options.cols === undefined ? 100 : requireInteger(options.cols, 'cols', 2, 1_000)
     const rows = options.rows === undefined ? 30 : requireInteger(options.rows, 'rows', 1, 1_000)
     const env = Object.fromEntries(Object.entries(safeChildEnvironment({ TERM: 'xterm-256color', COLORTERM: 'truecolor' })).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-    const terminal = pty.spawn(shell, ['-l'], { cwd, cols, rows, name: 'xterm-256color', env })
+    const terminal = pty.spawn(shell, shellArguments(shell), { cwd, cols, rows, name: 'xterm-256color', env })
     if (owner.isDestroyed()) { try { terminal.kill() } catch { /* owner closed during spawn */ }; throw new Error('Terminal owner was closed') }
     const terminalId = randomUUID()
     const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, cwd, shell, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false }
@@ -200,6 +222,10 @@ export class TerminalService {
     if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
     this.flushOutput(id, owned)
     const descendants = await processTree(owned.terminal.pid)
+    if (process.platform === 'win32') {
+      signalTerminalTree(owned, descendants, 'SIGTERM')
+      return
+    }
     signalTerminalTree(owned, descendants, 'SIGHUP')
     await delay(150)
     signalTerminalTree(owned, descendants, 'SIGTERM')

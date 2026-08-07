@@ -108,8 +108,8 @@ function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): 
 }
 
 export const AssistantMessage = memo(function AssistantMessage({ message, git, isLast, showReasoning, showTools, onOpenChanges }: { message: TranscriptMessage; git: GitStatus; isLast: boolean; showReasoning: boolean; showTools: boolean; onOpenChanges(): void }) {
-  const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage'
-  const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult'
+  const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
+  const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'compaction'
   const firstActivity = message.parts.findIndex(isActivity)
   let lastActivity = -1
   let lastCoreActivity = -1
@@ -122,7 +122,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, git, i
   const before = firstActivity < 0 ? message.parts : message.parts.slice(0, firstActivity)
   const work = firstActivity < 0 ? [] : message.parts.slice(firstActivity, workEnd)
   const after = firstActivity < 0 ? [] : message.parts.slice(workEnd)
-  const hasVisibleActivity = work.some((part) => part.type === 'agentMessage' || part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools)
+  const hasVisibleActivity = work.some((part) => part.type === 'agentMessage' || part.type === 'compaction' || part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools)
   const hiddenMiddleNarrative = !hasVisibleActivity ? work.filter((part) => part.type === 'text' || part.type === 'image') : []
   const copyableNarrative = hasVisibleActivity ? [...before, ...after] : [...before, ...hiddenMiddleNarrative, ...after]
   const copyableText = copyableNarrative.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')
@@ -146,7 +146,7 @@ export const UserMessage = memo(function UserMessage({ message }: { message: Tra
 })
 
 export const ActivityMessage = memo(function ActivityMessage({ message }: { message: TranscriptMessage }) {
-  const sourceParts: MessagePart[] = message.role === 'system'
+  const sourceParts: MessagePart[] = message.role === 'system' && !message.parts.some((part) => part.type === 'compaction')
     ? [
         { type: 'toolCall', id: message.id, name: 'Prime message' },
         { type: 'toolResult', name: 'Prime message', text: messageText(message), isError: true },

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import type { AppSettings, ProjectRecord } from '../../src/types/api'
 import { isRecord } from './validation'
 
@@ -21,6 +21,9 @@ export interface DesktopState {
 }
 
 export function defaultSettings(): AppSettings {
+  const defaultShell = process.platform === 'win32'
+    ? (process.env.ComSpec && isAbsolute(process.env.ComSpec) ? process.env.ComSpec : 'C:\\Windows\\System32\\cmd.exe')
+    : (process.env.SHELL && process.env.SHELL.startsWith('/') ? process.env.SHELL : '/bin/zsh')
   return {
     theme: 'system',
     sidebarOpen: true,
@@ -29,7 +32,7 @@ export function defaultSettings(): AppSettings {
     defaultInspectorTab: 'summary',
     browserHome: 'https://www.google.com/',
     browserAskForDownloads: true,
-    terminalShell: process.env.SHELL && process.env.SHELL.startsWith('/') ? process.env.SHELL : '/bin/zsh',
+    terminalShell: defaultShell,
     reduceMotion: false,
     showReasoningSummaries: true,
     showToolCalls: true,

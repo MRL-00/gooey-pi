@@ -174,13 +174,28 @@ describe('post-package verification helpers', () => {
     expect(() => assertAsarLayout(entries.filter((entry) => !entry.includes('node-pty')))).toThrow(/missing required/)
   })
 
-  test('keeps the builder native unpack patterns exact and architecture-specific', () => {
+  test('keeps every platform native unpack allowlist exact and architecture-specific', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    expect(packageJson.build.asarUnpack).toEqual([
+    expect(packageJson.build.asarUnpack).toBeUndefined()
+    expect(packageJson.build.mac.asarUnpack).toEqual([
       '**/node_modules/node-pty/build/Release/pty.node',
       '**/node_modules/node-pty/build/Release/spawn-helper',
       '**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node',
     ])
+    expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node'])
+    expect(packageJson.build.win.asarUnpack).toEqual([
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/pty.node',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty.node',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty_console_list.node',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/winpty-agent.exe',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/winpty.dll',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/OpenConsole.exe',
+      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/conpty.dll',
+      '**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node',
+    ])
+    expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm'])
+    expect(packageJson.build.win.target).toEqual(['nsis', 'zip'])
+    expect(packageJson.build.directories.output).toBe('release')
   })
 
   test('accepts the exact unpacked native fixture with complete architecture coverage', () => {

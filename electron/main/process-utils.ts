@@ -1,6 +1,6 @@
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 
@@ -106,17 +106,37 @@ export function restrictedGitEnvironment(): NodeJS.ProcessEnv {
   return env
 }
 
-export async function findPrimeAgent(): Promise<string | null> {
+export function isAbsolutePathForPlatform(value: string, platform = process.platform): boolean {
+  return platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value)
+}
+
+export function primeAgentExecutableName(platform = process.platform): string {
+  return platform === 'win32' ? 'prime-agent.exe' : 'prime-agent'
+}
+
+export function primeAgentCandidates(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
+  const pathApi = platform === 'win32' ? win32 : posix
+  const executable = primeAgentExecutableName(platform)
   const candidates: string[] = []
-  if (process.env.PRIME_AGENT_BINARY?.startsWith('/')) candidates.push(process.env.PRIME_AGENT_BINARY)
+  if (env.PRIME_AGENT_BINARY && isAbsolutePathForPlatform(env.PRIME_AGENT_BINARY, platform)) candidates.push(env.PRIME_AGENT_BINARY)
   if (typeof process.resourcesPath === 'string') {
-    candidates.push(join(process.resourcesPath, 'agent', 'prime-agent'))
-    candidates.push(join(process.resourcesPath, 'agent', 'bin', 'prime-agent'))
+    candidates.push(pathApi.join(process.resourcesPath, 'agent', executable))
+    candidates.push(pathApi.join(process.resourcesPath, 'agent', 'bin', executable))
   }
-  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
-    if (directory.startsWith('/')) candidates.push(join(directory, 'prime-agent'))
+  for (const directory of (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter)) {
+    if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
   }
-  candidates.push('/opt/homebrew/bin/prime-agent', '/usr/local/bin/prime-agent', join(homedir(), '.local', 'bin', 'prime-agent'))
+  if (platform === 'win32') {
+    const localAppData = env.LOCALAPPDATA
+    if (localAppData && isAbsolutePathForPlatform(localAppData, platform)) candidates.push(pathApi.join(localAppData, 'Programs', 'Prime Agent', executable))
+  } else {
+    candidates.push('/opt/homebrew/bin/prime-agent', '/usr/local/bin/prime-agent', join(homedir(), '.local', 'bin', executable))
+  }
+  return [...new Set(candidates)]
+}
+
+export async function findPrimeAgent(): Promise<string | null> {
+  const candidates = primeAgentCandidates()
   for (const candidate of [...new Set(candidates)]) {
     try { await access(candidate, fsConstants.X_OK); return candidate } catch { /* continue */ }
   }
