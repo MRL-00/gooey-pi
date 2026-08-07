@@ -293,3 +293,49 @@ describe('shell-facing app handlers', () => {
     registration.dispose()
   })
 })
+
+describe('IPC registration lifecycle', () => {
+  function servicesWithUnsubscribe(unsubscribe: () => void): Record<string, unknown> {
+    return {
+      meta: {},
+      projects: serviceStub(),
+      sessions: { ...serviceStub(), onDidChange: vi.fn(() => unsubscribe) },
+      agents: serviceStub(),
+      terminals: serviceStub(),
+      git: serviceStub(),
+      plugins: serviceStub(),
+      settings: serviceStub(),
+      schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
+    }
+  }
+
+  it('removes any prior listener before registering event channels', () => {
+    electronMocks.ipcMain.on.mockClear()
+    electronMocks.ipcMain.removeAllListeners.mockClear()
+    const registration = registerIpc(servicesWithUnsubscribe(vi.fn()) as never, 'prime-work://app/')
+
+    const eventChannels = electronMocks.ipcMain.on.mock.calls.map(([channel]) => channel)
+    expect(eventChannels.length).toBeGreaterThan(0)
+    const removed = electronMocks.ipcMain.removeAllListeners.mock.calls.map(([channel]) => channel)
+    for (const channel of eventChannels) expect(removed).toContain(channel)
+
+    registration.dispose()
+  })
+
+  it('warns and disposes a previous registration when registerIpc is called again', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const firstUnsubscribe = vi.fn()
+    const first = registerIpc(servicesWithUnsubscribe(firstUnsubscribe) as never, 'prime-work://app/')
+    expect(firstUnsubscribe).not.toHaveBeenCalled()
+
+    const second = registerIpc(servicesWithUnsubscribe(vi.fn()) as never, 'prime-work://app/')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('previous registration'))
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1)
+
+    // Disposing the stale handle again is a no-op.
+    first.dispose()
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1)
+    second.dispose()
+    warn.mockRestore()
+  })
+})
