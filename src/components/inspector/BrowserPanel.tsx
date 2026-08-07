@@ -1,10 +1,15 @@
 import { ArrowLeft, ArrowRight, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { createElement, useEffect, useRef, useState } from 'react'
+import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
+import { annotationElementLabel, MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
+import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
+import type { BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
 
 type WebviewElement = HTMLElement & {
   loadURL(url: string): Promise<void>
   getURL(): string
+  getTitle(): string
   goBack(): void
   goForward(): void
   canGoBack(): boolean
@@ -25,18 +30,38 @@ function normalizeUrl(value: string) {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
 }
 
-export function BrowserPanel({ home, onOpenExternal }: { home: string; onOpenExternal(url: string): void }) {
+interface BrowserPanelProps {
+  home: string
+  onOpenExternal(url: string): void
+  annotations: BrowserAnnotationsApi
+  /** Test hook: how often to poll the page for a clicked element while picking. */
+  pollIntervalMs?: number
+}
+
+export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs = 350 }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
   const [loading, setLoading] = useState(false)
   const [canBack, setCanBack] = useState(false)
   const [canForward, setCanForward] = useState(false)
-  const [annotation, setAnnotation] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [pendingElement, setPendingElement] = useState<BrowserAnnotationElement | null>(null)
   const [annotationText, setAnnotationText] = useState('')
-  const [annotations, setAnnotations] = useState<Array<{ id: number; text: string }>>([])
+  const [notice, setNotice] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [history, setHistory] = useState<string[]>(() => [home])
+  const annotationsRef = useRef(annotations)
+  annotationsRef.current = annotations
+  const noticeTimerRef = useRef<number | null>(null)
+  const lastMarkersRef = useRef('')
+
+  const showNotice = (text: string) => {
+    setNotice(text)
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+    noticeTimerRef.current = window.setTimeout(() => { noticeTimerRef.current = null; setNotice('') }, 5_000)
+  }
+  useEffect(() => () => { if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current) }, [])
 
   useEffect(() => {
     const view = webviewRef.current
@@ -46,12 +71,62 @@ export function BrowserPanel({ home, onOpenExternal }: { home: string; onOpenExt
     }
     const didStart = () => setLoading(true)
     const didStop = () => { setLoading(false); sync() }
+    // A full navigation replaces the document: the injected picker and markers
+    // are gone, and annotations captured on other pages become stale.
+    const didNavigate = () => {
+      sync()
+      lastMarkersRef.current = ''
+      setPicking(false)
+      setPendingElement(null)
+      setAnnotationText('')
+      try { annotationsRef.current.handleNavigation(view.getURL()) } catch { /* webview not ready */ }
+    }
     view.addEventListener('did-start-loading', didStart)
     view.addEventListener('did-stop-loading', didStop)
-    view.addEventListener('did-navigate', sync)
+    view.addEventListener('did-navigate', didNavigate)
     view.addEventListener('did-navigate-in-page', sync)
-    return () => { view.removeEventListener('did-start-loading', didStart); view.removeEventListener('did-stop-loading', didStop); view.removeEventListener('did-navigate', sync); view.removeEventListener('did-navigate-in-page', sync) }
+    return () => { view.removeEventListener('did-start-loading', didStart); view.removeEventListener('did-stop-loading', didStop); view.removeEventListener('did-navigate', didNavigate); view.removeEventListener('did-navigate-in-page', sync) }
   }, [home])
+
+  // While annotation mode is on, the picker runs inside the page; poll it for
+  // the element the user clicked. Stopping cleans up the page-side listeners.
+  useEffect(() => {
+    const view = webviewRef.current
+    if (!picking || !view) return
+    let disposed = false
+    let inFlight = false
+    void view.executeJavaScript(annotationPickerScript('start')).catch(() => undefined)
+    const interval = window.setInterval(() => {
+      if (inFlight) return
+      inFlight = true
+      view.executeJavaScript(annotationTakeScript()).then((payload) => {
+        inFlight = false
+        if (disposed || typeof payload !== 'string') return
+        let parsed: unknown
+        try { parsed = JSON.parse(payload) } catch { return }
+        const element = Array.isArray(parsed) ? sanitizeCapturedElement(parsed[0]) : null
+        if (!element) return
+        setPendingElement(element)
+        setAnnotationText('')
+        setPicking(false)
+      }).catch(() => { inFlight = false })
+    }, pollIntervalMs)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+      void view.executeJavaScript(annotationPickerScript('stop')).catch(() => undefined)
+    }
+  }, [picking, pollIntervalMs])
+
+  // Persistent numbered markers for every live annotation on the current page.
+  const markers = annotations.annotations.flatMap((annotation, index) => annotation.stale ? [] : [{ selector: annotation.element.selector, index: index + 1 }])
+  const markerSignature = `${currentUrl}|${markers.map((marker) => `${marker.index}:${marker.selector}`).join('|')}`
+  useEffect(() => {
+    const view = webviewRef.current
+    if (!view || loading || lastMarkersRef.current === markerSignature) return
+    lastMarkersRef.current = markerSignature
+    void view.executeJavaScript(annotationMarkersScript(markers)).catch(() => undefined)
+  }, [markerSignature, loading])
 
   const navigate = (value: string) => {
     const url = normalizeUrl(value)
@@ -61,9 +136,29 @@ export function BrowserPanel({ home, onOpenExternal }: { home: string; onOpenExt
     })
   }
 
+  const toggleAnnotation = () => {
+    if (picking) { setPicking(false); return }
+    if (pendingElement) { setPendingElement(null); setAnnotationText(''); return }
+    if (annotationsRef.current.atCapacity) {
+      showNotice(`Prime keeps at most ${MAX_BROWSER_ANNOTATIONS} annotations. Remove one from the composer attachment to add more.`)
+      return
+    }
+    setNotice('')
+    setPicking(true)
+  }
+
   const saveAnnotation = () => {
-    if (!annotationText.trim()) return
-    setAnnotations((items) => [...items, { id: items.length + 1, text: annotationText.trim() }]); setAnnotationText(''); setAnnotation(false)
+    const view = webviewRef.current
+    if (!pendingElement || !annotationText.trim()) return
+    let pageTitle = ''
+    let pageUrl = currentUrl
+    try { pageTitle = view?.getTitle() ?? ''; pageUrl = view?.getURL() || currentUrl } catch { /* webview not ready */ }
+    if (!annotationsRef.current.add({ comment: annotationText, element: pendingElement, pageUrl, pageTitle })) {
+      showNotice(`Prime keeps at most ${MAX_BROWSER_ANNOTATIONS} annotations. Remove one from the composer attachment to add more.`)
+      return
+    }
+    setPendingElement(null)
+    setAnnotationText('')
   }
 
   const webview = createElement('webview' as never, {
@@ -74,18 +169,25 @@ export function BrowserPanel({ home, onOpenExternal }: { home: string; onOpenExt
     webpreferences: 'contextIsolation=yes,sandbox=yes,nodeIntegration=no',
   })
 
+  const count = annotations.annotations.length
+  const staleCount = annotations.annotations.filter((annotation) => annotation.stale).length
+  const pendingLabel = pendingElement ? annotationElementLabel(pendingElement) : ''
+  const pendingSnippet = pendingElement?.text ? (pendingElement.text.length > 90 ? `${pendingElement.text.slice(0, 90)}…` : pendingElement.text) : ''
+
   return (
     <div className="browser-panel">
       <div className="browser-toolbar">
         <IconButton label="Back" disabled={!canBack} onClick={() => webviewRef.current?.goBack()}><ArrowLeft size={14} /></IconButton><IconButton label="Forward" disabled={!canForward} onClick={() => webviewRef.current?.goForward()}><ArrowRight size={14} /></IconButton><IconButton label={loading ? 'Stop loading' : 'Reload'} onClick={() => loading ? webviewRef.current?.stop() : webviewRef.current?.reload()}>{loading ? <X size={14} /> : <RefreshCw size={14} />}</IconButton>
         <form className="address-field" onSubmit={(event) => { event.preventDefault(); navigate(address) }}><ShieldCheck size={12} /><input value={address} onChange={(event) => setAddress(event.target.value)} aria-label="Browser address" spellCheck={false} /><button type="button" aria-label="Browser history" onClick={() => setHistoryOpen((value) => !value)}><History size={13} /></button></form>
-        <IconButton className={annotation ? 'is-active annotation-active' : ''} label="Annotate page" onClick={() => setAnnotation((value) => !value)}><MessageCirclePlus size={15} /></IconButton><IconButton label="Open in default browser" onClick={() => onOpenExternal(currentUrl)}><ExternalLink size={14} /></IconButton>
+        <IconButton className={picking || pendingElement ? 'is-active annotation-active' : ''} label={picking ? 'Stop annotating' : 'Annotate page'} aria-pressed={picking} onClick={toggleAnnotation}><MessageCirclePlus size={15} /></IconButton><IconButton label="Open in default browser" onClick={() => onOpenExternal(currentUrl)}><ExternalLink size={14} /></IconButton>
       </div>
       {historyOpen ? <div className="browser-history"><div><strong>Recent pages</strong><button type="button" onClick={() => setHistory([])}>Clear</button></div>{history.slice().reverse().map((url, index) => <button type="button" key={`${url}-${index}`} onClick={() => { navigate(url); setHistoryOpen(false) }}><History size={12} /><span>{url}</span></button>)}</div> : null}
-      <div className={`browser-viewport ${annotation ? 'is-annotating' : ''}`}>
+      <div className={`browser-viewport ${picking ? 'is-annotating' : ''}`}>
         {webview}
-        {annotation ? <div className="annotation-layer"><div className="annotation-target"><span>{annotations.length + 1}</span></div><div className="annotation-popover"><div><MessageCirclePlus size={14} /><strong>Page comment</strong><button type="button" onClick={() => setAnnotation(false)}><X size={13} /></button></div><textarea autoFocus value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="Describe what should change…"/><div><button type="button" className="button" onClick={() => setAnnotation(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={saveAnnotation}>Add comment</button></div></div></div> : null}
-        {annotations.length ? <div className="annotation-count"><MessageCirclePlus size={12} /> {annotations.length} comment{annotations.length === 1 ? '' : 's'}</div> : null}
+        {picking ? <div className="annotation-hint" role="status"><MessageCirclePlus size={12} /> Click an element in the page to comment on it</div> : null}
+        {pendingElement ? <div className="annotation-layer"><div className="annotation-popover"><div><MessageCirclePlus size={14} /><strong>Comment on element {count + 1}</strong><button type="button" aria-label="Discard annotation" onClick={() => { setPendingElement(null); setAnnotationText('') }}><X size={13} /></button></div><p className="annotation-popover__element">{pendingLabel}{pendingSnippet ? ` — “${pendingSnippet}”` : ''}</p><textarea autoFocus value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="Describe what should change…"/><div><button type="button" className="button" onClick={() => { setPendingElement(null); setAnnotationText('') }}>Cancel</button><button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={saveAnnotation}>Add comment</button></div></div></div> : null}
+        {count ? <div className="annotation-count"><MessageCirclePlus size={12} /> {count} of {MAX_BROWSER_ANNOTATIONS} annotation{count === 1 ? '' : 's'}{staleCount ? ` · ${staleCount} from earlier pages` : ''}</div> : null}
+        {notice ? <p className="annotation-notice" role="alert">{notice}</p> : null}
       </div>
     </div>
   )
