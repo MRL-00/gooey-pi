@@ -64,6 +64,15 @@ describe('ProjectService file listing', () => {
     await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
   })
 
+  it.skipIf(process.platform === 'win32')('preserves backslashes in POSIX filenames', async () => {
+    const { root, service, store } = setup()
+    writeFileSync(join(root, 'weird\\name.txt'), 'posix filename with a backslash')
+    await store.update((state) => { state.projects.push({ id: 'project', name: 'Project', path: root, folders: [root], primaryFolder: root, pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root) }) })
+
+    await service.list()
+    expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'weird\\name.txt', type: 'file' }], skipped: 0 })
+  })
+
   it('migrates explicit project grants created before folder identities were persisted', async () => {
     const { root, service, store } = setup()
     writeFileSync(join(root, 'README.md'), 'read me')
