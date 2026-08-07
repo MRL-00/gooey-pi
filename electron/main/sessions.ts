@@ -99,7 +99,7 @@ export class SessionService {
       try { project = await requireExistingDirectory(requestedProject, 'projectPath') } catch { /* Preserve stale lexical filtering. */ }
     }
     const sessions = await this.catalog.all()
-    const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
+    const archived = new Set(this.store.getArchivedSessions().map((path) => resolve(path)))
     const records: SessionRecord[] = []
     for (const original of sessions) {
       const metadata = { ...original }

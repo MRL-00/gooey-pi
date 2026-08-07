@@ -253,14 +253,14 @@ async function bootstrap(): Promise<void> {
     (cwd) => projects.authorizeCwd(cwd),
     (path) => sessions.requireSessionPath(path),
     providers,
-    () => new Set(stateStore.snapshot().settings.disabledProviders),
+    () => new Set(stateStore.getSettings().disabledProviders),
   )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
-  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.snapshot().settings.terminalShell)
+  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.getSettings().terminalShell)
   projects.bindProviders({
     sessions: listCatalogSessions,
     branch: (cwd) => git.branch(cwd),
@@ -286,7 +286,7 @@ async function bootstrap(): Promise<void> {
     sessions,
     agents,
     providers,
-    () => new Set(stateStore.snapshot().settings.disabledProviders),
+    () => new Set(stateStore.getSettings().disabledProviders),
   )
   const schedules = new AutomationService(stateStore, {
     validateTarget: (target) => scheduledRuns.validateTarget(target),
