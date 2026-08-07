@@ -10,7 +10,7 @@ import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
-import { PluginService } from './plugins'
+import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
@@ -412,6 +412,7 @@ app.on('before-quit', (event) => {
   registration?.dispose()
   agents?.beginShutdown()
   beginProcessShutdown()
+  beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
   providerService?.cancelAll()
   const stopServices = Promise.all([

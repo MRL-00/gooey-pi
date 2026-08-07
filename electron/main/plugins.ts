@@ -21,7 +21,7 @@ const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
 const MAX_KNOWN_PATH_OWNERS = 64
 const MAX_KNOWN_PATHS_PER_OWNER = 4_096
 let activePluginDiscoveries = 0
-const discoveryWaiters: Array<() => void> = []
+const discoveryWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
 
 async function acquirePluginDiscoverySlot(): Promise<void> {
   if (activePluginDiscoveries < MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
@@ -31,13 +31,19 @@ async function acquirePluginDiscoverySlot(): Promise<void> {
   if (discoveryWaiters.length >= MAX_QUEUED_PLUGIN_DISCOVERIES) {
     throw new TypeError('Too many plugin discoveries are pending')
   }
-  await new Promise<void>((resolve) => discoveryWaiters.push(resolve))
+  await new Promise<void>((resolve, reject) => discoveryWaiters.push({ resolve, reject }))
 }
 
 function releasePluginDiscoverySlot(): void {
   const next = discoveryWaiters.shift()
-  if (next) next()
+  if (next) next.resolve()
   else activePluginDiscoveries -= 1
+}
+
+export function beginPluginDiscoveryShutdown(): void {
+  for (const waiter of discoveryWaiters.splice(0)) {
+    waiter.reject(new TypeError('Prime Work is shutting down'))
+  }
 }
 
 async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {

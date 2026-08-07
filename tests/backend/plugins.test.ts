@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PluginService } from '../../electron/main/plugins'
+import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
@@ -126,6 +126,31 @@ describe('PluginService discovery', () => {
     const rejected = settled.filter((outcome) => outcome !== 'fulfilled')
     expect(rejected).toHaveLength(6)
     expect(rejected.every((error) => error instanceof TypeError && error.message.includes('Too many plugin discoveries'))).toBe(true)
+  })
+
+  it('rejects queued discovery waiters on shutdown so pending lists settle', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let releaseDiscovery: () => void = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => { await discoveryGate; return { skills: [], warnings: [] } },
+    })
+
+    const outcomes = Array.from({ length: 4 }, (_, index) => service.list(join(root, `pending-${index}`)))
+      .map((request) => request.then(() => 'fulfilled', (error: unknown) => error))
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+
+    beginPluginDiscoveryShutdown()
+    releaseDiscovery()
+    const settled = await Promise.all(outcomes)
+
+    expect(settled.filter((outcome) => outcome === 'fulfilled')).toHaveLength(2)
+    const rejected = settled.filter((outcome) => outcome !== 'fulfilled')
+    expect(rejected).toHaveLength(2)
+    expect(rejected.every((error) => error instanceof TypeError && error.message.includes('shutting down'))).toBe(true)
   })
 
   it('bounds catalog work globally across distinct discovery keys', async () => {
