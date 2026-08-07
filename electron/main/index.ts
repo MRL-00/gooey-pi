@@ -52,6 +52,10 @@ function appIconPath(): string {
   return app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'assets', 'icon.png')
 }
 
+// One policy for every surface that serves renderer content: the app protocol
+// response headers and the packaged browser-session header rewrite.
+const RENDERER_CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
 const rendererContentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
@@ -72,7 +76,7 @@ function registerRendererProtocol(): void {
       const body = await readFile(candidate)
       return new Response(body, { headers: {
         'Content-Type': rendererContentTypes[extname(candidate).toLowerCase()] ?? 'application/octet-stream',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        'Content-Security-Policy': RENDERER_CONTENT_SECURITY_POLICY,
         'X-Content-Type-Options': 'nosniff',
       } })
     } catch { return new Response('Not found', { status: 404 }) }
@@ -371,12 +375,12 @@ else void app.whenReady().then(async () => {
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserProfile.setPermissionCheckHandler(() => false)
-  if (!!app.isPackaged) {
+  if (app.isPackaged) {
     browserSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"],
+          'Content-Security-Policy': [RENDERER_CONTENT_SECURITY_POLICY],
         },
       })
     })

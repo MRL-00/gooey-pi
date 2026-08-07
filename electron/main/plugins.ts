@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { SkillRecord } from '../../src/types/api'
+import type { ProcessOutcome, SkillRecord } from '../../src/types/api'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
@@ -114,8 +114,8 @@ export class PluginService {
     return path
   }
 
-  async install(sourceValue: unknown): Promise<{ ok: boolean; output: string }> {
-    if (!this.primeAgentPath) return { ok: false, output: 'Prime Agent executable was not found' }
+  async install(sourceValue: unknown): Promise<ProcessOutcome> {
+    if (!this.primeAgentPath) return { ok: false, reason: 'blocked', output: 'Prime Agent executable was not found' }
     const source = validatePackageSource(sourceValue)
     const settingsPath = join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
@@ -133,7 +133,7 @@ export class PluginService {
     return await operation
   }
 
-  async connectMcp(inputValue: unknown): Promise<{ ok: boolean; output: string }> {
+  async connectMcp(inputValue: unknown): Promise<ProcessOutcome> {
     const input = validateMcpConnection(inputValue)
     let settingsTarget: string | ProjectSettingsPath
     if (input.scope === 'project') {

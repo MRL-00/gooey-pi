@@ -1,6 +1,6 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, FileCode2, Target } from 'lucide-react'
-import type { GitStatus, MessagePart, TranscriptMessage } from '@/types/api'
+import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
+import type { MessagePart, TranscriptMessage } from '@/types/api'
 import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { PrimeMark } from '../ui'
@@ -95,19 +95,7 @@ function MessageActions({ message, text: suppliedText }: { message: TranscriptMe
   )
 }
 
-function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): void }) {
-  const additions = git.files.reduce((sum, file) => sum + file.additions, 0)
-  const deletions = git.files.reduce((sum, file) => sum + file.deletions, 0)
-  return (
-    <button type="button" className="changes-card" onClick={onOpenChanges}>
-      <span className="changes-card__icon"><FileCode2 size={16} /></span>
-      <span className="changes-card__text"><strong>{git.files.length} {git.files.length === 1 ? 'file' : 'files'} changed</strong><small>Review changes in the inspector</small></span>
-      <span className="diff-count diff-count--add">+{additions}</span><span className="diff-count diff-count--remove">−{deletions}</span><ChevronRight size={14} />
-    </button>
-  )
-}
-
-export const AssistantMessage = memo(function AssistantMessage({ message, git, isLast, showReasoning, showTools, onOpenChanges }: { message: TranscriptMessage; git: GitStatus; isLast: boolean; showReasoning: boolean; showTools: boolean; onOpenChanges(): void }) {
+export const AssistantMessage = memo(function AssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
   const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
   const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'compaction'
   const firstActivity = message.parts.findIndex(isActivity)
@@ -133,13 +121,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, git, i
         {renderNarrative(before, 'before', message.streaming)}
         {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle', message.streaming)}
         {renderNarrativeWithActivity(after, 'after', showReasoning, showTools, message.streaming)}
-        {isLast && git.files.length > 0 && !message.streaming ? <ChangesCard git={git} onOpenChanges={onOpenChanges} /> : null}
         {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div> : null}
         {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
       </div>
     </article>
   )
-}, (previous, next) => previous.message === next.message && previous.isLast === next.isLast && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools && (!next.isLast || previous.git === next.git && previous.onOpenChanges === next.onOpenChanges))
+}, (previous, next) => previous.message === next.message && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools)
 
 export const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
   return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, index) => part.type === 'text' ? <InlineText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null)}</div><MessageActions message={message} /></article>

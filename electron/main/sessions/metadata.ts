@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { SessionRecord, SessionStatus } from '../../../src/types/api'
+import { SESSION_FILE_RECORD_LIMIT_BYTES } from '../jsonl-limits'
 import { isRecord } from '../validation'
 import { compactText, textFromContent, validTimestamp } from './transcript'
 
@@ -12,7 +13,8 @@ export interface SessionMetadata extends SessionRecord { sessionName?: string }
 
 const MAX_SESSION_FILE_BYTES = 256 * 1024 * 1024
 const MAX_METADATA_RECORDS = 200_000
-const MAX_METADATA_RECORD_BYTES = 64 * 1024 * 1024
+// The transcript reader of the same file MUST share this per-record tolerance.
+const MAX_METADATA_RECORD_BYTES = SESSION_FILE_RECORD_LIMIT_BYTES
 const MAX_TRACKED_METADATA_STATES = 5_000
 export const METADATA_VERIFY_TAIL_BYTES = 4_096
 const LINE_FEED = 0x0a

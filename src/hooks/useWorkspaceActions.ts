@@ -1,0 +1,333 @@
+import { useRef, useState } from 'react'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { requestFailureMessage } from '@/app/workspace'
+import type { DEFAULT_SETTINGS } from '@/lib/data'
+import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
+import type { GitStatus, McpConnectionInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { useAppSettings } from '@/hooks/useAppSettings'
+import type { usePanelLayout } from '@/hooks/usePanelLayout'
+import type { usePluginSkills } from '@/hooks/usePluginSkills'
+import type { useProviderCatalog } from '@/hooks/useProviderCatalog'
+import type { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
+
+export interface WorkspaceActionsDeps {
+  bridge: PrimeWorkApi | null
+  initialized: boolean
+  projects: ProjectRecord[]
+  sessions: SessionRecord[]
+  activeProject: ProjectRecord | undefined
+  workspace: ReturnType<typeof useWorkspaceRuntime>
+  settingsState: ReturnType<typeof useAppSettings>
+  layout: ReturnType<typeof usePanelLayout>
+  provider: ReturnType<typeof useProviderCatalog>
+  pluginSkills: ReturnType<typeof usePluginSkills>
+  submissionAdmissionRef: MutableRefObject<ReturnType<typeof createSingleFlightAdmission>>
+  gitRequestRef: MutableRefObject<number>
+  demoTimerRef: MutableRefObject<number[]>
+  setProjects: Dispatch<SetStateAction<ProjectRecord[]>>
+  setSessions: Dispatch<SetStateAction<SessionRecord[]>>
+  setGitSnapshot: Dispatch<SetStateAction<{ cwd: string | undefined; status: GitStatus }>>
+  setView: Dispatch<SetStateAction<WorkspaceView>>
+  setPaletteOpen: Dispatch<SetStateAction<boolean>>
+  setToast: Dispatch<SetStateAction<string | null>>
+  setSubmitting: Dispatch<SetStateAction<boolean>>
+  refreshSchedules(): Promise<void>
+  refreshHeartbeats(): Promise<void>
+  reportError(error: unknown): void
+}
+
+/**
+ * The workspace mutation handlers, extracted from App. Every callback has a
+ * stable identity (created once) and dispatches against the latest render's
+ * dependencies, mirroring useStableCallback/useSidebarActions semantics.
+ */
+export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
+  const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
+    const { bridge, workspace, setProjects, gitRequestRef, setGitSnapshot } = getDeps()
+    if (!bridge || !project.inferred) return project
+    const granted = await bridge.projects.grantInferred(project.primaryFolder)
+    setProjects((items) => items.map((item) => item.id === project.id ? granted : item))
+    const selected = workspace.workspaceRef.current
+    if (selected.project?.id !== project.id) return granted
+    workspace.workspaceRef.current = { ...selected, project: granted, cwd: workspaceCwd(granted, selected.session) }
+    const requestId = ++gitRequestRef.current
+    const cwd = workspaceCwd(granted, selected.session)
+    if (!cwd) return granted
+    const nextGit = await bridge.git.status(cwd)
+    if (gitRequestRef.current === requestId && workspace.workspaceRef.current.generation === selected.generation && workspace.workspaceRef.current.cwd === cwd) setGitSnapshot({ cwd, status: nextGit })
+    return granted
+  }
+  const persistPanel = (patch: Partial<typeof DEFAULT_SETTINGS>) => { void getDeps().settingsState.updateSettings(patch) }
+  const toggleSidebar = () => {
+    const { settingsState, layout } = getDeps()
+    const next = !settingsState.sidebarOpen
+    layout.compactRestoreRef.current = null
+    if (layout.compactLayout && next && settingsState.inspectorOpen) settingsState.setInspectorOpen(false)
+    persistPanel({ sidebarOpen: next })
+  }
+  const toggleInspector = () => {
+    const { settingsState, layout } = getDeps()
+    const next = !settingsState.inspectorOpen
+    layout.compactRestoreRef.current = null
+    if (layout.compactLayout && next && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    persistPanel({ inspectorOpen: next })
+  }
+  const toggleTerminal = async () => {
+    const { settingsState, activeProject, reportError } = getDeps()
+    if (!settingsState.terminalOpen && activeProject?.inferred) {
+      try { await grantProject(activeProject) } catch (error) { reportError(error); return }
+    }
+    persistPanel({ terminalOpen: !settingsState.terminalOpen })
+  }
+  const selectProject = async (project: ProjectRecord) => {
+    const { bridge, layout, settingsState, sessions, workspace, setView, reportError } = getDeps()
+    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
+    const generation = workspace.activateWorkspace(project, session)
+    setView('session')
+    try {
+      const granted = await grantProject(project)
+      if (bridge && !granted.inferred) await bridge.projects.touch(granted.id)
+      await workspace.reconcileRuntime(generation)
+    } catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
+  }
+  const selectSession = async (session: SessionRecord) => {
+    const { layout, settingsState, projects, workspace, setSessions, setView, reportError } = getDeps()
+    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
+    const project = findProjectForSession(projects, session)
+    if (!project) { reportError('This session is not contained by an available project.'); return }
+    const generation = workspace.activateWorkspace(project, session)
+    setView('session')
+    try { await grantProject(project); await workspace.reconcileRuntime(generation) }
+    catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
+  }
+  const newSession = (requestedProject?: ProjectRecord) => {
+    const { bridge, initialized, layout, settingsState, activeProject, workspace, setView, setPaletteOpen } = getDeps()
+    if (!initialized) return
+    const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
+    if (!project) return
+    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    workspace.activateWorkspace(project)
+    if (!bridge) workspace.setMessages([])
+    setView('session'); setPaletteOpen(false)
+  }
+  const navigate = (nextView: WorkspaceView) => {
+    const { layout, settingsState, setView, setPaletteOpen } = getDeps()
+    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    setView(nextView); setPaletteOpen(false)
+  }
+  const renameSession = async (session: SessionRecord, title: string) => {
+    const { bridge, setSessions, setToast, reportError } = getDeps()
+    if (!bridge) return
+    try {
+      if (!await bridge.sessions.rename(session.filePath, title)) throw new Error('Prime Agent could not rename this session.')
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, title } : item)); setToast('Session renamed.')
+    } catch (error) { reportError(error) }
+  }
+  const setSessionArchived = async (session: SessionRecord, archived: boolean) => {
+    const { bridge, workspace, setSessions, setToast, reportError } = getDeps()
+    if (!bridge) return
+    try {
+      await bridge.sessions.archive(session.filePath, archived)
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived } : item))
+      if (archived && workspace.workspaceRef.current.session?.id === session.id) newSession()
+      setToast(archived ? 'Session archived. Restore it from Activity.' : 'Session restored.')
+    } catch (error) { reportError(error) }
+  }
+  const addProject = async () => {
+    const { bridge, workspace, setProjects, setView, setToast, reportError } = getDeps()
+    if (!bridge) { setToast('Project picker is available in the desktop app.'); return }
+    try {
+      const project = await bridge.projects.add()
+      if (project) { setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]); workspace.activateWorkspace(project); setView('session') }
+    } catch (error) { reportError(error) }
+  }
+  const removeProject = async (project: ProjectRecord) => {
+    const { bridge, projects, sessions, workspace, setProjects, setToast, reportError } = getDeps()
+    try {
+      if (bridge && !await bridge.projects.remove(project.id)) throw new Error('This project could not be removed.')
+      setProjects((items) => items.filter((item) => item.id !== project.id))
+      if (workspace.workspaceRef.current.project?.id === project.id) {
+        const fallback = projects.find((item) => item.id !== project.id)
+        const session = fallback ? sessions.find((candidate) => !candidate.archived && projectContainsPath(fallback, candidate.projectPath)) : undefined
+        workspace.activateWorkspace(fallback, session)
+      }
+      setToast('Project removed. Files and saved sessions were kept.')
+    } catch (error) { reportError(error) }
+  }
+
+  const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
+    const { bridge, sessions, workspace, provider, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
+    await submissionAdmissionRef.current.run(async () => {
+      setSubmitting(true)
+      const admitted = workspace.workspaceRef.current
+      const generation = admitted.generation
+      let startedPrompt = false
+      try {
+        if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
+        if (images.length > 0 && provider.model !== 'auto' && !provider.selectedModel?.input.includes('image')) {
+          reportError('This model does not accept images. Remove the attachment or choose a vision model.')
+          return
+        }
+        if (!workspace.prepareForPrompt(generation)) return
+        const sentAt = Date.now()
+        const sentAtIso = new Date(sentAt).toISOString()
+        const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
+        workspace.setMessages((items) => [...items, userMessage])
+        if (admitted.sessionFile) setSessions((items) => items.map((session) => session.filePath === admitted.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
+        if (!bridge) {
+          const assistantId = `assistant-${Date.now()}`
+          workspace.setMessages((items) => [...items, { id: assistantId, role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [{ type: 'thinking', text: 'Reviewing the request and current workspace context.' }] }])
+          demoTimerRef.current.push(window.setTimeout(() => workspace.setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, parts: [...item.parts, { type: 'toolCall', id: 'demo-tool', name: 'Inspect project', args: { cwd: admitted.cwd } }] } : item)), 450))
+          demoTimerRef.current.push(window.setTimeout(() => workspace.setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false, completedAt: Date.now(), parts: [...item.parts, { type: 'toolResult', name: 'Inspect project', text: 'Project context loaded' }, { type: 'text', text: 'I’ve reviewed the project context and prepared the workspace. Connect the desktop bridge to run this request with Prime Agent.' }] } : item)), 1_250))
+          return
+        }
+        await grantProject(admitted.project)
+        if (workspace.workspaceRef.current.generation !== generation) return
+        const selected = workspace.workspaceRef.current
+        if (!selected.cwd) throw new Error('The selected workspace has no working directory.')
+        const liveRuntimes = await bridge.agent.list()
+        if (workspace.workspaceRef.current.generation !== generation) return
+        const owner = workspace.runtimeOwnerRef.current
+        const tracked = workspace.runtimeIdRef.current ? liveRuntimes.find((item) => item.runtimeId === workspace.runtimeIdRef.current) : undefined
+        const belongsHere = Boolean(tracked && owner?.runtimeId === tracked.runtimeId && owner.generation === generation && tracked.cwd === selected.cwd && (!selected.sessionFile || tracked.sessionFile === selected.sessionFile))
+        let activeRuntime = belongsHere ? tracked : findRuntimeForWorkspace(liveRuntimes, selected.cwd, selected.sessionFile)
+        let startedRuntime = false
+        if (!activeRuntime) {
+          workspace.attachRuntime(undefined, generation)
+          const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
+          if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
+            throw new Error('Image attachments cannot be queued while this session is active outside Prime Work. Wait for it to finish, then try again.')
+          }
+          if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
+            && await bridge.sessions.followUp(selected.sessionFile, prompt, intent)) return
+          try {
+            activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+          } catch (startError) {
+            if (images.length === 0 && selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt, intent)) return
+            throw startError
+          }
+          startedRuntime = true
+          if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
+        }
+        if (activeRuntime.cwd !== selected.cwd || (selected.sessionFile && activeRuntime.sessionFile !== selected.sessionFile)) {
+          if (startedRuntime) await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
+          throw new Error('Prime returned a runtime for a different workspace or session.')
+        }
+        workspace.attachRuntime(activeRuntime, generation)
+        if (activeRuntime.isStreaming) {
+          await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
+        } else {
+          startedPrompt = true
+          workspace.setRuntime({ ...activeRuntime, isStreaming: true })
+          workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
+          await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
+        }
+      } catch (error) {
+        if (workspace.workspaceRef.current.generation !== generation) return
+        const failure = requestFailureMessage(error)
+        if (startedPrompt) workspace.setRuntime((current) => current ? { ...current, isStreaming: false } : current)
+        workspace.setMessages((items) => {
+          const finalized = startedPrompt
+            ? items.flatMap((item) => item.streaming && item.role === 'assistant' && item.parts.length === 0 ? [] : [{ ...item, streaming: false }])
+            : items
+          return finalized.at(-1)?.role === 'system' ? finalized : [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: failure }] }]
+        })
+        throw error
+      } finally { setSubmitting(false) }
+    })
+  }
+  const stopRuntime = async () => {
+    const { bridge, workspace, reportError } = getDeps()
+    if (!workspace.runtime) return
+    if (!bridge) { workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item)); workspace.setRuntime(null); return }
+    try {
+      await bridge.agent.command(workspace.runtime.runtimeId, { type: 'abort' })
+      workspace.setRuntime((current) => current ? { ...current, isStreaming: false } : current)
+      workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item))
+    } catch (error) { reportError(error) }
+  }
+
+  const installSkill = async (source: string) => {
+    const { bridge, reportError } = getDeps()
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Package installation is available in the desktop app.' }
+    try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
+  }
+  const connectMcp = async (input: McpConnectionInput) => {
+    const { bridge, activeProject, pluginSkills, reportError } = getDeps()
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'MCP connections are available in the desktop app.' }
+    try {
+      let connection = input
+      if (input.scope === 'project') {
+        if (!activeProject) return { ok: false as const, reason: 'blocked' as const, output: 'Open a project before adding a project MCP server.' }
+        const project = await grantProject(activeProject); connection = { ...input, projectPath: project.primaryFolder }
+      }
+      const response = await bridge.plugins.connectMcp(connection)
+      if (response.ok) await pluginSkills.refresh()
+      return response
+    } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
+  }
+  const createSchedule = async (input: ScheduleInput) => {
+    const { bridge, refreshSchedules, reportError } = getDeps()
+    if (!bridge) throw new Error('Scheduled tasks are available in the desktop app.')
+    try { await bridge.schedules.create(input); await refreshSchedules() } catch (error) { reportError(error); throw error }
+  }
+  const updateSchedule = async (id: string, patch: SchedulePatch) => {
+    const { bridge, refreshSchedules, reportError } = getDeps()
+    if (!bridge) throw new Error('Scheduled tasks are available in the desktop app.')
+    try { await bridge.schedules.update(id, patch); await refreshSchedules() } catch (error) { reportError(error); throw error }
+  }
+  const mutateSchedule = async (operation: () => Promise<unknown>) => {
+    const { bridge, refreshSchedules, reportError } = getDeps()
+    if (!bridge) throw new Error('Scheduled tasks are available in the desktop app.')
+    try { await operation(); await refreshSchedules() } catch (error) { reportError(error); throw error }
+  }
+  const manageHeartbeat = async (id: string, action: 'pause' | 'resume' | 'stop') => {
+    const { bridge, refreshHeartbeats, reportError } = getDeps()
+    if (!bridge) throw new Error('Heartbeats are available in the desktop app.')
+    try { await bridge.heartbeats.manage(id, action); await refreshHeartbeats() } catch (error) { reportError(error); throw error }
+  }
+  const openScheduledSession = (sessionFile: string) => {
+    const { bridge, sessions, setSessions, reportError } = getDeps()
+    const known = sessions.find((session) => session.filePath === sessionFile)
+    if (known) { void selectSession(known); return }
+    if (!bridge) return
+    void bridge.sessions.list(undefined, true).then((catalog) => {
+      setSessions(catalog)
+      const found = catalog.find((session) => session.filePath === sessionFile)
+      if (found) void selectSession(found)
+    }).catch(reportError)
+  }
+  const openBrowser = () => {
+    const { layout, settingsState, setView } = getDeps()
+    if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    setView('session')
+    settingsState.selectInspectorTab('browser')
+    if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true })
+  }
+  const openChanges = () => {
+    const { layout, settingsState } = getDeps()
+    if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    settingsState.selectInspectorTab('changes')
+    if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true })
+  }
+
+  return {
+    grantProject, persistPanel, toggleSidebar, toggleInspector, toggleTerminal,
+    selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived,
+    addProject, removeProject, sendPrompt, stopRuntime, installSkill, connectMcp,
+    createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
+    openBrowser, openChanges,
+  }
+}
+
+export type WorkspaceActions = ReturnType<typeof createWorkspaceActions>
+
+/** Memoized workspace mutation handlers: one stable object for the app's lifetime. */
+export function useWorkspaceActions(deps: WorkspaceActionsDeps): WorkspaceActions {
+  const depsRef = useRef(deps)
+  depsRef.current = deps
+  const [actions] = useState(() => createWorkspaceActions(() => depsRef.current))
+  return actions
+}

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
-import { safeChildEnvironment } from '../process-utils'
+import { killProcessTree, safeChildEnvironment, waitForProcessExit } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
@@ -32,8 +32,6 @@ export class RpcRuntime {
   private transportFailed = false
   private readonly child: ChildProcessWithoutNullStreams
   private readonly transport: FramedRpcTransport
-  private readonly exited: Promise<void>
-  private resolveExited!: () => void
   private stopPromise: Promise<boolean> | null = null
   private readonly eventForwarder: AgentEventForwarder
   private stopped = false
@@ -51,7 +49,6 @@ export class RpcRuntime {
     extraEnvironment: NodeJS.ProcessEnv = {},
   ) {
     this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false }
-    this.exited = new Promise((resolveExit) => { this.resolveExited = resolveExit })
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
@@ -65,7 +62,6 @@ export class RpcRuntime {
     this.child.once('close', (code, signal) => {
       this.fail(new Error(`Prime Agent RPC exited (${code ?? signal ?? 'unknown'})`))
       this.emit({ type: 'runtime_exit', code, signal, expected: this.stopped })
-      this.resolveExited()
       this.onExit(this)
     })
   }
@@ -151,25 +147,21 @@ export class RpcRuntime {
     this.stopped = true
     this.transport.endInput()
     if (await this.waitForExit(750)) return true
-    this.terminate('SIGTERM')
-    if (await this.waitForExit(2_000)) return true
-    this.terminate('SIGKILL')
-    return this.waitForExit(1_500)
+    return this.killTree()
   }
 
-  private terminate(signal: NodeJS.Signals): void {
-    if (this.child.pid && process.platform !== 'win32') {
-      try { process.kill(-this.child.pid, signal); return } catch { /* fall back to the direct child */ }
-    }
-    try { this.child.kill(signal) } catch { /* the process already exited */ }
+  private killTree(): Promise<boolean> {
+    if (!this.child.pid) return this.waitForExit(3_500)
+    return killProcessTree(this.child.pid, {
+      ladder: [{ signal: 'SIGTERM', waitMs: 2_000 }, { signal: 'SIGKILL', waitMs: 1_500 }],
+      hasExited: () => this.child.exitCode !== null || this.child.signalCode !== null,
+      waitForExit: (timeoutMs) => this.waitForExit(timeoutMs),
+      signalDirect: (signal) => this.child.kill(signal),
+    })
   }
 
   private waitForExit(timeoutMs: number): Promise<boolean> {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return Promise.resolve(true)
-    return new Promise((resolveWait) => {
-      const timer = setTimeout(() => resolveWait(false), timeoutMs)
-      void this.exited.then(() => { clearTimeout(timer); resolveWait(true) })
-    })
+    return waitForProcessExit(this.child, timeoutMs)
   }
 
   private failTransport(reason: unknown): void {
@@ -182,13 +174,10 @@ export class RpcRuntime {
     this.stopPromise ??= this.performTransportStop()
   }
 
-  private async performTransportStop(): Promise<boolean> {
+  private performTransportStop(): Promise<boolean> {
     this.stopped = true
     this.transport.destroyInput()
-    this.terminate('SIGTERM')
-    if (await this.waitForExit(2_000)) return true
-    this.terminate('SIGKILL')
-    return this.waitForExit(1_500)
+    return this.killTree()
   }
 
   private request(command: RpcObject, timeoutMs: number): Promise<RpcObject> {

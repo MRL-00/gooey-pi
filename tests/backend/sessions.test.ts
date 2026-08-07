@@ -539,15 +539,15 @@ describe('SessionService transcript read admission', () => {
     await vi.waitFor(() => expect(transcriptReader).toHaveBeenCalledTimes(2))
     const third = service.read(files[2])
     const fourth = service.read(files[3])
-    const admission = service as unknown as { transcriptReadQueue: Array<() => void> }
-    await vi.waitFor(() => expect(admission.transcriptReadQueue).toHaveLength(2))
+    const admission = service as unknown as { transcriptAdmission: { pendingCount: number } }
+    await vi.waitFor(() => expect(admission.transcriptAdmission.pendingCount).toBe(2))
 
     // Attach the rejection assertion immediately: retaining an already-rejected
     // overflow promise while waiting on the reader gate would leak an unhandled rejection.
     const overflow = service.read(files[4])
     await expect(overflow).rejects.toThrow('Too many transcript reads are pending')
     expect(authorize).toHaveBeenCalledTimes(7)
-    expect(admission.transcriptReadQueue).toHaveLength(2)
+    expect(admission.transcriptAdmission.pendingCount).toBe(2)
     expect(peak).toBe(2)
 
     releaseReads?.()

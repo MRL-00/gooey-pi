@@ -1,7 +1,7 @@
 import { session } from 'electron'
 import type { AppSettings, ScheduleRecord } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
-import { runProcess } from './process-utils'
+import { processFailureReason, runProcess } from './process-utils'
 import type { JsonStateStore } from './store'
 import { isRecord, rejectUnknownKeys, requireBoolean, requireString, requireWebUrl } from './validation'
 
@@ -114,7 +114,8 @@ export class ScheduleService {
       let fallbackComplete = false
       if ((runtimes.length === 0 || runtimeFailure) && this.primeAgentPath) {
         const result = await runProcess(this.primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
-        if (result.code !== 0 || result.timedOut || result.outputExceeded) throw new Error('Prime Agent could not return a complete schedule catalog')
+        const failure = processFailureReason(result)
+        if (failure) throw new Error(`Prime Agent could not return a complete schedule catalog (${failure})`)
         let parsed: unknown
         try { parsed = JSON.parse(result.stdout) } catch { throw new Error('Prime Agent returned an incompatible schedule catalog') }
         if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) throw new Error('Prime Agent returned an incompatible schedule catalog')

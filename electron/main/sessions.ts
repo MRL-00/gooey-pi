@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
 import { queueDaemonFollowUp } from './agent-daemon'
+import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
 import { runProcess } from './process-utils'
 import { canonicalSessionPath } from './session-paths'
 import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
@@ -29,10 +30,6 @@ export interface SessionServiceOptions {
   maxPendingTranscriptReads?: number
 }
 
-function comparePaths(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
 export class SessionService {
   readonly sessionRoot = join(homedir(), '.prime', 'agent', 'sessions')
   private runtimeForSession: (filePath: string) => RuntimeSessionState | undefined = () => undefined
@@ -41,11 +38,8 @@ export class SessionService {
   private renameRuntimeSession: (filePath: string, title: string) => Promise<boolean> = async () => false
   private readonly catalog: SessionMetadataCatalog
   private readonly metadataReader = createSessionMetadataReader()
-  private readonly transcriptReadsByCanonicalPath = new Map<string, Promise<TranscriptMessage[]>>()
-  private readonly transcriptReadQueue: Array<() => void> = []
-  private activeTranscriptReads = 0
-  private readonly maxConcurrentTranscriptReads: number
-  private readonly maxPendingTranscriptReads: number
+  private readonly transcriptReads = createSingleFlight<string, TranscriptMessage[]>()
+  private readonly transcriptAdmission: AdmissionQueue
   private readonly transcriptReader: TranscriptReader
   private readonly changeListeners = new Set<(event: SessionChangeEvent) => void>()
   private sessionWatcher: FSWatcher | null = null
@@ -65,8 +59,12 @@ export class SessionService {
     const pendingLimit = options.maxPendingTranscriptReads ?? MAX_PENDING_TRANSCRIPT_READS
     if (!Number.isInteger(transcriptLimit) || transcriptLimit < 1) throw new RangeError('maxConcurrentTranscriptReads must be a positive integer')
     if (!Number.isInteger(pendingLimit) || pendingLimit < 0) throw new RangeError('maxPendingTranscriptReads must be a non-negative integer')
-    this.maxConcurrentTranscriptReads = transcriptLimit
-    this.maxPendingTranscriptReads = pendingLimit
+    this.transcriptAdmission = createAdmissionQueue({
+      maxConcurrent: transcriptLimit,
+      maxPending: pendingLimit,
+      pendingLimitError: () => new Error('Too many transcript reads are pending'),
+      closedError: () => new Error('Too many transcript reads are pending'),
+    })
     this.transcriptReader = options.transcriptReader ?? readTranscript
     this.catalog = new SessionMetadataCatalog(
       () => this.sessionRoot,
@@ -143,48 +141,12 @@ export class SessionService {
   async read(filePath: string): Promise<TranscriptMessage[]> {
     const requested = requireString(filePath, 'filePath', { min: 1, max: 4096 })
     const safePath = await this.requireSessionPath(requested)
-    const existing = this.transcriptReadsByCanonicalPath.get(safePath)
     // Coalesced callers share one immutable result; the IPC boundary clones it
     // for the renderer, so a pre-IPC structuredClone would be a second copy.
-    if (existing) return existing
-
-    const operation = this.admitTranscriptRead(async () => {
+    return this.transcriptReads.run(safePath, () => this.transcriptAdmission.run(async () => {
       const runtime = this.runtimeForSession(safePath)
       return this.transcriptReader(safePath, runtime?.isStreaming === true || runtime?.isCompacting === true)
-    })
-    this.transcriptReadsByCanonicalPath.set(safePath, operation)
-    try {
-      return await operation
-    } finally {
-      if (this.transcriptReadsByCanonicalPath.get(safePath) === operation) {
-        this.transcriptReadsByCanonicalPath.delete(safePath)
-      }
-    }
-  }
-
-  private admitTranscriptRead(task: () => Promise<TranscriptMessage[]>): Promise<TranscriptMessage[]> {
-    if (this.activeTranscriptReads < this.maxConcurrentTranscriptReads) return this.runTranscriptRead(task)
-    if (this.transcriptReadQueue.length >= this.maxPendingTranscriptReads) {
-      return Promise.reject(new Error('Too many transcript reads are pending'))
-    }
-    return new Promise<TranscriptMessage[]>((resolveRead, rejectRead) => {
-      this.transcriptReadQueue.push(() => { void this.runTranscriptRead(task).then(resolveRead, rejectRead) })
-    })
-  }
-
-  private runTranscriptRead(task: () => Promise<TranscriptMessage[]>): Promise<TranscriptMessage[]> {
-    this.activeTranscriptReads += 1
-    const operation = task()
-    operation.then(
-      () => this.finishTranscriptRead(),
-      () => this.finishTranscriptRead(),
-    )
-    return operation
-  }
-
-  private finishTranscriptRead(): void {
-    this.activeTranscriptReads -= 1
-    this.transcriptReadQueue.shift()?.()
+    }))
   }
 
   async followUp(filePath: unknown, message: unknown, intent: unknown = 'queue'): Promise<boolean> {

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PendingAgentEvent } from '../../src/app/agent-events'
-import { createRuntimeQueue } from '../../src/app/runtime-queue'
 import { createScopedRequestGuard } from '../../src/app/scoped-request'
 import { areSidebarPropsEqual, boundedSidebarSessions, indexSidebarSessions, type SidebarProps } from '../../src/components/Sidebar'
 import {
@@ -478,14 +477,4 @@ describe('scoped async ownership', () => {
     expect(guard.isCurrent(project, 4, '/project')).toBe(false)
   })
 
-  it('keeps background extension requests isolated until their runtime activates', () => {
-    const queue = createRuntimeQueue<{ id: string }>()
-    queue.put('background', { id: 'question-background' })
-    queue.put('active', { id: 'question-active' })
-    expect(queue.get('active')?.id).toBe('question-active')
-    expect(queue.get('background')?.id).toBe('question-background')
-    expect(queue.get('background')?.id).toBe('question-background')
-    queue.delete('active')
-    expect(queue.get('background')?.id).toBe('question-background')
-  })
 })

@@ -3,6 +3,9 @@ import { access } from 'node:fs/promises'
 import { delimiter, join, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
+import { createAdmissionQueue } from './lib/async'
+
+import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
 
 export interface ProcessResult {
   code: number
@@ -15,46 +18,156 @@ export interface ProcessResult {
   stderrBytes: number
 }
 
+/** Classifies a completed subprocess: overflow, then timeout, then exit status. */
+export function processFailureReason(result: ProcessResult): ProcessFailureReason | undefined {
+  if (result.outputExceeded) return 'overflow'
+  if (result.timedOut) return 'timeout'
+  if (result.code !== 0) return 'exit'
+  return undefined
+}
+
+/** Folds a ProcessResult into the shared `{ ok, output, reason }` outcome shape. */
+export function processOutcome(result: ProcessResult, output: string): ProcessOutcome {
+  const reason = processFailureReason(result)
+  return reason ? { ok: false, output, reason } : { ok: true, output }
+}
+
 export const PROCESS_CONCURRENCY_LIMIT = 8
 export const PROCESS_QUEUE_LIMIT = 64
 
 const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
 const activeChildren = new Set<ChildProcess>()
-const pendingAdmissions: Array<{ start: () => void; reject: (error: Error) => void }> = []
+const processAdmission = createAdmissionQueue({
+  maxConcurrent: PROCESS_CONCURRENCY_LIMIT,
+  maxPending: PROCESS_QUEUE_LIMIT,
+  pendingLimitError: () => new Error(`Process queue limit of ${PROCESS_QUEUE_LIMIT} exceeded`),
+  closedError: () => new Error('Process admission is closed during shutdown'),
+})
 let processAdmissionClosed = false
 
 export function beginProcessShutdown(): void {
   if (processAdmissionClosed) return
   processAdmissionClosed = true
-  const error = new Error('Process admission is closed during shutdown')
-  for (const pending of pendingAdmissions.splice(0)) pending.reject(error)
+  processAdmission.close()
+}
+
+export interface KillLadderRung {
+  signal: NodeJS.Signals
+  /** How long to wait for exit after this rung before escalating to the next one. */
+  waitMs: number
+}
+
+export interface KillProcessTreeOptions {
+  ladder: readonly KillLadderRung[]
+  /** True once the target process exited; consulted before every escalation. */
+  hasExited?: () => boolean
+  /** Waits up to timeoutMs and resolves true when the process exits earlier. Defaults to a plain delay. */
+  waitForExit?: (timeoutMs: number) => Promise<boolean>
+  /** Extra direct signal for handles that own the process (for example a pty). Defaults to signalling the PID. */
+  signalDirect?: (signal: NodeJS.Signals) => void
+  /** Descendant PIDs signalled alongside the process group; needed when children detach from it (POSIX only). */
+  descendants?: readonly number[]
+  /** Test seams. */
+  platform?: NodeJS.Platform
+  runTaskkill?: (pid: number) => Promise<void>
+}
+
+const delay = (milliseconds: number) => new Promise<void>((resolveDelay) => {
+  const timer = setTimeout(resolveDelay, milliseconds)
+  timer.unref()
+})
+
+/** Force-kills a Windows process tree; bounded, awaited, and never throws. */
+function runWindowsTaskkill(pid: number): Promise<void> {
+  return new Promise((resolveKill) => {
+    let child: ChildProcess
+    try {
+      child = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, shell: false, stdio: 'ignore' })
+    } catch { resolveKill(); return }
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveKill()
+    }
+    const timer = setTimeout(() => {
+      try { child.kill() } catch { /* taskkill already exited */ }
+      finish()
+    }, 5_000)
+    timer.unref()
+    child.once('error', finish)
+    child.once('close', finish)
+  })
+}
+
+/**
+ * The one process-tree terminator: walks the signal ladder over the process
+ * group (plus any explicitly listed detached descendants) until the target
+ * exits. On win32 there is no graceful tier, so the whole ladder collapses
+ * into a single awaited, bounded `taskkill /pid <pid> /T /F`.
+ * Resolves true once the target is known to have exited (always true when no
+ * exit observer is provided).
+ */
+export async function killProcessTree(pid: number, options: KillProcessTreeOptions): Promise<boolean> {
+  const platform = options.platform ?? process.platform
+  const waitForExit = options.waitForExit ?? (async (timeoutMs: number) => { await delay(timeoutMs); return options.hasExited?.() ?? false })
+  if (platform === 'win32') {
+    await (options.runTaskkill ?? runWindowsTaskkill)(pid)
+    try { options.signalDirect?.('SIGKILL') } catch { /* already exited */ }
+    if (!options.hasExited) return true
+    if (options.hasExited()) return true
+    const budget = options.ladder.reduce((total, rung) => total + rung.waitMs, 0)
+    return budget > 0 ? waitForExit(budget) : options.hasExited()
+  }
+  const signalTree = (signal: NodeJS.Signals): void => {
+    for (const descendant of options.descendants ?? []) {
+      try { process.kill(descendant, signal) } catch { /* already exited */ }
+    }
+    try { process.kill(-pid, signal) } catch { /* no process group */ }
+    try {
+      if (options.signalDirect) options.signalDirect(signal)
+      else process.kill(pid, signal)
+    } catch { /* already exited */ }
+  }
+  for (const rung of options.ladder) {
+    if (options.hasExited?.()) return true
+    signalTree(rung.signal)
+    if (rung.waitMs > 0 && await waitForExit(rung.waitMs)) return true
+  }
+  return options.hasExited?.() ?? true
+}
+
+/** Resolves true when the child exits within timeoutMs (immediately when it already has). */
+export function waitForProcessExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+  return new Promise((resolveWait) => {
+    const onClose = (): void => {
+      clearTimeout(timer)
+      resolveWait(true)
+    }
+    const timer = setTimeout(() => {
+      child.removeListener('close', onClose)
+      resolveWait(false)
+    }, timeoutMs)
+    timer.unref()
+    child.once('close', onClose)
+  })
 }
 
 function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (child.pid && process.platform !== 'win32') {
-    try { process.kill(-child.pid, signal); return } catch { /* fall through */ }
+  if (!child.pid) {
+    try { child.kill(signal) } catch { /* already exited */ }
+    return
   }
-  try { child.kill(signal) } catch { /* already exited */ }
+  void killProcessTree(child.pid, {
+    ladder: [{ signal, waitMs: 0 }],
+    signalDirect: (rungSignal) => child.kill(rungSignal),
+  })
 }
 
 function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<void> {
-  return Promise.race([
-    Promise.all(children.map((child) => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise<void>((resolveExit) => child.once('close', () => resolveExit())))).then(() => undefined),
-    new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, timeoutMs)),
-  ])
-}
-
-function drainProcessQueue(): void {
-  if (processAdmissionClosed) {
-    const error = new Error('Process admission is closed during shutdown')
-    for (const pending of pendingAdmissions.splice(0)) pending.reject(error)
-    return
-  }
-  while (activeChildren.size < PROCESS_CONCURRENCY_LIMIT) {
-    const pending = pendingAdmissions.shift()
-    if (!pending) return
-    pending.start()
-  }
+  return Promise.all(children.map((child) => waitForProcessExit(child, timeoutMs))).then(() => undefined)
 }
 
 export async function stopChildProcesses(): Promise<void> {
@@ -159,104 +272,96 @@ export function runProcess(file: string, args: readonly string[], options: {
     return Promise.reject(new TypeError(`process input must not exceed ${PROCESS_INPUT_LIMIT} bytes`))
   }
 
-  return new Promise((resolve, reject) => {
-    const start = (): void => {
-      if (processAdmissionClosed) { reject(new Error('Process admission is closed during shutdown')); return }
-      const child = spawn(file, [...args], {
-        cwd: options.cwd,
-        env: options.env ?? safeChildEnvironment(),
-        shell: false,
-        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        detached: process.platform !== 'win32',
-      })
-      activeChildren.add(child)
-      if (options.input !== undefined) child.stdin?.on('error', () => { /* child close/error reports the process result */ })
-      const stdout: Buffer[] = []
-      const stderr: Buffer[] = []
-      let stdoutBytes = 0
-      let stderrBytes = 0
-      let capturedBytes = 0
-      let timedOut = false
-      let outputExceeded = false
-      let settled = false
-      let limitKillTimer: NodeJS.Timeout | undefined
-      const timer = setTimeout(() => {
-        timedOut = true
-        terminateChild(child, 'SIGTERM')
-        limitKillTimer ??= setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
-        }, 2_000)
-        limitKillTimer.unref()
-      }, timeoutMs)
-      timer.unref()
+  return processAdmission.run(() => new Promise((resolve, reject) => {
+    const child = spawn(file, [...args], {
+      cwd: options.cwd,
+      env: options.env ?? safeChildEnvironment(),
+      shell: false,
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    })
+    activeChildren.add(child)
+    if (options.input !== undefined) child.stdin?.on('error', () => { /* child close/error reports the process result */ })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let capturedBytes = 0
+    let timedOut = false
+    let outputExceeded = false
+    let settled = false
+    let limitKillTimer: NodeJS.Timeout | undefined
+    const timer = setTimeout(() => {
+      timedOut = true
+      terminateChild(child, 'SIGTERM')
+      limitKillTimer ??= setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
+      }, 2_000)
+      limitKillTimer.unref()
+    }, timeoutMs)
+    timer.unref()
 
-      const exceedOutputLimit = (): void => {
-        if (outputExceeded) return
-        outputExceeded = true
-        terminateChild(child, 'SIGTERM')
-        // Output limits need their own short escalation rather than waiting for
-        // the operation timeout while a producer ignores TERM.
-        if (limitKillTimer) clearTimeout(limitKillTimer)
-        limitKillTimer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
-        }, 500)
-        limitKillTimer.unref()
-      }
-      const collect = (target: Buffer[], chunk: Buffer): void => {
-        const remaining = maxBytes - capturedBytes
-        if (remaining > 0) {
-          const retained = chunk.subarray(0, remaining)
-          target.push(retained)
-          capturedBytes += retained.length
-        }
-        if (chunk.length > remaining) exceedOutputLimit()
-      }
-      child.stdout?.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
-      child.stderr?.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
-
-      const finish = (): void => {
-        activeChildren.delete(child)
-        clearTimeout(timer)
-        if (limitKillTimer) clearTimeout(limitKillTimer)
-        drainProcessQueue()
-      }
-      const fail = (error: Error): void => {
-        if (settled) return
-        settled = true
-        finish()
-        reject(error)
-      }
-      child.once('error', fail)
-      // Read-pipe errors (EPIPE/ECONNRESET from a killed child) would otherwise be
-      // uncaught 'error' events that crash the main process.
-      const failPipe = (error: Error): void => {
-        if (settled) return
-        terminateChild(child, 'SIGTERM')
-        fail(error)
-      }
-      child.stdout?.on('error', failPipe)
-      child.stderr?.on('error', failPipe)
-      child.once('close', (code, signal) => {
-        if (settled) return
-        settled = true
-        finish()
-        resolve({
-          code: code ?? -1,
-          signal,
-          stdout: Buffer.concat(stdout).toString('utf8'),
-          stderr: Buffer.concat(stderr).toString('utf8'),
-          timedOut,
-          outputExceeded,
-          stdoutBytes,
-          stderrBytes,
-        })
-      })
-      if (options.input !== undefined) child.stdin?.end(options.input)
+    const exceedOutputLimit = (): void => {
+      if (outputExceeded) return
+      outputExceeded = true
+      terminateChild(child, 'SIGTERM')
+      // Output limits need their own short escalation rather than waiting for
+      // the operation timeout while a producer ignores TERM.
+      if (limitKillTimer) clearTimeout(limitKillTimer)
+      limitKillTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
+      }, 500)
+      limitKillTimer.unref()
     }
+    const collect = (target: Buffer[], chunk: Buffer): void => {
+      const remaining = maxBytes - capturedBytes
+      if (remaining > 0) {
+        const retained = chunk.subarray(0, remaining)
+        target.push(retained)
+        capturedBytes += retained.length
+      }
+      if (chunk.length > remaining) exceedOutputLimit()
+    }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutBytes += chunk.length; collect(stdout, chunk) })
+    child.stderr?.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; collect(stderr, chunk) })
 
-    if (activeChildren.size < PROCESS_CONCURRENCY_LIMIT) start()
-    else if (pendingAdmissions.length >= PROCESS_QUEUE_LIMIT) reject(new Error(`Process queue limit of ${PROCESS_QUEUE_LIMIT} exceeded`))
-    else pendingAdmissions.push({ start, reject })
-  })
+    const finish = (): void => {
+      activeChildren.delete(child)
+      clearTimeout(timer)
+      if (limitKillTimer) clearTimeout(limitKillTimer)
+    }
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      finish()
+      reject(error)
+    }
+    child.once('error', fail)
+    // Read-pipe errors (EPIPE/ECONNRESET from a killed child) would otherwise be
+    // uncaught 'error' events that crash the main process.
+    const failPipe = (error: Error): void => {
+      if (settled) return
+      terminateChild(child, 'SIGTERM')
+      fail(error)
+    }
+    child.stdout?.on('error', failPipe)
+    child.stderr?.on('error', failPipe)
+    child.once('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      finish()
+      resolve({
+        code: code ?? -1,
+        signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        timedOut,
+        outputExceeded,
+        stdoutBytes,
+        stderrBytes,
+      })
+    })
+    if (options.input !== undefined) child.stdin?.end(options.input)
+  }))
 }

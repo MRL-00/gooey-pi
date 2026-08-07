@@ -89,9 +89,6 @@
 .syntax-string { color: var(--success); }
 .syntax-keyword { color: var(--prime); }
 .syntax-number { color: var(--warning); }
-.standalone-output { max-height: 230px; margin: 0; padding: 9px 12px; overflow: auto; border-top: 1px solid var(--border); background: var(--canvas); color: var(--text-secondary); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-.standalone-output { border: 1px solid var(--border); border-radius: 8px; }
-.standalone-output.is-error { color: var(--danger); background: var(--danger-soft); }
 .image-part { display: block; max-width: min(100%, 420px); max-height: 320px; margin: 7px 0; border: 1px solid var(--border); border-radius: 10px; object-fit: contain; }
 .image-part--unavailable { padding: 20px; color: var(--text-tertiary); text-align: center; }
 .message--activity { margin: 3px 0 18px 38px; }
@@ -106,6 +103,8 @@
 .diff-count--add { color: var(--success); background: var(--diff-add); }
 .diff-count--remove { color: var(--danger); background: var(--diff-remove); }
 .streaming-state { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--text-tertiary); font-size: 11.5px; }
+.transcript-active-placeholder { align-items: center; }
+.transcript-active-placeholder .streaming-state { margin-top: 0; }
 .thinking-dots { min-width: 30px; height: 16px; display: inline-flex; align-items: center; gap: 4px; }
 .thinking-dots > span { width: 5px; height: 5px; border-radius: 50%; background: var(--prime); opacity: .34; animation: thinking-dot 1.15s cubic-bezier(.45, 0, .55, 1) infinite; }
 .thinking-dots > span:nth-child(2) { animation-delay: 140ms; }

@@ -9,7 +9,7 @@ import { BrowserSettings } from './settings/BrowserSettings'
 import type { SettingsSection, SettingsUpdate } from './settings/contracts'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { PrivacySettings } from './settings/PrivacySettings'
-import { ProvidersSettings } from './settings/ProvidersSettings'
+import { ProvidersSettings } from './settings/ProviderSettings'
 import { TerminalSettings } from './settings/TerminalSettings'
 
 const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<{ size?: number }> }> = [
