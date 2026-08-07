@@ -75,8 +75,10 @@ function assertUnpackedNativeLayout(directory, target, architecture) {
   const unexpected = files.filter((path) => !allowed.has(path) && !zeroMqPattern.test(path))
   const missing = required.filter((path) => !files.includes(path))
   const zeroMq = files.filter((path) => zeroMqPattern.test(path))
-  if (missing.length || !zeroMq.length || unexpected.length) {
-    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ: ${zeroMq.length}; extra: ${unexpected.join(', ') || 'none'})`)
+  // Exactly one ZeroMQ addon per platform/architecture: zero means the native
+  // runtime is missing, more than one means another toolchain's build leaked in.
+  if (missing.length || zeroMq.length !== 1 || unexpected.length) {
+    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ addons: ${zeroMq.length}, expected exactly 1; extra: ${unexpected.join(', ') || 'none'})`)
   }
 }
 
@@ -91,7 +93,7 @@ export function verifyPackage(target, architecture, { unpackedOnly = false } = {
   if (!existsSync(asar) || !lstatSync(asar).isFile()) throw new Error('Packaged application must contain resources/app.asar')
   if (existsSync(join(resources, 'app'))) throw new Error('Packaged application contains forbidden loose resources/app')
   if (!existsSync(unpacked)) throw new Error('Packaged application must contain resources/app.asar.unpacked')
-  assertAsarLayout(listPackage(asar))
+  assertAsarLayout(listPackage(asar, { isPack: false }))
   assertUnpackedNativeLayout(unpacked, target, architecture)
   const scope = unpackedOnly ? 'unpacked directory build' : 'installable artifacts'
   console.log(`Verified ${target}/${architecture} package: ${scope}, ASAR runtime layout, and exact native unpack allowlist.`)

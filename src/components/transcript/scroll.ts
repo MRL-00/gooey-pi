@@ -16,16 +16,18 @@ export function useTranscriptScroll(messages: TranscriptMessage[]) {
   useEffect(() => {
     const firstLoadedTranscript = previousCountRef.current === 0 && messages.length > 0
     const scroller = scrollRef.current
+    let frame: number | undefined
     if (firstLoadedTranscript) {
-      requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
+      frame = requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
       pinnedToBottomRef.current = true
     } else if (streaming && pinnedToBottomRef.current) {
-      requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
+      frame = requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
     }
     if (previousStreamingRef.current && !streaming) setAnnouncement('Prime response complete.')
     else if (!previousStreamingRef.current && streaming) setAnnouncement('Prime is working.')
     previousStreamingRef.current = streaming
     previousCountRef.current = messages.length
+    return () => { if (frame !== undefined) cancelAnimationFrame(frame) }
   }, [messages, streaming])
 
   const updatePinnedState = () => {

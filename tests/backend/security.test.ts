@@ -28,7 +28,7 @@ describe('security boundaries', () => {
     mkdirSync(config, { recursive: true })
     writeFileSync(join(config, 'settings.json'), JSON.stringify({ prompts: ['/etc/hosts'] }))
     const service = new PluginService(null, async () => resolve(project))
-    const records = await service.list(project)
+    const { skills: records } = await service.list(project)
     expect(records.some((record) => record.path === '/private/etc/hosts' || record.path === '/etc/hosts')).toBe(false)
   })
 

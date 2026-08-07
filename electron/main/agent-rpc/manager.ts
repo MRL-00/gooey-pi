@@ -1,4 +1,4 @@
-import type { PrimeEventEnvelope, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
@@ -40,7 +40,7 @@ export class AgentRpcManager {
       ? undefined
       : await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 }))
     if (sessionPath) args.push('--resume', sessionPath)
-    let selectedModel
+    let selectedModel: PrimeModelDescriptor | undefined
     if (options.model !== undefined) {
       selectedModel = this.providers
         ? await this.providers.requireAvailableModel(options.model, this.disabledProviders())

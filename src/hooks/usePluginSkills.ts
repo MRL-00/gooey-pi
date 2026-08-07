@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createScopedRequestGuard } from '@/app/scoped-request'
-import type { PrimeWorkApi, SkillRecord } from '@/types/api'
+import type { PluginWarning, PrimeWorkApi, SkillRecord } from '@/types/api'
 
 interface UsePluginSkillsOptions {
   bridge: PrimeWorkApi | null
@@ -12,20 +12,26 @@ interface UsePluginSkillsOptions {
 
 export function usePluginSkills({ bridge, scope, generation, initialSkills, reportError }: UsePluginSkillsOptions) {
   const [skills, setSkills] = useState(initialSkills)
+  const [warnings, setWarnings] = useState<PluginWarning[]>([])
   const [loading, setLoading] = useState(false)
   const requestGuardRef = useRef(createScopedRequestGuard())
   const scopeRef = useRef(scope)
   const generationRef = useRef(generation)
-  scopeRef.current = scope
-  generationRef.current = generation
+  useLayoutEffect(() => {
+    scopeRef.current = scope
+    generationRef.current = generation
+  })
 
   const load = useCallback(async (requestedScope: string | undefined, showLoading = false) => {
     if (!bridge) return
     const request = requestGuardRef.current.begin(generationRef.current, requestedScope)
     if (showLoading) setLoading(true)
     try {
-      const records = await bridge.plugins.list(requestedScope)
-      if (requestGuardRef.current.isCurrent(request, generationRef.current, scopeRef.current)) setSkills(records)
+      const catalog = await bridge.plugins.list(requestedScope)
+      if (requestGuardRef.current.isCurrent(request, generationRef.current, scopeRef.current)) {
+        setSkills(catalog.skills)
+        setWarnings(catalog.warnings)
+      }
     } catch (error) {
       if (requestGuardRef.current.isCurrent(request, generationRef.current, scopeRef.current)) reportError(error)
     } finally {
@@ -40,5 +46,5 @@ export function usePluginSkills({ bridge, scope, generation, initialSkills, repo
   }, [generation, load, scope])
 
   const refresh = useCallback(async () => { await load(scopeRef.current, true) }, [load])
-  return { skills, loading, refresh }
+  return { skills, warnings, loading, refresh }
 }

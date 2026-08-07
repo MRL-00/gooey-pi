@@ -7,7 +7,7 @@ function installHandler() {
   const actions = Object.fromEntries(
     (['open-palette', 'new-session', 'open-browser', 'toggle-sidebar', 'toggle-terminal', 'open-settings', 'close-palette'] as const).map((action) => [
       action,
-      () => calls.push(action),
+      () => { calls.push(action) },
     ]),
   ) as Record<AppShortcutAction, () => void>
   const handler = createAppKeydownHandler(actions)
@@ -117,6 +117,7 @@ describe('app shortcut key mapping', () => {
     expect(appShortcutForKey(event({ key: 'b', metaKey: true }), false)).toBe('toggle-sidebar')
     expect(appShortcutForKey(event({ key: 'j', ctrlKey: true }), false)).toBe('toggle-terminal')
     expect(appShortcutForKey(event({ key: ',', metaKey: true }), false)).toBe('open-settings')
+    expect(appShortcutForKey(event({ key: ',', ctrlKey: true }), false)).toBe('open-settings')
     expect(appShortcutForKey(event({ key: 'Escape' }), false)).toBe('close-palette')
     expect(appShortcutForKey(event({ key: 'v', metaKey: true }), false)).toBeNull()
   })

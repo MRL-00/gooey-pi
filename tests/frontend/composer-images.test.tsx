@@ -25,7 +25,10 @@ let root: Root
 
 beforeEach(() => {
   let id = 0
-  vi.stubGlobal('crypto', { randomUUID: () => `image-${id += 1}` })
+  vi.stubGlobal('crypto', { randomUUID: () => {
+    id += 1
+    return `image-${id}`
+  } })
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -134,6 +137,23 @@ describe('Composer image paste', () => {
       await Promise.resolve()
     })
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(false)
+  })
+
+  it('inserts mixed clipboard text at the caret instead of appending', async () => {
+    renderComposer(vi.fn(async () => undefined))
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    await act(async () => {
+      setter?.call(textarea, 'hello world')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    textarea.focus()
+    textarea.setSelectionRange(5, 5)
+
+    await pasteFiles([pastedPng()], ' pasted')
+
+    expect(textarea.value).toBe('hello pasted world')
+    expect(textarea.selectionStart).toBe('hello pasted'.length)
   })
 
   it('enforces the attachment count across concurrent paste completions', async () => {

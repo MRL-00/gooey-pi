@@ -17,7 +17,7 @@ import {
   Settings,
   SquarePen,
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { sessionAttentionSignature } from '@/app/session-attention'
@@ -86,9 +86,27 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
 }
 
 
-function readClearedAttention(): Record<string, string> {
-  if (typeof window === 'undefined') return {}
-  try { return JSON.parse(window.localStorage.getItem('prime-work.cleared-session-attention') ?? '{}') as Record<string, string> } catch { return {} }
+export function readClearedAttention(storedValue?: string | null): Record<string, string> {
+  const raw = storedValue !== undefined
+    ? storedValue
+    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-session-attention')
+  try {
+    const parsed: unknown = JSON.parse(raw ?? '{}')
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const result: Record<string, string> = {}
+    for (const [id, signature] of Object.entries(parsed)) {
+      if (typeof signature === 'string') result[id] = signature
+    }
+    return result
+  } catch { return {} }
+}
+
+export function pruneClearedAttention(current: Record<string, string>, sessions: SessionRecord[]): Record<string, string> {
+  // An empty catalog usually means the list has not loaded yet; keep the store.
+  if (!sessions.length) return current
+  const known = new Set(sessions.map((session) => session.id))
+  const kept = Object.entries(current).filter(([id]) => known.has(id))
+  return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
 }
 
 function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
@@ -107,7 +125,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const [renameTarget, setRenameTarget] = useState<SessionRecord | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
-  const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(readClearedAttention)
+  const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(() => readClearedAttention())
+  const clearedAttentionPersistedRef = useRef(false)
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
     const signature = sessionAttentionSignature(session)
@@ -118,14 +137,21 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
     if (!signature) return
     setClearedAttention((current) => ({ ...current, [session.id]: signature }))
   }
-  useEffect(() => { window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention)) }, [clearedAttention])
+  useEffect(() => {
+    // The mount value came from localStorage; only persist actual changes.
+    if (!clearedAttentionPersistedRef.current) { clearedAttentionPersistedRef.current = true; return }
+    window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
+  }, [clearedAttention])
+  useEffect(() => {
+    setClearedAttention((current) => pruneClearedAttention(current, sessions))
+  }, [sessions])
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   useEffect(() => {
     if (!sessionMenu) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.session-row-wrap')) setSessionMenu(null) }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setSessionMenu(null) } }
-    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', escape, true)
-    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', escape, true) }
+    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setSessionMenu(null) } }
+    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
+    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
   }, [sessionMenu])
   const normalized = query.trim().toLowerCase()
   const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || (sessionsByProject.get(project.id) ?? []).some((session) => `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, sessionsByProject, normalized])

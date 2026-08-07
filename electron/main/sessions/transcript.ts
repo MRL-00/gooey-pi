@@ -178,7 +178,7 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
           error: boundedText(part.error),
           customInstructions: boundedText(part.customInstructions),
         }
-      } else {
+      } else if (part.type === 'image') {
         let data: string | undefined
         if (part.data && imageBudget > 0) {
           data = boundedString(part.data, imageBudget)

@@ -10,7 +10,7 @@ import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
-import { PluginService } from './plugins'
+import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
@@ -240,6 +240,32 @@ function boundedErrorMessage(error: unknown): string {
   return message.replace(/[\r\n\t]+/g, ' ').slice(0, 512) || 'Unknown error'
 }
 
+export async function settleShutdown(
+  steps: ReadonlyArray<PromiseLike<unknown>>,
+  options: { watchdogMs?: number; log?: (message: string) => void } = {},
+): Promise<void> {
+  const log = options.log ?? ((message: string) => console.error(message))
+  const watchdogMs = options.watchdogMs ?? 10_000
+  const settled = Promise.allSettled(steps).then((results) => {
+    for (const result of results) {
+      if (result.status === 'rejected') log(`Prime Work shutdown step failed: ${boundedErrorMessage(result.reason)}`)
+    }
+  })
+  let timer: NodeJS.Timeout | undefined
+  const watchdog = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      log(`Prime Work shutdown did not finish within ${watchdogMs} ms; quitting anyway`)
+      resolve()
+    }, watchdogMs)
+    timer.unref?.()
+  })
+  try {
+    await Promise.race([settled, watchdog])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function requestWindow(reason: 'activation' | 'second instance'): void {
   void ensureWindow().then((window) => {
     if (!window || shutdownStarted || window.isDestroyed()) return
@@ -412,14 +438,16 @@ app.on('before-quit', (event) => {
   registration?.dispose()
   agents?.beginShutdown()
   beginProcessShutdown()
+  beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
   providerService?.cancelAll()
-  const stopServices = Promise.all([
+  void settleShutdown([
     agentScheduleBridge?.stop() ?? Promise.resolve(),
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),
     stopChildProcesses(),
-  ])
-  void stopServices.then(() => store?.beginShutdown()).finally(() => app.quit())
+  ]).then(() => {
+    try { store?.beginShutdown() } catch (error) { console.error(`Prime Work store shutdown failed: ${boundedErrorMessage(error)}`) }
+  }).finally(() => app.quit())
 })

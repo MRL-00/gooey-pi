@@ -71,7 +71,7 @@ export function requireWebUrl(value: unknown, options: { mailto?: boolean; max?:
   try { parsed = new URL(raw) } catch { throw new TypeError('Invalid URL') }
   const allowed = options.mailto ? ['http:', 'https:', 'mailto:'] : ['http:', 'https:']
   if (!allowed.includes(parsed.protocol)) throw new TypeError('URL scheme is not allowed')
-  if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && (parsed.username || parsed.password)) {
+  if (parsed.username || parsed.password) {
     throw new TypeError('URLs containing credentials are not allowed')
   }
   return parsed.toString()
@@ -80,7 +80,7 @@ export function requireWebUrl(value: unknown, options: { mailto?: boolean; max?:
 export function requireGitPath(value: unknown, label = 'path'): string {
   const input = requireString(value, label, { min: 1, max: 4096 })
   if (isAbsolute(input)) throw new TypeError(`${label} must be a relative path`)
-  const parts = input.split('/')
+  const parts = input.split(/[\\/]/)
   if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new TypeError(`${label} contains an invalid segment`)
   return input
 }
@@ -90,5 +90,6 @@ export function errorMessage(error: unknown): string {
 }
 
 export function stripAnsi(input: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the ANSI escape introducer is a control character by definition
   return input.replace(/\u001B(?:[@-_]|\[[0-?]*[ -/]*[@-~])/g, '')
 }

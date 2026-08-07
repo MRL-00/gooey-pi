@@ -30,5 +30,7 @@ export function boundLines(text: string, maxCharacters: number, maxLines: number
     lines.push(bounded.slice(cursor, newline))
     cursor = newline + 1
   }
-  return { lines, truncated: text.length > bounded.length || cursor <= bounded.length }
+  // `cursor === bounded.length` after the line limit means the text ended in a
+  // final newline with nothing after it — that is not truncation.
+  return { lines, truncated: text.length > bounded.length || cursor < bounded.length }
 }

@@ -45,10 +45,9 @@ describe('requireWebUrl', () => {
     expect(requireWebUrl('mailto:team@example.com', { mailto: true })).toBe('mailto:team@example.com')
   })
 
-  it('does not apply the credential check to mailto URLs', () => {
-    // Pins current behavior: the credential rejection only covers http/https.
-    // Phase 7 owns "mailto: credential check parity" (validation.ts:74-76).
+  it('rejects embedded credentials in mailto URLs too', () => {
     expect(requireWebUrl('mailto:team@example.com?subject=hi', { mailto: true })).toBe('mailto:team@example.com?subject=hi')
+    expect(() => requireWebUrl('mailto://user:pass@example.com', { mailto: true })).toThrow(/credentials/)
   })
 
   it('rejects malformed, empty, and oversized inputs', () => {
@@ -74,12 +73,16 @@ describe('requireGitPath', () => {
     }
   })
 
-  it('splits only on forward slashes, letting backslash segments through', () => {
-    // BUG: pins current behavior. Backslash separators are not treated as
-    // segment boundaries, so "..\\" traversal survives on Windows-style input.
-    // Phase 7 owns the fix (split on /[\\/]/ in requireGitPath).
-    expect(requireGitPath('a\\..\\b')).toBe('a\\..\\b')
-    expect(requireGitPath('..\\evil')).toBe('..\\evil')
+  it('rejects backslash traversal segments', () => {
+    expect(() => requireGitPath('..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src\\..\\..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src/..\\outside.txt')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('a\\..\\b')).toThrow(/invalid segment/)
+  })
+
+  it('rejects empty and dot segments regardless of separator', () => {
+    expect(() => requireGitPath('src//file.ts')).toThrow(/invalid segment/)
+    expect(() => requireGitPath('src\\.\\file.ts')).toThrow(/invalid segment/)
   })
 
   it('rejects non-strings and NUL bytes', () => {

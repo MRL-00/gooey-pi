@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
 
 type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
@@ -36,7 +36,7 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   const mutationRevisionRef = useRef(0)
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const runtimeIdRef = useRef(runtime?.runtimeId)
-  runtimeIdRef.current = runtime?.runtimeId
+  useLayoutEffect(() => { runtimeIdRef.current = runtime?.runtimeId })
 
   const updateModel = useCallback((value: string) => { modelRef.current = value; setModel(value) }, [])
   const updateEffort = useCallback((value: PrimeThinkingLevel) => { effortRef.current = value; setEffort(value) }, [])
@@ -117,8 +117,14 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     const effectiveModel = catalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id)
     if (effectiveModel) updateModel(effectiveModel.key)
     if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) updateEffort(runtime.thinkingLevel as PrimeThinkingLevel)
+  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.thinkingLevel, updateEffort, updateModel])
+
+  // Scoped to the runtime's reported tier so a catalog refresh cannot revert
+  // an optimistic fast-mode toggle that the runtime has not confirmed yet.
+  useEffect(() => {
+    if (!runtime) return
     updateFast(runtime.serviceTier === 'priority')
-  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.serviceTier, runtime?.thinkingLevel, updateEffort, updateFast, updateModel])
+  }, [runtime?.runtimeId, runtime?.serviceTier, updateFast])
 
   const changeModel = useCallback((nextModelKey: string) => {
     const previous = { model: modelRef.current, effort: effortRef.current, fast: fastRef.current }

@@ -12,7 +12,7 @@
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.tests.json && tsc --noEmit -p tsconfig.scripts.json",
     "lint": "biome lint --config-path=scripts/release/biome.json electron src tests scripts electron.vite.config.ts playwright.config.ts vitest.config.ts",
     "format:check": "biome format --config-path=scripts/release/biome.json scripts/release electron.vite.config.ts vitest.config.ts playwright.config.ts tests/release-scripts.test.ts",
     "check": "npm run lint && npm run format:check",
@@ -37,7 +37,8 @@
     "node-pty": "^1.0.0",
     "prime-agent": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-0.7.0.tgz",
     "prime-agent-ai": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-ai-0.7.0.tgz",
-    "rrule": "^2.8.1"
+    "rrule": "^2.8.1",
+    "zeromq": "^6.1.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
@@ -88,7 +89,11 @@
       "asarUnpack": [
         "**/node_modules/node-pty/build/Release/pty.node",
         "**/node_modules/node-pty/build/Release/spawn-helper",
-        "**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node"
+        "**/node_modules/zeromq/build/darwin/${arch}/node/*-Release/addon.node"
+      ],
+      "files": [
+        "!**/node_modules/zeromq/build/linux/**",
+        "!**/node_modules/zeromq/build/win32/**"
       ]
     },
     "linux": {
@@ -103,6 +108,10 @@
       "asarUnpack": [
         "**/node_modules/node-pty/build/Release/pty.node",
         "**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node"
+      ],
+      "files": [
+        "!**/node_modules/zeromq/build/darwin/**",
+        "!**/node_modules/zeromq/build/win32/**"
       ]
     },
     "win": {
@@ -121,6 +130,10 @@
         "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/OpenConsole.exe",
         "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll",
         "**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node"
+      ],
+      "files": [
+        "!**/node_modules/zeromq/build/darwin/**",
+        "!**/node_modules/zeromq/build/linux/**"
       ]
     },
     "directories": {

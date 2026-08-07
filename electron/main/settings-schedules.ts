@@ -1,7 +1,7 @@
 import { session } from 'electron'
 import type { AppSettings, ScheduleRecord } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
-import { processFailureReason, runProcess } from './process-utils'
+import { processFailureReason, runProcess, type ProcessResult } from './process-utils'
 import type { JsonStateStore } from './store'
 import { isRecord, rejectUnknownKeys, requireBoolean, requireString, requireWebUrl } from './validation'
 
@@ -67,10 +67,11 @@ function scheduleText(raw: Record<string, unknown>): string {
 function normalizeJob(raw: unknown, desktopRuntimeId?: string): ScheduleRecord | null {
   if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.prompt !== 'string') return null
   const primeStatus = typeof raw.status === 'string' ? raw.status : 'active'
-  let status: ScheduleRecord['status']
-  if (primeStatus === 'active' || primeStatus === 'paused' || primeStatus === 'completed') status = primeStatus
-  else if (typeof raw.lastError === 'string' && raw.lastError) status = 'failed'
-  else status = 'completed'
+  // A raw 'failed' is always surfaced as failed (even without lastError), and a
+  // status this app does not recognize must never be presented as completed.
+  const status: ScheduleRecord['status'] = primeStatus === 'active' || primeStatus === 'paused' || primeStatus === 'completed' || primeStatus === 'failed'
+    ? primeStatus
+    : 'unknown'
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : raw.prompt.replace(/\s+/g, ' ').trim().slice(0, 80)
   return {
     id: raw.id,
@@ -84,8 +85,25 @@ function normalizeJob(raw: unknown, desktopRuntimeId?: string): ScheduleRecord |
   }
 }
 
+function isUnknownCommandOutput(output: string): boolean {
+  return /\b(?:unknown|unrecognized|invalid)\s+(?:sub)?command\b/i.test(output)
+}
+
 export class ScheduleService {
-  constructor(private readonly agents: AgentRpcManager, private readonly primeAgentPath: string | null) {}
+  /** Session-scoped negative cache: the CLI does not support `schedule list`. */
+  private cliUnavailable = false
+
+  constructor(
+    private readonly agents: AgentRpcManager,
+    private readonly primeAgentPath: string | null,
+    private readonly warn: (message: string) => void = (message) => console.warn(message),
+  ) {}
+
+  private markCliScheduleSupportUnavailable(reason: string): void {
+    if (this.cliUnavailable) return
+    this.cliUnavailable = true
+    this.warn(`Prime Agent CLI schedule listing is unavailable (${reason}); treating the CLI catalog as empty for this session`)
+  }
 
   async list(runtimeIdValue?: unknown): Promise<ScheduleRecord[]> {
     const runtimeId = runtimeIdValue === undefined ? undefined : requireString(runtimeIdValue, 'runtimeId', { min: 1, max: 256 })
@@ -113,17 +131,37 @@ export class ScheduleService {
 
       let fallbackComplete = false
       if ((runtimes.length === 0 || runtimeFailure) && this.primeAgentPath) {
-        const result = await runProcess(this.primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
-        const failure = processFailureReason(result)
-        if (failure) throw new Error(`Prime Agent could not return a complete schedule catalog (${failure})`)
-        let parsed: unknown
-        try { parsed = JSON.parse(result.stdout) } catch { throw new Error('Prime Agent returned an incompatible schedule catalog') }
-        if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) throw new Error('Prime Agent returned an incompatible schedule catalog')
-        for (const raw of parsed.jobs) {
-          const job = normalizeJob(raw)
-          if (job && !jobsById.has(job.id)) jobsById.set(job.id, job)
+        if (this.cliUnavailable) {
+          // The negative result is cached for the session: the CLI has no
+          // schedule catalog, so its contribution is a complete empty list.
+          fallbackComplete = true
+        } else {
+          let result: ProcessResult | undefined
+          try {
+            result = await runProcess(this.primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
+          } catch (error) {
+            const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined
+            if (code !== 'ENOENT') throw error
+            this.markCliScheduleSupportUnavailable('executable not found')
+          }
+          if (result) {
+            const failure = processFailureReason(result)
+            if (failure === 'exit' && isUnknownCommandOutput(`${result.stderr}\n${result.stdout}`)) {
+              this.markCliScheduleSupportUnavailable('schedule commands are not supported by this CLI')
+            } else if (failure) {
+              throw new Error(`Prime Agent could not return a complete schedule catalog (${failure})`)
+            } else {
+              let parsed: unknown
+              try { parsed = JSON.parse(result.stdout) } catch { throw new Error('Prime Agent returned an incompatible schedule catalog') }
+              if (!isRecord(parsed) || !Array.isArray(parsed.jobs)) throw new Error('Prime Agent returned an incompatible schedule catalog')
+              for (const raw of parsed.jobs) {
+                const job = normalizeJob(raw)
+                if (job && !jobsById.has(job.id)) jobsById.set(job.id, job)
+              }
+            }
+          }
+          fallbackComplete = true
         }
-        fallbackComplete = true
       }
       if (runtimeFailure && !fallbackComplete) throw new Error('One or more runtimes could not return schedules; the catalog would be incomplete')
     }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ExtensionUiResponse } from '@/components/ExtensionUiModal'
 import { parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
 import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
@@ -46,7 +46,7 @@ export function useExtensionUi({
   const pendingByRuntimeRef = useRef<Map<string, PendingExtensionUi>>(new Map())
   const timerByRuntimeRef = useRef<Map<string, number>>(new Map())
   const activeRuntimeIdRef = useRef(activeRuntimeId)
-  activeRuntimeIdRef.current = activeRuntimeId
+  useLayoutEffect(() => { activeRuntimeIdRef.current = activeRuntimeId })
 
   const showPendingForActiveRuntime = useCallback(() => {
     const visible = pendingExtensionUiForRuntime(pendingByRuntimeRef.current, activeRuntimeIdRef.current)

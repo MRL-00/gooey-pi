@@ -128,7 +128,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
   }
 
   const handleQuestionnaireKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!questionnaire || !questionnaire.complete) return
+    if (!questionnaire?.complete) return
     const isTextInput = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
     const modifiedArrow = event.ctrlKey || event.metaKey
     // Question navigation is bound to explicit keys only. Tab is intentionally

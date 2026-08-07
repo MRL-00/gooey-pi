@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import {
   artifactArchitectures,
@@ -9,7 +11,7 @@ import {
   assertExactArchitectures,
   assertSupportedNode,
   assertUnpackedNativeLayout,
-  expectedUnpackedNativeFiles,
+  expectedUnpackedNativeLayout,
   parseArchitectures,
   parseTeamIdentifier,
   requireReleaseArtifacts,
@@ -31,9 +33,19 @@ const baseEnvironment = {
   APPLE_TEAM_ID: 'TEAM123',
 }
 
+const FIXTURE_ZEROMQ_DIRECTORIES = new Map([
+  ['arm64', 'arm64'],
+  ['x86_64', 'x64'],
+])
+
+function fixtureAddonPath(architecture: string, runtime = 'libc-115-Release') {
+  return `node_modules/zeromq/build/darwin/${FIXTURE_ZEROMQ_DIRECTORIES.get(architecture)}/node/${runtime}/addon.node`
+}
+
 function createUnpackedFixture(architectures = new Set(['arm64'])) {
   const directory = mkdtempSync(join(tmpdir(), 'prime-work-unpacked-'))
-  for (const relativePath of expectedUnpackedNativeFiles(architectures)) {
+  const relativePaths = [...expectedUnpackedNativeLayout(architectures).files, ...[...architectures].map((architecture) => fixtureAddonPath(architecture))]
+  for (const relativePath of relativePaths) {
     const path = join(directory, relativePath)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, 'fixture')
@@ -63,6 +75,29 @@ function createBundleSizeFixture() {
 }
 
 describe('release preflight', () => {
+  test('package.mjs --dry-run says nothing executed instead of claiming success', () => {
+    const platform = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'
+    const result = spawnSync(process.execPath, ['scripts/release/package.mjs', '--qa', '--platform', platform, '--dry-run'], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('DRY RUN — nothing executed.')
+    expect(result.stdout).not.toContain('pipeline passed')
+  })
+
+  test('verify-package runs when invoked as a script and fails closed on a missing entrypoint', async () => {
+    const { invokedAsScript } = await import('../scripts/release/verify-package.mjs')
+    const original = process.argv[1]
+    try {
+      process.argv[1] = fileURLToPath(new URL('../scripts/release/verify-package.mjs', import.meta.url))
+      expect(invokedAsScript()).toBe(true)
+      process.argv[1] = join(tmpdir(), 'another-entrypoint.mjs')
+      expect(invokedAsScript()).toBe(false)
+      process.argv[1] = undefined as unknown as string
+      expect(invokedAsScript()).toBe(true)
+    } finally {
+      process.argv[1] = original
+    }
+  })
+
   test('requires the Electron 43 Node.js baseline', () => {
     expect(() => assertSupportedNode('v22.11.0')).toThrow(/>=22\.12\.0/)
     expect(() => assertSupportedNode('v22.12.0')).not.toThrow()
@@ -129,13 +164,13 @@ describe('release preflight', () => {
         continue
       }
       if (!inJobs) continue
-      const jobMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*$/)
+      const jobMatch = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/)
       if (jobMatch) {
         job = jobMatch[1]
         current = undefined
         continue
       }
-      if (/^      - /.test(line)) {
+      if (/^ {6}- /.test(line)) {
         current = { job, name: undefined, uses: undefined, secretLines: [], lines: [] }
         steps.push(current)
       }
@@ -187,12 +222,31 @@ describe('release preflight', () => {
 
   test('gates packaging regressions on every pull request', () => {
     const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
-    expect(ciWorkflow).toMatch(/on:\n  push:\n    branches:\n      - main/)
+    expect(ciWorkflow).toMatch(/on:\n {2}push:\n {4}branches:\n {6}- main/)
     expect(ciWorkflow).toContain('cancel-in-progress: true')
-    expect(ciWorkflow).toMatch(/packaging-smoke:\n    if: github\.event_name == 'pull_request'/)
+    expect(ciWorkflow).toMatch(/packaging-smoke:\n {4}if: github\.event_name == 'pull_request'/)
     for (const runner of ['macos-14', 'ubuntu-22.04', 'windows-2022']) expect(ciWorkflow).toContain(`runner: ${runner}`)
     expect(ciWorkflow).toContain('electron-builder --dir')
     expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')
+  })
+
+  test('reads the Node version from .nvmrc and hard-fails empty artifact uploads', () => {
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
+    for (const workflow of [releaseWorkflow, ciWorkflow]) {
+      expect(workflow).not.toMatch(/node-version:/)
+      expect(workflow.match(/node-version-file: \.nvmrc/g)?.length).toBeGreaterThan(0)
+      const uploads = workflow.match(/uses: actions\/upload-artifact@/g) ?? []
+      expect(workflow.match(/if-no-files-found: error/g)).toHaveLength(uploads.length)
+      expect(workflow).toContain('actions/cache@')
+    }
+    // Release jobs skip the CI-duplicated verification suite and never upload
+    // an unpacked application directory; linux/win publish their update feeds.
+    expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(3)
+    expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
+    expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
+    expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
+    expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
   })
 })
 
@@ -258,7 +312,7 @@ describe('post-package verification helpers', () => {
     expect(packageJson.build.mac.asarUnpack).toEqual([
       '**/node_modules/node-pty/build/Release/pty.node',
       '**/node_modules/node-pty/build/Release/spawn-helper',
-      '**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node',
+      '**/node_modules/zeromq/build/darwin/${arch}/node/*-Release/addon.node',
     ])
     expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node'])
     expect(packageJson.build.win.asarUnpack).toEqual([
@@ -276,6 +330,44 @@ describe('post-package verification helpers', () => {
     expect(packageJson.build.directories.output).toBe('release')
   })
 
+  test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(packageJson.build.mac.files).toEqual(['!**/node_modules/zeromq/build/linux/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.linux.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.win.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/linux/**'])
+    // Pin the app to the zeromq range prime-agent uses so the packaged addon
+    // and the agent's runtime expectations cannot drift apart silently.
+    const primeAgent = JSON.parse(readFileSync(new URL('../node_modules/prime-agent/package.json', import.meta.url), 'utf8'))
+    expect(packageJson.dependencies.zeromq).toBe(primeAgent.dependencies.zeromq)
+  })
+
+  test('requires exactly one ZeroMQ addon per architecture regardless of runtime-library name', () => {
+    const architectures = new Set(['arm64'])
+    const duplicatedDirectory = createUnpackedFixture(architectures)
+    const duplicate = join(duplicatedDirectory, fixtureAddonPath('arm64', 'libc-999-Release'))
+    mkdirSync(dirname(duplicate), { recursive: true })
+    writeFileSync(duplicate, 'fixture')
+    try {
+      // Two runtime-library directories for one architecture must fail.
+      expect(() => assertUnpackedNativeLayout(duplicatedDirectory, architectures, () => architectures)).toThrow(/exactly one.*ZeroMQ/i)
+    } finally {
+      rmSync(duplicatedDirectory, { recursive: true, force: true })
+    }
+
+    const futureDirectory = mkdtempSync(join(tmpdir(), 'prime-work-unpacked-'))
+    for (const relativePath of [...expectedUnpackedNativeLayout(architectures).files, fixtureAddonPath('arm64', 'libc-999-Release')]) {
+      const path = join(futureDirectory, relativePath)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, 'fixture')
+    }
+    try {
+      // A future runtime-library name still matches the wildcard exactly once.
+      expect(() => assertUnpackedNativeLayout(futureDirectory, architectures, () => architectures)).not.toThrow()
+    } finally {
+      rmSync(futureDirectory, { recursive: true, force: true })
+    }
+  })
+
   test('accepts the exact unpacked native fixture with complete architecture coverage', () => {
     const architectures = new Set(['arm64'])
     const directory = createUnpackedFixture(architectures)
@@ -289,8 +381,7 @@ describe('post-package verification helpers', () => {
   test('rejects missing and extra unpacked fixture files', () => {
     const architectures = new Set(['arm64'])
     const missingDirectory = createUnpackedFixture(architectures)
-    const missingPath = join(missingDirectory, expectedUnpackedNativeFiles(architectures).at(-1)!)
-    rmSync(missingPath)
+    rmSync(join(missingDirectory, expectedUnpackedNativeLayout(architectures).files.at(-1)!))
     try {
       expect(() => assertUnpackedNativeLayout(missingDirectory, architectures, () => architectures)).toThrow(/Missing unpacked/)
     } finally {
@@ -320,7 +411,7 @@ describe('post-package verification helpers', () => {
     const architectures = new Set(['arm64'])
     const directory = createUnpackedFixture(architectures)
     try {
-      expect(() => assertUnpackedNativeLayout(directory, architectures, (path) => (path.endsWith('addon.node') ? new Set(['x86_64']) : new Set(['arm64'])))).toThrow(
+      expect(() => assertUnpackedNativeLayout(directory, architectures, (path: string) => (path.endsWith('addon.node') ? new Set(['x86_64']) : new Set(['arm64'])))).toThrow(
         /addon\.node is missing app architecture.*arm64/,
       )
     } finally {
@@ -350,6 +441,17 @@ describe('cross-platform packaging repair', () => {
       return readdirSync(directory, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .some((entry) => globMatchExists(join(directory, entry.name), segments))
+    }
+    if (head.includes('*')) {
+      const pattern = new RegExp(
+        `^${head
+          .split('*')
+          .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('[^/]*')}$`,
+      )
+      const entries = readdirSync(directory, { withFileTypes: true })
+      if (rest.length === 0) return entries.some((entry) => entry.isFile() && pattern.test(entry.name))
+      return entries.filter((entry) => entry.isDirectory() && pattern.test(entry.name)).some((entry) => globMatchExists(join(directory, entry.name), rest))
     }
     const next = join(directory, head)
     if (rest.length === 0) return existsSync(next) && statSync(next).isFile()
@@ -406,6 +508,21 @@ describe('cross-platform packaging repair', () => {
     expect(npmViaLifecycle).toEqual({ file: process.execPath, args: ['C:/npm/npm-cli.js', 'run', 'release:verify'], shell: false })
     expect(resolveCommandInvocation('npm', ['ci'], 'win32', {})).toEqual({ file: 'npm.cmd', args: ['ci'], shell: true })
     expect(resolveCommandInvocation('npm', ['ci'], 'darwin', {})).toEqual({ file: 'npm', args: ['ci'], shell: false })
+  })
+})
+
+describe('DMG verification cleanup', () => {
+  test('detach failures are logged instead of masking the original error and cleanup always runs', () => {
+    const source = readFileSync('scripts/release/verify-package.mjs', 'utf8')
+    const verifyDmg = source.slice(source.indexOf('async function verifyDmg'), source.indexOf('export async function verifyPackage'))
+    // hdiutil detach runs inside its own try/catch that only logs.
+    expect(verifyDmg).toMatch(/try\s*\{\s*run\('hdiutil', \['detach', mountPoint\]\)\s*\}\s*catch \(detachError\)\s*\{\s*console\.error/)
+    // The rmSync cleanup is attempted unconditionally after the detach attempt.
+    const finallyIndex = verifyDmg.indexOf('} finally {')
+    const cleanupIndex = verifyDmg.indexOf('rmSync(mountPoint, { recursive: true, force: true })')
+    expect(finallyIndex).toBeGreaterThan(-1)
+    expect(cleanupIndex).toBeGreaterThan(finallyIndex)
+    expect(verifyDmg.slice(cleanupIndex)).not.toContain('detach')
   })
 })
 

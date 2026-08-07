@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { ProcessOutcome, SkillRecord } from '../../src/types/api'
+import type { PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
@@ -21,7 +21,7 @@ const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
 const MAX_KNOWN_PATH_OWNERS = 64
 const MAX_KNOWN_PATHS_PER_OWNER = 4_096
 let activePluginDiscoveries = 0
-const discoveryWaiters: Array<() => void> = []
+const discoveryWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
 
 async function acquirePluginDiscoverySlot(): Promise<void> {
   if (activePluginDiscoveries < MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
@@ -31,13 +31,19 @@ async function acquirePluginDiscoverySlot(): Promise<void> {
   if (discoveryWaiters.length >= MAX_QUEUED_PLUGIN_DISCOVERIES) {
     throw new TypeError('Too many plugin discoveries are pending')
   }
-  await new Promise<void>((resolve) => discoveryWaiters.push(resolve))
+  await new Promise<void>((resolve, reject) => discoveryWaiters.push({ resolve, reject }))
 }
 
 function releasePluginDiscoverySlot(): void {
   const next = discoveryWaiters.shift()
-  if (next) next()
+  if (next) next.resolve()
   else activePluginDiscoveries -= 1
+}
+
+export function beginPluginDiscoveryShutdown(): void {
+  for (const waiter of discoveryWaiters.splice(0)) {
+    waiter.reject(new TypeError('Prime Work is shutting down'))
+  }
 }
 
 async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {
@@ -53,7 +59,7 @@ export class PluginService {
   private lastProjectPath: string | undefined
   private readonly knownPathsByOwner = new Map<string, Set<string>>()
   private settingsMutation = Promise.resolve()
-  private readonly discoveryInFlight = new Map<string, Promise<SkillRecord[]>>()
+  private readonly discoveryInFlight = new Map<string, Promise<PluginCatalog>>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
   private readonly builtInSkills: SkillRecord[]
@@ -68,13 +74,13 @@ export class PluginService {
     this.builtInSkills = options.builtInSkills ?? []
   }
 
-  list(projectPath?: string): Promise<SkillRecord[]> {
+  list(projectPath?: string): Promise<PluginCatalog> {
     if (!projectPath) return this.listCanonical()
     const requested = requireString(projectPath, 'projectPath', { min: 1, max: 4096 })
     return this.authorizeProject(requested).then((safeProjectPath) => this.listCanonical(safeProjectPath))
   }
 
-  private listCanonical(safeProjectPath?: string): Promise<SkillRecord[]> {
+  private listCanonical(safeProjectPath?: string): Promise<PluginCatalog> {
     const key = safeProjectPath ? `project:${safeProjectPath}` : 'user'
     const active = this.discoveryInFlight.get(key)
     if (active) return active
@@ -88,10 +94,10 @@ export class PluginService {
     return discovery
   }
 
-  private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<SkillRecord[]> {
+  private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.primeAgentPath)
-    const combined = [...this.builtInSkills, ...result.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
+    const combined = [...this.builtInSkills, ...result.skills.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
     this.knownPathsByOwner.delete(ownerKey)
@@ -101,7 +107,7 @@ export class PluginService {
       if (oldest === undefined) break
       this.knownPathsByOwner.delete(oldest)
     }
-    return combined
+    return { skills: combined, warnings: result.warnings }
   }
 
   authorizeReveal(pathValue: unknown): string {
@@ -139,7 +145,7 @@ export class PluginService {
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsTarget = prepareProjectSettingsPath(projectPath)
+      settingsTarget = await prepareProjectSettingsPath(projectPath)
     } else {
       settingsTarget = join(this.agentDir, 'settings.json')
     }
@@ -149,7 +155,7 @@ export class PluginService {
     return await mutation
   }
 
-  refresh(): Promise<SkillRecord[]> {
+  refresh(): Promise<PluginCatalog> {
     const projectPath = this.lastProjectPath
     if (!projectPath) return this.listCanonical()
     // Re-authorize on every refresh: the remembered project may have been

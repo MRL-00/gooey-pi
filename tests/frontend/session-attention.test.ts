@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applySessionLifecycleEvent, sessionAttentionSignature } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
+import { pruneClearedAttention, readClearedAttention } from '../../src/components/Sidebar'
 import type { SessionRecord } from '../../src/types/api'
 
 const session = (): SessionRecord => ({
@@ -84,5 +85,27 @@ describe('catalog merges over live session state', () => {
     )
     expect(mergedSame.syncRevision).toBe(3)
     expect(mergedMoved.syncRevision).toBe(7)
+  })
+})
+
+describe('cleared-attention store', () => {
+  it('guards malformed persisted values, including the null literal', () => {
+    expect(readClearedAttention('null')).toEqual({})
+    expect(readClearedAttention('[]')).toEqual({})
+    expect(readClearedAttention('"waiting:1"')).toEqual({})
+    expect(readClearedAttention('not json')).toEqual({})
+    expect(readClearedAttention(null)).toEqual({})
+    expect(readClearedAttention('{"a":"waiting:1","b":7}')).toEqual({ a: 'waiting:1' })
+  })
+
+  it('prunes ids that are absent from the session catalog', () => {
+    const current = { session: 'waiting:1', ghost: 'complete:2' }
+    expect(pruneClearedAttention(current, [session()])).toEqual({ session: 'waiting:1' })
+  })
+
+  it('keeps the store identity when nothing needs pruning or the catalog is empty', () => {
+    const current = { session: 'waiting:1' }
+    expect(pruneClearedAttention(current, [session()])).toBe(current)
+    expect(pruneClearedAttention(current, [])).toBe(current)
   })
 })

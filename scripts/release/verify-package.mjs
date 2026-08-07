@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { listPackage } from '@electron/asar'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
 import { artifactArchitectures, assertAsarLayout, assertExactArchitectures, assertUnpackedNativeLayout, parseArchitectures, parseTeamIdentifier, requireReleaseArtifacts } from './lib.mjs'
@@ -61,7 +62,7 @@ async function verifyApp({ app, artifact, mode, expectedTeam }) {
   const looseApp = join(resources, 'app')
   if (!existsSync(asar)) throw new Error(`${basename(artifact)} application must contain Resources/app.asar`)
   if (existsSync(looseApp)) throw new Error(`${basename(artifact)} contains forbidden loose Resources/app`)
-  assertAsarLayout(listPackage(asar))
+  assertAsarLayout(listPackage(asar, { isPack: false }))
 
   const appArchitectures = parseArchitectures(run('lipo', ['-archs', executable]))
   assertExactArchitectures(appArchitectures, artifactArchitectures(artifact), basename(artifact))
@@ -110,7 +111,15 @@ async function verifyDmg(dmg, options, artifacts) {
     const payload = await verifyApp({ ...options, app: findSingleApp(mountPoint, basename(dmg)), artifact: dmg })
     return assertArtifactSizeBudgets(payload, artifacts)
   } finally {
-    if (mounted) run('hdiutil', ['detach', mountPoint])
+    // A detach failure is logged rather than thrown so it can never mask the
+    // original verification error, and the mount-point cleanup always runs.
+    if (mounted) {
+      try {
+        run('hdiutil', ['detach', mountPoint])
+      } catch (detachError) {
+        console.error(`hdiutil detach failed for ${mountPoint}: ${detachError instanceof Error ? detachError.message : String(detachError)}`)
+      }
+    }
     rmSync(mountPoint, { recursive: true, force: true })
   }
 }
@@ -132,7 +141,18 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
   )
 }
 
-if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// Fail closed: run verification unless this module was provably imported by
+// another entrypoint. A malformed or missing argv[1] must not skip the checks.
+export function invokedAsScript() {
+  if (!process.argv[1]) return true
+  try {
+    return import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+  } catch {
+    return true
+  }
+}
+
+if (invokedAsScript()) {
   const modeIndex = process.argv.indexOf('--mode')
   const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : undefined
   const releaseDirectoryIndex = process.argv.indexOf('--release-directory')

@@ -6,7 +6,6 @@ import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../..
 import { queueDaemonFollowUp } from './agent-daemon'
 import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
 import { runProcess } from './process-utils'
-import { canonicalSessionPath } from './session-paths'
 import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
 import { createSessionMetadataReader, type SessionMetadata } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
@@ -166,7 +165,7 @@ export class SessionService {
     // parallelism and caches the result; reuse it instead of re-listing with
     // up to MAX_SESSION_FILES * 4 serial realpath calls.
     const active = (await this.catalog.liveSessions()).get(safePath)
-    if (!active || active.lifecycle !== 'live' || active.isSessionActive !== true) return false
+    if (active?.lifecycle !== 'live' || active.isSessionActive !== true) return false
     const activeSessionId = requireId(active.activeSessionId ?? active.id, 'activeSessionId')
     if (activeSessionId.startsWith('-')) throw new Error('Prime Agent returned an invalid active session identifier')
 

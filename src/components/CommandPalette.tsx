@@ -1,4 +1,4 @@
-import { Bell, CalendarClock, Folder, LayoutPanelLeft, PackageOpen, Plus, Search, Settings, Terminal, X } from 'lucide-react'
+import { Bell, CalendarClock, Folder, LayoutPanelLeft, PackageOpen, Plus, Search, Settings, Terminal, } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WorkspaceView } from '@/types/api'

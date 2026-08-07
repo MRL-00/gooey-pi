@@ -178,10 +178,18 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
     }
   }
 
+  const insertAtCaret = (textarea: HTMLTextAreaElement, text: string) => {
+    const start = textarea.selectionStart ?? textarea.value.length
+    const end = textarea.selectionEnd ?? textarea.value.length
+    textarea.setRangeText(text, start, end, 'end')
+    setValue(textarea.value)
+  }
   const insert = (text: string) => {
-    setValue((current) => `${current}${text}`)
+    const textarea = textareaRef.current
+    if (textarea) insertAtCaret(textarea, text)
+    else setValue((current) => `${current}${text}`)
     setMenu(null)
-    textareaRef.current?.focus()
+    textarea?.focus()
   }
 
   const suggestions = menu === 'command'
@@ -237,7 +245,7 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
             if (!files.length) return
             const pastedText = event.clipboardData.getData('text/plain')
             event.preventDefault()
-            if (pastedText) setValue((current) => `${current}${pastedText}`)
+            if (pastedText) insertAtCaret(event.currentTarget, pastedText)
             void addPastedImages(files)
           }}
           onKeyDown={(event) => {

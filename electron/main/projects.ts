@@ -336,7 +336,8 @@ export class ProjectService {
         if (child.isDirectory() && ignoredDirectories.has(child.name)) continue
         if (!child.isDirectory() && !child.isFile()) continue
         const absolutePath = resolve(directory, child.name)
-        const path = relative(root, absolutePath).split('\\').join('/')
+        const relativePath = relative(root, absolutePath)
+        const path = process.platform === 'win32' ? relativePath.split('\\').join('/') : relativePath
         entries.push({ path, type: child.isDirectory() ? 'directory' : 'file' })
         if (child.isDirectory()) await visit(absolutePath)
       }

@@ -611,7 +611,7 @@ describe('SessionService transcript bounds', () => {
     const result = parts.find((part) => part.type === 'toolResult')
     const image = parts.find((part) => part.type === 'image')
     expect(typeof call?.args).toBe('string')
-    expect((call?.args as string).length).toBeLessThanOrEqual(128 * 1024)
+    expect((call!.args as string).length).toBeLessThanOrEqual(128 * 1024)
     expect(result?.text.length).toBeLessThanOrEqual(128 * 1024)
     expect(image?.data?.length).toBeLessThanOrEqual(2 * 1024 * 1024)
     expect(call?.args).toContain('[truncated]')

@@ -19,21 +19,32 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "none",
+      "preset": "recommended",
       "security": {
         "preset": "all",
         "noSecrets": "off"
       },
+      "style": {
+        "noNonNullAssertion": "off",
+        "noDescendingSpecificity": "off"
+      },
+      "a11y": {
+        "noAutofocus": "off",
+        "noLabelWithoutControl": "off",
+        "noNoninteractiveTabindex": "off",
+        "noStaticElementInteractions": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "useSemanticElements": "off"
+      },
       "correctness": {
-        "noConstAssign": "error",
-        "noSelfAssign": "error",
-        "noUnreachable": "error"
+        "useExhaustiveDependencies": "off"
       },
       "suspicious": {
-        "noDuplicateObjectKeys": "error",
-        "noDuplicateCase": "error",
-        "noDoubleEquals": "error",
-        "noDebugger": "error"
+        "noArrayIndexKey": "off",
+        "noTemplateCurlyInString": "off"
+      },
+      "complexity": {
+        "noImportantStyles": "off"
       }
     }
   },

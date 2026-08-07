@@ -68,7 +68,7 @@ describe('agent transport events', () => {
 
     assertContinuousTurn(events.reduce((messages, event) => applyPrimeEvent(messages, event), [streamingMessage()]))
     const buffered = createPrimeEventBuffer()
-    events.forEach((event) => buffered.push(event))
+    for (const event of events) buffered.push(event)
     assertContinuousTurn(buffered.replay([streamingMessage()]))
   })
 
@@ -104,7 +104,7 @@ describe('agent transport events', () => {
     resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), [streamingMessage()])
     const buffered = createPrimeEventBuffer()
-    events.forEach((event) => buffered.push(event))
+    for (const event of events) buffered.push(event)
     resetTranscriptIdsForTests()
     expect(buffered.replay([streamingMessage()])).toEqual(sequential)
     expect(sequential.filter((message) => message.parts.some((part) => part.type === 'compaction'))).toHaveLength(1)
@@ -127,7 +127,7 @@ describe('agent transport events', () => {
       expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length)
     }
 
-    assertDistinctIds(events.reduce((current, event) => applyPrimeEvent(current, event), []))
+    assertDistinctIds(events.reduce<TranscriptMessage[]>((current, event) => applyPrimeEvent(current, event), []))
     assertDistinctIds(replayPrimeEvents([], events))
     now.mockRestore()
   })

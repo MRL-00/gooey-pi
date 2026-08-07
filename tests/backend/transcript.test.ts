@@ -23,7 +23,7 @@ describe('session file record tolerance', () => {
     // The catalog admits this session, so the transcript reader must open it too.
     const metadata = await readSessionMetadata(file)
     expect(metadata.id).toBe('big-record')
-    expect(metadata.preview.length).toBeGreaterThan(0)
+    expect(metadata.preview?.length).toBeGreaterThan(0)
 
     const transcript = await readTranscript(file, false)
     expect(transcript).toHaveLength(1)

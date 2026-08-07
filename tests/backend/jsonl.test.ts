@@ -138,7 +138,7 @@ describe('strictJsonLines', () => {
       break
     }
     expect(lines).toEqual(['{"line":1}'])
-    if (!stream.closed) await new Promise((resolve) => stream.once('close', resolve))
+    if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', () => resolve()))
     expect(stream.destroyed).toBe(true)
   })
 
@@ -150,7 +150,7 @@ describe('strictJsonLines', () => {
     const stream = createReadStream(file, { highWaterMark: 64 })
     stream.on('error', () => undefined)
     await expect(collect(stream, 64)).rejects.toThrow(/maximum frame size/)
-    if (!stream.closed) await new Promise((resolve) => stream.once('close', resolve))
+    if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', () => resolve()))
     expect(stream.destroyed).toBe(true)
   })
 })

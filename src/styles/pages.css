@@ -86,6 +86,7 @@
 .schedule-row__status { width: 34px; height: 34px; display: grid; place-items: center; align-self: start; margin-top: 1px; border-radius: 9px; color: var(--prime); background: var(--prime-soft); }
 .schedule-row__status--paused, .schedule-row__status--completed { color: var(--text-tertiary); background: var(--surface-hover); }
 .schedule-row__status--attention { color: var(--warning); background: var(--warning-soft); }
+.schedule-row__status--unknown { color: var(--text-tertiary); background: transparent; border: 1px dashed var(--border); }
 .schedule-row__main { min-width: 0; display: flex; flex-direction: column; }
 .schedule-row__main > span:first-child { display: flex; align-items: center; gap: 7px; }
 .schedule-row__main strong { overflow: hidden; font-size: 13px; font-weight: 570; white-space: nowrap; text-overflow: ellipsis; }
@@ -102,6 +103,7 @@
 .schedule-state { display: inline-flex; padding: 2px 6px; border-radius: 5px; color: var(--success); background: var(--success-soft); font-size: 8.5px; font-style: normal; line-height: 1.4; text-transform: capitalize; white-space: nowrap; }
 .schedule-state--paused, .schedule-state--completed { color: var(--text-tertiary); background: var(--surface-hover); }
 .schedule-state--attention, .schedule-state--blocked { color: var(--warning); background: var(--warning-soft); }
+.schedule-state--unknown { color: var(--text-tertiary); background: transparent; border: 1px dashed var(--border); }
 
 .schedule-page--detail { width: min(100%, 980px); }
 .schedule-back { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; margin: -7px 0 18px -7px; padding: 0 7px; border-radius: 6px; color: var(--text-secondary); background: transparent; font-size: 11px; }
@@ -112,6 +114,7 @@
 .schedule-detail__mark { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 11px; color: var(--prime); background: var(--prime-soft); }
 .schedule-detail__mark--paused, .schedule-detail__mark--completed { color: var(--text-tertiary); background: var(--surface-hover); }
 .schedule-detail__mark--attention, .schedule-detail__mark--blocked { color: var(--warning); background: var(--warning-soft); }
+.schedule-detail__mark--unknown { color: var(--text-tertiary); background: transparent; border: 1px dashed var(--border); }
 .schedule-detail__actions { display: flex; flex-wrap: wrap; gap: 7px; margin: 22px 0 20px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .schedule-detail__actions .schedule-delete { margin-left: auto; color: var(--danger); }
 .schedule-action-notice { display: flex; align-items: center; gap: 6px; margin: 10px 0; padding: 8px 10px; border-radius: 7px; color: var(--success); background: var(--success-soft); font-size: 11px; }

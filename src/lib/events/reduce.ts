@@ -24,6 +24,15 @@ interface PartDraft {
 }
 
 /** Applies a frame batch with one transcript scan and one scan of each drafted part list. */
+/**
+ * Tool events without a toolCallId must still pair their start/update/end
+ * events onto one tool row instead of appending a phantom second row, so
+ * they share a stable name-derived fallback id.
+ */
+function effectiveToolId(id: string | undefined, name: string): string {
+  return id ?? `tool-fallback:${name}`
+}
+
 export function replayPrimeEvents(
   messages: TranscriptMessage[],
   events: Record<string, unknown>[],
@@ -115,7 +124,7 @@ export function replayPrimeEvents(
   const assistantIndex = () => lastStreamingAssistant >= 0
     ? lastStreamingAssistant
     : resumeTailAssistant() ?? appendAssistant('stream')
-  const upsertToolDraft = (index: number, id: string | undefined, name: string, args: unknown): PartNode => {
+  const upsertToolDraft = (index: number, id: string, name: string, args: unknown): PartNode => {
     const draft = draftParts(index)
     const existing = id ? draft.firstToolById.get(id) : undefined
     const tool: MessagePart = { type: 'toolCall', id, name, args }
@@ -191,18 +200,20 @@ export function replayPrimeEvents(
         else appendNode(draft, withPartId({ type: partType, text }))
       } else if (deltaType === 'toolcall_end') {
         const tool = record(delta?.toolCall)
-        upsertToolDraft(assistantIndex(), string(tool?.id), string(tool?.name) ?? 'Tool', tool?.arguments ?? tool?.args)
+        const name = string(tool?.name) ?? 'Tool'
+        upsertToolDraft(assistantIndex(), effectiveToolId(string(tool?.id), name), name, tool?.arguments ?? tool?.args)
       }
       continue
     }
     if (type === 'tool_execution_start') {
-      upsertToolDraft(assistantIndex(), string(raw.toolCallId), string(raw.toolName) ?? 'Tool', raw.args)
+      const name = string(raw.toolName) ?? 'Tool'
+      upsertToolDraft(assistantIndex(), effectiveToolId(string(raw.toolCallId), name), name, raw.args)
       continue
     }
     if (type === 'tool_execution_update') {
       const index = assistantIndex()
-      const id = string(raw.toolCallId)
       const name = string(raw.toolName) ?? 'Tool'
+      const id = effectiveToolId(string(raw.toolCallId), name)
       upsertToolDraft(index, id, name, raw.args)
       const draft = draftParts(index)
       const call = draft.firstToolById.get(id)
@@ -211,10 +222,10 @@ export function replayPrimeEvents(
     }
     if (type === 'tool_execution_end') {
       const index = assistantIndex()
-      const id = string(raw.toolCallId)
       const name = string(raw.toolName) ?? 'Tool'
+      const id = effectiveToolId(string(raw.toolCallId), name)
       const draft = draftParts(index)
-      const call = id ? draft.firstToolById.get(id) : undefined
+      const call = draft.firstToolById.get(id)
       const resultPart: MessagePart = { type: 'toolResult', name, text: resultText(raw.result), isError: raw.isError === true }
       if (call) setToolResult(draft, call, resultPart)
       else {

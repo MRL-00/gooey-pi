@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { Stats } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { isAbsolute } from 'node:path'
@@ -13,7 +14,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
   if (!isAbsolute(socketPath) || socketPath.includes('\0') || socketPath.length > 4_096) {
     throw new Error('Prime Agent returned an invalid daemon socket path')
   }
-  let socketInfo
+  let socketInfo: Stats
   try { socketInfo = await lstat(socketPath) } catch { throw new Error('Prime Agent daemon socket is unavailable') }
   const currentUid = typeof process.getuid === 'function' ? process.getuid() : undefined
   if (!socketInfo.isSocket() || (currentUid !== undefined && socketInfo.uid !== currentUid)) {

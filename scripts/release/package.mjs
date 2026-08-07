@@ -7,6 +7,10 @@ const args = new Set(process.argv.slice(2))
 const isPublic = args.has('--public')
 const isQa = args.has('--qa')
 const dryRun = args.has('--dry-run')
+// CI release jobs pass --skip-verify because the CI workflow has already run
+// the identical typecheck/lint/test suite on the same commit; the release job
+// then only builds the bundle, packages, and runs post-package verification.
+const skipVerify = args.has('--skip-verify')
 const platformIndex = process.argv.indexOf('--platform')
 const platform = platformIndex === -1 ? undefined : process.argv[platformIndex + 1]
 const archIndex = process.argv.indexOf('--arch')
@@ -38,7 +42,7 @@ try {
   assertSupportedNode()
   if (process.platform !== platformHosts[platform]) throw new Error(`${platform} packaging must run natively on ${platformHosts[platform]}`)
   if (isPublic && platform === 'mac') validateReleaseCredentials(process.env)
-  const verifyScript = platform === 'mac' ? 'release:verify' : 'release:verify:package'
+  const verifyScript = skipVerify ? 'build:bundle' : platform === 'mac' ? 'release:verify' : 'release:verify:package'
   run('npm', ['run', verifyScript], withoutReleaseCredentials(process.env))
   if (!dryRun) rmSync(resolve('release', platform, arch), { recursive: true, force: true })
 
@@ -55,7 +59,8 @@ try {
   } else {
     run('node', ['scripts/release/verify-cross-platform-package.mjs', '--platform', platform, '--arch', arch], withoutReleaseCredentials(process.env))
   }
-  console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
+  if (dryRun) console.log('\nDRY RUN — nothing executed.')
+  else console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
 } catch (error) {
   console.error(`\nPackaging failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 1

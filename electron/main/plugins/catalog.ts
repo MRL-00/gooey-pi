@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
+import type { Dir } from 'node:fs'
 import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
-import type { SkillRecord } from '../../../src/types/api'
+import type { PluginCatalog, PluginWarning, SkillRecord } from '../../../src/types/api'
 import { mapLimit } from '../lib/async'
 import { isPathWithin, isRecord } from '../validation'
-import { readAtMost } from './file-io'
+import { errorCode, readAtMost } from './file-io'
 
 type Kind = SkillRecord['kind']
 type Location = SkillRecord['location']
@@ -65,13 +66,29 @@ function safeSource(source: string): string {
   return source.slice(0, 1_000)
 }
 
-async function readSettings(path: string): Promise<Record<string, unknown>> {
+interface SettingsReadResult { settings: Record<string, unknown>; warning?: PluginWarning }
+
+/**
+ * Reads settings.json with readSettingsForUpdate's strictness philosophy: a
+ * missing file is fine, but an unreadable, oversized, unparsable, or
+ * non-object file yields empty settings plus a structured warning the
+ * Plugins UI surfaces, instead of silently hiding configured plugins.
+ */
+async function readSettings(path: string, scope: PluginWarning['scope']): Promise<SettingsReadResult> {
+  const invalid = (message: string): SettingsReadResult => ({ settings: {}, warning: { scope, path, message } })
+  let content: string
   try {
-    const { content, truncated } = await readAtMost(path, MAX_SETTINGS_BYTES)
-    if (truncated) return {}
-    const value: unknown = JSON.parse(content)
-    return isRecord(value) ? value : {}
-  } catch { return {} }
+    const value = await readAtMost(path, MAX_SETTINGS_BYTES)
+    if (value.truncated) return invalid('settings.json is too large — plugins hidden')
+    content = value.content
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return { settings: {} }
+    return invalid('settings.json unreadable — plugins hidden')
+  }
+  let value: unknown
+  try { value = JSON.parse(content) } catch { return invalid('settings.json invalid — plugins hidden') }
+  if (!isRecord(value)) return invalid('settings.json invalid — plugins hidden')
+  return { settings: value }
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -82,6 +99,10 @@ function resolveConfiguredPath(value: string, base: string): string | null {
   if (!value || /^[!+*-]/.test(value) || value.includes('*') || value.includes('?')) return null
   const expanded = value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value
   return resolve(base, expanded)
+}
+
+function isPathWithinAny(roots: readonly string[], candidate: string): boolean {
+  return roots.some((root) => isPathWithin(root, candidate))
 }
 
 function discoveryExhausted(budget: DiscoveryBudget): boolean {
@@ -105,18 +126,18 @@ async function collectDirectory(
   location: Location,
   output: Candidate[],
   budget: DiscoveryBudget,
-  options: { skillRoot?: boolean; depth?: number; containmentRoot?: string } = {},
+  options: { skillRoot?: boolean; depth?: number; containmentRoots?: readonly string[] } = {},
 ): Promise<void> {
   if (discoveryExhausted(budget)) return
   const depth = options.depth ?? 0
-  if (depth === 0 && options.containmentRoot) {
+  if (depth === 0 && options.containmentRoots?.length) {
     try {
       const canonicalRoot = await realpath(root)
-      if (!isPathWithin(options.containmentRoot, canonicalRoot)) return
+      if (!isPathWithinAny(options.containmentRoots, canonicalRoot)) return
     } catch { return }
   }
 
-  let directory
+  let directory: Dir
   try {
     directory = await opendir(root)
     budget.directories += 1
@@ -147,7 +168,7 @@ async function collectConfigured(
   location: Location,
   output: Candidate[],
   budget: DiscoveryBudget,
-  containmentRoot?: string,
+  containmentRoots?: readonly string[],
 ): Promise<void> {
   if (!Array.isArray(value)) return
   for (const raw of value) {
@@ -159,9 +180,9 @@ async function collectConfigured(
       const stat = await lstat(path)
       if (stat.isSymbolicLink()) continue
       const canonicalPath = await realpath(path)
-      if (containmentRoot && !isPathWithin(containmentRoot, canonicalPath)) continue
+      if (containmentRoots?.length && !isPathWithinAny(containmentRoots, canonicalPath)) continue
       if (stat.isFile()) addCandidate({ path: canonicalPath, kind, location }, output, budget)
-      else if (stat.isDirectory()) await collectDirectory(canonicalPath, kind, location, output, budget, { skillRoot: kind === 'skill', containmentRoot })
+      else if (stat.isDirectory()) await collectDirectory(canonicalPath, kind, location, output, budget, { skillRoot: kind === 'skill', containmentRoots })
     } catch { /* stale configured path */ }
   }
 }
@@ -238,18 +259,24 @@ async function bundledSkillsDirectory(primeAgentPath: string | null): Promise<st
   } catch { return null }
 }
 
-export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, primeAgentPath: string | null): Promise<SkillRecord[]> {
+export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, primeAgentPath: string | null): Promise<PluginCatalog> {
   const candidates: Candidate[] = []
+  const warnings: PluginWarning[] = []
   const budget: DiscoveryBudget = { candidates: 0, directories: 0, entries: 0, seenCandidates: new Set() }
-  const globalSettings = await readSettings(join(agentDir, 'settings.json'))
+  const globalRead = await readSettings(join(agentDir, 'settings.json'), 'user')
+  if (globalRead.warning) warnings.push(globalRead.warning)
+  const globalSettings = globalRead.settings
 
   await collectDirectory(join(agentDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true })
   await collectDirectory(join(homedir(), '.agents', 'skills'), 'skill', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'extensions'), 'extension', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'prompts'), 'prompt', 'user', candidates, budget)
-  await collectConfigured(globalSettings.skills, agentDir, 'skill', 'user', candidates, budget)
-  await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget)
-  await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget)
+  const userConfiguredRoots = await Promise.all([agentDir, homedir()].map(async (root) => {
+    try { return await realpath(root) } catch { return root }
+  }))
+  await collectConfigured(globalSettings.skills, agentDir, 'skill', 'user', candidates, budget, userConfiguredRoots)
+  await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget, userConfiguredRoots)
+  await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget, userConfiguredRoots)
 
   const bundled = await bundledSkillsDirectory(primeAgentPath)
   if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget)
@@ -257,18 +284,21 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   let projectSettings: Record<string, unknown> = {}
   if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
     const projectAgentDir = join(safeProjectPath, '.prime', 'agent')
-    projectSettings = await readSettings(join(projectAgentDir, 'settings.json'))
-    await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoot: safeProjectPath })
-    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, safeProjectPath)
-    await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, safeProjectPath)
-    await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, safeProjectPath)
+    const projectRead = await readSettings(join(projectAgentDir, 'settings.json'), 'project')
+    if (projectRead.warning) warnings.push(projectRead.warning)
+    projectSettings = projectRead.settings
+    const projectRoots = [safeProjectPath]
+    await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoots: projectRoots })
+    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, projectRoots)
+    await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, projectRoots)
+    await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, projectRoots)
   }
 
   const result = await buildCandidateRecords(candidates, safeProjectPath)
   addSettingsMetadata(globalSettings, 'user', result)
   addSettingsMetadata(projectSettings, 'project', result)
-  return result.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
+  return { skills: result.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)), warnings }
 }

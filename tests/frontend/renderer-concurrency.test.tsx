@@ -11,7 +11,7 @@ import { useExtensionUi } from '../../src/hooks/useExtensionUi'
 import { usePluginSkills } from '../../src/hooks/usePluginSkills'
 import { useWorkspaceRuntime } from '../../src/hooks/useWorkspaceRuntime'
 import { DEFAULT_SETTINGS } from '../../src/lib/data'
-import type { AppSettings, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, SkillRecord, TranscriptMessage } from '../../src/types/api'
+import type { AppSettings, PluginCatalog, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, SkillRecord, TranscriptMessage } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -141,7 +141,7 @@ describe('transcript read ownership', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError: vi.fn(),
       })
       return <Probe />
@@ -177,7 +177,7 @@ describe('transcript read ownership', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError,
       })
       return <Probe />
@@ -202,6 +202,60 @@ describe('transcript read ownership', () => {
     expect(state.messages[0]?.parts[0]).toMatchObject({ type: 'text', text: 'loaded:live' })
     expect(read).toHaveBeenCalledTimes(2)
   })
+
+  it('clears prompt admission on transport_error and runtime_exit so reconciliation recovers', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, sessions: [session],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<WorkspaceProbe />); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    await act(async () => { expect(state.prepareForPrompt(0)).toBe(true) })
+
+    // The admitted prompt never starts: the transport fails and the runtime exits.
+    await act(async () => {
+      state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'transport_error' })
+      state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'runtime_exit' })
+      await Promise.resolve()
+    })
+
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts an admitted load even when the session catalog record has diverged', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    const renamedRecord: SessionRecord = { ...session, id: 'two', filePath: '/sessions/two-renamed.jsonl', title: 'Two' }
+    const activatedSession: SessionRecord = { ...session, id: 'two', filePath: '/sessions/two.jsonl', title: 'Two' }
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, sessions: [session, renamedRecord],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<WorkspaceProbe />); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    // Activate a session whose catalog record carries a different filePath, so
+    // the transcript effect's guard can never match this workspace.
+    await act(async () => { state.activateWorkspace(project, activatedSession); await Promise.resolve(); await Promise.resolve() })
+
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenLastCalledWith('/sessions/two.jsonl')
+    expect(state.loadingSession).toBe(false)
+  })
 })
 
 describe('agent event frame queue', () => {
@@ -211,7 +265,7 @@ describe('agent event frame queue', () => {
     let state!: ReturnType<typeof useWorkspaceRuntime>
     function WorkspaceProbe() {
       state = useWorkspaceRuntime({
-        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        bridge, initialProject: project, initialSession: session, sessions: [session],
         initialMessages: [], reportError,
       })
       return <Probe />
@@ -332,7 +386,7 @@ describe('bootstrap critical path', () => {
       app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
       schedules: { list: async () => [] },
     } as unknown as PrimeWorkApi
-    const workspaceRef = { current: { generation: 0 } }
+    const workspaceRef = { current: { generation: 0 } as { generation: number; project?: ProjectRecord; session?: SessionRecord; cwd?: string; sessionFile?: string } }
     const activated: Array<{ project?: ProjectRecord; session?: SessionRecord }> = []
     const attached: RuntimeInfo[] = []
     const setProjects = vi.fn()
@@ -417,7 +471,7 @@ describe('extension UI runtime ownership', () => {
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe({ activeRuntimeId }: { activeRuntimeId: string }) {
       runtimeIdRef.current = activeRuntimeId
-      state = useExtensionUi({ bridge, activeRuntimeId, runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId, runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
     await act(async () => { root.render(<ExtensionProbe activeRuntimeId="active" />) })
@@ -437,14 +491,13 @@ describe('extension UI runtime ownership', () => {
   it('groups ask_user question requests and responds to every pending question', async () => {
     const command = vi.fn().mockResolvedValue({})
     const bridge = { agent: { command } } as unknown as PrimeWorkApi
-    const runtimeIdRef = { current: 'runtime' as string | null }
     const runtimeSessionsRef = { current: new Map<string, string>() }
     const setSessions = vi.fn()
     const setRuntime = vi.fn()
     const reportError = vi.fn()
     let state!: ReturnType<typeof useExtensionUi>
     function ExtensionProbe() {
-      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeIdRef, runtimeSessionsRef, setSessions, setRuntime, reportError })
+      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeSessionsRef, setSessions, setRuntime, reportError })
       return <Probe />
     }
 
@@ -481,9 +534,9 @@ describe('extension UI runtime ownership', () => {
 
 describe('plugin request ownership', () => {
   it('rejects stale global, project, refresh, generation, and path completions', async () => {
-    const requests = Array.from({ length: 4 }, () => deferred<SkillRecord[]>())
+    const requests = Array.from({ length: 4 }, () => deferred<PluginCatalog>())
     const list = vi.fn()
-    requests.forEach((request) => list.mockImplementationOnce(() => request.promise))
+    for (const request of requests) list.mockImplementationOnce(() => request.promise)
     const bridge = { plugins: { list } } as unknown as PrimeWorkApi
     const reportError = vi.fn()
     const skill = (id: string): SkillRecord => ({ id, name: id, description: id, kind: 'skill', location: 'project', enabled: true })
@@ -497,17 +550,17 @@ describe('plugin request ownership', () => {
     await act(async () => { root.render(<PluginProbe scope="/project" generation={1} />) })
     expect(list).toHaveBeenNthCalledWith(2, '/project')
 
-    await act(async () => { requests[0].resolve([skill('stale-global')]); await requests[0].promise })
+    await act(async () => { requests[0].resolve({ skills: [skill('stale-global')], warnings: [] }); await requests[0].promise })
     expect(state.skills).toEqual([])
-    await act(async () => { requests[1].resolve([skill('project-one')]); await requests[1].promise })
+    await act(async () => { requests[1].resolve({ skills: [skill('project-one')], warnings: [] }); await requests[1].promise })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-one'])
 
     let refresh!: Promise<void>
     await act(async () => { refresh = state.refresh(); await Promise.resolve() })
     await act(async () => { root.render(<PluginProbe scope="/project" generation={2} />) })
-    await act(async () => { requests[2].resolve([skill('stale-refresh')]); await refresh })
+    await act(async () => { requests[2].resolve({ skills: [skill('stale-refresh')], warnings: [] }); await refresh })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-one'])
-    await act(async () => { requests[3].resolve([skill('project-two')]); await requests[3].promise })
+    await act(async () => { requests[3].resolve({ skills: [skill('project-two')], warnings: [] }); await requests[3].promise })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-two'])
     expect(reportError).not.toHaveBeenCalled()
   })

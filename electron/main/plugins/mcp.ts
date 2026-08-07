@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync } from 'node:fs'
-import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { renameSync, type BigIntStats, type Stats } from 'node:fs'
+import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
 import { isPathWithin, isRecord, requireString } from '../validation'
@@ -23,7 +23,7 @@ type FingerprintSettings = (path: string) => Promise<string>
 
 export interface ProjectSettingsPath {
   path: string
-  verify(): void
+  verify(): Promise<void>
 }
 
 function parseSettingsLockOwner(value: unknown): SettingsLockOwner | null {
@@ -128,19 +128,19 @@ async function recoverStaleSettingsLock(lockPath: string): Promise<(() => Promis
   }
 }
 
-export async function acquireSettingsLock(settingsPath: string, verify?: () => void): Promise<() => Promise<void>> {
-  if (verify) verify()
+export async function acquireSettingsLock(settingsPath: string, verify?: () => Promise<void>): Promise<() => Promise<void>> {
+  if (verify) await verify()
   else await mkdir(dirname(settingsPath), { recursive: true })
   const lockPath = `${settingsPath}.lock`
   for (let attempt = 0; attempt < SETTINGS_LOCK_ATTEMPTS; attempt += 1) {
-    verify?.()
+    await verify?.()
     const acquired = await createSettingsLock(lockPath)
     if (acquired) {
-      try { verify?.(); return acquired } catch (error) { await acquired(); throw error }
+      try { await verify?.(); return acquired } catch (error) { await acquired(); throw error }
     }
     const recovered = await recoverStaleSettingsLock(lockPath)
     if (recovered) {
-      try { verify?.(); return recovered } catch (error) { await recovered(); throw error }
+      try { await verify?.(); return recovered } catch (error) { await recovered(); throw error }
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, SETTINGS_LOCK_RETRY_MS))
   }
@@ -201,7 +201,7 @@ async function writeSettingsAtomically(
   expectedFingerprint: string,
   source: string | null,
   fingerprint: FingerprintSettings,
-  verify?: () => void,
+  verify?: () => Promise<void>,
 ): Promise<boolean> {
   const token = `${process.pid}.${randomUUID()}`
   const temporary = `${path}.${token}.tmp`
@@ -210,7 +210,7 @@ async function writeSettingsAtomically(
   let backupIdentity: FileIdentity | null = null
   let renamed = false
   try {
-    verify?.()
+    await verify?.()
     await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
     temporaryIdentity = await regularFileIdentity(temporary)
     if (source !== null) {
@@ -218,26 +218,27 @@ async function writeSettingsAtomically(
       backupIdentity = await regularFileIdentity(backup)
     }
     // Both recovery files must have been staged in the still-pinned directory.
-    verify?.()
+    await verify?.()
     if (await fingerprint(path) !== expectedFingerprint) return false
-    verify?.()
+    await verify?.()
     if (!sameFileIdentity(await regularFileIdentity(temporary), temporaryIdentity)) {
       throw new TypeError('Prime Agent settings staging file changed during update')
     }
     if (backupIdentity && !sameFileIdentity(await regularFileIdentity(backup), backupIdentity)) {
       throw new TypeError('Prime Agent settings backup changed during update')
     }
-    // There is no renameat-style API in Node on macOS. Keep this synchronous
-    // verification immediately adjacent to rename, then prove which inode won.
-    verify?.()
+    // There is no renameat-style API in Node on macOS. Await the pin re-check
+    // immediately before the rename, then prove which inode won.
+    await verify?.()
     // Invoke the final filesystem operation synchronously so no libuv worker-pool
-    // admission window separates the identity check from the rename syscall.
+    // admission window separates it from the rename syscall; the post-rename
+    // identity and pin checks below remain the authority on what actually won.
     renameSync(temporary, path)
     renamed = true
     if (!sameFileIdentity(await regularFileIdentity(path), temporaryIdentity)) {
       throw new TypeError('Prime Agent settings target changed during update')
     }
-    verify?.()
+    await verify?.()
     if (backupIdentity && !await removeOwnedFile(backup, backupIdentity)) {
       throw new TypeError('Prime Agent settings backup changed during update')
     }
@@ -290,43 +291,51 @@ export function validateMcpConnection(value: unknown): McpConnectionInput {
   throw new TypeError('MCP transport must be http or stdio')
 }
 
-export function prepareProjectSettingsPath(projectPath: string): ProjectSettingsPath {
-  const projectRoot = realpathSync(projectPath)
+export async function prepareProjectSettingsPath(projectPath: string): Promise<ProjectSettingsPath> {
+  const projectRoot = await realpath(projectPath)
   const pinnedDirectories = new Map<string, { dev: string; ino: string }>()
-  const pin = (path: string): void => {
-    const stat = lstatSync(path, { bigint: true })
+  const pin = async (path: string): Promise<void> => {
+    const stat = await lstat(path, { bigint: true })
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TypeError('Project MCP configuration path must remain a real directory')
     pinnedDirectories.set(path, { dev: stat.dev.toString(), ino: stat.ino.toString() })
   }
-  pin(projectRoot)
+  await pin(projectRoot)
   let directory = projectRoot
   for (const segment of ['.prime', 'agent']) {
     const candidate = join(directory, segment)
-    if (existsSync(candidate)) {
-      const stat = lstatSync(candidate)
-      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TypeError(`Project ${segment} configuration path must be a real directory`)
-    } else {
-      mkdirSync(candidate, { mode: 0o700 })
+    let existing: Stats | undefined
+    try {
+      existing = await lstat(candidate)
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw error
     }
-    directory = realpathSync(candidate)
+    if (existing) {
+      if (existing.isSymbolicLink() || !existing.isDirectory()) throw new TypeError(`Project ${segment} configuration path must be a real directory`)
+    } else {
+      await mkdir(candidate, { mode: 0o700 })
+    }
+    directory = await realpath(candidate)
     if (!isPathWithin(projectRoot, directory)) throw new TypeError('Project MCP configuration path escapes the project')
-    pin(directory)
+    await pin(directory)
   }
   const settingsPath = join(directory, 'settings.json')
-  const verify = (): void => {
+  const verify = async (): Promise<void> => {
     for (const [path, expected] of pinnedDirectories) {
-      let stat
-      try { stat = lstatSync(path, { bigint: true }) } catch { throw new TypeError('Project MCP configuration directory changed during update') }
+      let stat: BigIntStats
+      try { stat = await lstat(path, { bigint: true }) } catch { throw new TypeError('Project MCP configuration directory changed during update') }
       if (stat.isSymbolicLink() || !stat.isDirectory() || stat.dev.toString() !== expected.dev || stat.ino.toString() !== expected.ino) {
         throw new TypeError('Project MCP configuration directory changed during update')
       }
     }
-    if (existsSync(settingsPath)) {
-      const stat = lstatSync(settingsPath)
-      if (stat.isSymbolicLink() || !stat.isFile()) throw new TypeError('Project MCP settings must be a regular file')
+    let settingsStat: Stats | undefined
+    try {
+      settingsStat = await lstat(settingsPath)
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw new TypeError('Project MCP settings must be a regular file')
     }
+    if (settingsStat && (settingsStat.isSymbolicLink() || !settingsStat.isFile())) throw new TypeError('Project MCP settings must be a regular file')
   }
-  verify()
+  await verify()
   return { path: settingsPath, verify }
 }
 
@@ -340,13 +349,13 @@ export async function updateMcpSettings(
   const release = await acquireSettingsLock(settingsPath, verify)
   try {
     for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
-      verify?.()
+      await verify?.()
       const snapshot = await readSettingsForUpdate(settingsPath)
-      verify?.()
+      await verify?.()
       const settings = snapshot.settings
       if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
       const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
-      if (Object.prototype.hasOwnProperty.call(currentServers, input.name)) {
+      if (Object.hasOwn(currentServers, input.name)) {
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
       const config = input.type === 'http'

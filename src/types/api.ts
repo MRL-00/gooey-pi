@@ -179,6 +179,17 @@ export interface SkillRecord {
   source?: string
 }
 
+export interface PluginWarning {
+  scope: 'user' | 'project'
+  path: string
+  message: string
+}
+
+export interface PluginCatalog {
+  skills: SkillRecord[]
+  warnings: PluginWarning[]
+}
+
 export type McpConnectionInput = {
   name: string
   scope: 'user' | 'project'
@@ -283,7 +294,7 @@ export interface ScheduleRecord {
   title: string
   schedule: string
   prompt: string
-  status: 'active' | 'paused' | 'completed' | 'failed'
+  status: 'active' | 'paused' | 'completed' | 'failed' | 'unknown'
   nextRun?: string
   lastRun?: string
   runtimeId?: string
@@ -388,7 +399,7 @@ export interface PrimeWorkApi {
     onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
-  plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<SkillRecord[]> }
+  plugins: { list(projectPath?: string): Promise<PluginCatalog>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<PluginCatalog> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>

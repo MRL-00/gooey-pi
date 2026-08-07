@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PluginService } from '../../electron/main/plugins'
+import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
@@ -22,7 +22,7 @@ describe('PluginService discovery', () => {
     const duplicate = service.refresh()
 
     expect(duplicate).toBe(first)
-    await expect(first).resolves.toEqual(expect.any(Array))
+    await expect(first).resolves.toEqual({ skills: expect.any(Array), warnings: [] })
   })
 
   it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
@@ -34,7 +34,7 @@ describe('PluginService discovery', () => {
     let discoveries = 0
     const service = new PluginService(null, async (path) => realpathSync(path), {
       agentDir,
-      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return [] },
+      discover: async () => { discoveries += 1; await new Promise((resolveWait) => setTimeout(resolveWait, 20)); return { skills: [], warnings: [] } },
     })
 
     await Promise.all([service.list(project), service.list(alias)])
@@ -62,9 +62,9 @@ describe('PluginService discovery', () => {
     await projects.list()
 
     let authorized = 0
-    let signalAuthorized = () => undefined
+    let signalAuthorized: () => void = () => undefined
     const allAuthorized = new Promise<void>((resolveWait) => { signalAuthorized = resolveWait })
-    let releaseDiscovery = () => undefined
+    let releaseDiscovery: () => void = () => undefined
     const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
     let discoveries = 0
     const discoveredRoots = new Set<string | undefined>()
@@ -79,10 +79,10 @@ describe('PluginService discovery', () => {
         discoveries += 1
         discoveredRoots.add(projectPath)
         await discoveryGate
-        return [{
+        return { skills: [{
           id: 'project-prompt', name: 'Project prompt', description: '', kind: 'prompt',
           location: 'project', path: realpathSync(pluginPrompt), enabled: true,
-        }]
+        }], warnings: [] }
       },
     })
 
@@ -101,7 +101,7 @@ describe('PluginService discovery', () => {
     const root = temp()
     const agentDir = join(root, 'agent')
     mkdirSync(agentDir)
-    let releaseDiscovery = () => undefined
+    let releaseDiscovery: () => void = () => undefined
     const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
     let active = 0
     const service = new PluginService(null, async (path) => resolve(path), {
@@ -110,7 +110,7 @@ describe('PluginService discovery', () => {
         active += 1
         await discoveryGate
         active -= 1
-        return []
+        return { skills: [], warnings: [] }
       },
     })
 
@@ -128,6 +128,31 @@ describe('PluginService discovery', () => {
     expect(rejected.every((error) => error instanceof TypeError && error.message.includes('Too many plugin discoveries'))).toBe(true)
   })
 
+  it('rejects queued discovery waiters on shutdown so pending lists settle', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let releaseDiscovery: () => void = () => undefined
+    const discoveryGate = new Promise<void>((resolveWait) => { releaseDiscovery = resolveWait })
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      discover: async () => { await discoveryGate; return { skills: [], warnings: [] } },
+    })
+
+    const outcomes = Array.from({ length: 4 }, (_, index) => service.list(join(root, `pending-${index}`)))
+      .map((request) => request.then(() => 'fulfilled', (error: unknown) => error))
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+
+    beginPluginDiscoveryShutdown()
+    releaseDiscovery()
+    const settled = await Promise.all(outcomes)
+
+    expect(settled.filter((outcome) => outcome === 'fulfilled')).toHaveLength(2)
+    const rejected = settled.filter((outcome) => outcome !== 'fulfilled')
+    expect(rejected).toHaveLength(2)
+    expect(rejected.every((error) => error instanceof TypeError && error.message.includes('shutting down'))).toBe(true)
+  })
+
   it('bounds catalog work globally across distinct discovery keys', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
@@ -141,7 +166,7 @@ describe('PluginService discovery', () => {
         peak = Math.max(peak, active)
         await new Promise((resolveWait) => setTimeout(resolveWait, 20))
         active -= 1
-        return []
+        return { skills: [], warnings: [] }
       },
     })
 
@@ -150,12 +175,33 @@ describe('PluginService discovery', () => {
     expect(peak).toBe(2)
   })
 
+  it('surfaces a structured warning for invalid settings.json instead of silently hiding plugins', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const project = join(root, 'project')
+    const projectAgentDir = join(project, '.prime', 'agent')
+    const skillDir = join(agentDir, 'skills', 'local')
+    mkdirSync(skillDir, { recursive: true }); mkdirSync(projectAgentDir, { recursive: true })
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: local\n---\nLocal skill')
+    writeFileSync(join(agentDir, 'settings.json'), '{ this is not json')
+    writeFileSync(join(projectAgentDir, 'settings.json'), JSON.stringify(['not', 'an', 'object']))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const catalog = await service.list(project)
+
+    expect(catalog.warnings).toEqual([
+      { scope: 'user', path: join(agentDir, 'settings.json'), message: 'settings.json invalid — plugins hidden' },
+      { scope: 'project', path: join(realpathSync(project), '.prime', 'agent', 'settings.json'), message: 'settings.json invalid — plugins hidden' },
+    ])
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'local', kind: 'skill' }))
+  })
+
   it('retains reveal authorization independently for user and project catalogs', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
     const project = join(root, 'project')
     const projectAgentDir = join(project, '.prime', 'agent')
-    const userPrompt = join(root, 'user-prompt.md')
+    const userPrompt = join(root, 'agent', 'user-prompt.md')
     const projectPrompt = join(project, 'project-prompt.md')
     mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true })
     writeFileSync(userPrompt, '# User prompt')
@@ -217,8 +263,8 @@ describe('PluginService discovery', () => {
     const service = new PluginService(null, async (path) => realpathSync(path), {
       agentDir,
       discover: async (_agentDirectory, safeProjectPath) => safeProjectPath
-        ? [{ id: `skill-${safeProjectPath}`, name: 'Prompt', description: '', kind: 'prompt', location: 'project', path: join(safeProjectPath, 'prompt.md'), enabled: true }]
-        : [],
+        ? { skills: [{ id: `skill-${safeProjectPath}`, name: 'Prompt', description: '', kind: 'prompt', location: 'project', path: join(safeProjectPath, 'prompt.md'), enabled: true }], warnings: [] }
+        : { skills: [], warnings: [] },
     })
 
     for (const project of projects) await service.list(project)
@@ -240,11 +286,28 @@ describe('PluginService discovery', () => {
     writeFileSync(ancestorSkill, '---\nname: ancestor\n---\nAncestor skill')
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
 
-    const records = await service.list(project)
+    const { skills: records } = await service.list(project)
 
     expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
     expect(records.some((record) => record.path === realpathSync(ancestorSkill))).toBe(false)
     expect(readFileSync('electron/main/plugins/catalog.ts', 'utf8')).not.toContain('collectAncestorSkills')
+  })
+
+  it('keeps user-configured discovery contained to the agent directory and home', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const inside = join(agentDir, 'inside-prompt.md')
+    const outside = join(root, 'outside-prompt.md')
+    mkdirSync(agentDir)
+    writeFileSync(inside, '# Inside\ncontained user discovery')
+    writeFileSync(outside, '# Outside\nshould not be disclosed')
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ prompts: [inside, outside] }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const { skills: records } = await service.list()
+
+    expect(records).toContainEqual(expect.objectContaining({ kind: 'prompt', location: 'user', path: realpathSync(inside) }))
+    expect(records.some((record) => record.path === outside || record.path === realpathSync(outside))).toBe(false)
   })
 
   it('keeps project-configured discovery contained while accepting in-project files', async () => {
@@ -264,7 +327,7 @@ describe('PluginService discovery', () => {
     }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
 
-    const records = await service.list(project)
+    const { skills: records } = await service.list(project)
 
     expect(records).toContainEqual(expect.objectContaining({ kind: 'prompt', location: 'project', path: realpathSync(inside) }))
     expect(records.some((record) => record.path === outside || record.path === join(notes, 'linked-outside.md'))).toBe(false)
@@ -272,6 +335,13 @@ describe('PluginService discovery', () => {
 })
 
 describe('PluginService MCP connections', () => {
+  it('keeps project settings preparation free of synchronous fs syscalls', () => {
+    // renameSync is the one deliberate exception (kept adjacent to its identity
+    // checks); everything else in the settings path must be fs/promises.
+    const source = readFileSync('electron/main/plugins/mcp.ts', 'utf8')
+    expect(source).not.toMatch(/\b(?:existsSync|lstatSync|mkdirSync|realpathSync|readFileSync|writeFileSync|rmSync)\b/)
+  })
+
   it('connects an HTTP MCP server without treating its URL as a package repository', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
@@ -290,7 +360,7 @@ describe('PluginService MCP connections', () => {
     const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
     expect(settings.defaultModel).toBe('test/model')
     expect(settings.mcpServers['local-studio']).toEqual({ type: 'http', url: 'http://127.0.0.1:3333/mcp', enabled: true })
-    const record = (await service.list()).find((item) => item.name === 'local-studio')
+    const record = (await service.list()).skills.find((item) => item.name === 'local-studio')
     expect(record).toMatchObject({ kind: 'mcp', location: 'user', enabled: true, source: 'http://127.0.0.1:3333' })
     expect(record?.description).not.toContain('/mcp')
   })
@@ -322,7 +392,7 @@ describe('PluginService MCP connections', () => {
       args: ['-y', '@modelcontextprotocol/server-filesystem', project],
       enabled: true,
     })
-    expect((await service.list(project)).find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
+    expect((await service.list(project)).skills.find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
   })
 
   it('rejects project MCP settings paths that traverse repository symlinks', async () => {

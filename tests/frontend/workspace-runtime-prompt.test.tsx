@@ -23,7 +23,6 @@ function Probe({ bridge }: { bridge: PrimeWorkApi }) {
     bridge,
     initialProject: project,
     initialSession: session,
-    projects: [project],
     sessions: [session],
     initialMessages: [],
     reportError: () => undefined,

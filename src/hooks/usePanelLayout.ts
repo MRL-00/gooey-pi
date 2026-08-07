@@ -16,7 +16,6 @@ const readPanelSize = (key: string, fallback: number) => {
 
 interface UsePanelLayoutOptions {
   sidebarOpen: boolean
-  setSidebarOpen(value: boolean): void
   inspectorOpen: boolean
   setInspectorOpen(value: boolean): void
   terminalOpen: boolean
@@ -25,7 +24,6 @@ interface UsePanelLayoutOptions {
 
 export function usePanelLayout({
   sidebarOpen,
-  setSidebarOpen,
   inspectorOpen,
   setInspectorOpen,
   terminalOpen,

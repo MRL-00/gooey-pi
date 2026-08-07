@@ -1,4 +1,4 @@
-import { app, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import type { AppMeta } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
 import type { GitService } from './git'
@@ -45,7 +45,13 @@ export interface IpcRegistration {
   dispose(): void
 }
 
+let activeIpcRegistration: IpcRegistration | null = null
+
 export function registerIpc(services: Services, expectedRendererUrl: string): IpcRegistration {
+  if (activeIpcRegistration) {
+    console.warn('registerIpc called while a previous registration was still active; disposing the previous registration')
+    activeIpcRegistration.dispose()
+  }
   const authorized = new Map<number, WebContents>()
   const invokeChannels: string[] = []
   const eventChannels: string[] = []
@@ -66,6 +72,8 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     const wrapped = (event: IpcMainEvent, ...args: unknown[]) => {
       try { verify(event); listener(event, ...args) } catch (error) { console.warn(`Rejected ${channel}:`, error instanceof Error ? error.message : error) }
     }
+    // Symmetric with handle(): these are private fixed channels, so any prior listener is stale.
+    ipcMain.removeAllListeners(channel)
     ipcMain.on(channel, wrapped)
     eventChannels.push(channel)
   }
@@ -189,12 +197,13 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   })
   const unsubscribeScheduleChanges = typeof scheduleSubscription === 'function' ? scheduleSubscription : () => undefined
 
-  return {
+  const registration: IpcRegistration = {
     authorize(webContents) { if (!closed) authorized.set(webContents.id, webContents) },
     revoke(webContentsId) { authorized.delete(webContentsId); void services.terminals.killOwner(webContentsId) },
     dispose() {
       if (closed) return
       closed = true
+      if (activeIpcRegistration === registration) activeIpcRegistration = null
       authorized.clear()
       unsubscribeSessionChanges()
       if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
@@ -203,4 +212,6 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)
     },
   }
+  activeIpcRegistration = registration
+  return registration
 }

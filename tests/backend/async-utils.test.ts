@@ -26,7 +26,7 @@ describe('mapLimit', () => {
 
     expect(maxActive).toBeLessThanOrEqual(3)
     expect(maxActive).toBeGreaterThan(1)
-    expect(result.toSorted((a, b) => a - b)).toEqual([0, 2, 4, 6, 8, 10, 12, 14, 16, 18])
+    expect([...result].sort((a, b) => a - b)).toEqual([0, 2, 4, 6, 8, 10, 12, 14, 16, 18])
   })
 
   it('handles empty input and limits larger than the input', async () => {

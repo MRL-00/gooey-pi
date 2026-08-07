@@ -7,7 +7,7 @@ import { requireString, requireWebUrl } from './validation'
 
 const CATALOG_TTL_MS = 30_000
 const MAX_CATALOG_MODELS = 5_000
-const MAX_CATALOG_PROVIDERS = 256
+export const MAX_CATALOG_PROVIDERS = 256
 const EXTERNAL_AUTH_PROVIDERS = new Set(['amazon-bedrock', 'google-vertex'])
 const OAUTH_TIMEOUT_MS = 10 * 60_000
 
@@ -121,7 +121,8 @@ export class PrimeProviderService {
     const configuredProviders = new Set([...authStatuses].filter(([, status]) => status.configured).map(([id]) => id))
     const { keys: available, fallbackProviders } = resolveAvailableModelKeys(eligibleModels, executableModels, configuredProviders)
     const models = eligibleModels.slice(0, MAX_CATALOG_MODELS).map((model) => toModelDescriptor(model, available))
-    const providers = [...providerIds].filter(safeProviderId).slice(0, MAX_CATALOG_PROVIDERS).map((id): PrimeProviderDescriptor => {
+    const validProviderIds = [...providerIds].filter(safeProviderId)
+    const providers = validProviderIds.map((id): PrimeProviderDescriptor => {
       const authStatus = authStatuses.get(id) ?? this.registry.getProviderAuthStatus(id)
       const providerModels = models.filter((model) => model.provider === id)
       const authMethod: ProviderAuthMethod = oauthProviders.has(id) ? 'oauth' : EXTERNAL_AUTH_PROVIDERS.has(id) ? 'external' : 'api_key'
@@ -136,11 +137,14 @@ export class PrimeProviderService {
         availableModelCount: providerModels.filter((model) => model.available).length,
         enabled: true,
       }
-    }).sort((a, b) => a.name.localeCompare(b.name))
+    }).sort((a, b) => a.name.localeCompare(b.name)).slice(0, MAX_CATALOG_PROVIDERS)
 
     const warnings = [
       snapshot.models.length > models.length
         ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; Prime Work loaded the first ${models.length.toLocaleString()} valid entries.`
+        : undefined,
+      validProviderIds.length > providers.length
+        ? `Prime Agent returned ${validProviderIds.length.toLocaleString()} providers; Prime Work loaded the first ${providers.length.toLocaleString()} sorted by name.`
         : undefined,
       fallbackProviders.includes('openai-codex')
         ? 'ChatGPT subscription model discovery was unavailable or incomplete; Prime Work is showing Prime Agent’s configured Codex catalogue.'

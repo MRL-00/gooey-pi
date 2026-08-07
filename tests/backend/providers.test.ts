@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
+import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -132,6 +132,28 @@ describe('Prime provider adapter', () => {
 
     expect(deepseek?.availableThinkingLevels).toEqual(['off', 'high', 'xhigh'])
   })
+
+  it('sorts providers before capping the catalog and warns about the overflow', async () => {
+    const customProviders: Record<string, unknown> = {}
+    for (let index = 0; index < 300; index += 1) {
+      customProviders[`zz-overflow-${String(index).padStart(3, '0')}`] = {
+        baseUrl: 'http://127.0.0.1:8118/v1', api: 'openai-completions', apiKey: 'prime-local',
+        models: [{ id: `model-${index}` }],
+      }
+    }
+    customProviders['aa-first-provider'] = {
+      baseUrl: 'http://127.0.0.1:8118/v1', api: 'openai-completions', apiKey: 'prime-local',
+      models: [{ id: 'model-first' }],
+    }
+
+    const catalog = await serviceWithModels({ providers: customProviders }).catalog(true)
+
+    expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    const names = catalog.providers.map((provider) => provider.name)
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
+    expect(catalog.providers.some((provider) => provider.id === 'aa-first-provider')).toBe(true)
+    expect(catalog.warning).toMatch(/providers/)
+  }, 30_000)
 
   it('stores API keys through Prime auth storage without exposing them in the catalog', async () => {
     const { providerService, authPath } = serviceWithAuthPath()
