@@ -117,6 +117,7 @@ describe('app shortcut key mapping', () => {
     expect(appShortcutForKey(event({ key: 'b', metaKey: true }), false)).toBe('toggle-sidebar')
     expect(appShortcutForKey(event({ key: 'j', ctrlKey: true }), false)).toBe('toggle-terminal')
     expect(appShortcutForKey(event({ key: ',', metaKey: true }), false)).toBe('open-settings')
+    expect(appShortcutForKey(event({ key: ',', ctrlKey: true }), false)).toBe('open-settings')
     expect(appShortcutForKey(event({ key: 'Escape' }), false)).toBe('close-palette')
     expect(appShortcutForKey(event({ key: 'v', metaKey: true }), false)).toBeNull()
   })

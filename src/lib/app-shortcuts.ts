@@ -29,7 +29,7 @@ export function appShortcutForKey(event: AppShortcutEvent, overlayOpen: boolean)
   if (command && key === 'b' && event.shiftKey) return 'open-browser'
   if (command && key === 'b') return 'toggle-sidebar'
   if (command && key === 'j') return 'toggle-terminal'
-  if (event.metaKey && event.key === ',') return 'open-settings'
+  if (command && event.key === ',') return 'open-settings'
   if (event.key === 'Escape') return 'close-palette'
   return null
 }

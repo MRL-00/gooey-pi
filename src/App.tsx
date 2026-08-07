@@ -58,11 +58,19 @@ export default function App() {
   const gitRequestRef = useRef(0)
   const scheduleRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
+  const toastTimerRef = useRef<number | null>(null)
 
   const reportError = useCallback((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     setToast(message)
-    window.setTimeout(() => setToast((current) => current === message ? null : current), 4_800)
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null
+      setToast((current) => current === message ? null : current)
+    }, 4_800)
+  }, [])
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
   }, [])
   const settingsState = useAppSettings({ bridge, reportError })
   const workspace = useWorkspaceRuntime({
