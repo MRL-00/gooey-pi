@@ -71,16 +71,24 @@ export function authoritativeTranscriptReadIsCurrent(
     && (currentRuntimeId === null || currentRuntimeId === marker.runtimeId)
 }
 
+/** Maximum events held for animation-frame replay before falling back to an authoritative transcript read. */
+export const AGENT_EVENT_QUEUE_LIMIT = 50_000
+
+/** Maximum events replayed per macrotask when draining a large queue on visibilitychange. */
+export const AGENT_EVENT_FLUSH_CHUNK = 2_000
+
 export function admitAgentEvent(
   generation: number,
   event: Record<string, unknown>,
   pendingLoad: TranscriptEventOwner | null,
   frameQueue: PendingAgentEvent[],
-): 'transcript' | 'frame' {
+  queueLimit = AGENT_EVENT_QUEUE_LIMIT,
+): 'transcript' | 'frame' | 'overflow' {
   if (pendingLoad?.generation === generation) {
     pendingLoad.eventBuffer.push(event)
     return 'transcript'
   }
+  if (frameQueue.length >= queueLimit) return 'overflow'
   frameQueue.push({ generation, event })
   return 'frame'
 }

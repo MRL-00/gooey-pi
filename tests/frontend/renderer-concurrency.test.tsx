@@ -3,6 +3,7 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AGENT_EVENT_FLUSH_CHUNK, AGENT_EVENT_QUEUE_LIMIT } from '../../src/app/agent-events'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
 import { useBootstrap } from '../../src/hooks/useBootstrap'
 import { useExtensionUi } from '../../src/hooks/useExtensionUi'
@@ -57,8 +58,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  Reflect.deleteProperty(document, 'visibilityState')
   vi.restoreAllMocks()
 })
+
+function setDocumentVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+}
 
 function Probe({ children }: { children?: ReactNode }) { return <>{children}</> }
 
@@ -159,6 +165,76 @@ describe('transcript read ownership', () => {
 
     expect(state.messages[0]?.parts[0]).toMatchObject({ type: 'text', text: 'loaded:live' })
     expect(read).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('agent event frame queue', () => {
+  function mountWorkspace(read: ReturnType<typeof vi.fn>) {
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    return { render: () => root.render(<WorkspaceProbe />), state: () => state }
+  }
+
+  const delta = (text: string) => ({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: text } })
+  const messageText = (state: ReturnType<typeof useWorkspaceRuntime>) => (state.messages[0]?.parts[0] as { text?: string } | undefined)?.text ?? ''
+
+  it('cancels the pending animation frame before a synchronous flush', async () => {
+    const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame')
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    await act(async () => { state.queueAgentEvent(delta('live')) })
+    const cancelledBefore = cancelSpy.mock.calls.length
+    await act(async () => { state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'agent_end' }); await Promise.resolve() })
+    expect(cancelSpy.mock.calls.length).toBeGreaterThan(cancelledBefore)
+    expect(messageText(workspace.state())).toBe('loaded:')
+  })
+
+  it('falls back to an authoritative read on the next visibilitychange after the queue bound is exceeded', async () => {
+    const read = vi.fn()
+      .mockResolvedValueOnce([message('loaded:')])
+      .mockResolvedValueOnce([message('fresh')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    setDocumentVisibility('hidden')
+    await act(async () => {
+      for (let index = 0; index <= AGENT_EVENT_QUEUE_LIMIT; index += 1) state.queueAgentEvent(delta('x'))
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+    setDocumentVisibility('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(messageText(workspace.state())).toBe('fresh')
+  })
+
+  it('drains a large hidden-window queue in chunks on visibilitychange', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const workspace = mountWorkspace(read)
+    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+    const state = workspace.state()
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    setDocumentVisibility('hidden')
+    await act(async () => {
+      for (let index = 0; index < AGENT_EVENT_FLUSH_CHUNK + 1; index += 1) state.queueAgentEvent(delta('x'))
+    })
+    setDocumentVisibility('visible')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK)}`)
+    await act(async () => { await new Promise((resolveWait) => setTimeout(resolveWait, 0)) })
+    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK + 1)}`)
+    expect(read).toHaveBeenCalledTimes(1)
   })
 })
 
