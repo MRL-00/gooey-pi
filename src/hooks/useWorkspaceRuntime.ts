@@ -210,6 +210,14 @@ export function useWorkspaceRuntime({
   const reconcileTranscriptForEvent = useCallback((runtimeId: string, event: Record<string, unknown>) => {
     const selected = workspaceRef.current
     const type = typeof event.type === 'string' ? event.type : ''
+    if (type === 'agent_start' || type === 'turn_start' || type === 'compaction_start') {
+      const load = transcriptLoadRef.current
+      if (load?.generation === selected.generation && load.reconciliation) {
+        transcriptLoadRef.current = null
+        deferredReconciliationRef.current = null
+        setMessages((current) => load.eventBuffer.replay(current))
+      }
+    }
     if (promptAdmissionGenerationRef.current === selected.generation) {
       if (type === 'agent_start' || type === 'turn_start') promptAdmissionGenerationRef.current = null
       else if (needsTranscriptReconciliation(event) || isTranscriptTerminalEvent(event)) return

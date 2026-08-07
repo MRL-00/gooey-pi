@@ -74,7 +74,9 @@ export function useAgentEvents({
         setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isCompacting: true } : current)
       }
       if (type === 'compaction_end') {
-        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isCompacting: false } : current)
+        setRuntime((current) => current?.runtimeId === runtimeId
+          ? { ...current, isCompacting: false, isStreaming: event.willRetry === true || current.isStreaming }
+          : current)
       }
       if (type === 'runtime_exit') {
         clearExtensionUi(runtimeId)

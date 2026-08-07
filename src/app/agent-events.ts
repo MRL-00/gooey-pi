@@ -46,6 +46,7 @@ export function needsTranscriptReconciliation(event: Record<string, unknown>): b
 
 export function isTranscriptTerminalEvent(event: Record<string, unknown>): boolean {
   return TERMINAL_TRANSCRIPT_EVENTS.has(eventType(event))
+    && !(eventType(event) === 'compaction_end' && event.willRetry === true)
 }
 
 export function reconciliationMatches(

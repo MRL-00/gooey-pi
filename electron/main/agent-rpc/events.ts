@@ -34,7 +34,11 @@ export class AgentEventForwarder {
 
   emit(event: RpcObject): void {
     this.resetWindowIfNeeded()
-    const critical = event.type === 'runtime_exit' || event.type === 'agent_start' || event.type === 'agent_end'
+    const critical = event.type === 'runtime_exit'
+      || event.type === 'agent_start'
+      || event.type === 'agent_end'
+      || event.type === 'compaction_start'
+      || event.type === 'compaction_end'
     if (critical) {
       this.criticalEventCount += 1
       if (this.criticalEventCount > 32) { this.reportLimit('critical-count', 'Prime Agent lifecycle event rate exceeded the desktop limit'); return }

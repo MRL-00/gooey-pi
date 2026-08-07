@@ -38,6 +38,7 @@ export class RpcRuntime {
   private info: RuntimeInfo
   private requestedServiceTier: PrimeServiceTier = 'default'
   private contextUsageRefresh: Promise<void> | null = null
+  private continuationPending = false
 
   constructor(
     executable: string,
@@ -67,7 +68,9 @@ export class RpcRuntime {
     })
   }
 
-  snapshot(): RuntimeInfo { return structuredClone(this.info) }
+  snapshot(): RuntimeInfo {
+    return structuredClone(this.continuationPending ? { ...this.info, isStreaming: true } : this.info)
+  }
 
   async handshake(): Promise<RuntimeInfo> {
     const response = await this.request({ type: 'get_state' }, 60_000)
@@ -243,13 +246,18 @@ export class RpcRuntime {
       return
     }
     if (value.type === 'agent_start') {
+      this.continuationPending = false
       this.info.isStreaming = true
       this.info.isCompacting = false
     } else if (value.type === 'agent_end') {
+      this.continuationPending = false
       this.info.isStreaming = false
       this.info.isCompacting = false
     } else if (value.type === 'compaction_start') this.info.isCompacting = true
-    else if (value.type === 'compaction_end') this.info.isCompacting = false
+    else if (value.type === 'compaction_end') {
+      this.continuationPending = value.willRetry === true
+      this.info.isCompacting = false
+    }
     this.emit(value)
     if (value.type === 'agent_end' || value.type === 'compaction_end') void this.refreshContextUsage()
   }

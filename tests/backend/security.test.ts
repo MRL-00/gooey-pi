@@ -119,8 +119,12 @@ const readline=require('node:readline');const fs=require('node:fs');fs.writeFile
     })
     lifecycleForwarder.emit({ type: 'message_update', value: 'first' })
     lifecycleForwarder.emit({ type: 'message_update', value: 'dropped' })
+    lifecycleForwarder.emit({ type: 'compaction_start', reason: 'overflow' })
+    lifecycleForwarder.emit({ type: 'compaction_end', reason: 'overflow', aborted: false, willRetry: true })
     lifecycleForwarder.emit({ type: 'agent_end' })
     expect(lifecycleEvents.some((event) => event.type === 'transport_error')).toBe(true)
+    expect(lifecycleEvents.some((event) => event.type === 'compaction_start')).toBe(true)
+    expect(lifecycleEvents.some((event) => event.type === 'compaction_end')).toBe(true)
     expect(lifecycleEvents.some((event) => event.type === 'agent_end')).toBe(true)
   })
 
