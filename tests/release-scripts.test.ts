@@ -418,12 +418,15 @@ describe('cross-platform packaging repair', () => {
         .some((entry) => globMatchExists(join(directory, entry.name), segments))
     }
     if (head.includes('*')) {
-      const pattern = new RegExp(`^${head.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`)
+      const pattern = new RegExp(
+        `^${head
+          .split('*')
+          .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('[^/]*')}$`,
+      )
       const entries = readdirSync(directory, { withFileTypes: true })
       if (rest.length === 0) return entries.some((entry) => entry.isFile() && pattern.test(entry.name))
-      return entries
-        .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
-        .some((entry) => globMatchExists(join(directory, entry.name), rest))
+      return entries.filter((entry) => entry.isDirectory() && pattern.test(entry.name)).some((entry) => globMatchExists(join(directory, entry.name), rest))
     }
     const next = join(directory, head)
     if (rest.length === 0) return existsSync(next) && statSync(next).isFile()
@@ -491,7 +494,7 @@ describe('DMG verification cleanup', () => {
     expect(verifyDmg).toMatch(/try\s*\{\s*run\('hdiutil', \['detach', mountPoint\]\)\s*\}\s*catch \(detachError\)\s*\{\s*console\.error/)
     // The rmSync cleanup is attempted unconditionally after the detach attempt.
     const finallyIndex = verifyDmg.indexOf('} finally {')
-    const cleanupIndex = verifyDmg.indexOf("rmSync(mountPoint, { recursive: true, force: true })")
+    const cleanupIndex = verifyDmg.indexOf('rmSync(mountPoint, { recursive: true, force: true })')
     expect(finallyIndex).toBeGreaterThan(-1)
     expect(cleanupIndex).toBeGreaterThan(finallyIndex)
     expect(verifyDmg.slice(cleanupIndex)).not.toContain('detach')
