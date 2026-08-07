@@ -35,10 +35,15 @@
   },
   "dependencies": {
     "node-pty": "^1.0.0",
-    "prime-agent": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-0.7.0.tgz",
-    "prime-agent-ai": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-ai-0.7.0.tgz",
+    "prime-agent": "file:vendor/prime-agent-0.7.0.tgz",
+    "prime-agent-ai": "file:vendor/prime-agent-ai-0.7.0.tgz",
     "rrule": "^2.8.1",
     "zeromq": "^6.1.2"
+  },
+  "overrides": {
+    "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",
+    "@earendil-works/pi-ai": "file:vendor/prime-agent-ai-0.7.0.tgz",
+    "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",

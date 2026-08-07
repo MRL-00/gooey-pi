@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -621,25 +622,39 @@ describe('non-registry dependency pins', () => {
     const pins = JSON.parse(readFileSync('scripts/release/dependency-pins.json', 'utf8')).packages
     const nonRegistry = (Object.entries(lockfile.packages ?? {}) as Array<[string, { resolved?: string; integrity?: string }]>)
       .filter(([, entry]) => typeof entry.resolved === 'string'
-        && entry.resolved.startsWith('http')
-        && !entry.resolved.includes('registry.npmjs.org'))
+        && entry.resolved.length > 0
+        && !entry.resolved.startsWith('https://registry.npmjs.org'))
 
     // The lockfile sha512 hashes are the supply-chain integrity boundary for
-    // these URL-hosted packages. A regenerated lockfile silently re-anchors
-    // them to whatever bytes the host currently serves; this pin file makes
-    // that a deliberate, reviewed change. To upgrade Prime Agent on purpose:
-    // verify the new tarballs, update the lockfile, then mirror the new
-    // resolved/integrity values here in the same commit.
+    // the vendored Prime Agent tarballs. A regenerated lockfile silently
+    // re-anchors them to whatever bytes are present; this pin file makes that
+    // a deliberate, reviewed change. To upgrade Prime Agent on purpose:
+    // verify the new tarballs, replace them in vendor/, update the lockfile,
+    // then mirror the new resolved/integrity values here in the same commit.
     expect(nonRegistry.length).toBeGreaterThan(0)
     for (const [name, entry] of nonRegistry) {
       const pin = pins[name]
       expect(pin, `unpinned non-registry dependency: ${name}`).toBeDefined()
-      expect(entry.resolved, `resolved URL drifted for ${name}`).toBe(pin.resolved)
+      expect(entry.resolved, `resolved location drifted for ${name}`).toBe(pin.resolved)
       expect(entry.integrity, `integrity drifted for ${name}`).toBe(pin.integrity)
       expect(entry.integrity, `weak integrity algorithm for ${name}`).toMatch(/^sha512-/)
     }
     for (const name of Object.keys(pins)) {
       expect(nonRegistry.some(([lockName]) => lockName === name), `stale pin for removed dependency: ${name}`).toBe(true)
+    }
+  })
+
+  test('the vendored tarballs on disk hash to their pinned integrity', () => {
+    const pins = JSON.parse(readFileSync('scripts/release/dependency-pins.json', 'utf8')).packages as Record<string, { resolved: string; integrity: string }>
+    const vendored = [...new Set(Object.values(pins)
+      .filter((pin) => pin.resolved.startsWith('file:vendor/'))
+      .map((pin) => ({ path: pin.resolved.slice('file:'.length), integrity: pin.integrity }))
+      .map((entry) => JSON.stringify(entry)))].map((entry) => JSON.parse(entry) as { path: string; integrity: string })
+
+    expect(vendored.length).toBeGreaterThan(0)
+    for (const { path, integrity } of vendored) {
+      const digest = `sha512-${createHash('sha512').update(readFileSync(path)).digest('base64')}`
+      expect(digest, `vendored tarball bytes drifted from pin: ${path}`).toBe(integrity)
     }
   })
 })
