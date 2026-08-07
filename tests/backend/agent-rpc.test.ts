@@ -417,6 +417,114 @@ setInterval(() => {}, 1000)
 
 })
 
+describe('compaction watchdog', () => {
+  const watchdogAgent = (name: string, promptScript: string): { cwd: string; executable: string } => {
+    const cwd = mkdtempSync(join(tmpdir(), `prime-work-rpc-${name}-`))
+    dirs.push(cwd)
+    const executable = join(cwd, `${name}.cjs`)
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+let compacting = false
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'watchdog', isStreaming: false, isCompacting: compacting } })
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: 50000, contextWindow: 100000, percent: 50 } } })
+  } else if (command.type === 'prompt') {
+    send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    ${promptScript}
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: 'abort', success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    return { cwd, executable }
+  }
+
+  const startWatchdogRuntime = async (fake: { cwd: string; executable: string }, events: Record<string, unknown>[]): Promise<RpcRuntime> => {
+    const runtime = new RpcRuntime(fake.executable, [], fake.cwd, ({ event }) => events.push(event), () => undefined, {}, { pollIntervalMs: 80, endGraceMs: 150 })
+    await runtime.handshake()
+    return runtime
+  }
+
+  it('synthesizes compaction lifecycle events when the agent reports compacting without streaming them', async () => {
+    const fake = watchdogAgent('silent-compaction', `
+    compacting = true
+    setTimeout(() => { compacting = false }, 600)`)
+    const events: Record<string, unknown>[] = []
+    const runtime = await startWatchdogRuntime(fake, events)
+    try {
+      await runtime.command({ type: 'prompt', message: 'continue' })
+      await waitUntil(() => events.some((event) => event.type === 'compaction_start' && event.synthetic === true))
+      expect(runtime.snapshot().isCompacting).toBe(true)
+      await waitUntil(() => events.some((event) => event.type === 'compaction_end' && event.synthetic === true))
+      expect(runtime.snapshot().isCompacting).toBe(false)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it('swallows the buffered real compaction_start after synthesizing and forwards the real end', async () => {
+    const fake = watchdogAgent('buffered-compaction', `
+    compacting = true
+    setTimeout(() => {
+      compacting = false
+      send({ type: 'compaction_start', reason: 'threshold' })
+      send({ type: 'compaction_end', reason: 'threshold', aborted: false, willRetry: false, result: { summary: 'Compacted', tokensBefore: 90000 } })
+    }, 500)`)
+    const events: Record<string, unknown>[] = []
+    const runtime = await startWatchdogRuntime(fake, events)
+    try {
+      await runtime.command({ type: 'prompt', message: 'continue' })
+      await waitUntil(() => events.some((event) => event.type === 'compaction_start' && event.synthetic === true))
+      await waitUntil(() => events.some((event) => event.type === 'compaction_end'))
+      // Wait past the grace window to prove no synthetic end fires after the real one.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      const starts = events.filter((event) => event.type === 'compaction_start')
+      expect(starts).toHaveLength(1)
+      expect(starts[0].synthetic).toBe(true)
+      const ends = events.filter((event) => event.type === 'compaction_end')
+      expect(ends).toHaveLength(1)
+      expect(ends[0].synthetic).toBeUndefined()
+      expect(ends[0].result).toMatchObject({ summary: 'Compacted' })
+      expect(runtime.snapshot().isCompacting).toBe(false)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it('stays out of the way when compaction events stream live', async () => {
+    const fake = watchdogAgent('live-compaction', `
+    compacting = true
+    send({ type: 'compaction_start', reason: 'threshold' })
+    setTimeout(() => {
+      compacting = false
+      send({ type: 'compaction_end', reason: 'threshold', aborted: false, willRetry: false, result: { summary: 'Compacted live', tokensBefore: 80000 } })
+    }, 400)`)
+    const events: Record<string, unknown>[] = []
+    const runtime = await startWatchdogRuntime(fake, events)
+    try {
+      await runtime.command({ type: 'prompt', message: 'continue' })
+      await waitUntil(() => events.some((event) => event.type === 'compaction_start'))
+      expect(runtime.snapshot().isCompacting).toBe(true)
+      await waitUntil(() => events.some((event) => event.type === 'compaction_end'))
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      const starts = events.filter((event) => event.type === 'compaction_start')
+      expect(starts).toHaveLength(1)
+      expect(starts[0].synthetic).toBeUndefined()
+      const ends = events.filter((event) => event.type === 'compaction_end')
+      expect(ends).toHaveLength(1)
+      expect(ends[0].synthetic).toBeUndefined()
+      expect(runtime.snapshot().isCompacting).toBe(false)
+    } finally {
+      await runtime.stop()
+    }
+  })
+})
+
 describe('framed RPC transport stdio failure', () => {
   interface FakeRpcChild extends EventEmitter {
     stdout: PassThrough

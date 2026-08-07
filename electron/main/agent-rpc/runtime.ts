@@ -17,6 +17,21 @@ interface PendingRequest {
   command: string
 }
 
+export interface CompactionWatchdogTimings {
+  /** How often to poll get_state for the compacting flag while the runtime is active. */
+  pollIntervalMs: number
+  /** How long to wait for the agent's own compaction_end after a poll reports the compaction over. */
+  endGraceMs: number
+  /** How long after the last agent activity polling keeps running on an idle runtime. */
+  idleWindowMs: number
+}
+
+const DEFAULT_COMPACTION_WATCHDOG_TIMINGS: CompactionWatchdogTimings = {
+  pollIntervalMs: 2_000,
+  endGraceMs: 4_000,
+  idleWindowMs: 30_000,
+}
+
 function parseContextUsage(raw: unknown): PrimeContextUsage | null {
   if (!isRecord(raw) || !Number.isSafeInteger(raw.contextWindow) || Number(raw.contextWindow) <= 0) return null
   const tokens = raw.tokens === null ? null : Number.isSafeInteger(raw.tokens) && Number(raw.tokens) >= 0 ? Number(raw.tokens) : undefined
@@ -45,6 +60,20 @@ export class RpcRuntime {
   // outside info so get_state refreshes (which report isStreaming false
   // during the backoff) cannot clear it.
   private retryPending = false
+  // Compaction watchdog: some Prime Agent event paths buffer compaction_start
+  // until the surrounding RPC command settles, so the desktop would learn
+  // about a compaction only after it finished. get_state responses are never
+  // buffered, so polling the compacting flag while the runtime is active lets
+  // the desktop synthesize the missing lifecycle events; real events take
+  // precedence and duplicates are swallowed.
+  private readonly watchdogTimings: CompactionWatchdogTimings
+  private compactionEpisode: 'none' | 'real' | 'synthetic' = 'none'
+  private compactionEndFallback: NodeJS.Timeout | null = null
+  private compactionPollTimer: NodeJS.Timeout | null = null
+  private compactionPollInFlight = false
+  private watchdogDisposed = false
+  private lastActivityAt = Date.now()
+  private lastRealCompactionEventAt = 0
 
   constructor(
     executable: string,
@@ -53,7 +82,9 @@ export class RpcRuntime {
     onEvent: (envelope: PrimeEventEnvelope) => void,
     private readonly onExit: (runtime: RpcRuntime) => void,
     extraEnvironment: NodeJS.ProcessEnv = {},
+    watchdogTimings: Partial<CompactionWatchdogTimings> = {},
   ) {
+    this.watchdogTimings = { ...DEFAULT_COMPACTION_WATCHDOG_TIMINGS, ...watchdogTimings }
     this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
@@ -66,10 +97,12 @@ export class RpcRuntime {
     this.child.stdin.on('error', (error) => this.fail(error))
     this.child.once('error', (error) => this.fail(error))
     this.child.once('close', (code, signal) => {
+      this.disposeCompactionWatchdog()
       this.fail(new Error(`Prime Agent RPC exited (${code ?? signal ?? 'unknown'})`))
       this.emit({ type: 'runtime_exit', code, signal, expected: this.stopped })
       this.onExit(this)
     })
+    this.scheduleCompactionPoll()
   }
 
   /** Frozen shallow copy: nested state is replaced wholesale on update, and the IPC boundary clones for the renderer. */
@@ -121,6 +154,7 @@ export class RpcRuntime {
   serviceTierPreference(): 'default' | 'priority' { return this.requestedServiceTier === 'priority' ? 'priority' : 'default' }
 
   async command(command: RpcObject): Promise<RpcObject> {
+    this.lastActivityAt = Date.now()
     if (command.type === 'extension_ui_response') {
       await this.transport.enqueue(`${JSON.stringify(command)}\n`).done
       return { type: 'response', command: 'extension_ui_response', success: true }
@@ -147,6 +181,7 @@ export class RpcRuntime {
   }
 
   private async performStop(): Promise<boolean> {
+    this.disposeCompactionWatchdog()
     if (this.info.isStreaming || this.info.isCompacting || this.retryPending) {
       try { await this.request({ type: 'abort' }, 5_000) } catch { /* close stdin and escalate below */ }
     }
@@ -181,9 +216,80 @@ export class RpcRuntime {
   }
 
   private performTransportStop(): Promise<boolean> {
+    this.disposeCompactionWatchdog()
     this.stopped = true
     this.transport.destroyInput()
     return this.killTree()
+  }
+
+  private scheduleCompactionPoll(): void {
+    if (this.watchdogDisposed || this.compactionPollTimer) return
+    this.compactionPollTimer = setTimeout(() => {
+      this.compactionPollTimer = null
+      void this.pollCompactionState().finally(() => this.scheduleCompactionPoll())
+    }, this.watchdogTimings.pollIntervalMs)
+    this.compactionPollTimer.unref()
+  }
+
+  private async pollCompactionState(): Promise<void> {
+    if (this.watchdogDisposed || this.compactionPollInFlight || !this.shouldPollCompaction()) return
+    this.compactionPollInFlight = true
+    const requestedAt = Date.now()
+    try {
+      const response = await this.request({ type: 'get_state' }, 5_000)
+      const raw = isRecord(response.data) ? response.data : null
+      // A poll issued before the latest real compaction event answers with
+      // stale state; only responses newer than that event are trusted.
+      if (!this.watchdogDisposed && raw && typeof raw.isCompacting === 'boolean' && requestedAt > this.lastRealCompactionEventAt) {
+        this.observePolledCompaction(raw.isCompacting)
+      }
+    } catch { /* transient poll failures are ignored; the next tick retries */ }
+    finally { this.compactionPollInFlight = false }
+  }
+
+  private shouldPollCompaction(): boolean {
+    if (!this.transport.writable()) return false
+    if (this.info.isStreaming || this.info.isCompacting || this.retryPending || this.continuationPending) return true
+    return Date.now() - this.lastActivityAt < this.watchdogTimings.idleWindowMs
+  }
+
+  private observePolledCompaction(isCompacting: boolean): void {
+    if (isCompacting) {
+      this.info.isCompacting = true
+      this.clearCompactionEndFallback()
+      if (this.compactionEpisode === 'none') {
+        this.compactionEpisode = 'synthetic'
+        this.emit({ type: 'compaction_start', synthetic: true })
+      }
+      return
+    }
+    this.info.isCompacting = false
+    if (this.compactionEpisode === 'none' || this.compactionEndFallback) return
+    // The agent stopped compacting but its own compaction_end has not arrived;
+    // give the real event a grace window before closing the row ourselves.
+    this.compactionEndFallback = setTimeout(() => {
+      this.compactionEndFallback = null
+      if (this.watchdogDisposed || this.compactionEpisode === 'none') return
+      this.compactionEpisode = 'none'
+      this.emit({ type: 'compaction_end', synthetic: true, aborted: false, willRetry: false })
+      void this.refreshContextUsage()
+    }, this.watchdogTimings.endGraceMs)
+    this.compactionEndFallback.unref()
+  }
+
+  private clearCompactionEndFallback(): void {
+    if (!this.compactionEndFallback) return
+    clearTimeout(this.compactionEndFallback)
+    this.compactionEndFallback = null
+  }
+
+  private disposeCompactionWatchdog(): void {
+    this.watchdogDisposed = true
+    if (this.compactionPollTimer) {
+      clearTimeout(this.compactionPollTimer)
+      this.compactionPollTimer = null
+    }
+    this.clearCompactionEndFallback()
   }
 
   private request(command: RpcObject, timeoutMs: number): Promise<RpcObject> {
@@ -236,6 +342,7 @@ export class RpcRuntime {
       return
     }
     if (!isRecord(value) || typeof value.type !== 'string') return
+    if (value.type !== 'response') this.lastActivityAt = Date.now()
     if (value.type === 'response' && typeof value.id === 'string') {
       const pending = this.pending.get(value.id)
       if (!pending) {
@@ -270,6 +377,13 @@ export class RpcRuntime {
       this.retryPending = false
       this.info.isStreaming = true
       this.info.isCompacting = false
+      if (this.compactionEpisode !== 'none') {
+        // The compaction's end event never arrived (or was lost); close the
+        // renderer's running row before the new turn opens.
+        this.compactionEpisode = 'none'
+        this.clearCompactionEndFallback()
+        this.emit({ type: 'compaction_end', synthetic: true, aborted: false, willRetry: true })
+      }
     } else if (value.type === 'agent_end') {
       // retryPending is cleared only by agent_start or auto_retry_end, never
       // by agent_end: a failed run's agent_end is followed by auto_retry_start
@@ -277,10 +391,20 @@ export class RpcRuntime {
       this.continuationPending = false
       this.info.isStreaming = false
       this.info.isCompacting = false
-    } else if (value.type === 'compaction_start') this.info.isCompacting = true
-    else if (value.type === 'compaction_end') {
+    } else if (value.type === 'compaction_start') {
+      this.info.isCompacting = true
+      this.lastRealCompactionEventAt = Date.now()
+      this.clearCompactionEndFallback()
+      // A late real start after the watchdog already announced this compaction
+      // would open a duplicate row in the renderer; the real end still flows.
+      if (this.compactionEpisode === 'synthetic') return
+      this.compactionEpisode = 'real'
+    } else if (value.type === 'compaction_end') {
       this.continuationPending = value.willRetry === true
       this.info.isCompacting = false
+      this.lastRealCompactionEventAt = Date.now()
+      this.clearCompactionEndFallback()
+      this.compactionEpisode = 'none'
     } else if (value.type === 'auto_retry_start') this.retryPending = true
     else if (value.type === 'auto_retry_end') this.retryPending = false
     this.emit(value)
