@@ -84,8 +84,11 @@ describe('ProjectService file listing', () => {
       createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: identities(root),
     }) })
     await service.list()
+    const replacement = `${root}-replacement`
+    // Allocate while the original exists so the replacement cannot reuse its inode.
+    mkdirSync(replacement)
     rmSync(root, { recursive: true })
-    mkdirSync(root)
+    renameSync(replacement, root)
     await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
   })
 
