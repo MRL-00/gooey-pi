@@ -98,6 +98,19 @@ describe('release preflight', () => {
     }
   })
 
+  test('binds the requested target architecture to the produced mac artifacts', async () => {
+    const { assertRequestedArchitecture } = await import('../scripts/release/verify-package.mjs')
+    const artifacts = { dmg: 'release/mac/arm64/Prime Work-1.0.0-arm64.dmg', zip: 'release/mac/arm64/Prime Work-1.0.0-arm64.zip' }
+    expect(() => assertRequestedArchitecture(artifacts, 'arm64')).not.toThrow()
+    expect(() => assertRequestedArchitecture(artifacts, undefined)).not.toThrow()
+    expect(() => assertRequestedArchitecture(artifacts, 'x64')).toThrow(/declares architecture arm64, but --arch x64 was requested/)
+    expect(() => assertRequestedArchitecture({ ...artifacts, zip: 'release/mac/x64/Prime Work-1.0.0-x64.zip' }, 'arm64')).toThrow(/declares architecture x64/)
+    expect(() => assertRequestedArchitecture(artifacts, 'universal')).toThrow(/must be arm64 or x64/)
+    expect(() => assertRequestedArchitecture(artifacts, '')).toThrow(/must be arm64 or x64/)
+    // package.mjs forwards the authoritative arch into mac post-package verification.
+    expect(readFileSync('scripts/release/package.mjs', 'utf8')).toContain("'--arch', arch, '--release-directory'")
+  })
+
   test('requires the Electron 43 Node.js baseline', () => {
     expect(() => assertSupportedNode('v22.11.0')).toThrow(/>=22\.12\.0/)
     expect(() => assertSupportedNode('v22.12.0')).not.toThrow()
@@ -241,12 +254,33 @@ describe('release preflight', () => {
       expect(workflow).toContain('actions/cache@')
     }
     // Release jobs skip the CI-duplicated verification suite and never upload
-    // an unpacked application directory; linux/win publish their update feeds.
+    // an unpacked application directory; every platform publishes its update feed.
     expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(3)
+    expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/latest*.yml')
     expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
     expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
     expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
     expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
+  })
+
+  test('ships both mac architectures as separate builds from native-arch runners', () => {
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    // Two matrix legs, each on a runner whose native architecture matches the
+    // target (arm64 on macos-14, x64 on macos-13) so node-pty/zeromq never
+    // cross-compile, and one leg's failure never cancels the other's build.
+    expect(releaseWorkflow).toContain('fail-fast: false')
+    expect(releaseWorkflow).toMatch(/- arch: arm64\n {12}runner: macos-14/)
+    expect(releaseWorkflow).toMatch(/- arch: x64\n {12}runner: macos-13/)
+    expect(releaseWorkflow).toContain('runs-on: ${{ matrix.runner }}')
+    // The explicit target arch drives packaging, and each leg uploads only its
+    // own arch directory under a per-arch artifact name and cache key.
+    expect(releaseWorkflow).toContain('npm run package:mac -- --skip-verify --arch ${{ matrix.arch }}')
+    expect(releaseWorkflow).toContain('name: prime-work-public-macos-${{ matrix.arch }}')
+    expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/*.dmg')
+    expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/*.zip')
+    expect(releaseWorkflow).toContain('electron-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles(')
+    // Universal binaries are excluded by design: the release ships two builds.
+    expect(releaseWorkflow).not.toContain('--universal')
   })
 })
 
