@@ -310,21 +310,30 @@ describe('agent event frame queue', () => {
   })
 
   it('drains a large hidden-window queue in chunks on visibilitychange', async () => {
-    const read = vi.fn().mockResolvedValue([message('loaded:')])
-    const workspace = mountWorkspace(read)
-    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
-    const state = workspace.state()
-    await act(async () => { state.attachRuntime(runtime, 0) })
-    setDocumentVisibility('hidden')
-    await act(async () => {
-      for (let index = 0; index < AGENT_EVENT_FLUSH_CHUNK + 1; index += 1) state.queueAgentEvent(delta('x'))
-    })
-    setDocumentVisibility('visible')
-    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
-    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK)}`)
-    await act(async () => { await new Promise((resolveWait) => setTimeout(resolveWait, 0)) })
-    expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK + 1)}`)
-    expect(read).toHaveBeenCalledTimes(1)
+    // jsdom fires requestAnimationFrame on a timer even for hidden documents,
+    // unlike real Chromium, which suspends it — the exact behavior this test
+    // simulates. Stub rAF to never fire so the queue can only drain through
+    // the visibilitychange chunked path, deterministically.
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(() => 1)
+    try {
+      const read = vi.fn().mockResolvedValue([message('loaded:')])
+      const workspace = mountWorkspace(read)
+      await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+      const state = workspace.state()
+      await act(async () => { state.attachRuntime(runtime, 0) })
+      setDocumentVisibility('hidden')
+      await act(async () => {
+        for (let index = 0; index < AGENT_EVENT_FLUSH_CHUNK + 1; index += 1) state.queueAgentEvent(delta('x'))
+      })
+      setDocumentVisibility('visible')
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK)}`)
+      await act(async () => { await new Promise((resolveWait) => setTimeout(resolveWait, 0)) })
+      expect(messageText(workspace.state())).toBe(`loaded:${'x'.repeat(AGENT_EVENT_FLUSH_CHUNK + 1)}`)
+      expect(read).toHaveBeenCalledTimes(1)
+    } finally {
+      rafSpy.mockRestore()
+    }
   })
 })
 
