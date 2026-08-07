@@ -348,7 +348,10 @@ export function replayPrimeEvents(
     const type = string(raw.type) ?? string(raw.event)
     if (!type) continue
     if (type === 'agent_start' || type === 'turn_start') {
-      if (streaming.size === 0 && resumeTailAssistant() === undefined) appendAssistant('assistant')
+      // Gate on a streaming *assistant* to match the sequential reducer: a
+      // compaction system row carried over from a previous batch may still be
+      // streaming, yet a new turn must open a fresh assistant message.
+      if (lastStreamingAssistant < 0 && resumeTailAssistant() === undefined) appendAssistant('assistant')
       continue
     }
     if (type === 'message_update') {

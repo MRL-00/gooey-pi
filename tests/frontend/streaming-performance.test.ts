@@ -266,6 +266,9 @@ describe('linear event batches', () => {
       { type: 'tool_execution_end', toolName: 'Anonymous', result: 'done' },
       { type: 'agent_end' }, { type: 'error', message: 'failed' },
       { type: 'runtime_exit', expected: true },
+      { type: 'compaction_start', reason: 'threshold' },
+      { type: 'compaction_end', reason: 'threshold', aborted: false, result: { summary: 'Trimmed earlier work.', tokensBefore: 4_096, firstKeptEntryId: 'kept-1' } },
+      { type: 'compaction_end', reason: 'manual', aborted: true },
     ]
     let seed = 0x5eed
     const random = () => { seed = (seed * 1_664_525 + 1_013_904_223) >>> 0; return seed }
@@ -276,6 +279,24 @@ describe('linear event batches', () => {
       resetTranscriptIdsForTests()
       expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
     }
+  })
+
+  it('opens a fresh assistant turn after a compaction row carried over from a prior batch', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(7)
+    const batchA: Record<string, unknown>[] = [{ type: 'compaction_start', reason: 'threshold' }]
+    const batchB: Record<string, unknown>[] = [
+      { type: 'agent_start' },
+      delta('after compaction'),
+      { type: 'agent_end' },
+    ]
+    resetTranscriptIdsForTests()
+    const sequential = [...batchA, ...batchB].reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
+    const batched = replayPrimeEvents(replayPrimeEvents(transcript(), batchA), batchB)
+
+    expect(batched).toEqual(sequential)
+    expect(batched.filter((message) => message.role === 'assistant')).toHaveLength(2)
+    expect(batched.at(-1)?.parts).toEqual([{ type: 'text', text: 'after compaction' }])
   })
 
   it('uses one bounded state commit for each sustained frame batch', () => {
