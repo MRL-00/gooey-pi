@@ -188,6 +188,13 @@ export function useExtensionUi({
     }
   }, [bridge, cancelPending, clearExtensionUi])
 
+  const hasOpenRequestForSession = useCallback((filePath: string): boolean => {
+    for (const runtimeId of pendingByRuntimeRef.current.keys()) {
+      if (runtimeSessionsRef.current.get(runtimeId) === filePath) return true
+    }
+    return false
+  }, [runtimeSessionsRef])
+
   useEffect(() => { showPendingForActiveRuntime() }, [activeRuntimeId, showPendingForActiveRuntime])
 
   useEffect(() => () => {
@@ -197,5 +204,5 @@ export function useExtensionUi({
     pendingByRuntimeRef.current.clear()
   }, [cancelPending])
 
-  return { extensionUi, clearExtensionUi, respondToExtensionUi, showExtensionUi }
+  return { extensionUi, clearExtensionUi, respondToExtensionUi, showExtensionUi, hasOpenRequestForSession }
 }

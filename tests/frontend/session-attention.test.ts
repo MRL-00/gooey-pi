@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applySessionLifecycleEvent, sessionAttentionSignature } from '../../src/app/session-attention'
+import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
 import type { SessionRecord } from '../../src/types/api'
 
 const session = (): SessionRecord => ({
@@ -45,5 +46,43 @@ describe('session lifecycle attention', () => {
     const completed = applySessionLifecycleEvent(running, { type: 'compaction_end', reason: 'manual', willRetry: false }, true, 2)
     expect(running.status).toBe('running')
     expect(completed).toMatchObject({ status: 'complete', unread: false, eventRevision: 2 })
+  })
+})
+
+describe('catalog merges over live session state', () => {
+  it('keeps a waiting badge while its extension-UI request is still open', () => {
+    const waiting = applySessionLifecycleEvent(session(), { type: 'extension_ui_request' }, false, 1)
+    expect(sessionAttentionSignature(waiting)).toBe('waiting:1')
+
+    const diskRecord: SessionRecord = { ...session(), status: 'running', updatedAt: '2025-01-01T00:00:05.000Z' }
+    const [merged] = mergeSessionCatalog([waiting], [diskRecord], undefined, new Map(), 0, () => true)
+    expect(merged.status).toBe('waiting')
+    expect(merged.eventRevision).toBe(1)
+    expect(sessionAttentionSignature(merged)).toBe('waiting:1')
+
+    const [settled] = mergeSessionCatalog([waiting], [diskRecord], undefined, new Map(), 0, () => false)
+    expect(settled.status).toBe('running')
+  })
+
+  it('keeps a newer optimistic lastUserMessageAt over the disk value', () => {
+    const live: SessionRecord = { ...session(), lastUserMessageAt: '2025-01-01T00:10:00.000Z' }
+    const diskRecord: SessionRecord = { ...session(), lastUserMessageAt: '2025-01-01T00:00:00.000Z' }
+    const [merged] = mergeSessionCatalog([live], [diskRecord], undefined, new Map(), 0)
+    expect(merged.lastUserMessageAt).toBe('2025-01-01T00:10:00.000Z')
+  })
+
+  it('bumps the catalog revision only for records that actually changed', () => {
+    const unchanged: SessionRecord = { ...session(), id: 'same', filePath: '/sessions/same.jsonl', syncRevision: 3 }
+    const moved: SessionRecord = { ...session(), id: 'moved', filePath: '/sessions/moved.jsonl', syncRevision: 3 }
+    const movedOnDisk: SessionRecord = { ...moved, updatedAt: '2025-01-02T00:00:00.000Z', syncRevision: undefined }
+    const [mergedSame, mergedMoved] = mergeSessionCatalog(
+      [unchanged, moved],
+      [{ ...unchanged, syncRevision: undefined }, movedOnDisk],
+      undefined,
+      new Map(),
+      7,
+    )
+    expect(mergedSame.syncRevision).toBe(3)
+    expect(mergedMoved.syncRevision).toBe(7)
   })
 })

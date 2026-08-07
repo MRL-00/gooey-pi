@@ -20,24 +20,55 @@ interface UseBootstrapOptions {
   workspaceRef: React.RefObject<WorkspaceSnapshot>
   activateWorkspace(project?: ProjectRecord, session?: SessionRecord, runtime?: RuntimeInfo): number
   attachRuntime(runtime: RuntimeInfo | undefined, generation: number): void
+  sessionHasOpenExtensionUi?(filePath: string): boolean
   reportError(error: unknown): void
 }
 
-function mergeSessionCatalog(
+const NO_OPEN_EXTENSION_UI = () => false
+
+function sessionRecordChanged(previous: SessionRecord, record: SessionRecord): boolean {
+  return previous.updatedAt !== record.updatedAt
+    || previous.status !== record.status
+    || previous.title !== record.title
+    || previous.preview !== record.preview
+    || previous.archived !== record.archived
+}
+
+export function mergeSessionCatalog(
   current: SessionRecord[],
   records: SessionRecord[],
   activeFile: string | undefined,
   changedFiles: ReadonlyMap<string, number>,
   catalogRevision: number,
+  sessionHasOpenExtensionUi: (filePath: string) => boolean = NO_OPEN_EXTENSION_UI,
 ): SessionRecord[] {
   const previousByPath = new Map(current.map((session) => [session.filePath, session]))
   return records.map((record) => {
     const previous = previousByPath.get(record.filePath)
     const needsAttention = (record.status === 'waiting' || record.status === 'complete')
       && previous?.status !== record.status
-    const syncRevision = changedFiles.get(record.filePath) ?? (catalogRevision || (previous?.syncRevision ?? record.syncRevision))
+    // A catalog-wide change only bumps sessions whose record actually moved;
+    // bumping everything retriggers external-sync reads for every session.
+    const syncRevision = changedFiles.get(record.filePath)
+      ?? (catalogRevision && (!previous || sessionRecordChanged(previous, record))
+        ? catalogRevision
+        : previous?.syncRevision ?? record.syncRevision)
+    // The catalog scan cannot see an open extension-UI request, so a session
+    // the renderer marked waiting stays waiting until the request settles.
+    const status = previous?.status === 'waiting' && sessionHasOpenExtensionUi(record.filePath)
+      ? previous.status
+      : record.status
+    const lastUserMessageAt = previous?.lastUserMessageAt
+      && (!record.lastUserMessageAt || Date.parse(previous.lastUserMessageAt) > Date.parse(record.lastUserMessageAt))
+      ? previous.lastUserMessageAt
+      : record.lastUserMessageAt
     return {
       ...record,
+      status,
+      lastUserMessageAt,
+      // eventRevision is renderer-only lifecycle state; disk records never
+      // carry it, so always keep the live value.
+      eventRevision: previous?.eventRevision,
       unread: record.filePath === activeFile ? false : needsAttention ? true : previous?.unread ?? record.unread,
       syncRevision,
     }
@@ -54,6 +85,7 @@ export function useBootstrap({
   workspaceRef,
   activateWorkspace,
   attachRuntime,
+  sessionHasOpenExtensionUi = NO_OPEN_EXTENSION_UI,
   reportError,
 }: UseBootstrapOptions) {
   const [meta, setMeta] = useState<AppMeta | null>(null)
@@ -162,6 +194,7 @@ export function useBootstrap({
             workspaceRef.current.sessionFile,
             changedFiles,
             catalogRevision,
+            sessionHasOpenExtensionUi,
           ))
           for (const [filePath, changedRevision] of changedFiles) {
             if (pendingChangedFiles.get(filePath) === changedRevision) pendingChangedFiles.delete(filePath)
@@ -178,7 +211,7 @@ export function useBootstrap({
       unsubscribe()
       if (refreshTimer !== null) window.clearTimeout(refreshTimer)
     }
-  }, [bridge, initialized, reportError, setSessions, workspaceRef])
+  }, [bridge, initialized, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
 
   return { meta, initialized }
 }

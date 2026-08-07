@@ -83,14 +83,15 @@ export default function App() {
     inspectorOpen: settingsState.inspectorOpen, setInspectorOpen: settingsState.setInspectorOpen,
     terminalOpen: settingsState.terminalOpen, view,
   })
-  const { meta, initialized } = useBootstrap({
-    bridge, setProjects, setSessions, setSchedules, setScheduleError,
-    runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
-    activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime, reportError,
-  })
   const extension = useExtensionUi({
     bridge, activeRuntimeId: workspace.runtime?.runtimeId, runtimeSessionsRef: workspace.runtimeSessionsRef,
     setSessions, setRuntime: workspace.setRuntime, reportError,
+  })
+  const { meta, initialized } = useBootstrap({
+    bridge, setProjects, setSessions, setSchedules, setScheduleError,
+    runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
+    activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime,
+    sessionHasOpenExtensionUi: extension.hasOpenRequestForSession, reportError,
   })
 
   const refreshGit = useCallback(async () => {
