@@ -15,7 +15,7 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => electron)
 
-import { hardenRenderer, loadInitialRenderer } from '../../electron/main/index'
+import { hardenRenderer, loadInitialRenderer, settleShutdown } from '../../electron/main/index'
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
@@ -126,5 +126,30 @@ describe('initial renderer window lifecycle', () => {
     }, 'prime-work://app/index.html')).rejects.toThrow('ERR_ABORTED')
 
     expect(destroy).not.toHaveBeenCalled()
+  })
+})
+
+describe('shutdown settlement', () => {
+  it('waits for every step and logs rejections without rejecting itself', async () => {
+    const log = vi.fn()
+    let finished = false
+
+    await settleShutdown([
+      Promise.resolve(),
+      Promise.reject(new Error('terminal cleanup failed')),
+      new Promise<void>((resolve) => setTimeout(() => { finished = true; resolve() }, 20)),
+    ], { log })
+
+    expect(finished).toBe(true)
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('terminal cleanup failed'))
+  })
+
+  it('gives up after the watchdog deadline when a step never settles', async () => {
+    const log = vi.fn()
+
+    await settleShutdown([new Promise<void>(() => undefined)], { log, watchdogMs: 25 })
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('quitting anyway'))
   })
 })
