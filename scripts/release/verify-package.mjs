@@ -124,7 +124,23 @@ async function verifyDmg(dmg, options, artifacts) {
   }
 }
 
-export async function verifyPackage({ mode, releaseDirectory = resolve('release'), env = process.env }) {
+// Binds the packaging pipeline's requested target architecture to the
+// artifacts that were actually produced. The per-artifact deep checks then
+// verify the binaries against each artifact's declared name, so a requested
+// arch that reaches this gate is enforced end-to-end. Universal is rejected by
+// design: the release ships separate arm64 and x64 builds.
+export function assertRequestedArchitecture(artifacts, arch) {
+  if (arch === undefined) return
+  if (arch !== 'arm64' && arch !== 'x64') throw new Error('Requested architecture must be arm64 or x64')
+  for (const artifact of [artifacts.dmg, artifacts.zip]) {
+    const declared = /-(arm64|x64|universal)\.(?:dmg|zip)$/.exec(artifact)?.[1]
+    if (declared !== arch) {
+      throw new Error(`${basename(artifact)} declares architecture ${declared ?? '<none>'}, but --arch ${arch} was requested`)
+    }
+  }
+}
+
+export async function verifyPackage({ mode, releaseDirectory = resolve('release'), env = process.env, arch = undefined }) {
   if (mode !== 'public' && mode !== 'qa') throw new Error('Verification mode must be public or qa')
   if (!existsSync(releaseDirectory)) throw new Error(`Release directory does not exist: ${releaseDirectory}`)
   const expectedTeam = env.RELEASE_SIGNING_TEAM_ID?.trim()
@@ -132,6 +148,7 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
 
   const artifactFiles = findFiles(releaseDirectory, (path, stat) => stat.isFile() && (path.endsWith('.dmg') || path.endsWith('.zip')))
   const artifacts = requireReleaseArtifacts(artifactFiles)
+  assertRequestedArchitecture(artifacts, arch)
   const dmgMetrics = await verifyDmg(artifacts.dmg, { mode, expectedTeam }, artifacts)
   const zipMetrics = await verifyZip(artifacts.zip, { mode, expectedTeam }, artifacts)
 
@@ -157,7 +174,10 @@ if (invokedAsScript()) {
   const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : undefined
   const releaseDirectoryIndex = process.argv.indexOf('--release-directory')
   const releaseDirectory = releaseDirectoryIndex >= 0 ? process.argv[releaseDirectoryIndex + 1] : undefined
-  verifyPackage({ mode, ...(releaseDirectory ? { releaseDirectory } : {}) }).catch((error) => {
+  const archIndex = process.argv.indexOf('--arch')
+  // A --arch flag with a missing value must fail closed, not skip the check.
+  const arch = archIndex >= 0 ? (process.argv[archIndex + 1] ?? '') : undefined
+  verifyPackage({ mode, ...(releaseDirectory ? { releaseDirectory } : {}), ...(arch !== undefined ? { arch } : {}) }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
   })
