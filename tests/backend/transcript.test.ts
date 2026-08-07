@@ -13,6 +13,28 @@ function makeSessionFile(): string {
   return join(dir, 'session.jsonl')
 }
 
+describe('transcript graph budgets', () => {
+  it('does not let non-renderable records evict renderable history or break the walk', async () => {
+    const file = makeSessionFile()
+    const records = [
+      JSON.stringify({ type: 'session', id: 'session-1', cwd: '/tmp' }),
+      JSON.stringify({ type: 'message', id: 'user-1', parentId: null, message: { role: 'user', content: 'first question' } }),
+      JSON.stringify({ type: 'message', id: 'assistant-1', parentId: 'user-1', message: { role: 'assistant', content: 'first answer' } }),
+    ]
+    let parent = 'assistant-1'
+    for (let index = 0; index < 10_050; index += 1) {
+      const id = `event-${index}`
+      records.push(JSON.stringify({ type: 'event', id, parentId: parent, name: 'internal' }))
+      parent = id
+    }
+    records.push(JSON.stringify({ type: 'message', id: 'user-2', parentId: parent, message: { role: 'user', content: 'second question' } }))
+    writeFileSync(file, `${records.join('\n')}\n`)
+
+    const transcript = await readTranscript(file, false)
+    expect(transcript.map((message) => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
+  })
+})
+
 describe('persisted compaction transcript entries', () => {
   it('shares the transcript text budget across repeated compaction summaries', async () => {
     const file = makeSessionFile()

@@ -199,6 +199,9 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
 export async function readTranscript(filePath: string, isStreaming: boolean): Promise<TranscriptMessage[]> {
   if ((await stat(filePath)).size > 256 * 1024 * 1024) throw new Error('Session transcript is too large to display')
   const entries = new Map<string, { id: string; parentId: string | null; entry: JsonRecord; bytes: number }>()
+  // A light id→parentId edge map covers every record, so the parent-chain walk
+  // still traverses nodes that never render (and never charge the budgets).
+  const parentEdges = new Map<string, string | null>()
   let graphBytes = 0
   let leafId: string | null = null
   let recordCount = 0
@@ -207,8 +210,17 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     if (++recordCount > 200_000) throw new Error('Session transcript has too many records')
     let entry: unknown
     try { entry = JSON.parse(line) } catch { continue }
-    if (!isRecord(entry) || entry.type === 'session' || typeof entry.id !== 'string') continue
-    const parentId = typeof entry.parentId === 'string' ? entry.parentId : null
+    if (!isRecord(entry) || entry.type === 'session' || typeof entry.id !== 'string' || entry.id.length > 1_024) continue
+    const parentId = typeof entry.parentId === 'string' && entry.parentId.length <= 1_024 ? entry.parentId : null
+    parentEdges.delete(entry.id)
+    parentEdges.set(entry.id, parentId)
+    while (parentEdges.size > MAX_TRANSCRIPT_GRAPH_RECORDS * 4) {
+      const oldestEdge = parentEdges.keys().next().value as string | undefined
+      if (oldestEdge === undefined) break
+      parentEdges.delete(oldestEdge)
+    }
+    leafId = entry.id
+    if (entry.type !== 'message' && entry.type !== 'compaction' && !(entry.type === 'custom_message' && entry.display === true)) continue
     const existing = entries.get(entry.id)
     if (existing) {
       graphBytes -= existing.bytes
@@ -217,7 +229,6 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
     const bytes = Buffer.byteLength(line, 'utf8')
     entries.set(entry.id, { id: entry.id, parentId, entry, bytes })
     graphBytes += bytes
-    leafId = entry.id
     while (entries.size > MAX_TRANSCRIPT_GRAPH_RECORDS || graphBytes > MAX_TRANSCRIPT_GRAPH_BYTES) {
       const oldestId = entries.keys().next().value as string | undefined
       if (oldestId === undefined) break
@@ -225,15 +236,19 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       entries.delete(oldestId)
     }
   }
-  const branch: Array<{ id: string; entry: JsonRecord }> = []
-  const visited = new Set<string>()
-  while (leafId && !visited.has(leafId)) {
-    visited.add(leafId)
-    const node = entries.get(leafId)
-    if (!node) break
-    if (node.entry.type === 'message' || node.entry.type === 'compaction' || (node.entry.type === 'custom_message' && node.entry.display === true)) branch.push(node)
-    leafId = node.parentId
+  const walkBranch = (startId: string | null): Array<{ id: string; entry: JsonRecord }> => {
+    const collected: Array<{ id: string; entry: JsonRecord }> = []
+    const visited = new Set<string>()
+    let currentId = startId
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId)
+      const node = entries.get(currentId)
+      if (node) collected.push(node)
+      currentId = parentEdges.get(currentId) ?? null
+    }
+    return collected
   }
+  const branch = walkBranch(leafId)
   branch.reverse()
   const transcript: TranscriptMessage[] = []
   let activeAssistant: TranscriptMessage | undefined
