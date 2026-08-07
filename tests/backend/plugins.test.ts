@@ -176,7 +176,7 @@ describe('PluginService discovery', () => {
     const agentDir = join(root, 'agent')
     const project = join(root, 'project')
     const projectAgentDir = join(project, '.prime', 'agent')
-    const userPrompt = join(root, 'user-prompt.md')
+    const userPrompt = join(root, 'agent', 'user-prompt.md')
     const projectPrompt = join(project, 'project-prompt.md')
     mkdirSync(agentDir); mkdirSync(projectAgentDir, { recursive: true })
     writeFileSync(userPrompt, '# User prompt')
@@ -266,6 +266,23 @@ describe('PluginService discovery', () => {
     expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
     expect(records.some((record) => record.path === realpathSync(ancestorSkill))).toBe(false)
     expect(readFileSync('electron/main/plugins/catalog.ts', 'utf8')).not.toContain('collectAncestorSkills')
+  })
+
+  it('keeps user-configured discovery contained to the agent directory and home', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    const inside = join(agentDir, 'inside-prompt.md')
+    const outside = join(root, 'outside-prompt.md')
+    mkdirSync(agentDir)
+    writeFileSync(inside, '# Inside\ncontained user discovery')
+    writeFileSync(outside, '# Outside\nshould not be disclosed')
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ prompts: [inside, outside] }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const { skills: records } = await service.list()
+
+    expect(records).toContainEqual(expect.objectContaining({ kind: 'prompt', location: 'user', path: realpathSync(inside) }))
+    expect(records.some((record) => record.path === outside || record.path === realpathSync(outside))).toBe(false)
   })
 
   it('keeps project-configured discovery contained while accepting in-project files', async () => {

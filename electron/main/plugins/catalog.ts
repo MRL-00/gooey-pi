@@ -101,6 +101,10 @@ function resolveConfiguredPath(value: string, base: string): string | null {
   return resolve(base, expanded)
 }
 
+function isPathWithinAny(roots: readonly string[], candidate: string): boolean {
+  return roots.some((root) => isPathWithin(root, candidate))
+}
+
 function discoveryExhausted(budget: DiscoveryBudget): boolean {
   return budget.candidates >= MAX_DISCOVERY_CANDIDATES
     || budget.directories >= MAX_DISCOVERY_DIRECTORIES
@@ -122,14 +126,14 @@ async function collectDirectory(
   location: Location,
   output: Candidate[],
   budget: DiscoveryBudget,
-  options: { skillRoot?: boolean; depth?: number; containmentRoot?: string } = {},
+  options: { skillRoot?: boolean; depth?: number; containmentRoots?: readonly string[] } = {},
 ): Promise<void> {
   if (discoveryExhausted(budget)) return
   const depth = options.depth ?? 0
-  if (depth === 0 && options.containmentRoot) {
+  if (depth === 0 && options.containmentRoots?.length) {
     try {
       const canonicalRoot = await realpath(root)
-      if (!isPathWithin(options.containmentRoot, canonicalRoot)) return
+      if (!isPathWithinAny(options.containmentRoots, canonicalRoot)) return
     } catch { return }
   }
 
@@ -164,7 +168,7 @@ async function collectConfigured(
   location: Location,
   output: Candidate[],
   budget: DiscoveryBudget,
-  containmentRoot?: string,
+  containmentRoots?: readonly string[],
 ): Promise<void> {
   if (!Array.isArray(value)) return
   for (const raw of value) {
@@ -176,9 +180,9 @@ async function collectConfigured(
       const stat = await lstat(path)
       if (stat.isSymbolicLink()) continue
       const canonicalPath = await realpath(path)
-      if (containmentRoot && !isPathWithin(containmentRoot, canonicalPath)) continue
+      if (containmentRoots?.length && !isPathWithinAny(containmentRoots, canonicalPath)) continue
       if (stat.isFile()) addCandidate({ path: canonicalPath, kind, location }, output, budget)
-      else if (stat.isDirectory()) await collectDirectory(canonicalPath, kind, location, output, budget, { skillRoot: kind === 'skill', containmentRoot })
+      else if (stat.isDirectory()) await collectDirectory(canonicalPath, kind, location, output, budget, { skillRoot: kind === 'skill', containmentRoots })
     } catch { /* stale configured path */ }
   }
 }
@@ -267,9 +271,12 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   await collectDirectory(join(homedir(), '.agents', 'skills'), 'skill', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'extensions'), 'extension', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'prompts'), 'prompt', 'user', candidates, budget)
-  await collectConfigured(globalSettings.skills, agentDir, 'skill', 'user', candidates, budget)
-  await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget)
-  await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget)
+  const userConfiguredRoots = await Promise.all([agentDir, homedir()].map(async (root) => {
+    try { return await realpath(root) } catch { return root }
+  }))
+  await collectConfigured(globalSettings.skills, agentDir, 'skill', 'user', candidates, budget, userConfiguredRoots)
+  await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget, userConfiguredRoots)
+  await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget, userConfiguredRoots)
 
   const bundled = await bundledSkillsDirectory(primeAgentPath)
   if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget)
@@ -280,13 +287,14 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
     const projectRead = await readSettings(join(projectAgentDir, 'settings.json'), 'project')
     if (projectRead.warning) warnings.push(projectRead.warning)
     projectSettings = projectRead.settings
-    await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoot: safeProjectPath })
-    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoot: safeProjectPath })
-    await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, safeProjectPath)
-    await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, safeProjectPath)
-    await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, safeProjectPath)
+    const projectRoots = [safeProjectPath]
+    await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoots: projectRoots })
+    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoots: projectRoots })
+    await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, projectRoots)
+    await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, projectRoots)
+    await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, projectRoots)
   }
 
   const result = await buildCandidateRecords(candidates, safeProjectPath)
