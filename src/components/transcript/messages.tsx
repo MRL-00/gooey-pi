@@ -17,15 +17,15 @@ function renderImage(part: Extract<MessagePart, { type: 'image' }>, key: string)
   return source ? <img key={key} className="image-part" src={source} alt="User attachment" /> : <div key={key} className="image-part image-part--unavailable">Image attachment unavailable</div>
 }
 
-function renderNarrative(parts: MessagePart[], keyPrefix: string) {
+function renderNarrative(parts: MessagePart[], keyPrefix: string, streaming = false) {
   return parts.map((part, index) => {
-    if (part.type === 'text') return <MarkdownText key={`${keyPrefix}-${index}`} text={part.text} />
+    if (part.type === 'text') return <MarkdownText key={`${keyPrefix}-${index}`} text={part.text} streaming={streaming} />
     if (part.type === 'image') return renderImage(part, `${keyPrefix}-${index}`)
     return null
   })
 }
 
-function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, showReasoning: boolean, showTools: boolean) {
+function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, showReasoning: boolean, showTools: boolean, streaming = false) {
   const groups: Array<{ activity: boolean; parts: MessagePart[] }> = []
   for (const part of parts) {
     const activity = part.type !== 'text' && part.type !== 'image'
@@ -34,8 +34,8 @@ function renderNarrativeWithActivity(parts: MessagePart[], keyPrefix: string, sh
     else groups.push({ activity, parts: [part] })
   }
   return groups.map((group, index) => group.activity
-    ? <WorkTimeline key={`${keyPrefix}-activity-${index}`} parts={group.parts} showReasoning={showReasoning} showTools={showTools} />
-    : <div key={`${keyPrefix}-narrative-${index}`}>{renderNarrative(group.parts, `${keyPrefix}-${index}`)}</div>)
+    ? <WorkTimeline key={`${keyPrefix}-activity-${index}`} parts={group.parts} showReasoning={showReasoning} showTools={showTools} streaming={streaming} />
+    : <div key={`${keyPrefix}-narrative-${index}`}>{renderNarrative(group.parts, `${keyPrefix}-${index}`, streaming)}</div>)
 }
 
 function messageText(message: TranscriptMessage): string {
@@ -130,9 +130,9 @@ export const AssistantMessage = memo(function AssistantMessage({ message, git, i
     <article className="message message--assistant">
       <div className="assistant-mark"><PrimeMark size={24} /></div>
       <div className="message__content">
-        {renderNarrative(before, 'before')}
-        {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle')}
-        {renderNarrativeWithActivity(after, 'after', showReasoning, showTools)}
+        {renderNarrative(before, 'before', message.streaming)}
+        {hasVisibleActivity ? <WorkDisclosure message={message} parts={work} showReasoning={showReasoning} showTools={showTools} /> : renderNarrative(hiddenMiddleNarrative, 'middle', message.streaming)}
+        {renderNarrativeWithActivity(after, 'after', showReasoning, showTools, message.streaming)}
         {isLast && git.files.length > 0 && !message.streaming ? <ChangesCard git={git} onOpenChanges={onOpenChanges} /> : null}
         {message.streaming && !hasVisibleActivity ? <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div> : null}
         {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}

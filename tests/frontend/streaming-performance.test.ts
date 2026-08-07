@@ -388,6 +388,44 @@ describe('catalog tick session identity', () => {
   })
 })
 
+describe('streaming markdown parse throttling', () => {
+  it('parses at most once per interval and renders the tail as plain text between parses', async () => {
+    const { advanceStreamingParse, STREAMING_PARSE_INTERVAL_MS } = await import('../../src/components/MarkdownText')
+    const first = advanceStreamingParse({ boundary: 0, lastParseAt: 0 }, 10, false, 1_000)
+    expect(first.state).toEqual({ boundary: 10, lastParseAt: 1_000 })
+    expect(first.delayMs).toBeUndefined()
+
+    // More deltas inside the interval: keep the old boundary, retry later.
+    const throttled = advanceStreamingParse(first.state, 25, false, 1_040)
+    expect(throttled.state).toBe(first.state)
+    expect(throttled.delayMs).toBe(STREAMING_PARSE_INTERVAL_MS - 40)
+
+    // A newline in the unparsed tail commits immediately.
+    const newline = advanceStreamingParse(first.state, 25, true, 1_040)
+    expect(newline.state).toEqual({ boundary: 25, lastParseAt: 1_040 })
+
+    // Once the interval elapses the boundary advances.
+    const elapsed = advanceStreamingParse(first.state, 25, false, 1_000 + STREAMING_PARSE_INTERVAL_MS)
+    expect(elapsed.state.boundary).toBe(25)
+
+    // Unchanged text is a no-op; shrunk text re-parses from the new end.
+    expect(advanceStreamingParse(elapsed.state, 25, false, 2_000).state).toBe(elapsed.state)
+    expect(advanceStreamingParse(elapsed.state, 5, false, 2_000).state).toEqual({ boundary: 5, lastParseAt: 2_000 })
+  })
+
+  it('summarizes the transcript with a single reverse walk that stops at the first text part', async () => {
+    const { summarizeTranscript } = await import('../../src/components/inspector/SummaryPanel')
+    const messages: TranscriptMessage[] = [
+      { id: 'user-1', role: 'user', timestamp: 1, parts: [{ type: 'text', text: 'ask' }] },
+      { id: 'assistant-1', role: 'assistant', timestamp: 2, parts: [{ type: 'toolCall', id: 'a', name: 'Read' }, { type: 'text', text: 'first answer' }] },
+      { id: 'assistant-2', role: 'assistant', timestamp: 3, parts: [{ type: 'text', text: 'final answer' }, { type: 'toolCall', id: 'b', name: 'Write' }] },
+      { id: 'tool-1', role: 'tool', timestamp: 4, parts: [{ type: 'toolResult', name: 'Write', text: 'done' }] },
+    ]
+    expect(summarizeTranscript(messages)).toEqual({ toolCount: 2, lastText: 'final answer' })
+    expect(summarizeTranscript([])).toEqual({ toolCount: 0, lastText: undefined })
+  })
+})
+
 describe('git refresh scheduling', () => {
   it('fires once when an externally running session stops, never per catalog tick', () => {
     expect(shouldRefreshGitOnSessionTransition('running', 'running', false)).toBe(false)
