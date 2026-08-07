@@ -614,3 +614,32 @@ describe('release size budgets', () => {
     }
   })
 })
+
+describe('non-registry dependency pins', () => {
+  test('every non-registry dependency in the lockfile matches its recorded pin exactly', () => {
+    const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+    const pins = JSON.parse(readFileSync('scripts/release/dependency-pins.json', 'utf8')).packages
+    const nonRegistry = (Object.entries(lockfile.packages ?? {}) as Array<[string, { resolved?: string; integrity?: string }]>)
+      .filter(([, entry]) => typeof entry.resolved === 'string'
+        && entry.resolved.startsWith('http')
+        && !entry.resolved.includes('registry.npmjs.org'))
+
+    // The lockfile sha512 hashes are the supply-chain integrity boundary for
+    // these URL-hosted packages. A regenerated lockfile silently re-anchors
+    // them to whatever bytes the host currently serves; this pin file makes
+    // that a deliberate, reviewed change. To upgrade Prime Agent on purpose:
+    // verify the new tarballs, update the lockfile, then mirror the new
+    // resolved/integrity values here in the same commit.
+    expect(nonRegistry.length).toBeGreaterThan(0)
+    for (const [name, entry] of nonRegistry) {
+      const pin = pins[name]
+      expect(pin, `unpinned non-registry dependency: ${name}`).toBeDefined()
+      expect(entry.resolved, `resolved URL drifted for ${name}`).toBe(pin.resolved)
+      expect(entry.integrity, `integrity drifted for ${name}`).toBe(pin.integrity)
+      expect(entry.integrity, `weak integrity algorithm for ${name}`).toMatch(/^sha512-/)
+    }
+    for (const name of Object.keys(pins)) {
+      expect(nonRegistry.some(([lockName]) => lockName === name), `stale pin for removed dependency: ${name}`).toBe(true)
+    }
+  })
+})

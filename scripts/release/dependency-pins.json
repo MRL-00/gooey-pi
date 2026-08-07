@@ -1,0 +1,25 @@
+{
+  "//": "Tamper-evidence pins for dependencies fetched outside the npm registry. npm ci enforces these hashes; this file makes lockfile re-anchoring (npm install regenerating package-lock.json against changed remote bytes) a loud, reviewed change instead of a silent one. Update ONLY when deliberately upgrading Prime Agent: verify the new tarballs, then regenerate via scripts/release/update-dependency-pins.",
+  "packages": {
+    "node_modules/@earendil-works/pi-agent-core": {
+      "resolved": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-core-0.7.0.tgz",
+      "integrity": "sha512-lx+juh3pTKb8hVFjtVEKjcVttsNBpKh8anWO15cQ4uuYVeHOFXYs/SjHPEEO7/m1PbmuXHpz1E3qEBxoM6AwaQ=="
+    },
+    "node_modules/@earendil-works/pi-ai": {
+      "resolved": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-ai-0.7.0.tgz",
+      "integrity": "sha512-UUYRmIA4SG3wg2v0Dnpj16DxgwZu3GtzZuZhtyEUMeXbdG3Bv7bmHowPCQC/6+GDepd82mwRmV4RVe4IrMlNUg=="
+    },
+    "node_modules/@earendil-works/pi-tui": {
+      "resolved": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-tui-0.7.0.tgz",
+      "integrity": "sha512-mbypMOaUYrrQCBc59YZ34RQHWmsnzJNhd1ISF5E39L9qEKpVU5ZpctTqrA9Dhdo7IGDk0WfSnppNls/uyAcMjw=="
+    },
+    "node_modules/prime-agent": {
+      "resolved": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-0.7.0.tgz",
+      "integrity": "sha512-pgrjR4QFg4VqgcPg+50VSmttjISuFQgv2a5Bx6L7jD/Mk72/XGd6strBuQPIJ0+KKNekaiEf7cclt7RWvw8s7w=="
+    },
+    "node_modules/prime-agent-ai": {
+      "resolved": "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/releases/v0.7.0/prime-agent-ai-0.7.0.tgz",
+      "integrity": "sha512-UUYRmIA4SG3wg2v0Dnpj16DxgwZu3GtzZuZhtyEUMeXbdG3Bv7bmHowPCQC/6+GDepd82mwRmV4RVe4IrMlNUg=="
+    }
+  }
+}
