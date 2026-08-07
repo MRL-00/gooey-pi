@@ -497,9 +497,11 @@ describe('cross-platform packaging repair', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     const root = new URL('..', import.meta.url).pathname
     const localArchitecture = process.arch === 'arm64' ? 'arm64' : 'x64'
+    const localTarget = process.platform === 'darwin' ? 'mac' : process.platform
     const architecturesFor = (glob: string) => (glob.includes('node-pty/build/Release') ? [localArchitecture] : ['arm64', 'x64'])
     for (const target of ['mac', 'linux', 'win']) {
       for (const glob of packageJson.build[target].asarUnpack as string[]) {
+        if (glob.includes('node-pty/build/Release') && target !== localTarget) continue
         const covered = architecturesFor(glob).some((architecture) => {
           const relativeGlob = glob.replace(/^\*\*\//, '').replaceAll('${arch}', architecture)
           const platformRoot = relativeGlob.split('/').slice(0, 4).join('/')
