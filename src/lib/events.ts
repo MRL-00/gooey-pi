@@ -2,6 +2,18 @@ import type { MessagePart, TranscriptMessage } from '@/types/api'
 
 type UnknownRecord = Record<string, unknown>
 
+// Generated transcript identity must be collision-free within a session: two
+// messages minted in the same millisecond previously shared a `Date.now()`
+// React key and were reconciled into one row.
+let transcriptIdSeq = 0
+function nextTranscriptId(prefix: string): string {
+  transcriptIdSeq += 1
+  return `${prefix}-${transcriptIdSeq}`
+}
+
+/** Test-only: restarts generated ids so replays are deterministic. */
+export function resetTranscriptIdsForTests(): void { transcriptIdSeq = 0 }
+
 function record(value: unknown): UnknownRecord | undefined { return value && typeof value === 'object' ? value as UnknownRecord : undefined }
 function string(value: unknown): string | undefined { return typeof value === 'string' ? value : undefined }
 
@@ -114,7 +126,7 @@ function compactionIndex(messages: TranscriptMessage[], status?: Extract<Message
 
 function appendCompaction(messages: TranscriptMessage[], part: Extract<MessagePart, { type: 'compaction' }>, now: number): TranscriptMessage[] {
   return [...messages, {
-    id: `compaction-${now}-${messages.length}`,
+    id: nextTranscriptId('compaction'),
     role: 'system',
     timestamp: now,
     startedAt: now,
@@ -163,7 +175,7 @@ function updateLastAssistant(messages: TranscriptMessage[], updater: (message: T
     if (messages[cursor].role === 'assistant' && messages[cursor].streaming) { index = cursor; break }
   }
   if (index < 0 && messages.at(-1)?.role === 'assistant') index = messages.length - 1
-  if (index < 0) return [...messages, updater({ id: `stream-${Date.now()}`, role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [] })]
+  if (index < 0) return [...messages, updater({ id: nextTranscriptId('stream'), role: 'assistant', timestamp: Date.now(), startedAt: Date.now(), streaming: true, parts: [] })]
   return messages.map((message, messageIndex) => messageIndex === index
     ? updater(message.streaming ? message : { ...message, streaming: true, completedAt: undefined })
     : message)
@@ -284,7 +296,7 @@ export function replayPrimeEvents(
     copyTranscript()
     const now = Date.now()
     const index = next.length
-    next.push({ id: `${prefix}-${now}`, role: 'assistant', timestamp: now, startedAt: now, streaming: true, parts: [] })
+    next.push({ id: nextTranscriptId(prefix), role: 'assistant', timestamp: now, startedAt: now, streaming: true, parts: [] })
     draftedMessages.add(index)
     streaming.add(index)
     lastStreamingAssistant = index
@@ -394,8 +406,9 @@ export function replayPrimeEvents(
     if (type === 'extension_error' || type === 'error' || type === 'transport_error') {
       const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
       finalizeStreaming(Date.now(), false)
+      if (next.at(-1)?.role === 'system') continue
       copyTranscript()
-      next.push({ id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] })
+      next.push({ id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] })
       continue
     }
     if (type === 'runtime_exit') {
@@ -403,7 +416,7 @@ export function replayPrimeEvents(
       if (raw.expected === true || next.at(-1)?.role === 'system') continue
       const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
       copyTranscript()
-      next.push({ id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] })
+      next.push({ id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] })
     }
   }
 
@@ -443,7 +456,7 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
         : message)
     }
     const startedAt = Date.now()
-    return [...messages, { id: `assistant-${startedAt}`, role: 'assistant', timestamp: startedAt, startedAt, streaming: true, parts: [] }]
+    return [...messages, { id: nextTranscriptId('assistant'), role: 'assistant', timestamp: startedAt, startedAt, streaming: true, parts: [] }]
   }
   if (type === 'message_update') {
     const delta = record(raw.assistantMessageEvent) ?? record(raw.delta)
@@ -489,14 +502,15 @@ export function applyPrimeEvent(messages: TranscriptMessage[], raw: Record<strin
     const text = string(raw.error) ?? string(raw.message) ?? 'Prime encountered an error.'
     const completedAt = Date.now()
     const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
-    return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] }]
+    if (finalized.at(-1)?.role === 'system') return finalized
+    return [...finalized, { id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text }] }]
   }
   if (type === 'runtime_exit') {
     const completedAt = Date.now()
     const finalized = messages.map((message) => message.streaming ? { ...message, streaming: false, completedAt } : message)
     if (raw.expected === true || finalized.at(-1)?.role === 'system') return finalized
     const reason = raw.code !== null && raw.code !== undefined ? `exit code ${String(raw.code)}` : string(raw.signal) ?? 'an unknown error'
-    return [...finalized, { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] }]
+    return [...finalized, { id: nextTranscriptId('error'), role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Prime Agent stopped unexpectedly (${reason}). Send the message again to restart it.` }] }]
   }
   return messages
 }

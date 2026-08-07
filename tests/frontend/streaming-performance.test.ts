@@ -9,7 +9,7 @@ import {
   updateActivityCriteria,
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
-import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, type PrimeEventReplayStats } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
 import type { ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
@@ -271,7 +271,9 @@ describe('linear event batches', () => {
     const random = () => { seed = (seed * 1_664_525 + 1_013_904_223) >>> 0; return seed }
     for (let run = 0; run < 100; run += 1) {
       const events = Array.from({ length: 80 }, () => pool[random() % pool.length])
+      resetTranscriptIdsForTests()
       const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+      resetTranscriptIdsForTests()
       expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
     }
   })

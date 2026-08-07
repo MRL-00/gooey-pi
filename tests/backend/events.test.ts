@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { applyPrimeEvent, createPrimeEventBuffer } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, resetTranscriptIdsForTests } from '../../src/lib/events'
 import type { TranscriptMessage } from '../../src/types/api'
 
 const streamingMessage = (): TranscriptMessage => ({
@@ -101,13 +101,49 @@ describe('agent transport events', () => {
       },
       { type: 'compaction_end', reason: 'threshold', aborted: false, errorSeverity: 'warning', errorMessage: 'Auto-compaction skipped: no model' },
     ]
+    resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), [streamingMessage()])
     const buffered = createPrimeEventBuffer()
     events.forEach((event) => buffered.push(event))
+    resetTranscriptIdsForTests()
     expect(buffered.replay([streamingMessage()])).toEqual(sequential)
     expect(sequential.filter((message) => message.parts.some((part) => part.type === 'compaction'))).toHaveLength(1)
     expect(sequential.at(-1)?.parts[0]).toMatchObject({ type: 'compaction', status: 'failed', outcome: 'skipped' })
     now.mockRestore()
+  })
+
+  it('mints distinct message ids for turns created in the same millisecond', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_786_074_279_000)
+    const events: Record<string, unknown>[] = [
+      { type: 'agent_start' },
+      { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'first' } },
+      { type: 'agent_end' },
+      { type: 'error', message: 'boundary failed' },
+      { type: 'agent_start' },
+      { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'second' } },
+    ]
+    const assertDistinctIds = (messages: TranscriptMessage[]) => {
+      expect(messages.length).toBeGreaterThanOrEqual(3)
+      expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length)
+    }
+
+    assertDistinctIds(events.reduce((current, event) => applyPrimeEvent(current, event), []))
+    assertDistinctIds(replayPrimeEvents([], events))
+    now.mockRestore()
+  })
+
+  it('suppresses a duplicate system row for consecutive transport failures', () => {
+    const sequential = [
+      { type: 'error', message: 'first failure' },
+      { type: 'transport_error', error: 'second failure' },
+    ].reduce((current, event) => applyPrimeEvent(current, event), [streamingMessage()])
+    expect(sequential.filter((message) => message.role === 'system')).toHaveLength(1)
+
+    const batched = replayPrimeEvents([streamingMessage()], [
+      { type: 'error', message: 'first failure' },
+      { type: 'transport_error', error: 'second failure' },
+    ])
+    expect(batched.filter((message) => message.role === 'system')).toHaveLength(1)
   })
 
   it('does not duplicate a compaction already present in an authoritative reload', () => {
