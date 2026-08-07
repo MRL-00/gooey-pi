@@ -75,17 +75,25 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     try { await shell.openExternal(requireWebUrl(url, { mailto: true }), { activate: true }); return true } catch { return false }
   })
   handle('app:reveal-path', async (_event, path) => {
-    try {
-      const requested = await requireExistingPath(path)
+    let requested: string
+    try { requested = await requireExistingPath(path) } catch { return false }
+    const authorizations: Array<() => Promise<string> | string> = [
+      () => services.projects.authorizePath(requested),
+      () => services.sessions.requireSessionPath(requested),
+      () => services.plugins.authorizeReveal(requested),
+    ]
+    for (const authorize of authorizations) {
       let authorized: string
-      try { authorized = await services.projects.authorizePath(requested) }
-      catch {
-        try { authorized = await services.sessions.requireSessionPath(requested) }
-        catch { authorized = services.plugins.authorizeReveal(requested) }
+      try { authorized = await authorize() } catch { continue /* denial here defers to the next authorization domain */ }
+      try {
+        shell.showItemInFolder(authorized)
+        return true
+      } catch (error) {
+        console.warn('Rejected app:reveal-path:', error instanceof Error ? error.message : error)
+        return false
       }
-      shell.showItemInFolder(authorized)
-      return true
-    } catch { return false }
+    }
+    return false
   })
 
   handle('projects:list', () => services.projects.list())

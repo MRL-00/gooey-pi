@@ -863,6 +863,33 @@ process.exit(2)
     await expect(service.followUp(file, 'do not disclose this')).rejects.toThrow('untrusted daemon socket')
   })
 
+  it('resolves follow-up candidates through the cached live catalog instead of a second listing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-followup-catalog-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'busy.jsonl')
+    writeSession(file, project, 'busy')
+    const countFile = join(dir, 'list-count')
+    const executable = join(dir, 'prime-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs')
+if (process.argv[2] === 'list') {
+  fs.appendFileSync(${JSON.stringify(countFile)}, 'x')
+  process.stdout.write(JSON.stringify({ sessions: [{ id: 'busy-worker', activeSessionId: 'busy-worker', lifecycle: 'live', isSessionActive: false, sessionFile: ${JSON.stringify(file)} }] }))
+  process.exit(0)
+}
+process.exit(9)
+`)
+    chmodSync(executable, 0o755)
+    const service = new SessionService(new JsonStateStore(join(dir, 'state.json')), executable)
+    Object.defineProperty(service, 'sessionRoot', { value: root })
+
+    await service.list()
+    await expect(service.followUp(file, 'reuse the catalog')).resolves.toBe(false)
+    const { readFileSync } = await import('node:fs')
+    expect(readFileSync(countFile, 'utf8')).toBe('x')
+  })
+
   it('does not send a follow-up when the session is no longer active', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-inactive-session-')); dirs.push(dir)
     const root = join(dir, 'sessions'); mkdirSync(root)

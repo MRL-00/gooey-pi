@@ -8,7 +8,7 @@ import { isRecord, rejectUnknownKeys, requireBoolean, requireString, requireWebU
 export class SettingsService {
   constructor(private readonly store: JsonStateStore, private readonly validateShell: (shell: unknown) => string, private readonly cancelBrowserDownloads: () => void = () => undefined) {}
 
-  get(): AppSettings { return this.store.snapshot().settings }
+  get(): AppSettings { return this.store.getSettings() }
 
   async update(raw: unknown): Promise<AppSettings> {
     if (!isRecord(raw)) throw new TypeError('settings patch must be an object')

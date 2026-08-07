@@ -106,7 +106,7 @@ export class SessionService {
       try { project = await requireExistingDirectory(requestedProject, 'projectPath') } catch { /* Preserve stale lexical filtering. */ }
     }
     const sessions = await this.catalog.all()
-    const archived = new Set(this.store.snapshot().archivedSessions.map((path) => resolve(path)))
+    const archived = new Set(this.store.getArchivedSessions().map((path) => resolve(path)))
     // One runtime snapshot per list call; each session then resolves in O(1).
     const runtimeBySession = this.snapshotRuntimeSessions()
     const records: SessionRecord[] = []
@@ -200,20 +200,11 @@ export class SessionService {
     const safeMessage = requireString(message, 'message', { min: 1, max: 64 * 1024 })
     if (!this.primeAgentPath) throw new Error('Prime Agent executable was not found')
 
-    const catalog = await runProcess(this.primeAgentPath, ['list', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
-    if (catalog.code !== 0 || catalog.timedOut || catalog.outputExceeded) throw new Error('Prime Work could not inspect active Prime Agent sessions')
-    let parsed: unknown
-    try { parsed = JSON.parse(catalog.stdout) } catch { throw new Error('Prime Agent returned an invalid active-session catalog') }
-    if (!isRecord(parsed) || !Array.isArray(parsed.sessions)
-      || parsed.sessions.length > MAX_SESSION_FILES * 4) throw new Error('Prime Agent returned an invalid active-session catalog')
-
-    let active: Record<string, unknown> | undefined
-    for (const value of parsed.sessions) {
-      if (!isRecord(value) || value.lifecycle !== 'live' || value.isSessionActive !== true
-        || typeof value.sessionFile !== 'string' || value.sessionFile.length > 4_096) continue
-      if (canonicalSessionPath(value.sessionFile) === safePath) { active = value; break }
-    }
-    if (!active) return false
+    // The catalog canonicalizes candidate session files with bounded
+    // parallelism and caches the result; reuse it instead of re-listing with
+    // up to MAX_SESSION_FILES * 4 serial realpath calls.
+    const active = (await this.catalog.liveSessions()).get(safePath)
+    if (!active || active.lifecycle !== 'live' || active.isSessionActive !== true) return false
     const activeSessionId = requireId(active.activeSessionId ?? active.id, 'activeSessionId')
     if (activeSessionId.startsWith('-')) throw new Error('Prime Agent returned an invalid active session identifier')
 

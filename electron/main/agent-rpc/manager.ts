@@ -69,7 +69,14 @@ export class AgentRpcManager {
       await this.decorate(runtime)
       if (runtime.snapshot().fastModeSupported && options.fast === true) await runtime.setServiceTier('priority', true)
       return runtime.snapshot()
-    } catch (error) { await runtime.stop(); throw error }
+    } catch (error) {
+      // Release the runtime slot explicitly: the close-event cleanup may never
+      // fire if the child cannot be reaped, and a failed start must not count
+      // against the concurrent-runtime cap.
+      this.runtimes.delete(runtime.runtimeId)
+      await runtime.stop()
+      throw error
+    }
   }
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {

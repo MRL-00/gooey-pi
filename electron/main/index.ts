@@ -102,7 +102,7 @@ function isAllowedBrowserUrl(raw: string): boolean {
   try { const url = new URL(raw); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password } catch { return false }
 }
 
-function hardenRenderer(window: BrowserWindow): void {
+export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string = () => trustedRendererUrl): void {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-attach-webview', (event, preferences, params) => {
     delete preferences.preload
@@ -112,6 +112,8 @@ function hardenRenderer(window: BrowserWindow): void {
     preferences.sandbox = true
     preferences.webSecurity = true
     preferences.allowRunningInsecureContent = false
+    // A guest page must never be able to attach a nested guest of its own.
+    preferences.webviewTag = false
     const partition = typeof params.partition === 'string' ? params.partition : ''
     if (partition !== 'persist:prime-work-browser' || !isAllowedBrowserUrl(params.src)) event.preventDefault()
   })
@@ -125,6 +127,14 @@ function hardenRenderer(window: BrowserWindow): void {
   window.webContents.on('will-navigate', (event, target) => {
     const current = window.webContents.getURL()
     if (target !== current) event.preventDefault()
+  })
+  // Server redirects and sub-frame navigations bypass will-navigate; hold them
+  // to the same trusted-renderer predicate the IPC gate uses.
+  window.webContents.on('will-redirect', (event) => {
+    if (!isTrustedRendererUrl(event.url, trustedUrl())) event.preventDefault()
+  })
+  window.webContents.on('will-frame-navigate', (event) => {
+    if (!isTrustedRendererUrl(event.url, trustedUrl())) event.preventDefault()
   })
 }
 
@@ -255,7 +265,7 @@ async function bootstrap(): Promise<void> {
     (cwd) => projects.authorizeCwd(cwd),
     (path) => sessions.requireSessionPath(path),
     providers,
-    () => new Set(stateStore.snapshot().settings.disabledProviders),
+    () => new Set(stateStore.getSettings().disabledProviders),
   )
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
@@ -263,7 +273,7 @@ async function bootstrap(): Promise<void> {
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
-  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.snapshot().settings.terminalShell)
+  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.getSettings().terminalShell)
   projects.bindProviders({
     sessions: listCatalogSessions,
     branch: (cwd) => git.branch(cwd),
@@ -292,7 +302,7 @@ async function bootstrap(): Promise<void> {
     sessions,
     agents,
     providers,
-    () => new Set(stateStore.snapshot().settings.disabledProviders),
+    () => new Set(stateStore.getSettings().disabledProviders),
   )
   const schedules = new AutomationService(stateStore, {
     validateTarget: (target) => scheduledRuns.validateTarget(target),

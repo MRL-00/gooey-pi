@@ -21,6 +21,7 @@ interface OwnedTerminal {
   pendingOutputBytes: number
   flushTimer?: NodeJS.Timeout
   terminating: boolean
+  exited: boolean
 }
 
 function systemShells(): Set<string> {
@@ -136,10 +137,11 @@ export class TerminalService {
     const terminal = pty.spawn(shell, shellArguments(shell), { cwd, cols, rows, name: 'xterm-256color', env })
     if (owner.isDestroyed()) { try { terminal.kill() } catch { /* owner closed during spawn */ }; throw new Error('Terminal owner was closed') }
     const terminalId = randomUUID()
-    const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, cwd, shell, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false }
+    const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, cwd, shell, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false, exited: false }
     this.terminals.set(terminalId, owned)
     terminal.onData((data) => this.forwardOutput(terminalId, owned, data))
     terminal.onExit(({ exitCode, signal }) => {
+      owned.exited = true
       this.terminals.delete(terminalId)
       if (owned.flushTimer) clearTimeout(owned.flushTimer)
       this.flushOutput(terminalId, owned)
@@ -221,6 +223,7 @@ export class TerminalService {
   private async terminateProcess(id: string, owned: OwnedTerminal): Promise<void> {
     if (owned.flushTimer) { clearTimeout(owned.flushTimer); owned.flushTimer = undefined }
     this.flushOutput(id, owned)
+    if (owned.exited) return
     const descendants = await processTree(owned.terminal.pid)
     if (process.platform === 'win32') {
       signalTerminalTree(owned, descendants, 'SIGTERM')
@@ -230,7 +233,16 @@ export class TerminalService {
     await delay(150)
     signalTerminalTree(owned, descendants, 'SIGTERM')
     await delay(350)
-    signalTerminalTree(owned, descendants, 'SIGKILL')
+    // Re-snapshot before the SIGKILL rung: only descendants still parented
+    // under this pty may be force-killed, which narrows the window in which a
+    // recycled PID could be hit with the stale snapshot.
+    const survivors = new Set(await processTree(owned.terminal.pid))
+    const remaining = descendants.filter((pid) => survivors.has(pid))
+    if (owned.exited) {
+      signalPids(remaining, 'SIGKILL')
+      return
+    }
+    signalTerminalTree(owned, remaining, 'SIGKILL')
   }
 
   private owned(owner: WebContents, idValue: unknown): OwnedTerminal {

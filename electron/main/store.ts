@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
@@ -181,9 +181,19 @@ function parseSchedule(value: unknown): AutomationScheduleRecord | null {
   }
 }
 
+const MAX_ARCHIVED_SESSIONS = 5_000
+const MAX_DISMISSED_PROJECT_PATHS = 1_024
+const MAX_STATE_FILE_BYTES = 64 * 1024 * 1024
+
+/** Entries append chronologically, so trimming from the front keeps the most recent. */
+function capUnboundedCollections(state: DesktopState): void {
+  if (state.archivedSessions.length > MAX_ARCHIVED_SESSIONS) state.archivedSessions = state.archivedSessions.slice(-MAX_ARCHIVED_SESSIONS)
+  if (state.dismissedProjectPaths.length > MAX_DISMISSED_PROJECT_PATHS) state.dismissedProjectPaths = state.dismissedProjectPaths.slice(-MAX_DISMISSED_PROJECT_PATHS)
+}
+
 function parseState(value: unknown): DesktopState {
   if (!isRecord(value)) return defaultState()
-  return {
+  const state: DesktopState = {
     version: 2,
     projects: Array.isArray(value.projects) ? value.projects.map(parseProject).filter((item): item is PersistedProject => item !== null) : [],
     settings: parseSettings(value.settings),
@@ -191,6 +201,8 @@ function parseState(value: unknown): DesktopState {
     dismissedProjectPaths: Array.isArray(value.dismissedProjectPaths) ? value.dismissedProjectPaths.filter((item): item is string => typeof item === 'string') : [],
     schedules: Array.isArray(value.schedules) ? value.schedules.map(parseSchedule).filter((item): item is AutomationScheduleRecord => item !== null).slice(0, 500) : [],
   }
+  capUnboundedCollections(state)
+  return state
 }
 
 export interface JsonStateStoreFileHandle {
@@ -222,11 +234,16 @@ export class JsonStateStore {
   ) {
     mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
     try {
+      const { size } = statSync(filePath)
+      if (size > MAX_STATE_FILE_BYTES) throw new Error(`state file is ${size} bytes; refusing to parse more than ${MAX_STATE_FILE_BYTES} bytes`)
       this.state = parseState(JSON.parse(readFileSync(filePath, 'utf8')))
     } catch (error) {
       this.state = defaultState()
       try {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') renameSync(filePath, `${filePath}.corrupt-${Date.now()}`)
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error(`Prime Work desktop state was reset and backed up: ${error instanceof Error ? error.message : String(error)}`)
+          renameSync(filePath, `${filePath}.corrupt-${Date.now()}`)
+        }
       } catch { /* The valid in-memory fallback remains usable. */ }
       this.queue = this.persist(this.state).catch(() => undefined)
     }
@@ -236,11 +253,24 @@ export class JsonStateStore {
     return structuredClone(this.state)
   }
 
+  getSettings(): AppSettings {
+    return structuredClone(this.state.settings)
+  }
+
+  getProjects(): PersistedProject[] {
+    return structuredClone(this.state.projects)
+  }
+
+  getArchivedSessions(): string[] {
+    return [...this.state.archivedSessions]
+  }
+
   async update<T>(mutator: (draft: DesktopState) => T): Promise<T> {
     if (this.closed) throw new Error('Desktop state store is shutting down')
     const operation = this.queue.then(async () => {
       const draft = structuredClone(this.state)
       const result = mutator(draft)
+      capUnboundedCollections(draft)
       await this.persist(draft)
       this.state = draft
       return result

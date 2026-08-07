@@ -48,7 +48,72 @@ describe('tool result placement in assembled turns', () => {
   })
 })
 
+function makeSessionFile(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'prime-work-transcript-'))
+  dirs.push(dir)
+  return join(dir, 'session.jsonl')
+}
+
+describe('transcript graph budgets', () => {
+  it('does not let non-renderable records evict renderable history or break the walk', async () => {
+    const file = makeSessionFile()
+    const records = [
+      JSON.stringify({ type: 'session', id: 'session-1', cwd: '/tmp' }),
+      JSON.stringify({ type: 'message', id: 'user-1', parentId: null, message: { role: 'user', content: 'first question' } }),
+      JSON.stringify({ type: 'message', id: 'assistant-1', parentId: 'user-1', message: { role: 'assistant', content: 'first answer' } }),
+    ]
+    let parent = 'assistant-1'
+    for (let index = 0; index < 10_050; index += 1) {
+      const id = `event-${index}`
+      records.push(JSON.stringify({ type: 'event', id, parentId: parent, name: 'internal' }))
+      parent = id
+    }
+    records.push(JSON.stringify({ type: 'message', id: 'user-2', parentId: parent, message: { role: 'user', content: 'second question' } }))
+    writeFileSync(file, `${records.join('\n')}\n`)
+
+    const transcript = await readTranscript(file, false)
+    expect(transcript.map((message) => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
+  })
+
+  it('renders the last renderable branch when the file ends with a rootless non-renderable record', async () => {
+    const file = makeSessionFile()
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'session-1', cwd: '/tmp' }),
+      JSON.stringify({ type: 'message', id: 'user-1', parentId: null, message: { role: 'user', content: 'question' } }),
+      JSON.stringify({ type: 'message', id: 'assistant-1', parentId: 'user-1', message: { role: 'assistant', content: 'answer' } }),
+      JSON.stringify({ type: 'event', id: 'stray', parentId: null, name: 'housekeeping' }),
+      '',
+    ].join('\n'))
+
+    const transcript = await readTranscript(file, false)
+    expect(transcript.map((message) => message.id)).toEqual(['user-1', 'assistant-1'])
+  })
+})
+
 describe('persisted compaction transcript entries', () => {
+  it('shares the transcript text budget across repeated compaction summaries', async () => {
+    const file = makeSessionFile()
+    const summary = 'S'.repeat(256 * 1024)
+    const records = [JSON.stringify({ type: 'session', id: 'session-1', cwd: '/tmp' })]
+    let parent: string | null = null
+    for (let index = 0; index < 5; index += 1) {
+      records.push(JSON.stringify({ type: 'compaction', id: `compact-${index}`, parentId: parent, timestamp: '2026-08-07T00:00:00.000Z', summary }))
+      parent = `compact-${index}`
+    }
+    writeFileSync(file, `${records.join('\n')}\n`)
+
+    const transcript = await readTranscript(file, false)
+    expect(transcript).toHaveLength(5)
+    const summaryLengths = transcript.map((message) => {
+      const part = message.parts[0] as { summary?: string }
+      return part.summary?.length ?? 0
+    })
+    expect(summaryLengths.reduce((total, length) => total + length, 0)).toBeLessThanOrEqual(1024 * 1024)
+    // The budget is consumed newest-first; the most recent compaction keeps its full summary.
+    expect(summaryLengths.at(-1)).toBe(256 * 1024)
+    expect(summaryLengths[0]).toBe(0)
+  })
+
   it('keeps completed compaction summaries visible after a session reload', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-transcript-'))
     dirs.push(dir)

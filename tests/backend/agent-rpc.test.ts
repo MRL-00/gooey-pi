@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentRpcManager } from '../../electron/main/agent-rpc'
+import { RpcRuntime } from '../../electron/main/agent-rpc/runtime'
 import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
 import { validateRpcCommand } from '../../electron/main/agent-rpc/command-schema'
 import { MAX_RPC_WRITE_FRAME_BYTES, rpcRequestFrameBytes } from '../../electron/main/agent-rpc/limits'
@@ -194,6 +195,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 
     await expect(manager.start({ cwd: fake.cwd })).rejects.toThrow('Unable to initialize session')
     expect(manager.list()).toEqual([])
+  })
+
+  it('releases the runtime slot on a failed start even when the child cannot be stopped', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-stuck-'))
+    dirs.push(cwd)
+    const manager = managerFor('/bin/cat')
+    const handshake = vi.spyOn(RpcRuntime.prototype, 'handshake').mockRejectedValue(new Error('handshake unavailable'))
+    // Simulate a child that survives the stop escalation: stop resolves false
+    // and the close-event cleanup never runs.
+    const stop = vi.spyOn(RpcRuntime.prototype, 'stop').mockResolvedValue(false)
+    try {
+      await expect(manager.start({ cwd })).rejects.toThrow('handshake unavailable')
+      expect(manager.list()).toEqual([])
+    } finally {
+      handshake.mockRestore()
+      stop.mockRestore()
+    }
   })
 
   it('decorates runtime reasoning and fast-mode capabilities from the Prime catalog', async () => {

@@ -15,7 +15,73 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => electron)
 
-import { loadInitialRenderer } from '../../electron/main/index'
+import { hardenRenderer, loadInitialRenderer } from '../../electron/main/index'
+import type { BrowserWindow } from 'electron'
+
+type Handler = (...args: never[]) => void
+
+function hardenedWindow(currentUrl = 'prime-work://app/index.html') {
+  const handlers = new Map<string, Handler>()
+  const webContents = {
+    on: (name: string, listener: Handler) => { handlers.set(name, listener) },
+    once: (name: string, listener: Handler) => { handlers.set(name, listener) },
+    setWindowOpenHandler: vi.fn(),
+    getURL: () => currentUrl,
+  }
+  hardenRenderer({ webContents } as unknown as BrowserWindow, () => 'prime-work://app/index.html')
+  const handler = (name: string): Handler => {
+    const listener = handlers.get(name)
+    if (!listener) throw new Error(`No ${name} handler was registered`)
+    return listener
+  }
+  return { handler }
+}
+
+describe('renderer hardening', () => {
+  it('forces webviewTag off and locks down every attached webview preference', () => {
+    const { handler } = hardenedWindow()
+    const preferences: Record<string, unknown> = { preload: '/tmp/evil.js', nodeIntegration: true, webviewTag: true, sandbox: false }
+    const event = { preventDefault: vi.fn() }
+    handler('will-attach-webview')(...[event, preferences, { partition: 'persist:prime-work-browser', src: 'https://example.test/' }] as never[])
+
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(preferences).toMatchObject({
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+    })
+    expect('preload' in preferences).toBe(false)
+  })
+
+  it('rejects webviews outside the browser partition or with unsafe sources', () => {
+    const { handler } = hardenedWindow()
+    for (const params of [
+      { partition: 'persist:other', src: 'https://example.test/' },
+      { partition: 'persist:prime-work-browser', src: 'file:///etc/passwd' },
+    ]) {
+      const event = { preventDefault: vi.fn() }
+      handler('will-attach-webview')(...[event, {}, params] as never[])
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('blocks main-window redirects and frame navigations away from the trusted renderer', () => {
+    const { handler } = hardenedWindow()
+    for (const name of ['will-redirect', 'will-frame-navigate']) {
+      const blocked = { url: 'https://attacker.test/', preventDefault: vi.fn() }
+      handler(name)(...[blocked] as never[])
+      expect(blocked.preventDefault, name).toHaveBeenCalledOnce()
+
+      const trusted = { url: 'prime-work://app/index.html', preventDefault: vi.fn() }
+      handler(name)(...[trusted] as never[])
+      expect(trusted.preventDefault, name).not.toHaveBeenCalled()
+    }
+  })
+})
 
 describe('initial renderer window lifecycle', () => {
   it('does not settle the initial load before navigation settles', async () => {

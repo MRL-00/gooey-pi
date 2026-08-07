@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync,
 import { open, rename, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultSettings, JsonStateStore } from '../../electron/main/store'
 import type { JsonStateStoreFileHandle, JsonStateStoreFileSystem } from '../../electron/main/store'
 import { SessionService } from '../../electron/main/sessions'
@@ -240,6 +240,78 @@ describe('JsonStateStore', () => {
 
     expect(statSync(stateDirectory).mode & 0o777).toBe(0o700)
     expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  it('caps archived sessions and dismissed project paths on load and write', async () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 2,
+      projects: [],
+      settings: defaultSettings(),
+      archivedSessions: Array.from({ length: 5_200 }, (_, index) => `/sessions/${index}.jsonl`),
+      dismissedProjectPaths: Array.from({ length: 1_500 }, (_, index) => `/projects/${index}`),
+    }))
+    const store = new JsonStateStore(path)
+    const loaded = store.snapshot()
+    expect(loaded.archivedSessions).toHaveLength(5_000)
+    expect(loaded.archivedSessions[0]).toBe('/sessions/200.jsonl')
+    expect(loaded.archivedSessions.at(-1)).toBe('/sessions/5199.jsonl')
+    expect(loaded.dismissedProjectPaths).toHaveLength(1_024)
+    expect(loaded.dismissedProjectPaths.at(-1)).toBe('/projects/1499')
+
+    await store.update((state) => {
+      state.archivedSessions.push('/sessions/newest.jsonl')
+      state.dismissedProjectPaths.push('/projects/newest')
+    })
+    const written = JSON.parse(readFileSync(path, 'utf8')) as { archivedSessions: string[]; dismissedProjectPaths: string[] }
+    expect(written.archivedSessions).toHaveLength(5_000)
+    expect(written.archivedSessions.at(-1)).toBe('/sessions/newest.jsonl')
+    expect(written.dismissedProjectPaths).toHaveLength(1_024)
+    expect(written.dismissedProjectPaths.at(-1)).toBe('/projects/newest')
+  })
+
+  it('exposes narrow slice accessors that clone only their slice', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 2,
+      projects: [{ id: 'p1', name: 'One', path: '/one', folders: ['/one'], primaryFolder: '/one' }],
+      settings: { ...defaultSettings(), terminalShell: '/bin/bash' },
+      archivedSessions: ['/sessions/kept.jsonl'],
+      dismissedProjectPaths: [],
+    }))
+    const store = new JsonStateStore(path)
+
+    const settings = store.getSettings()
+    expect(settings.terminalShell).toBe('/bin/bash')
+    settings.terminalShell = '/bin/tampered'
+    expect(store.getSettings().terminalShell).toBe('/bin/bash')
+
+    const projects = store.getProjects()
+    expect(projects.map((project) => project.id)).toEqual(['p1'])
+    projects[0].name = 'tampered'
+    expect(store.getProjects()[0].name).toBe('One')
+
+    const archived = store.getArchivedSessions()
+    expect(archived).toEqual(['/sessions/kept.jsonl'])
+    archived.push('/sessions/tampered.jsonl')
+    expect(store.getArchivedSessions()).toEqual(['/sessions/kept.jsonl'])
+  })
+
+  it('refuses to parse an oversized state file and backs it up instead', async () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, `{"version":2,"padding":"${'x'.repeat(64 * 1024 * 1024)}"}`)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const store = new JsonStateStore(path)
+      expect(store.snapshot().projects).toEqual([])
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('refusing to parse'))
+      await store.update((state) => { state.archivedSessions.push('after-oversize') })
+      expect(readdirSync(dir).some((name) => name.startsWith('state.json.corrupt-'))).toBe(true)
+      expect(JSON.parse(readFileSync(path, 'utf8')).archivedSessions).toEqual(['after-oversize'])
+    } finally { errorSpy.mockRestore() }
   })
 
   it('backs up corrupt state, returns defaults, and serializes recovery before later updates', async () => {
