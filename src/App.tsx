@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TitleToolbar } from '@/components/TitleToolbar'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
+import { createAppKeydownHandler } from '@/lib/app-shortcuts'
 import { createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, gitStatusForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import { DEFAULT_SETTINGS, SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { requestFailureMessage } from '@/app/workspace'
@@ -397,17 +398,15 @@ export default function App() {
   })
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (document.querySelector('.modal[role="dialog"][aria-modal="true"]')) { if (event.metaKey || event.ctrlKey) event.preventDefault(); return }
-      const command = event.metaKey || event.ctrlKey
-      if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(true) }
-      else if (command && event.key.toLowerCase() === 'n') { event.preventDefault(); newSession() }
-      else if (command && event.key.toLowerCase() === 'b' && event.shiftKey) { event.preventDefault(); openBrowser() }
-      else if (command && event.key.toLowerCase() === 'b') { event.preventDefault(); toggleSidebar() }
-      else if (command && event.key.toLowerCase() === 'j') { event.preventDefault(); void toggleTerminal() }
-      else if (event.metaKey && event.key === ',') { event.preventDefault(); navigate('settings') }
-      else if (event.key === 'Escape') setPaletteOpen(false)
-    }
+    const onKeyDown = createAppKeydownHandler({
+      'open-palette': () => setPaletteOpen(true),
+      'new-session': () => newSession(),
+      'open-browser': () => openBrowser(),
+      'toggle-sidebar': () => toggleSidebar(),
+      'toggle-terminal': () => { void toggleTerminal() },
+      'open-settings': () => navigate('settings'),
+      'close-palette': () => setPaletteOpen(false),
+    })
     window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown)
   })
 
