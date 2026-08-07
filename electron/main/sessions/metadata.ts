@@ -2,6 +2,7 @@ import { createReadStream, type Stats } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { SessionRecord, SessionStatus } from '../../../src/types/api'
+import { SESSION_FILE_RECORD_LIMIT_BYTES } from '../jsonl-limits'
 import { strictJsonLines } from '../jsonl'
 import { isRecord } from '../validation'
 import { compactText, textFromContent, validTimestamp } from './transcript'
@@ -72,7 +73,8 @@ export async function readSessionMetadata(filePath: string, knownStat?: Stats): 
   let stopReason: string | undefined
 
   let metadataRecords = 0
-  for await (const line of strictJsonLines(createReadStream(filePath))) {
+  // The transcript reader of the same file MUST share this per-record tolerance.
+  for await (const line of strictJsonLines(createReadStream(filePath), SESSION_FILE_RECORD_LIMIT_BYTES)) {
     if (!line) continue
     if (++metadataRecords > 200_000) throw new Error('Session file has too many records')
     let value: unknown

@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { RPC_READ_FRAME_LIMIT_BYTES } from '../jsonl-limits'
 import { StrictJsonlDecoder } from '../jsonl'
 import { errorMessage } from '../validation'
 import { MAX_RPC_WRITE_FRAME_BYTES } from './limits'
@@ -16,7 +17,7 @@ export class FramedRpcTransport {
     onFatalFrameError: (error: unknown) => void,
     private readonly isAvailable: () => boolean,
   ) {
-    this.decoder = new StrictJsonlDecoder(onLine, 16 * 1024 * 1024)
+    this.decoder = new StrictJsonlDecoder(onLine, RPC_READ_FRAME_LIMIT_BYTES)
     this.child.stdout.on('data', (chunk: Buffer) => {
       try { this.decoder.push(chunk) } catch (error) {
         this.frameFailed = true
