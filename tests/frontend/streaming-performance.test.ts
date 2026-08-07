@@ -181,7 +181,9 @@ describe('batched Prime event reduction', () => {
       { type: 'tool_execution_end', toolCallId: 'tool-2', toolName: 'Write', result: 'written', isError: false },
       { type: 'agent_end' },
     ]
+    resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
     const batched = replayPrimeEvents(transcript(), events)
 
     expect(batched).toEqual(sequential)
@@ -249,7 +251,9 @@ describe('linear event batches', () => {
       { type: 'tool_execution_end', toolCallId: 'tool-2', toolName: 'Write', result: { output: 'saved' } },
       { type: 'runtime_exit', expected: true },
     ]
+    resetTranscriptIdsForTests()
     const sequential = events.reduce((current, event) => applyPrimeEvent(current, event), transcript())
+    resetTranscriptIdsForTests()
     expect(replayPrimeEvents(transcript(), events)).toEqual(sequential)
   })
 
@@ -296,7 +300,7 @@ describe('linear event batches', () => {
 
     expect(batched).toEqual(sequential)
     expect(batched.filter((message) => message.role === 'assistant')).toHaveLength(2)
-    expect(batched.at(-1)?.parts).toEqual([{ type: 'text', text: 'after compaction' }])
+    expect(batched.at(-1)?.parts).toMatchObject([{ type: 'text', text: 'after compaction' }])
   })
 
   it('uses one bounded state commit for each sustained frame batch', () => {

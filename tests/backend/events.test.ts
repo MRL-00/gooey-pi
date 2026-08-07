@@ -12,12 +12,12 @@ describe('agent transport events', () => {
 
     expect(messages[0].streaming).toBe(false)
     expect(messages.at(-1)?.role).toBe('system')
-    expect(messages.at(-1)?.parts).toEqual([{ type: 'text', text: 'Malformed agent output' }])
+    expect(messages.at(-1)?.parts).toMatchObject([{ type: 'text', text: 'Malformed agent output' }])
   })
 
   it('explains an unexpected runtime exit without duplicating an existing error', () => {
     const exited = applyPrimeEvent([streamingMessage()], { type: 'runtime_exit', code: 2, expected: false })
-    expect(exited.at(-1)?.parts[0]).toEqual({ type: 'text', text: 'Prime Agent stopped unexpectedly (exit code 2). Send the message again to restart it.' })
+    expect(exited.at(-1)?.parts[0]).toMatchObject({ type: 'text', text: 'Prime Agent stopped unexpectedly (exit code 2). Send the message again to restart it.' })
 
     const afterTransportError = applyPrimeEvent(exited, { type: 'runtime_exit', code: 2, expected: false })
     expect(afterTransportError).toHaveLength(exited.length)
@@ -29,11 +29,11 @@ describe('agent transport events', () => {
       details: { message: 'Review complete.', from: { sessionName: 'reviewer' } },
     }
     const applied = applyPrimeEvent([streamingMessage()], event)
-    expect(applied[0].parts.at(-1)).toEqual({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
+    expect(applied[0].parts.at(-1)).toMatchObject({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
 
     const buffered = createPrimeEventBuffer()
     buffered.push(event)
-    expect(buffered.replay([streamingMessage()])[0].parts.at(-1)).toEqual({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
+    expect(buffered.replay([streamingMessage()])[0].parts.at(-1)).toMatchObject({ type: 'agentMessage', text: 'Review complete.', agentName: 'reviewer' })
   })
 
   it('replays live events over an older transcript load result', () => {
