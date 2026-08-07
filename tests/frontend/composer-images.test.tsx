@@ -139,6 +139,23 @@ describe('Composer image paste', () => {
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(false)
   })
 
+  it('inserts mixed clipboard text at the caret instead of appending', async () => {
+    renderComposer(vi.fn(async () => undefined))
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    await act(async () => {
+      setter?.call(textarea, 'hello world')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    textarea.focus()
+    textarea.setSelectionRange(5, 5)
+
+    await pasteFiles([pastedPng()], ' pasted')
+
+    expect(textarea.value).toBe('hello pasted world')
+    expect(textarea.selectionStart).toBe('hello pasted'.length)
+  })
+
   it('enforces the attachment count across concurrent paste completions', async () => {
     renderComposer()
     const files = Array.from({ length: 10 }, () => pastedPng())
