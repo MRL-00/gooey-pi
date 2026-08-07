@@ -113,13 +113,13 @@
       "artifactName": "${productName}-${version}-win-${arch}.${ext}",
       "icon": "assets/icon.png",
       "asarUnpack": [
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/pty.node",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty.node",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty_console_list.node",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/winpty-agent.exe",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/winpty.dll",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/OpenConsole.exe",
-        "**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/conpty.dll",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/pty.node",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty.node",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty_console_list.node",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/winpty-agent.exe",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/winpty.dll",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/OpenConsole.exe",
+        "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll",
         "**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node"
       ]
     },

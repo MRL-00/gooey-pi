@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -13,10 +13,14 @@ import {
   parseArchitectures,
   parseTeamIdentifier,
   requireReleaseArtifacts,
+  resolveCommandInvocation,
   validateReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
+// after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
+import { executablePath } from '../scripts/release/after-pack.cjs'
+import { expectedNativeFiles, nativeRuntimeDirectory, zeroMqAddonPattern } from '../scripts/release/verify-cross-platform-package.mjs'
 
 const baseEnvironment = {
   RELEASE_SIGNING_TEAM_ID: 'TEAM123',
@@ -184,13 +188,13 @@ describe('post-package verification helpers', () => {
     ])
     expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node'])
     expect(packageJson.build.win.asarUnpack).toEqual([
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/pty.node',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty.node',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty_console_list.node',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/winpty-agent.exe',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/winpty.dll',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/OpenConsole.exe',
-      '**/node_modules/node-pty/prebuilds/win32/${arch}/conpty/conpty.dll',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/pty.node',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty.node',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty_console_list.node',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/winpty-agent.exe',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/winpty.dll',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/OpenConsole.exe',
+      '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll',
       '**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node',
     ])
     expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm'])
@@ -248,6 +252,86 @@ describe('post-package verification helpers', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('cross-platform packaging repair', () => {
+  const fixtureContext = {
+    appOutDir: join('/tmp', 'app-out'),
+    packager: { appInfo: { productFilename: 'Prime Work', sanitizedName: 'Prime-Work' } },
+  }
+
+  test('computes the hardened executable path per platform', () => {
+    expect(executablePath(fixtureContext, 'darwin')).toBe(join('/tmp', 'app-out', 'Prime Work.app', 'Contents', 'MacOS', 'Prime Work'))
+    expect(executablePath(fixtureContext, 'win32')).toBe(join('/tmp', 'app-out', 'Prime Work.exe'))
+    expect(executablePath(fixtureContext, 'linux')).toBe(join('/tmp', 'app-out', 'prime-work'))
+  })
+
+  function globMatchExists(directory: string, segments: string[]): boolean {
+    if (!existsSync(directory) || !statSync(directory).isDirectory()) return false
+    const [head, ...rest] = segments
+    if (head === undefined) return false
+    if (head === '**') {
+      if (globMatchExists(directory, rest)) return true
+      return readdirSync(directory, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .some((entry) => globMatchExists(join(directory, entry.name), segments))
+    }
+    const next = join(directory, head)
+    if (rest.length === 0) return existsSync(next) && statSync(next).isFile()
+    return globMatchExists(next, rest)
+  }
+
+  test('every asarUnpack glob matches at least one real file for platforms present in node_modules', () => {
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    const root = new URL('..', import.meta.url).pathname
+    const localArchitecture = process.arch === 'arm64' ? 'arm64' : 'x64'
+    const architecturesFor = (glob: string) => (glob.includes('node-pty/build/Release') ? [localArchitecture] : ['arm64', 'x64'])
+    for (const target of ['mac', 'linux', 'win']) {
+      for (const glob of packageJson.build[target].asarUnpack as string[]) {
+        const covered = architecturesFor(glob).some((architecture) => {
+          const relativeGlob = glob.replace(/^\*\*\//, '').replaceAll('${arch}', architecture)
+          const platformRoot = relativeGlob.split('/').slice(0, 4).join('/')
+          if (!existsSync(join(root, platformRoot))) return false
+          return globMatchExists(root, relativeGlob.split('/'))
+        })
+        expect(covered, `asarUnpack glob matches no file in node_modules: ${glob}`).toBe(true)
+      }
+    }
+  })
+
+  test('the verifier and package.json agree on native directory naming', () => {
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    for (const [target, architecture] of [
+      ['win', 'x64'],
+      ['win', 'arm64'],
+      ['linux', 'x64'],
+      ['linux', 'arm64'],
+    ] as const) {
+      const globs = (packageJson.build[target].asarUnpack as string[]).map((glob) => glob.replace(/^\*\*\//, '').replaceAll('${arch}', architecture))
+      for (const file of expectedNativeFiles(target, architecture)) {
+        expect(globs, `verifier requires ${file} but no ${target} asarUnpack glob produces it`).toContain(file)
+      }
+      const zeroMqGlob = globs.find((glob) => glob.includes('zeromq'))
+      expect(zeroMqGlob).toBe(`node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/**/addon.node`)
+      const sampleAddon = `node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/glibc-x64-115-Release/addon.node`
+      expect(zeroMqAddonPattern(target, architecture).test(sampleAddon)).toBe(true)
+    }
+    expect(nativeRuntimeDirectory('win')).toBe('win32')
+    expect(nativeRuntimeDirectory('linux')).toBe('linux')
+  })
+
+  test('resolves release-script commands to Windows-safe spawns', () => {
+    expect(resolveCommandInvocation('node', ['scripts/release/verify.mjs'])).toEqual({ file: process.execPath, args: ['scripts/release/verify.mjs'], shell: false })
+    const builder = resolveCommandInvocation('electron-builder', ['install-app-deps'])
+    expect(builder.file).toBe(process.execPath)
+    expect(builder.shell).toBe(false)
+    expect(builder.args[0]).toMatch(/electron-builder[\\/]cli\.js$/)
+    expect(builder.args.at(-1)).toBe('install-app-deps')
+    const npmViaLifecycle = resolveCommandInvocation('npm', ['run', 'release:verify'], 'win32', { npm_execpath: 'C:/npm/npm-cli.js' })
+    expect(npmViaLifecycle).toEqual({ file: process.execPath, args: ['C:/npm/npm-cli.js', 'run', 'release:verify'], shell: false })
+    expect(resolveCommandInvocation('npm', ['ci'], 'win32', {})).toEqual({ file: 'npm.cmd', args: ['ci'], shell: true })
+    expect(resolveCommandInvocation('npm', ['ci'], 'darwin', {})).toEqual({ file: 'npm', args: ['ci'], shell: false })
   })
 })
 
