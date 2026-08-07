@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { contextUsageFromEvent } from '@/app/agent-events'
 import { applySessionLifecycleEvent, sessionLifecycleChange } from '@/app/session-attention'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
@@ -55,6 +56,12 @@ export function useAgentEvents({
       if (type === 'runtime_exit') clearExtensionUi(runtimeId)
       if (runtimeIdRef.current !== runtimeId) {
         if (type === 'runtime_exit') runtimeSessionsRef.current.delete(runtimeId)
+        return
+      }
+
+      if (type === 'context_usage') {
+        const contextUsage = contextUsageFromEvent(event)
+        if (contextUsage) setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, contextUsage } : current)
         return
       }
 

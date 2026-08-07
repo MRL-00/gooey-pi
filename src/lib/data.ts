@@ -2,7 +2,7 @@ import type {
   AppSettings,
   GitStatus,
   ProjectRecord,
-  ScheduleRecord,
+  AutomationScheduleRecord,
   SessionRecord,
   SkillRecord,
   TranscriptMessage,
@@ -143,9 +143,15 @@ export const SAMPLE_SKILLS: SkillRecord[] = [
   { id: 'release', name: 'Release notes', description: 'Draft release notes from commits, diffs, and project context.', kind: 'prompt', location: 'project', enabled: true, icon: 'file-text' },
 ]
 
-export const SAMPLE_SCHEDULES: ScheduleRecord[] = [
-  { id: 'morning', title: 'Morning issue triage', schedule: 'Every weekday at 9:00 AM', prompt: 'Review new high-priority issues and propose owners.', status: 'active', nextRun: new Date(Date.now() + 16 * 3600e3).toISOString(), lastRun: new Date(Date.now() - 8 * 3600e3).toISOString() },
-  { id: 'deps', title: 'Dependency health check', schedule: 'Every Monday', prompt: 'Check outdated dependencies and summarize safe upgrades.', status: 'paused', lastRun: new Date(Date.now() - 4 * 864e5).toISOString() },
+export const SAMPLE_SCHEDULES: AutomationScheduleRecord[] = [
+  {
+    schemaVersion: 1, id: 'morning', revision: 1, title: 'Morning issue triage',
+    prompt: 'Review new high-priority issues and propose owners.',
+    target: { kind: 'project', projectId: 'prime-work' },
+    timing: { kind: 'rrule', dtstartLocal: '2026-08-06T09:00:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' },
+    execution: { model: 'auto', thinking: 'auto', speed: 'normal' }, status: 'active', createdBy: 'user',
+    createdAt: new Date(Date.now() - 7 * 864e5).toISOString(), updatedAt: new Date().toISOString(), nextRunAt: new Date(Date.now() + 16 * 3600e3).toISOString(), runs: [],
+  },
 ]
 
 export function formatRelative(value?: string | number): string {

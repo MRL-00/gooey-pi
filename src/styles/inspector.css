@@ -127,3 +127,15 @@
 .file-tree > p { padding: 20px; color: var(--text-tertiary); text-align: center; font-size: 11px; }
 .file-tree > .file-tree__show-more { justify-content: center; padding-left: 7px; border: 1px solid var(--border); margin-top: 6px; }
 
+
+
+.summary-automation-list { display: grid; gap: 0.375rem; }
+.summary-automation-list > button { width: 100%; min-height: 2.75rem; display: flex; align-items: center; gap: 0.625rem; padding: 0.5rem 0.625rem; border: 1px solid var(--border); border-radius: 0.55rem; color: var(--text-primary); background: var(--surface); text-align: left; cursor: pointer; }
+.summary-automation-list > button:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.summary-automation-list > button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.summary-automation-list > button > span:last-child { min-width: 0; display: grid; gap: 0.125rem; }
+.summary-automation-list strong { overflow: hidden; font-size: 0.72rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.summary-automation-list small { color: var(--text-tertiary); font-size: 0.64rem; text-transform: capitalize; }
+.summary-automation-icon { width: 1.75rem; height: 1.75rem; display: grid; place-items: center; flex: 0 0 auto; border-radius: 0.45rem; color: var(--prime); background: var(--prime-soft); }
+.summary-automation-icon.is-heartbeat { color: var(--success); background: var(--success-soft); }
+.summary-automation-list > .summary-automation-more { min-height: 2.25rem; justify-content: center; color: var(--text-secondary); font-size: 0.68rem; }

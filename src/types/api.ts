@@ -87,6 +87,12 @@ export interface TranscriptMessage {
   streaming?: boolean
 }
 
+export interface PrimeContextUsage {
+  tokens: number | null
+  contextWindow: number
+  percent: number | null
+}
+
 export interface RuntimeInfo {
   runtimeId: string
   sessionId?: string
@@ -101,6 +107,7 @@ export interface RuntimeInfo {
   imageInputSupported?: boolean
   fastModeAvailable?: boolean
   serviceTier?: PrimeServiceTier
+  contextUsage?: PrimeContextUsage
 }
 
 export type PrimeThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -330,6 +337,7 @@ export interface NativeHeartbeatRecord {
   nextRunAt?: string
   lastRunAt?: string
   label?: string
+  runtimeId?: string
 }
 
 export interface PrimeWorkApi {
@@ -371,7 +379,22 @@ export interface PrimeWorkApi {
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<{ ok: boolean; output: string }> }
   plugins: { list(projectPath?: string): Promise<SkillRecord[]>; install(source: string): Promise<{ ok: boolean; output: string }>; connectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>; refresh(): Promise<SkillRecord[]> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
-  schedules: { list(runtimeId?: string): Promise<ScheduleRecord[]>; add(runtimeId: string, schedule: string, prompt: string): Promise<Record<string, unknown>>; cancel(runtimeId: string, jobId: string): Promise<Record<string, unknown>> }
+  heartbeats: {
+    list(): Promise<NativeHeartbeatRecord[]>
+    manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord>
+  }
+  schedules: {
+    list(): Promise<AutomationScheduleRecord[]>
+    get(id: string): Promise<AutomationScheduleRecord>
+    preview(timing: ScheduleTiming, count?: number): Promise<SchedulePreview>
+    create(input: ScheduleInput): Promise<AutomationScheduleRecord>
+    update(id: string, patch: SchedulePatch): Promise<AutomationScheduleRecord>
+    pause(id: string): Promise<AutomationScheduleRecord>
+    resume(id: string): Promise<AutomationScheduleRecord>
+    delete(id: string): Promise<boolean>
+    runNow(id: string): Promise<ScheduleRunRecord>
+    onChanged(callback: (event: ScheduleChangeEvent) => void): () => void
+  }
 }
 
 declare global { interface Window { prime: PrimeWorkApi } }

@@ -131,6 +131,10 @@
       {
         "from": "assets/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "assets/skills",
+        "to": "skills"
       }
     ],
     "electronLanguages": [

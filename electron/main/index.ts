@@ -12,7 +12,11 @@ import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } 
 import { PluginService } from './plugins'
 import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
-import { ScheduleService, SettingsService } from './settings-schedules'
+import { SettingsService } from './settings-schedules'
+import { ScheduledRunExecutor } from './schedules/executor'
+import { HeartbeatService } from './schedules/heartbeats'
+import { AutomationService } from './schedules/service'
+import { AgentScheduleBridge } from './schedules/agent-bridge'
 import { SessionService } from './sessions'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
@@ -26,6 +30,8 @@ let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
 let store: JsonStateStore | null = null
+let automation: AutomationService | null = null
+let agentScheduleBridge: AgentScheduleBridge | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -254,8 +260,50 @@ async function bootstrap(): Promise<void> {
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
-  const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path))
-  const schedules = new ScheduleService(agents, executable)
+  const scheduleSkillPath = app.isPackaged
+    ? join(process.resourcesPath, 'skills', 'prime-work-schedules')
+    : join(app.getAppPath(), 'assets', 'skills', 'prime-work-schedules')
+  const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
+    builtInSkills: [{
+      id: 'prime-work-schedules', name: 'Prime Work schedules',
+      description: 'Create and manage durable project and thread schedules from an agent.',
+      kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
+    }],
+  })
+  const heartbeats = new HeartbeatService(agents, executable)
+  const scheduledRuns = new ScheduledRunExecutor(
+    projects,
+    sessions,
+    agents,
+    providers,
+    () => new Set(stateStore.snapshot().settings.disabledProviders),
+  )
+  const schedules = new AutomationService(stateStore, {
+    validateTarget: (target) => scheduledRuns.validateTarget(target),
+    validateExecution: (execution) => scheduledRuns.validateExecution(execution),
+    run: (task) => scheduledRuns.run(task),
+  })
+  automation = schedules
+  await schedules.start()
+  const scheduleBridge = new AgentScheduleBridge({
+    service: schedules,
+    skillPath: scheduleSkillPath,
+    resolveScope: async ({ cwd, sessionPath }) => {
+      const catalog = await projects.list()
+      const canonicalCwd = resolve(cwd)
+      const project = catalog.find((candidate) => !candidate.inferred && candidate.folders.some((folder) => {
+        const root = resolve(folder)
+        return canonicalCwd === root || canonicalCwd.startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`)
+      }))
+      if (!project) throw new Error('The agent is not running in an explicitly granted Prime Work project')
+      if (!sessionPath) return { projectId: project.id }
+      const scheduledSession = (await sessions.list(undefined, true)).find((candidate) => resolve(candidate.filePath) === resolve(sessionPath))
+      return { projectId: project.id, sessionId: scheduledSession?.id }
+    },
+  })
+  await scheduleBridge.start()
+  agentScheduleBridge = scheduleBridge
+  agents.setRuntimeEnvironmentProvider((scope) => scheduleBridge.environmentFor(scope))
   const detectedPrimeVersion = await primeVersion(executable)
   if (shutdownStarted) return
   const meta: AppMeta = {
@@ -266,7 +314,7 @@ async function bootstrap(): Promise<void> {
     primeAgentVersion: detectedPrimeVersion,
   }
   trustedRendererUrl = resolveRendererUrl()
-  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, schedules }, trustedRendererUrl)
+  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules }, trustedRendererUrl)
   agents.setEventSink((envelope) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
@@ -338,5 +386,5 @@ app.on('before-quit', (event) => {
   const storeDrain = store?.beginShutdown() ?? Promise.resolve()
 
   providerService?.cancelAll()
-  void Promise.all([terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses(), storeDrain]).finally(() => app.quit())
+  void Promise.all([agentScheduleBridge?.stop() ?? Promise.resolve(), automation?.stop() ?? Promise.resolve(), terminals?.killAll() ?? Promise.resolve(), agents?.stopAll() ?? Promise.resolve(), stopChildProcesses(), storeDrain]).finally(() => app.quit())
 })

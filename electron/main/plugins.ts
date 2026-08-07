@@ -13,6 +13,7 @@ type PluginDiscovery = typeof discoverPlugins
 interface PluginServiceOptions {
   agentDir?: string
   discover?: PluginDiscovery
+  builtInSkills?: SkillRecord[]
 }
 
 const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
@@ -53,6 +54,7 @@ export class PluginService {
   private readonly discoveryInFlight = new Map<string, Promise<SkillRecord[]>>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
+  private readonly builtInSkills: SkillRecord[]
 
   constructor(
     private readonly primeAgentPath: string | null,
@@ -61,6 +63,7 @@ export class PluginService {
   ) {
     this.agentDir = options.agentDir ?? join(homedir(), '.prime', 'agent')
     this.discoverCatalog = options.discover ?? discoverPlugins
+    this.builtInSkills = options.builtInSkills ?? []
   }
 
   list(projectPath?: string): Promise<SkillRecord[]> {
@@ -86,8 +89,9 @@ export class PluginService {
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<SkillRecord[]> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.primeAgentPath)
-    this.knownPathsByOwner.set(ownerKey, new Set(result.flatMap((item) => item.path ? [item.path] : [])))
-    return result
+    const combined = [...this.builtInSkills, ...result.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
+    this.knownPathsByOwner.set(ownerKey, new Set(combined.flatMap((item) => item.path ? [item.path] : [])))
+    return combined
   }
 
   authorizeReveal(pathValue: unknown): string {

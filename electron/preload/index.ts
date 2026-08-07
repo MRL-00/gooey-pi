@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -76,10 +76,21 @@ const api: PrimeWorkApi = {
     update: (patch) => ipcRenderer.invoke('settings:update', patch),
     resetBrowserData: () => ipcRenderer.invoke('settings:reset-browser-data'),
   },
+  heartbeats: {
+    list: () => ipcRenderer.invoke('heartbeats:list'),
+    manage: (id, action) => ipcRenderer.invoke('heartbeats:manage', id, action),
+  },
   schedules: {
-    list: (runtimeId) => ipcRenderer.invoke('schedules:list', runtimeId),
-    add: (runtimeId, schedule, prompt) => ipcRenderer.invoke('schedules:add', runtimeId, schedule, prompt),
-    cancel: (runtimeId, jobId) => ipcRenderer.invoke('schedules:cancel', runtimeId, jobId),
+    list: () => ipcRenderer.invoke('schedules:list'),
+    get: (id) => ipcRenderer.invoke('schedules:get', id),
+    preview: (timing, count) => ipcRenderer.invoke('schedules:preview', timing, count),
+    create: (input) => ipcRenderer.invoke('schedules:create', input),
+    update: (id, patch) => ipcRenderer.invoke('schedules:update', id, patch),
+    pause: (id) => ipcRenderer.invoke('schedules:pause', id),
+    resume: (id) => ipcRenderer.invoke('schedules:resume', id),
+    delete: (id) => ipcRenderer.invoke('schedules:delete', id),
+    runNow: (id) => ipcRenderer.invoke('schedules:run-now', id),
+    onChanged: (callback) => subscribe<ScheduleChangeEvent>('schedules:changed', callback),
   },
 }
 

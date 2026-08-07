@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from '../../src/components/Composer'
-import type { PrimeModelDescriptor, PrimeProviderDescriptor } from '../../src/types/api'
+import type { PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -36,7 +36,7 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-function renderComposer(onSend = vi.fn(), imageInputSupported = true, busy = false, messageEnterAction: 'queue' | 'steer' = 'queue') {
+function renderComposer(onSend = vi.fn(), imageInputSupported = true, busy = false, messageEnterAction: 'queue' | 'steer' = 'queue', contextUsage?: PrimeContextUsage) {
   act(() => root.render(<Composer
     busy={busy}
     model="provider/vision"
@@ -49,6 +49,7 @@ function renderComposer(onSend = vi.fn(), imageInputSupported = true, busy = fal
     fastAvailable
     imageInputSupported={imageInputSupported}
     messageEnterAction={messageEnterAction}
+    contextUsage={contextUsage}
     skills={[]}
     onModelChange={vi.fn()}
     onEffortChange={vi.fn()}
@@ -199,5 +200,32 @@ describe('Composer message delivery shortcuts', () => {
     expect(onSend).toHaveBeenNthCalledWith(1, 'Steer this', [], 'steer')
     expect(onSend).toHaveBeenNthCalledWith(2, 'Queue this', [], 'queue')
     expect(onSend).toHaveBeenCalledTimes(2)
+  })
+})
+
+
+describe('Composer context usage and stop control', () => {
+  it('shows the exact context usage in a filled dial before the send button', () => {
+    renderComposer(vi.fn(), true, false, 'queue', { tokens: 50_000, contextWindow: 100_000, percent: 50 })
+
+    const dial = container.querySelector<HTMLElement>('[role="meter"]')
+    const actions = container.querySelector('.composer__actions')
+    expect(dial?.textContent).toBe('50')
+    expect(dial?.title).toBe('50,000 / 100,000 tokens')
+    expect(dial?.getAttribute('aria-valuenow')).toBe('50')
+    expect(dial?.style.getPropertyValue('--context-percent')).toBe('50%')
+    expect(actions?.firstElementChild).toBe(dial)
+    expect(dial?.nextElementSibling?.getAttribute('aria-label')).toBe('Send message')
+  })
+
+  it('shows unavailable usage honestly and uses a square stop icon', () => {
+    renderComposer(vi.fn(), true, true, 'queue', { tokens: null, contextWindow: 100_000, percent: null })
+
+    const dial = container.querySelector<HTMLElement>('[role="meter"]')
+    expect(dial?.textContent).toBe('—')
+    expect(dial?.hasAttribute('aria-valuenow')).toBe(false)
+    expect(dial?.title).toContain('unavailable')
+    expect(container.querySelector('button[aria-label="Stop Prime"] .lucide-square')).not.toBeNull()
+    expect(container.querySelector('.lucide-circle-stop')).toBeNull()
   })
 })

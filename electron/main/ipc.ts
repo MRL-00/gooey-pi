@@ -5,7 +5,9 @@ import type { GitService } from './git'
 import type { PluginService } from './plugins'
 import type { PrimeProviderService } from './providers'
 import type { ProjectService } from './projects'
-import type { ScheduleService, SettingsService } from './settings-schedules'
+import type { SettingsService } from './settings-schedules'
+import type { AutomationService } from './schedules/service'
+import type { HeartbeatService } from './schedules/heartbeats'
 import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
 import { requireExistingPath, requireString, requireWebUrl } from './validation'
@@ -20,7 +22,8 @@ interface Services {
   plugins: PluginService
   providers: PrimeProviderService
   settings: SettingsService
-  schedules: ScheduleService
+  heartbeats: HeartbeatService
+  schedules: AutomationService
 }
 
 type IpcEvent = IpcMainInvokeEvent | IpcMainEvent
@@ -149,9 +152,18 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('settings:update', (_event, patch) => services.settings.update(patch))
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())
 
-  handle('schedules:list', (_event, runtimeId) => services.schedules.list(runtimeId))
-  handle('schedules:add', (_event, runtimeId, schedule, prompt) => services.schedules.add(runtimeId, schedule, prompt))
-  handle('schedules:cancel', (_event, runtimeId, jobId) => services.schedules.cancel(runtimeId, jobId))
+  handle('heartbeats:list', () => services.heartbeats.list())
+  handle('heartbeats:manage', (_event, id, action) => services.heartbeats.manage(id, action))
+
+  handle('schedules:list', () => services.schedules.list())
+  handle('schedules:get', (_event, id) => services.schedules.get(id))
+  handle('schedules:preview', (_event, timing, count) => services.schedules.preview(timing, count))
+  handle('schedules:create', (_event, input) => services.schedules.create(input, 'user'))
+  handle('schedules:update', (_event, id, patch) => services.schedules.update(id, patch))
+  handle('schedules:pause', (_event, id) => services.schedules.pause(id))
+  handle('schedules:resume', (_event, id) => services.schedules.resume(id))
+  handle('schedules:delete', (_event, id) => services.schedules.delete(id))
+  handle('schedules:run-now', (_event, id) => services.schedules.runNow(id))
 
   const unsubscribeSessionChanges = services.sessions.onDidChange((change) => {
     for (const [id, contents] of authorized) {
@@ -160,6 +172,14 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
         && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('sessions:changed', change)
     }
   })
+  const scheduleSubscription = services.schedules.onDidChange((change) => {
+    for (const [id, contents] of authorized) {
+      if (contents.isDestroyed()) { authorized.delete(id); continue }
+      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
+        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('schedules:changed', change)
+    }
+  })
+  const unsubscribeScheduleChanges = typeof scheduleSubscription === 'function' ? scheduleSubscription : () => undefined
 
   return {
     authorize(webContents) { if (!closed) authorized.set(webContents.id, webContents) },
@@ -169,6 +189,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       closed = true
       authorized.clear()
       unsubscribeSessionChanges()
+      if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
       for (const channel of invokeChannels) ipcMain.removeHandler(channel)
       // Event listeners are removed wholesale only for our private fixed channels.
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)

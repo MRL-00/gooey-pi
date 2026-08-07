@@ -6,7 +6,7 @@ import type {
   PrimeWorkApi,
   ProjectRecord,
   RuntimeInfo,
-  ScheduleRecord,
+  AutomationScheduleRecord,
   SessionRecord,
 } from '@/types/api'
 
@@ -14,7 +14,7 @@ interface UseBootstrapOptions {
   bridge: PrimeWorkApi | null
   setProjects: React.Dispatch<React.SetStateAction<ProjectRecord[]>>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
-  setSchedules: React.Dispatch<React.SetStateAction<ScheduleRecord[]>>
+  setSchedules: React.Dispatch<React.SetStateAction<AutomationScheduleRecord[]>>
   setScheduleError(value: string): void
   runtimeSessionsRef: React.RefObject<Map<string, string>>
   workspaceRef: React.RefObject<WorkspaceSnapshot>

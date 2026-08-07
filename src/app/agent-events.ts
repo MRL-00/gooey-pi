@@ -1,4 +1,5 @@
 import type { PrimeEventBuffer } from '@/lib/events'
+import type { PrimeContextUsage } from '@/types/api'
 
 export interface PendingAgentEvent {
   generation: number
@@ -27,6 +28,16 @@ const TERMINAL_TRANSCRIPT_EVENTS = new Set([
 
 export function eventType(event: Record<string, unknown>): string {
   return typeof event.type === 'string' ? event.type : ''
+}
+
+export function contextUsageFromEvent(event: Record<string, unknown>): PrimeContextUsage | null {
+  if (eventType(event) !== 'context_usage' || typeof event.contextUsage !== 'object' || event.contextUsage === null || Array.isArray(event.contextUsage)) return null
+  const raw = event.contextUsage as Record<string, unknown>
+  if (!Number.isSafeInteger(raw.contextWindow) || Number(raw.contextWindow) <= 0) return null
+  const tokens = raw.tokens === null ? null : Number.isSafeInteger(raw.tokens) && Number(raw.tokens) >= 0 ? Number(raw.tokens) : undefined
+  const percent = raw.percent === null ? null : typeof raw.percent === 'number' && Number.isFinite(raw.percent) && raw.percent >= 0 ? raw.percent : undefined
+  if (tokens === undefined || percent === undefined) return null
+  return { tokens, contextWindow: Number(raw.contextWindow), percent }
 }
 
 export function needsTranscriptReconciliation(event: Record<string, unknown>): boolean {

@@ -305,7 +305,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
     await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)

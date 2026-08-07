@@ -1,18 +1,19 @@
 import {
   ArrowUp,
   AtSign,
-  CircleStop,
   Command,
   FolderGit2,
   Gauge,
   ImageIcon,
   Plus,
   ShieldCheck,
+  Square,
   X,
   Zap,
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { MessageEnterAction, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
+import type { CSSProperties } from 'react'
+import type { MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
@@ -31,6 +32,7 @@ interface ComposerProps {
   fastAvailable: boolean
   imageInputSupported: boolean
   messageEnterAction: MessageEnterAction
+  contextUsage?: PrimeContextUsage
   skills: SkillRecord[]
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
@@ -68,7 +70,7 @@ function base64FromBuffer(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
-export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
+export function Composer({ busy, submitting = false, loading = false, disabled, model, effort, models, providers, reasoningLevels, fast, fastSupported, fastAvailable, imageInputSupported, messageEnterAction, contextUsage, skills, onModelChange, onEffortChange, onFastChange, onSend, onStop }: ComposerProps) {
   const [value, setValue] = useState('')
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -191,6 +193,14 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
 
   useEffect(() => { setActiveSuggestion(0) }, [menu, value, suggestions.length])
   const chooseSuggestion = (index: number) => suggestions[index]?.choose()
+  const contextPercent = contextUsage?.percent === null || contextUsage?.percent === undefined
+    ? null
+    : Math.min(100, Math.max(0, contextUsage.percent))
+  const contextLabel = contextUsage && contextUsage.tokens !== null
+    ? `${contextUsage.tokens.toLocaleString('en-US')} / ${contextUsage.contextWindow.toLocaleString('en-US')} tokens`
+    : 'Context usage unavailable until the next response'
+  const contextDisplayPercent = contextPercent === null ? null : Math.min(99, Math.round(contextPercent))
+  const contextStyle = { '--context-percent': `${contextPercent ?? 0}%` } as CSSProperties
 
   return (
     <div className="composer-wrap">
@@ -286,7 +296,20 @@ export function Composer({ busy, submitting = false, loading = false, disabled, 
             <span className="permissions-chip" title="Workspace write access"><ShieldCheck size={12} /><span>Workspace</span></span>
           </div>
           <div className="composer__actions">
-            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><CircleStop size={17} fill="currentColor" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
+            <span
+              className={`context-usage-dial ${contextPercent === null ? 'is-unavailable' : contextPercent >= 95 ? 'is-critical' : contextPercent >= 80 ? 'is-warning' : ''}`}
+              role="meter"
+              tabIndex={0}
+              aria-label="Context usage"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={contextPercent === null ? undefined : Math.round(contextPercent)}
+              aria-valuetext={contextLabel}
+              title={contextLabel}
+              data-tooltip={contextLabel}
+              style={contextStyle}
+            ><span>{contextDisplayPercent ?? '—'}</span></span>
+            {busy ? <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}><Square size={10} fill="currentColor" aria-hidden="true" /></button> : <button type="button" className="send-button" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || processingImages || submitting || loading || disabled} onClick={() => void submit()}><ArrowUp size={17} /></button>}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { safeChildEnvironment } from '../process-utils'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
@@ -13,6 +13,14 @@ interface PendingRequest {
   timer: NodeJS.Timeout
   bytes: number
   command: string
+}
+
+function parseContextUsage(raw: unknown): PrimeContextUsage | null {
+  if (!isRecord(raw) || !Number.isSafeInteger(raw.contextWindow) || Number(raw.contextWindow) <= 0) return null
+  const tokens = raw.tokens === null ? null : Number.isSafeInteger(raw.tokens) && Number(raw.tokens) >= 0 ? Number(raw.tokens) : undefined
+  const percent = raw.percent === null ? null : typeof raw.percent === 'number' && Number.isFinite(raw.percent) && raw.percent >= 0 ? raw.percent : undefined
+  if (tokens === undefined || percent === undefined) return null
+  return { tokens, contextWindow: Number(raw.contextWindow), percent }
 }
 
 export class RpcRuntime {
@@ -29,6 +37,7 @@ export class RpcRuntime {
   private stopped = false
   private info: RuntimeInfo
   private requestedServiceTier: PrimeServiceTier = 'default'
+  private contextUsageRefresh: Promise<void> | null = null
 
   constructor(
     executable: string,
@@ -36,11 +45,12 @@ export class RpcRuntime {
     cwd: string,
     private readonly onEvent: (envelope: PrimeEventEnvelope) => void,
     private readonly onExit: (runtime: RpcRuntime) => void,
+    extraEnvironment: NodeJS.ProcessEnv = {},
   ) {
     this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false }
     this.exited = new Promise((resolveExit) => { this.resolveExited = resolveExit })
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
-    this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
+    this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
       this.child,
       (line) => this.handleLine(line),
@@ -62,6 +72,11 @@ export class RpcRuntime {
   async handshake(): Promise<RuntimeInfo> {
     const response = await this.request({ type: 'get_state' }, 60_000)
     this.updateFromState(response.data)
+    const contextDeadline = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 250)
+      timer.unref()
+    })
+    await Promise.race([this.refreshContextUsage(), contextDeadline])
     return this.snapshot()
   }
 
@@ -108,8 +123,12 @@ export class RpcRuntime {
     if (response.success === true && ['set_model', 'cycle_model', 'set_thinking_level', 'cycle_thinking_level'].includes(String(command.type))) {
       const state = await this.request({ type: 'get_state' }, 60_000)
       this.updateFromState(state.data)
+      void this.refreshContextUsage()
     } else if (response.success === true && ['prompt', 'new_session', 'switch_session', 'clone', 'fork'].includes(String(command.type))) {
-      void this.request({ type: 'get_state' }, 60_000).then((state) => this.updateFromState(state.data)).catch(() => undefined)
+      void this.request({ type: 'get_state' }, 60_000).then((state) => {
+        this.updateFromState(state.data)
+        return this.refreshContextUsage()
+      }).catch(() => undefined)
     }
     return response
   }
@@ -232,6 +251,22 @@ export class RpcRuntime {
     } else if (value.type === 'compaction_start') this.info.isCompacting = true
     else if (value.type === 'compaction_end') this.info.isCompacting = false
     this.emit(value)
+    if (value.type === 'agent_end' || value.type === 'compaction_end') void this.refreshContextUsage()
+  }
+
+  private refreshContextUsage(): Promise<void> {
+    this.contextUsageRefresh ??= this.performContextUsageRefresh().finally(() => { this.contextUsageRefresh = null })
+    return this.contextUsageRefresh
+  }
+
+  private async performContextUsageRefresh(): Promise<void> {
+    try {
+      const response = await this.request({ type: 'get_session_stats' }, 10_000)
+      const usage = isRecord(response.data) ? parseContextUsage(response.data.contextUsage) : null
+      if (!usage) return
+      this.info.contextUsage = usage
+      this.emit({ type: 'context_usage', contextUsage: usage })
+    } catch { /* older Prime Agent versions may not expose session stats */ }
   }
 
   private updateFromState(raw: unknown): void {

@@ -27,6 +27,8 @@ input.on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
     send(${stateResponse ?? "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'session-1', thinkingLevel: 'medium', isStreaming: false } }"})
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: 25000, contextWindow: 100000, percent: 25 } } })
   } else if (command.type === 'prompt') {
     send(${promptResponse})
   } else if (command.type === 'abort') {
@@ -86,6 +88,40 @@ describe('agent RPC command frame bounds', () => {
 })
 
 describe('agent RPC responses', () => {
+  it('hydrates and refreshes authoritative context-window usage', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-context-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'context-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+let stats = 0
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'context', isStreaming: false } })
+  else if (command.type === 'get_session_stats') {
+    stats += 1
+    send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: stats * 25000, contextWindow: 100000, percent: stats * 25 } } })
+  } else if (command.type === 'prompt') {
+    send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    send({ type: 'agent_end' })
+  } else if (command.type === 'abort') send({ id: command.id, type: 'response', command: 'abort', success: true })
+})
+`)
+    chmodSync(executable, 0o755)
+    const manager = managerFor(executable)
+    const events: Array<{ event: Record<string, unknown> }> = []
+    manager.setEventSink((event) => events.push(event))
+
+    const runtime = await manager.start({ cwd })
+    expect(runtime.contextUsage).toEqual({ tokens: 25_000, contextWindow: 100_000, percent: 25 })
+    await manager.command(runtime.runtimeId, { type: 'prompt', message: 'continue' })
+    await waitUntil(() => events.some(({ event }) => event.type === 'context_usage'
+      && typeof (event.contextUsage as { percent?: unknown } | undefined)?.percent === 'number'
+      && Number((event.contextUsage as { percent: number }).percent) >= 50))
+    expect(manager.list()[0]?.contextUsage?.percent).toBeGreaterThanOrEqual(50)
+  })
+
   it('rejects a negative command response with the agent error', async () => {
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: false, error: 'No model credentials are configured' }")
     const manager = managerFor(fake.executable)
@@ -160,6 +196,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (command.type === 'get_state') {
     process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'overflow', isStreaming: false } }) + '\\n')
     setTimeout(() => process.stdout.write('x'.repeat(17 * 1024 * 1024)), 25)
+  } else if (command.type === 'get_session_stats') {
+    process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } } }) + '\\n')
   }
 })
 setInterval(() => {}, 1000)

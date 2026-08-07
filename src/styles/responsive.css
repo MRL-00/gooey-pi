@@ -87,3 +87,50 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+
+@media (max-width: 720px) {
+  .schedule-page__header .button { min-height: 44px; }
+  .schedule-ledger-summary { gap: 12px; overflow-x: auto; }
+  .schedule-ledger-summary > span { flex: 0 0 auto; }
+  .schedule-tools .segmented { width: 100%; height: 38px; overflow-x: auto; }
+  .schedule-tools .segmented button { min-width: max-content; min-height: 34px; flex: 1; }
+  .schedule-row { min-height: 126px; grid-template-columns: 36px minmax(0, 1fr) 16px; gap: 10px; padding-block: 14px; }
+  .schedule-row__next { grid-column: 2; align-items: flex-start; flex-direction: row; gap: 5px; text-align: left; }
+  .schedule-row__next small { margin-top: 2px; }
+  .schedule-row__next strong { margin: 0; }
+  .schedule-row__next span { display: none; }
+  .schedule-row__chevron { grid-column: 3; grid-row: 1 / span 2; }
+  .schedule-row__tags > span:nth-child(2) { max-width: 220px; }
+  .schedule-detail__actions .button { min-height: 44px; }
+  .schedule-detail__actions .schedule-delete { margin-left: 0; }
+  .schedule-detail__grid { grid-template-columns: 1fr; }
+  .schedule-detail__card, .schedule-detail__card:nth-child(odd), .schedule-detail__card:nth-last-child(-n+2) { min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); }
+  .schedule-detail__card:last-child { border-bottom: 0; }
+  .schedule-run { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .schedule-run time { display: none; }
+  .schedule-session-link, .schedule-run__no-session { grid-column: 2 / -1; justify-self: start; min-height: 36px; }
+  .modal:has(.schedule-editor) { width: 100%; max-height: calc(100vh - 20px); }
+  .schedule-editor__grid { grid-template-columns: 1fr; }
+  .schedule-editor__grid .schedule-fieldset + .schedule-fieldset { border-top: 1px solid var(--border); border-left: 0; }
+  .schedule-radio-grid > label { min-height: 60px; }
+  .schedule-frequency button { min-height: 36px; }
+  .weekday-chips label { min-height: 44px; }
+  .schedule-execution-grid { grid-template-columns: 1fr 1fr; }
+  .schedule-fast-toggle { min-height: 48px; grid-column: 1 / -1; }
+  .schedule-preview ol { grid-template-columns: 1fr 1fr; }
+  .schedule-editor__save-status { display: none; }
+}
+
+@media (max-width: 490px) {
+  .schedule-ledger-summary > span:last-child { display: none; }
+  .schedule-row__status { width: 32px; height: 32px; }
+  .schedule-row__tags > span:nth-child(n+2) { display: none; }
+  .schedule-detail__header h1 { font-size: 21px; }
+  .schedule-detail__actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .schedule-detail__actions .button { width: 100%; }
+  .schedule-date-fields, .schedule-execution-grid { grid-template-columns: 1fr; }
+  .schedule-fast-toggle { grid-column: auto; }
+  .schedule-preview ol { grid-template-columns: 1fr; }
+  .schedule-preview li { min-height: 44px; align-content: center; }
+}

@@ -9,6 +9,7 @@ import type { PrimeProviderService } from '../providers'
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
+  private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv = () => ({})
   private closed = false
 
   constructor(
@@ -21,6 +22,10 @@ export class AgentRpcManager {
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
 
+  setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv): void {
+    this.runtimeEnvironmentProvider = provider
+  }
+
   beginShutdown(): void { this.closed = true }
 
   async start(raw: unknown): Promise<RuntimeInfo> {
@@ -31,7 +36,10 @@ export class AgentRpcManager {
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
     this.requireOpen()
     const args = ['--mode', 'rpc', '--cwd', cwd]
-    if (options.sessionPath !== undefined) args.push('--resume', await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 })))
+    const sessionPath = options.sessionPath === undefined
+      ? undefined
+      : await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 }))
+    if (sessionPath) args.push('--resume', sessionPath)
     let selectedModel
     if (options.model !== undefined) {
       selectedModel = this.providers
@@ -51,7 +59,10 @@ export class AgentRpcManager {
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
     if (this.runtimes.size >= 4) throw new Error('Prime Work supports at most four concurrent agent runtimes')
-    const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId))
+    const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath })
+    const skillPath = runtimeEnvironment.PRIME_WORK_SCHEDULE_SKILL_PATH
+    if (skillPath && !skillPath.startsWith('-') && !/[\r\n]/.test(skillPath)) args.push('--skill', skillPath)
+    const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId), runtimeEnvironment)
     this.runtimes.set(runtime.runtimeId, runtime)
     try {
       await runtime.handshake()
