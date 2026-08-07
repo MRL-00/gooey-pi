@@ -1,0 +1,121 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AgentBrowserBridge } from '../../electron/main/browser/agent-bridge'
+import type { AgentBrowserService } from '../../electron/main/browser/agent-service'
+
+const bridges: AgentBrowserBridge[] = []
+afterEach(async () => {
+  await Promise.all(bridges.splice(0).map((bridge) => bridge.stop()))
+})
+
+function fakeService() {
+  const calls: Array<{ method: string; sessionKey: string; params: Record<string, unknown> }> = []
+  const record = (method: string) => async (sessionKey: string, params: Record<string, unknown> = {}) => {
+    calls.push({ method, sessionKey, params })
+    return { method }
+  }
+  const service = {
+    listTabs: record('tabs.list'),
+    openTab: record('tabs.open'),
+    closeTabScoped: record('tabs.close'),
+    selectTabScoped: record('tabs.select'),
+    navigate: record('navigate'),
+    screenshot: record('screenshot'),
+    click: record('click'),
+    type: record('type'),
+    pressKey: record('press_key'),
+    scroll: record('scroll'),
+    readPage: record('read_page'),
+    evaluate: record('evaluate'),
+  }
+  return { calls, service: service as unknown as AgentBrowserService }
+}
+
+async function fixture(scope: { cwd: string; sessionPath?: string } = { cwd: '/project', sessionPath: '/sessions/one.jsonl' }) {
+  const { calls, service } = fakeService()
+  const bridge = new AgentBrowserBridge({ service, extensionPath: '/app/extensions/prime-work-browser.ts', skillPath: '/app/skills/prime-work-browser' })
+  await bridge.start()
+  bridges.push(bridge)
+  const environment = bridge.environmentFor(scope)
+  const call = async (method: string, params: Record<string, unknown> = {}, token = environment.PRIME_WORK_BROWSER_TOKEN) => {
+    const response = await fetch(environment.PRIME_WORK_BROWSER_URL!, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, params }),
+    })
+    return { status: response.status, body: await response.json() as { ok: boolean; result?: unknown; error?: string } }
+  }
+  return { bridge, calls, environment, call }
+}
+
+describe('AgentBrowserBridge', () => {
+  it('exposes the extension and skill paths and dispatches scoped methods', async () => {
+    const { calls, environment, call } = await fixture()
+    expect(environment.PRIME_WORK_BROWSER_EXTENSION_PATH).toBe('/app/extensions/prime-work-browser.ts')
+    expect(environment.PRIME_WORK_BROWSER_SKILL_PATH).toBe('/app/skills/prime-work-browser')
+    const response = await call('tabs.open', { url: 'https://example.com' })
+    expect(response.status).toBe(200)
+    expect(response.body.ok).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].method).toBe('tabs.open')
+    expect(calls[0].params).toEqual({ url: 'https://example.com' })
+    // The session key is canonicalized from the claim's session path, never from request params.
+    expect(calls[0].sessionKey.endsWith('one.jsonl')).toBe(true)
+    await call('click', { x: 10, y: 20, sessionKey: '/etc/passwd' })
+    expect(calls[1].sessionKey.endsWith('one.jsonl')).toBe(true)
+  })
+
+  it('rejects missing tokens, wrong routes, browser origins, and unknown methods', async () => {
+    const { environment, call } = await fixture()
+    expect((await call('tabs.list', {}, 'wrong-token')).status).toBe(401)
+    expect((await call('definitely_not_a_method')).status).toBe(400)
+    const origin = await fetch(environment.PRIME_WORK_BROWSER_URL!, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${environment.PRIME_WORK_BROWSER_TOKEN}`, 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: JSON.stringify({ method: 'tabs.list' }),
+    })
+    expect(origin.status).toBe(404)
+    const wrongPath = await fetch(environment.PRIME_WORK_BROWSER_URL!.replace('/v1/call', '/v1/other'), {
+      method: 'POST', headers: { Authorization: `Bearer ${environment.PRIME_WORK_BROWSER_TOKEN}` }, body: '{}',
+    })
+    expect(wrongPath.status).toBe(404)
+  })
+
+  it('requires a session scope and accepts one bound after start', async () => {
+    const { bridge, calls, environment, call } = await fixture({ cwd: '/project' })
+    const before = await call('tabs.list')
+    expect(before.status).toBe(409)
+    expect(before.body.error).toContain('not available yet')
+    expect(calls).toHaveLength(0)
+    bridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, '/sessions/late.jsonl')
+    const after = await call('tabs.list')
+    expect(after.status).toBe(200)
+    expect(calls[0].sessionKey.endsWith('late.jsonl')).toBe(true)
+    // A bound session scope must never be rebound to another thread.
+    bridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, '/sessions/other.jsonl')
+    await call('tabs.list')
+    expect(calls[1].sessionKey.endsWith('late.jsonl')).toBe(true)
+  })
+
+  it('propagates service failures as bounded errors', async () => {
+    const { calls, service } = fakeService()
+    void calls
+    ;(service as unknown as Record<string, unknown>).readPage = vi.fn(async () => { throw new Error('boom') })
+    const bridge = new AgentBrowserBridge({ service, extensionPath: '/x.ts', skillPath: '/s' })
+    await bridge.start()
+    bridges.push(bridge)
+    const environment = bridge.environmentFor({ cwd: '/project', sessionPath: '/sessions/one.jsonl' })
+    const response = await fetch(environment.PRIME_WORK_BROWSER_URL!, {
+      method: 'POST', headers: { Authorization: `Bearer ${environment.PRIME_WORK_BROWSER_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'read_page' }),
+    })
+    expect(response.status).toBe(409)
+    expect(((await response.json()) as { error: string }).error).toBe('boom')
+  })
+
+  it('mints one independent claim per runtime', async () => {
+    const { bridge, calls, call } = await fixture()
+    const other = bridge.environmentFor({ cwd: '/project', sessionPath: '/sessions/two.jsonl' })
+    const response = await call('tabs.list', {}, other.PRIME_WORK_BROWSER_TOKEN)
+    expect(response.status).toBe(200)
+    expect(calls[0].sessionKey.endsWith('two.jsonl')).toBe(true)
+  })
+})
