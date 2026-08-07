@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import {
   artifactArchitectures,
@@ -73,6 +75,29 @@ function createBundleSizeFixture() {
 }
 
 describe('release preflight', () => {
+  test('package.mjs --dry-run says nothing executed instead of claiming success', () => {
+    const platform = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'
+    const result = spawnSync(process.execPath, ['scripts/release/package.mjs', '--qa', '--platform', platform, '--dry-run'], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('DRY RUN — nothing executed.')
+    expect(result.stdout).not.toContain('pipeline passed')
+  })
+
+  test('verify-package runs when invoked as a script and fails closed on a missing entrypoint', async () => {
+    const { invokedAsScript } = await import('../scripts/release/verify-package.mjs')
+    const original = process.argv[1]
+    try {
+      process.argv[1] = fileURLToPath(new URL('../scripts/release/verify-package.mjs', import.meta.url))
+      expect(invokedAsScript()).toBe(true)
+      process.argv[1] = join(tmpdir(), 'another-entrypoint.mjs')
+      expect(invokedAsScript()).toBe(false)
+      process.argv[1] = undefined as unknown as string
+      expect(invokedAsScript()).toBe(true)
+    } finally {
+      process.argv[1] = original
+    }
+  })
+
   test('requires the Electron 43 Node.js baseline', () => {
     expect(() => assertSupportedNode('v22.11.0')).toThrow(/>=22\.12\.0/)
     expect(() => assertSupportedNode('v22.12.0')).not.toThrow()

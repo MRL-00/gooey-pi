@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { listPackage } from '@electron/asar'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
 import { artifactArchitectures, assertAsarLayout, assertExactArchitectures, assertUnpackedNativeLayout, parseArchitectures, parseTeamIdentifier, requireReleaseArtifacts } from './lib.mjs'
@@ -140,7 +141,14 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
   )
 }
 
-if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// Fail closed: run verification unless this module was provably imported by
+// another entrypoint. A malformed or missing argv[1] must not skip the checks.
+export function invokedAsScript() {
+  if (!process.argv[1]) return true
+  try { return import.meta.url === pathToFileURL(resolve(process.argv[1])).href } catch { return true }
+}
+
+if (invokedAsScript()) {
   const modeIndex = process.argv.indexOf('--mode')
   const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : undefined
   const releaseDirectoryIndex = process.argv.indexOf('--release-directory')

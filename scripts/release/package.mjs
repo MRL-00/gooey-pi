@@ -59,7 +59,8 @@ try {
   } else {
     run('node', ['scripts/release/verify-cross-platform-package.mjs', '--platform', platform, '--arch', arch], withoutReleaseCredentials(process.env))
   }
-  console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
+  if (dryRun) console.log('\nDRY RUN — nothing executed.')
+  else console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
 } catch (error) {
   console.error(`\nPackaging failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 1
