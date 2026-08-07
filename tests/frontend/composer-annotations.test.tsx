@@ -100,7 +100,9 @@ describe('Composer annotation attachment', () => {
   it('auto-attaches a chip showing the annotation count while any exist', () => {
     renderComposer({ annotations: [annotation('a'), annotation('b')] })
     const chip = container.querySelector('.composer-attachment--annotations')
-    expect(chip?.textContent).toContain('2 page annotations')
+    expect(chip?.textContent).toContain('2')
+    expect(chip?.getAttribute('title')).toBe('2 page annotations')
+    expect(chip?.querySelector('.composer-attachment__expand')?.getAttribute('aria-label')).toContain('2 page annotations')
     expect(container.querySelector('.composer-annotations')).toBeNull()
   })
 
@@ -115,8 +117,7 @@ describe('Composer annotation attachment', () => {
     expect(panel?.querySelector('img')).toBeNull()
     expect(panel?.textContent).toContain('<img src=x onerror=alert(1)> fix this')
     expect(panel?.textContent).toContain('button#a.btn')
-    expect(panel?.textContent).toContain('Example Page')
-    expect(panel?.textContent).toContain('page changed since capture')
+    expect(panel?.textContent).toContain('page changed')
 
     await act(async () => { (container.querySelector('button[aria-label="Remove annotation 2"]') as HTMLButtonElement).click() })
     expect(onRemoveAnnotation).toHaveBeenCalledWith('b')

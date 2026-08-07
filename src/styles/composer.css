@@ -4,7 +4,7 @@
 .composer:focus-within { border-color: color-mix(in srgb, var(--border-strong) 65%, var(--focus)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 30%, transparent); }
 .composer--busy { border-color: color-mix(in srgb, var(--prime) 33%, var(--border-strong)); }
 .composer > textarea { width: 100%; min-height: 55px; max-height: 150px; flex: 1; resize: none; padding: 6px 9px; border: 0; outline: 0; background: transparent; font-size: 14px; line-height: 1.5; }
-.composer-attachments { display: flex; gap: 6px; padding: 1px 6px 7px; overflow-x: auto; }
+.composer-attachments { display: flex; align-items: center; gap: 6px; padding: 1px 6px 7px; overflow-x: auto; }
 .composer-attachment { max-width: 190px; height: 34px; display: flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 3px 4px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
 .composer-attachment > img { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 4px; object-fit: cover; }
 .composer-attachment > span { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--text-secondary); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
@@ -12,10 +12,13 @@
 .composer-attachment > button { width: 23px; height: 23px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 5px; color: var(--text-tertiary); background: transparent; }
 .composer-attachment > button:hover { color: var(--text); background: var(--surface-hover); }
 .composer-attachment-error { margin: -1px 7px 6px; color: var(--danger); font-size: 10.5px; line-height: 1.35; }
-.composer-attachment--annotations { border-color: color-mix(in srgb, var(--annotation) 35%, var(--border)); background: color-mix(in srgb, var(--annotation) 7%, var(--surface-subtle)); }
-.composer-attachment__expand { height: 100%; display: flex; align-items: center; gap: 5px; padding: 0 2px 0 6px; border-radius: 5px; color: var(--annotation); background: transparent; font-size: 10.5px; font-weight: 550; white-space: nowrap; }
+.composer-attachment--annotations { width: auto; max-width: none; height: 26px; align-self: center; gap: 0; padding: 0 1px 0 0; border-color: color-mix(in srgb, var(--annotation) 35%, var(--border)); border-radius: 13px; background: color-mix(in srgb, var(--annotation) 8%, var(--surface-subtle)); }
+.composer-attachment__expand { height: 22px; display: inline-flex; align-items: center; flex: 0 0 auto; gap: 4px; padding: 0 3px 0 9px; border-radius: 11px; color: var(--annotation); background: transparent; font-size: 11px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .composer-attachment__expand:hover { background: color-mix(in srgb, var(--annotation) 10%, transparent); }
+.composer-attachment__expand svg { flex: 0 0 auto; }
 .composer-attachment__expand svg.is-open { transform: rotate(180deg); }
+.composer-attachment--annotations .composer-attachment__clear { width: 20px; height: 20px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; color: var(--text-tertiary); background: transparent; }
+.composer-attachment--annotations .composer-attachment__clear:hover { color: var(--text); background: var(--surface-hover); }
 .composer-annotations { position: absolute; z-index: 50; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 260px; padding: 6px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
 .composer-annotation { display: flex; align-items: flex-start; gap: 8px; padding: 6px 7px; border-radius: 7px; }
 .composer-annotation:hover { background: var(--surface-hover); }

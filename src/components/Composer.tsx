@@ -316,21 +316,20 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
               <span className="composer-annotation__badge" aria-hidden="true">{index + 1}</span>
               <div className="composer-annotation__body">
                 <p>{annotation.comment}</p>
-                <small>{annotationElementLabel(annotation.element)}{snippet ? ` — “${snippet}”` : ''}</small>
-                <small>{annotation.pageTitle || annotation.pageUrl}{annotation.stale ? ' · page changed since capture' : ''}</small>
+                <small>{annotationElementLabel(annotation.element)}{snippet ? ` — “${snippet}”` : ''}{annotation.stale ? ' · page changed' : ''}</small>
               </div>
               <button type="button" aria-label={`Remove annotation ${index + 1}`} onClick={() => onRemoveAnnotation(annotation.id)}><X size={12} /></button>
             </div>
           })}
         </div> : null}
         {images.length || annotations.length ? <div className="composer-attachments" aria-label="Attachments">
-          {annotations.length ? <div className="composer-attachment composer-attachment--annotations">
+          {annotations.length ? <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
             <button type="button" className="composer-attachment__expand" aria-expanded={annotationsOpen} aria-label={`Inspect ${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`} onClick={() => setAnnotationsOpen((open) => !open)}>
-              <MessageCirclePlus size={12} />
-              <span>{annotations.length} page annotation{annotations.length === 1 ? '' : 's'}</span>
-              <ChevronDown size={12} className={annotationsOpen ? 'is-open' : ''} />
+              <MessageCirclePlus size={13} />
+              <span>{annotations.length}</span>
+              <ChevronDown size={11} className={annotationsOpen ? 'is-open' : ''} />
             </button>
-            <button type="button" aria-label="Remove page annotations" onClick={() => { setAnnotationsOpen(false); onClearAnnotations() }}><X size={12} /></button>
+            <button type="button" className="composer-attachment__clear" aria-label="Remove page annotations" onClick={() => { setAnnotationsOpen(false); onClearAnnotations() }}><X size={12} /></button>
           </div> : null}
           {images.map((image) => <div className="composer-attachment" key={image.id}>
           <img src={`data:${image.mimeType};base64,${image.data}`} alt="" />
