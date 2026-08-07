@@ -1,4 +1,4 @@
-import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, RotateCcw, Undo2 } from 'lucide-react'
+import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, RotateCcw, Sparkles, Undo2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { GitStatus } from '@/types/api'
 import { boundLines } from '@/lib/render-bounds'
@@ -6,6 +6,16 @@ import { EmptyState, IconButton, Modal, Segmented } from '../ui'
 
 const MAX_RENDERED_DIFF_CHARACTERS = 2 * 1024 * 1024
 const MAX_RENDERED_DIFF_LINES = 4_000
+
+function generateCommitSummary(files: GitStatus['files']): string {
+  const staged = files.filter((file) => file.staged)
+  if (!staged.length) return ''
+  const verbs = new Set(staged.map((file) => file.status[0]))
+  const verb = verbs.size === 1 && verbs.has('A') ? 'Add' : verbs.size === 1 && verbs.has('D') ? 'Remove' : 'Update'
+  const names = staged.map((file) => file.path)
+  const description = names.length <= 3 ? names.join(', ').replace(/, ([^,]*)$/, names.length === 2 ? ' and $1' : ', and $1') : `${names.length} files`
+  return `${verb} ${description}`
+}
 
 function DiffView({ text }: { text: string }) {
   if (!text) return <div className="diff-placeholder"><FileCode2 size={22} /><span>Select a changed file to inspect its diff.</span></div>
@@ -23,25 +33,30 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
   const visibleFiles = git.files.filter((file) => scope === 'staged' ? file.staged : !file.staged)
+  const activeSelectedPath = visibleFiles.some((file) => file.path === selectedPath) ? selectedPath : undefined
 
   useEffect(() => {
     if (!visibleFiles.some((file) => file.path === selectedPath)) setSelectedPath(visibleFiles[0]?.path)
   }, [git.files, scope, selectedPath])
 
   useEffect(() => {
-    if (!cwd || !selectedPath || !window.prime) { setDiff(selectedPath ? `diff --git a/${selectedPath} b/${selectedPath}
---- a/${selectedPath}
-+++ b/${selectedPath}
+    if (!cwd || !activeSelectedPath || !window.prime) {
+      setDiff(activeSelectedPath ? `diff --git a/${activeSelectedPath} b/${activeSelectedPath}
+--- a/${activeSelectedPath}
++++ b/${activeSelectedPath}
 @@ -18,3 +18,6 @@
  const workspace = createWorkspace()
 +workspace.open()
 +workspace.focus()
- return workspace` : ''); return }
+ return workspace` : '')
+      setLoading(false)
+      return
+    }
     let cancelled = false
     setLoading(true)
-    window.prime.git.diff(cwd, selectedPath, scope === 'staged').then((value) => { if (!cancelled) setDiff(value.text) }).catch(() => { if (!cancelled) setDiff('Unable to load this diff.') }).finally(() => { if (!cancelled) setLoading(false) })
+    window.prime.git.diff(cwd, activeSelectedPath, scope === 'staged').then((value) => { if (!cancelled) setDiff(value.text) }).catch(() => { if (!cancelled) setDiff('Unable to load this diff.') }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [cwd, selectedPath, scope])
+  }, [cwd, activeSelectedPath, scope])
 
   const mutate = async (kind: 'stage' | 'unstage' | 'restore', paths: string[]): Promise<boolean> => {
     if (!cwd || !window.prime) return false
@@ -59,6 +74,11 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
       setActionError(error instanceof Error ? error.message : String(error))
       return false
     }
+  }
+
+  const fillCommitSummary = () => {
+    setActionError('')
+    setCommitMessage(generateCommitSummary(git.files))
   }
 
   const commit = async () => {
@@ -91,7 +111,7 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
           {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={15} /> Loading diff…</div> : <DiffView text={diff} />}
         </div>
       </div>
-      {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} footer={<><button className="button" type="button" onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={!commitMessage.trim()} onClick={() => void commit()}>Commit changes</button></>}><label className="field"><span>Commit message</span><input autoFocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p></Modal> : null}
+      {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} footer={<><button className="button" type="button" onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={!commitMessage.trim()} onClick={() => void commit()}>Commit changes</button></>}><label className="field"><span>Commit message</span><div className="commit-message-input"><input autoFocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /><button type="button" className="button button--compact" onClick={fillCommitSummary} title="Generate a summary from staged files"><Sparkles size={13} /> Generate summary</button></div></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p></Modal> : null}
       {confirmRestore ? <Modal title="Revert file changes?" onClose={() => setConfirmRestore(null)} footer={<><button className="button" type="button" onClick={() => setConfirmRestore(null)}>Cancel</button><button className="button button--danger" type="button" onClick={() => { const path = confirmRestore; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmRestore(null) }) }}>Revert file</button></>}><p>Uncommitted changes to <code>{confirmRestore}</code> will be permanently discarded.</p></Modal> : null}
     </div>
   )

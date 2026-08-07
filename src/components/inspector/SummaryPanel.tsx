@@ -1,5 +1,6 @@
 import { Check, CircleDot, GitBranch, LoaderCircle } from 'lucide-react'
 import type { GitStatus, ProjectRecord, RuntimeInfo, TranscriptMessage } from '@/types/api'
+import { MarkdownText } from '../MarkdownText'
 
 export function SummaryPanel({ project, runtime, messages, git }: { project?: ProjectRecord; runtime?: RuntimeInfo | null; messages: TranscriptMessage[]; git: GitStatus }) {
   const toolCount = messages.reduce((sum, message) => sum + message.parts.filter((part) => part.type === 'toolCall').length, 0)
@@ -9,7 +10,7 @@ export function SummaryPanel({ project, runtime, messages, git }: { project?: Pr
       <section className="summary-hero">
         <span className={`run-state ${runtime?.isStreaming ? 'is-running' : ''}`}>{runtime?.isStreaming ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}{runtime?.isStreaming ? 'Prime is working' : 'Ready'}</span>
         <h2>{runtime?.isStreaming ? 'Working through the request' : 'Session overview'}</h2>
-        <p>{lastText?.type === 'text' ? lastText.text.slice(0, 220) : 'Start a conversation to see a compact summary of the work here.'}</p>
+        <MarkdownText text={lastText?.type === 'text' ? lastText.text.slice(0, 220) : 'Start a conversation to see a compact summary of the work here.'} />
       </section>
       <section className="summary-section"><h3>Workspace</h3><dl className="detail-list"><div><dt>Project</dt><dd>{project?.name ?? 'No project'}</dd></div><div><dt>Branch</dt><dd><GitBranch size={12} />{git.branch ?? project?.gitBranch ?? '—'}</dd></div><div><dt>Environment</dt><dd>Local</dd></div><div><dt>Working directory</dt><dd title={project?.primaryFolder} className="mono truncate">{project?.primaryFolder ?? '—'}</dd></div></dl></section>
       <section className="summary-section"><h3>Progress</h3><div className="progress-list"><div><Check size={13} /><span>Loaded project context</span></div><div><Check size={13} /><span>{toolCount} tool {toolCount === 1 ? 'call' : 'calls'} recorded</span></div><div className={git.files.length ? 'is-current' : ''}><CircleDot size={13} /><span>{git.files.length ? `${git.files.length} files ready to review` : git.isRepo ? 'No uncommitted changes' : 'Git repository not detected'}</span></div></div></section>
