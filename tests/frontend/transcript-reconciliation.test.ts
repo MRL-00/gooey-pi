@@ -17,8 +17,10 @@ const marker: TranscriptReconciliationMarker = {
 
 describe('authoritative transcript reconciliation', () => {
   it('marks transport loss and waits for a terminal turn or runtime event', () => {
-    expect(needsTranscriptReconciliation({ type: 'transport_error', error: 'event rate exceeded the desktop limit' })).toBe(true)
+    expect(needsTranscriptReconciliation({ type: 'transport_error', error: 'the runtime event stream broke' })).toBe(true)
+    expect(needsTranscriptReconciliation({ type: 'transport_limit', kind: 'count', error: 'event rate exceeded the desktop limit' })).toBe(true)
     expect(isTranscriptTerminalEvent({ type: 'transport_error' })).toBe(false)
+    expect(isTranscriptTerminalEvent({ type: 'transport_limit' })).toBe(false)
     expect(isTranscriptTerminalEvent({ type: 'agent_end' })).toBe(true)
     expect(isTranscriptTerminalEvent({ type: 'error' })).toBe(true)
     expect(isTranscriptTerminalEvent({ type: 'extension_error' })).toBe(true)

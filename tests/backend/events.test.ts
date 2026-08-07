@@ -15,6 +15,13 @@ describe('agent transport events', () => {
     expect(messages.at(-1)?.parts).toMatchObject([{ type: 'text', text: 'Malformed agent output' }])
   })
 
+  it('keeps the stream open when the desktop rate limiter drops events', () => {
+    const messages = applyPrimeEvent([streamingMessage()], { type: 'transport_limit', kind: 'count', error: 'Prime Agent event rate exceeded the desktop limit' })
+
+    expect(messages[0].streaming).toBe(true)
+    expect(messages.at(-1)?.role).toBe('assistant')
+  })
+
   it('explains an unexpected runtime exit without duplicating an existing error', () => {
     const exited = applyPrimeEvent([streamingMessage()], { type: 'runtime_exit', code: 2, expected: false })
     expect(exited.at(-1)?.parts[0]).toMatchObject({ type: 'text', text: 'Prime Agent stopped unexpectedly (exit code 2). Send the message again to restart it.' })

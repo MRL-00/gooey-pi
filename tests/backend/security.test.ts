@@ -97,7 +97,7 @@ const readline=require('node:readline');const fs=require('node:fs');fs.writeFile
 
     expect(envelopeEvents.some((event) => event.type === 'normal_event')).toBe(true)
     expect(envelopeEvents.some((event) => event.type === 'oversized_event')).toBe(false)
-    expect(envelopeEvents.some((event) => event.type === 'transport_error' && String(event.error).includes('envelope byte limit'))).toBe(true)
+    expect(envelopeEvents.some((event) => event.type === 'transport_limit' && String(event.error).includes('envelope byte limit'))).toBe(true)
 
     const windowEnvelopes: Array<{ runtimeId: string; event: Record<string, unknown> }> = []
     const windowForwarder = new AgentEventForwarder('runtime-window', (envelope) => windowEnvelopes.push(envelope), {
@@ -122,7 +122,7 @@ const readline=require('node:readline');const fs=require('node:fs');fs.writeFile
     lifecycleForwarder.emit({ type: 'compaction_start', reason: 'overflow' })
     lifecycleForwarder.emit({ type: 'compaction_end', reason: 'overflow', aborted: false, willRetry: true })
     lifecycleForwarder.emit({ type: 'agent_end' })
-    expect(lifecycleEvents.some((event) => event.type === 'transport_error')).toBe(true)
+    expect(lifecycleEvents.some((event) => event.type === 'transport_limit')).toBe(true)
     expect(lifecycleEvents.some((event) => event.type === 'compaction_start')).toBe(true)
     expect(lifecycleEvents.some((event) => event.type === 'compaction_end')).toBe(true)
     expect(lifecycleEvents.some((event) => event.type === 'agent_end')).toBe(true)

@@ -41,7 +41,12 @@ export function contextUsageFromEvent(event: Record<string, unknown>): PrimeCont
 }
 
 export function needsTranscriptReconciliation(event: Record<string, unknown>): boolean {
-  return eventType(event) === 'transport_error'
+  // transport_error: the runtime's event stream broke, so replayed events are
+  // untrustworthy. transport_limit: the desktop rate limiter dropped events
+  // mid-turn; the agent is still running and only the transcript needs an
+  // authoritative re-read once the turn settles.
+  const type = eventType(event)
+  return type === 'transport_error' || type === 'transport_limit'
 }
 
 export function isTranscriptTerminalEvent(event: Record<string, unknown>): boolean {

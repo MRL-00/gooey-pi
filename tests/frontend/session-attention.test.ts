@@ -42,6 +42,12 @@ describe('session lifecycle attention', () => {
     expect(sessionAttentionSignature(failed)).toBeUndefined()
   })
 
+  it('ignores desktop rate-limit drops: the agent is still running', () => {
+    const running = applySessionLifecycleEvent(session(), { type: 'agent_start' }, true, 1)
+    const afterLimit = applySessionLifecycleEvent(running, { type: 'transport_limit', kind: 'count' }, true, 2)
+    expect(afterLimit).toBe(running)
+  })
+
   it('finishes a manual compaction when no continuation is scheduled', () => {
     const running = applySessionLifecycleEvent(session(), { type: 'compaction_start', reason: 'manual' }, true, 1)
     const completed = applySessionLifecycleEvent(running, { type: 'compaction_end', reason: 'manual', willRetry: false }, true, 2)

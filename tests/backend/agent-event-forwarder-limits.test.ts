@@ -29,7 +29,7 @@ describe('AgentEventForwarder runtime_exit exemption', () => {
     // runtime_exit bypasses the limiter but is deduplicated per runtime lifetime.
     expect(events.filter((event) => event.type === 'runtime_exit')).toHaveLength(1)
     // Saturation is reported exactly once per window, not once per drop.
-    expect(events.filter((event) => event.type === 'transport_error')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'transport_limit')).toHaveLength(1)
   })
 
   it('lets critical events spend the byte reserve that normal events cannot touch', () => {
@@ -43,7 +43,7 @@ describe('AgentEventForwarder runtime_exit exemption', () => {
     const blocked = { type: 'message_update', value: 'y'.repeat(60) }
     emit(blocked)
     expect(events.filter((event) => event.type === 'message_update')).toHaveLength(1)
-    const byteReports = events.filter((event) => event.type === 'transport_error')
+    const byteReports = events.filter((event) => event.type === 'transport_limit')
     expect(byteReports).toHaveLength(1)
     expect(String(byteReports[0].error)).toContain('byte rate')
 
@@ -56,7 +56,7 @@ describe('AgentEventForwarder runtime_exit exemption', () => {
     // silent because the bytes limit was already reported this window.
     emit({ type: 'runtime_exit', code: 3, expected: false, padding: 'z'.repeat(400) })
     expect(events.filter((event) => event.type === 'runtime_exit')).toHaveLength(1)
-    expect(events.filter((event) => event.type === 'transport_error')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'transport_limit')).toHaveLength(1)
   })
 
   it('caps repeated lifecycle events while runtime_exit stays deduplicated', () => {
@@ -76,12 +76,12 @@ describe('AgentEventForwarder runtime_exit exemption', () => {
     const { events, emit } = forwarder({ maxEvents: 1, windowMs: 1_000 })
     emit({ type: 'message_update', index: 0 })
     emit({ type: 'message_update', index: 1 })
-    expect(events.map((event) => event.type)).toEqual(['message_update', 'transport_error'])
+    expect(events.map((event) => event.type)).toEqual(['message_update', 'transport_limit'])
 
     vi.setSystemTime(1_001_500)
     emit({ type: 'message_update', index: 2 })
     emit({ type: 'message_update', index: 3 })
     expect(events.filter((event) => event.type === 'message_update')).toHaveLength(2)
-    expect(events.filter((event) => event.type === 'transport_error')).toHaveLength(2)
+    expect(events.filter((event) => event.type === 'transport_limit')).toHaveLength(2)
   })
 })

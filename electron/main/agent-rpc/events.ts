@@ -85,7 +85,10 @@ export class AgentEventForwarder {
   private reportLimit(kind: string, error: string): void {
     if (this.reportedLimits.has(kind)) return
     this.reportedLimits.add(kind)
-    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event: { type: 'transport_error', error } }
+    // transport_limit, not transport_error: the desktop dropped events but the
+    // agent is still running, so the renderer must reconcile the transcript
+    // from disk rather than treat the turn as failed or finished.
+    const envelope: PrimeEventEnvelope = { runtimeId: this.runtimeId, event: { type: 'transport_limit', kind, error } }
     const bytes = this.serializedBytes(envelope)
     if (bytes === null || bytes > this.limits.maxEnvelopeBytes || this.windowBytes + bytes > this.limits.maxWindowBytes) return
     this.windowBytes += bytes
