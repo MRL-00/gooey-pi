@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
 
 type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
@@ -36,7 +36,7 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   const mutationRevisionRef = useRef(0)
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const runtimeIdRef = useRef(runtime?.runtimeId)
-  runtimeIdRef.current = runtime?.runtimeId
+  useLayoutEffect(() => { runtimeIdRef.current = runtime?.runtimeId })
 
   const updateModel = useCallback((value: string) => { modelRef.current = value; setModel(value) }, [])
   const updateEffort = useCallback((value: PrimeThinkingLevel) => { effortRef.current = value; setEffort(value) }, [])

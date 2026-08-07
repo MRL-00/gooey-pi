@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createScopedRequestGuard } from '@/app/scoped-request'
 import type { PluginWarning, PrimeWorkApi, SkillRecord } from '@/types/api'
 
@@ -17,8 +17,10 @@ export function usePluginSkills({ bridge, scope, generation, initialSkills, repo
   const requestGuardRef = useRef(createScopedRequestGuard())
   const scopeRef = useRef(scope)
   const generationRef = useRef(generation)
-  scopeRef.current = scope
-  generationRef.current = generation
+  useLayoutEffect(() => {
+    scopeRef.current = scope
+    generationRef.current = generation
+  })
 
   const load = useCallback(async (requestedScope: string | undefined, showLoading = false) => {
     if (!bridge) return
