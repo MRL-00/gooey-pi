@@ -151,6 +151,32 @@ describe('Prime provider adapter', () => {
     expect((await providerService.catalog(true)).providers.find((provider) => provider.id === 'openai')?.configured).toBe(false)
   })
 
+  it('always allows retrying a provider login after cancel, even when login hangs', async () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+      flows: Map<string, { timer: NodeJS.Timeout }>
+    }
+    // A login that ignores the abort signal and never settles.
+    internals.authStorage.login = () => new Promise<void>(() => undefined)
+
+    const catalog = await providerService.catalog(true)
+    const oauthProvider = catalog.providers.find((provider) => provider.authMethod === 'oauth')
+    expect(oauthProvider).toBeDefined()
+
+    const first = await providerService.startOAuth(oauthProvider!.id)
+    await expect(providerService.startOAuth(oauthProvider!.id)).rejects.toThrow(/already active/)
+    expect(providerService.cancelOAuth(first.flowId)).toBe(true)
+    expect(internals.flows.size).toBe(0)
+
+    // Cancel then retry must succeed immediately.
+    const second = await providerService.startOAuth(oauthProvider!.id)
+    expect(second.flowId).not.toBe(first.flowId)
+    expect(providerService.cancelOAuth(second.flowId)).toBe(true)
+    // A second cancel of the same flow is a no-op.
+    expect(providerService.cancelOAuth(second.flowId)).toBe(false)
+  })
+
   it('rejects OAuth for providers that do not own an OAuth flow', async () => {
     await expect(service().startOAuth('openai')).rejects.toThrow('requires api_key authentication')
   })

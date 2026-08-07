@@ -294,6 +294,10 @@ export class PrimeProviderService {
 
   private abortFlow(flow: OAuthFlow, message: string): void {
     const error = new Error(message)
+    // Release the flow slot immediately so cancel -> retry always works, even
+    // when the underlying login ignores the abort signal and never settles.
+    clearTimeout(flow.timer)
+    this.flows.delete(flow.id)
     flow.abort.abort(error)
     flow.pending?.reject(error)
     flow.pending = undefined
