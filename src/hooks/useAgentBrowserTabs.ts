@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { AgentBrowserTabRecord, PrimeWorkApi } from '@/types/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { AgentBrowserPointerEvent, AgentBrowserTabRecord, PrimeWorkApi } from '@/types/api'
 
 interface UseAgentBrowserTabsOptions {
   bridge: PrimeWorkApi | null
   reportError(error: unknown): void
 }
 
+/** Pointer event stamped with a sequence number so identical coordinates still retrigger animations. */
+export type StampedPointerEvent = AgentBrowserPointerEvent & { seq: number }
+
 export interface AgentBrowserApi {
   /** Every agent tab across all sessions; the layer must host them all so background threads keep browsing. */
   tabs: AgentBrowserTabRecord[]
+  /** Latest agent pointer movement, for the synthetic cursor overlay. */
+  pointerEvent: StampedPointerEvent | null
   attach(tabId: string, webContentsId: number): void
   select(tabId: string): void
   close(tabId: string): void
@@ -20,6 +25,8 @@ export interface AgentBrowserApi {
  */
 export function useAgentBrowserTabs({ bridge, reportError }: UseAgentBrowserTabsOptions): AgentBrowserApi {
   const [tabs, setTabs] = useState<AgentBrowserTabRecord[]>([])
+  const [pointerEvent, setPointerEvent] = useState<StampedPointerEvent | null>(null)
+  const pointerSeqRef = useRef(0)
 
   useEffect(() => {
     if (!bridge) return
@@ -28,7 +35,11 @@ export function useAgentBrowserTabs({ bridge, reportError }: UseAgentBrowserTabs
       .then((state) => { if (live) setTabs(state.tabs) })
       .catch((error: unknown) => { if (live) reportError(error) })
     const unsubscribe = bridge.browser.onChanged((state) => setTabs(state.tabs))
-    return () => { live = false; unsubscribe() }
+    const unsubscribePointer = bridge.browser.onPointer((event) => {
+      pointerSeqRef.current += 1
+      setPointerEvent({ ...event, seq: pointerSeqRef.current })
+    })
+    return () => { live = false; unsubscribe(); unsubscribePointer() }
   }, [bridge, reportError])
 
   // Attach races (a tab closed while the webview was mounting) are expected; they resolve on the next snapshot.
@@ -42,5 +53,5 @@ export function useAgentBrowserTabs({ bridge, reportError }: UseAgentBrowserTabs
     if (bridge) void bridge.browser.closeTab(tabId).catch(() => undefined)
   }, [bridge])
 
-  return { tabs, attach, select, close }
+  return { tabs, pointerEvent, attach, select, close }
 }

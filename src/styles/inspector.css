@@ -133,6 +133,16 @@
 .agent-browser-tab { position: absolute; inset: 0; visibility: hidden; }
 .agent-browser-layer.is-visible .agent-browser-tab.is-visible { visibility: visible; }
 
+/* Synthetic cursor mirroring the agent's real input glide */
+.agent-cursor-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 6; }
+.agent-cursor-trail { position: absolute; inset: 0; width: 100%; height: 100%; }
+.agent-cursor-trail__line { stroke: var(--annotation); stroke-width: 2; stroke-linecap: round; opacity: .8; }
+.agent-cursor { position: absolute; left: 0; top: 0; opacity: 0; transition: opacity 280ms ease; will-change: transform; }
+.agent-cursor.is-active { opacity: 1; }
+.agent-cursor.is-idle { opacity: 0; }
+.agent-cursor__dot { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 50%; background: var(--annotation); box-shadow: 0 1px 4px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.12); }
+.agent-cursor-ripple { position: absolute; width: 34px; height: 34px; border: 2px solid var(--annotation); border-radius: 50%; opacity: 0; pointer-events: none; }
+
 /* Files */
 .files-panel { height: 100%; display: flex; flex-direction: column; }
 .files-search { height: 43px; flex: 0 0 43px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }
