@@ -2,6 +2,7 @@ import {
   Archive,
   Bell,
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -153,6 +154,15 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
     document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
     return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
   }, [sessionMenu])
+  useEffect(() => {
+    if (!archiveTarget) return
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-archive-confirming="true"]')) setArchiveTarget(null)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setArchiveTarget(null) } }
+    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
+    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
+  }, [archiveTarget])
   const normalized = query.trim().toLowerCase()
   const visibleProjects = useMemo(() => projects.filter((project) => !normalized || project.name.toLowerCase().includes(normalized) || (sessionsByProject.get(project.id) ?? []).some((session) => `${session.title} ${session.preview ?? ''}`.toLowerCase().includes(normalized))), [projects, sessionsByProject, normalized])
 
@@ -214,7 +224,18 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                         <SessionStatusMark status={session.status} />
                         <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
                       </button>
-                      <IconButton size="small" className="session-row__archive" label={`Archive ${session.title}`} onClick={() => { setArchiveTarget(session); setSessionMenu(null) }}><Archive size={13}/></IconButton>
+                      <IconButton
+                        size="small"
+                        className={`session-row__archive ${archiveTarget?.id === session.id ? 'is-confirming' : ''}`}
+                        label={archiveTarget?.id === session.id ? `Confirm archive ${session.title}` : `Archive ${session.title}`}
+                        data-archive-confirming={archiveTarget?.id === session.id}
+                        onClick={() => {
+                          setSessionMenu(null)
+                          if (archiveTarget?.id !== session.id) { setArchiveTarget(session); return }
+                          setArchiveTarget(null)
+                          void onArchiveSession(session)
+                        }}
+                      >{archiveTarget?.id === session.id ? <Check size={13} /> : <Archive size={13}/>}</IconButton>
                       <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
                       {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
                     </div>
@@ -232,7 +253,6 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         <button type="button" className={activeView === 'settings' ? 'is-active' : ''} onClick={() => onNavigate('settings')}><Settings size={15} /><span>Settings</span><kbd>⌘,</kbd></button>
       </div>
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}
-      {archiveTarget ? <Modal title="Archive session" onClose={() => setArchiveTarget(null)} footer={<><button type="button" className="button" onClick={() => setArchiveTarget(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => { const target = archiveTarget; setArchiveTarget(null); void onArchiveSession(target) }}>Archive</button></>}><p className="modal-intro">Archive “{archiveTarget.title}”? Its Prime transcript stays on this Mac and can be restored from Activity.</p></Modal> : null}
     </aside>
   )
 }
