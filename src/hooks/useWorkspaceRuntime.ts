@@ -293,8 +293,11 @@ export function useWorkspaceRuntime({
       }
     }
     if (promptAdmissionGenerationRef.current === selected.generation) {
-      if (type === 'agent_start' || type === 'turn_start') promptAdmissionGenerationRef.current = null
-      else if (needsTranscriptReconciliation(event) || isTranscriptTerminalEvent(event)) return
+      // transport_error and runtime_exit mean the admitted prompt will never
+      // start; clear the admission so reconciliation stops being suppressed.
+      if (type === 'agent_start' || type === 'turn_start' || type === 'transport_error' || type === 'runtime_exit') {
+        promptAdmissionGenerationRef.current = null
+      } else if (needsTranscriptReconciliation(event) || isTranscriptTerminalEvent(event)) return
     }
     if (!selected.sessionFile) return
     const marker: TranscriptReconciliationMarker = {
@@ -355,7 +358,22 @@ export function useWorkspaceRuntime({
       return
     }
     const selected = workspaceRef.current
-    if (selected.generation !== workspaceGeneration || selected.sessionFile !== activeSession.filePath) return
+    if (selected.generation !== workspaceGeneration || selected.sessionFile !== activeSession.filePath) {
+      // Recovery: an admitted load for the live workspace snapshot must still be
+      // started even when this render's catalog view diverges (for example a
+      // renamed session record), or its events buffer forever and the session
+      // never finishes loading.
+      const admitted = transcriptLoadRef.current
+      if (admitted && !admitted.reconciliation
+        && admitted.generation === selected.generation
+        && admitted.sessionFile === selected.sessionFile
+        && selected.sessionFile
+        && lastTranscriptReadWorkspaceRef.current?.generation !== selected.generation) {
+        lastTranscriptReadWorkspaceRef.current = { generation: selected.generation, sessionFile: selected.sessionFile }
+        startTranscriptRead(selected, false, undefined, admitted)
+      }
+      return
+    }
     const previousReadWorkspace = lastTranscriptReadWorkspaceRef.current
     const workspaceChanged = previousReadWorkspace?.generation !== selected.generation
       || previousReadWorkspace.sessionFile !== activeSession.filePath
@@ -367,7 +385,7 @@ export function useWorkspaceRuntime({
     } else {
       startTranscriptRead(selected, false)
     }
-  }, [activeSession?.filePath, bridge, externalSessionSyncRevision, externalSessionUpdatedAt, flushAgentEvents, locallyOwnedActiveSession, reportError, startTranscriptRead, workspaceGeneration])
+  }, [activeSession?.filePath, bridge, externalSessionSyncRevision, externalSessionUpdatedAt, locallyOwnedActiveSession, startTranscriptRead, workspaceGeneration])
 
   useEffect(() => {
     const onVisibilityChange = () => {

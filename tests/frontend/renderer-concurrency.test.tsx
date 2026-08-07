@@ -202,6 +202,60 @@ describe('transcript read ownership', () => {
     expect(state.messages[0]?.parts[0]).toMatchObject({ type: 'text', text: 'loaded:live' })
     expect(read).toHaveBeenCalledTimes(2)
   })
+
+  it('clears prompt admission on transport_error and runtime_exit so reconciliation recovers', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, sessions: [session],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<WorkspaceProbe />); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    await act(async () => { expect(state.prepareForPrompt(0)).toBe(true) })
+
+    // The admitted prompt never starts: the transport fails and the runtime exits.
+    await act(async () => {
+      state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'transport_error' })
+      state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'runtime_exit' })
+      await Promise.resolve()
+    })
+
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts an admitted load even when the session catalog record has diverged', async () => {
+    const read = vi.fn().mockResolvedValue([message('loaded:')])
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    const renamedRecord: SessionRecord = { ...session, id: 'two', filePath: '/sessions/two-renamed.jsonl', title: 'Two' }
+    const activatedSession: SessionRecord = { ...session, id: 'two', filePath: '/sessions/two.jsonl', title: 'Two' }
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, sessions: [session, renamedRecord],
+        initialMessages: [], reportError,
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<WorkspaceProbe />); await Promise.resolve(); await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    // Activate a session whose catalog record carries a different filePath, so
+    // the transcript effect's guard can never match this workspace.
+    await act(async () => { state.activateWorkspace(project, activatedSession); await Promise.resolve(); await Promise.resolve() })
+
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenLastCalledWith('/sessions/two.jsonl')
+    expect(state.loadingSession).toBe(false)
+  })
 })
 
 describe('agent event frame queue', () => {
