@@ -117,3 +117,13 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
     </section>
   )
 }
+
+/** The Providers settings page: heading plus the provider/model catalog section. */
+export function ProvidersSettings(props: ProviderSettingsProps) {
+  return (
+    <>
+      <header><h1>Providers</h1><p>Connect accounts, choose which providers and their models appear in Prime Work, and browse every model Prime Agent supports.</p></header>
+      <ProviderSettings {...props} />
+    </>
+  )
+}
