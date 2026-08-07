@@ -134,9 +134,9 @@ export function AgentCursorOverlay({ pointerEvent }: { pointerEvent: StampedPoin
 
   return (
     <div ref={overlayRef} className="agent-cursor-layer" aria-hidden>
-      <svg ref={trailRef} className="agent-cursor-trail" />
+      <svg ref={trailRef} className="agent-cursor-trail" aria-hidden="true" />
       <div ref={cursorRef} className="agent-cursor">
-        <svg className="agent-cursor__arrow" viewBox="0 0 20 22" width="20" height="22">
+        <svg className="agent-cursor__arrow" viewBox="0 0 20 22" width="20" height="22" aria-hidden="true">
           <path d="M4 1.4 L4 17.2 L8.1 13.6 L10.7 19.6 L13.5 18.4 L10.9 12.5 L16.3 12.5 Z" />
         </svg>
       </div>
