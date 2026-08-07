@@ -83,6 +83,32 @@ describe('Prime provider adapter', () => {
     expect(gpt56?.availableThinkingLevels).not.toContain('minimal')
   })
 
+  it('single-flights concurrent catalog refreshes and clears the in-flight promise', async () => {
+    const providerService = service()
+    const registry = (providerService as unknown as { registry: { refreshModelCatalog(): Promise<unknown> } }).registry
+    const original = registry.refreshModelCatalog.bind(registry)
+    let refreshes = 0
+    registry.refreshModelCatalog = async () => {
+      refreshes += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return original()
+    }
+
+    const [first, second, third] = await Promise.all([
+      providerService.catalog(true),
+      providerService.catalog(true),
+      providerService.catalog(true, new Set(['anthropic'])),
+    ])
+    expect(refreshes).toBe(1)
+    expect(first.models.length).toBe(second.models.length)
+    expect(third.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(false)
+    expect(first.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(true)
+
+    // After settling, a forced refresh runs again (the in-flight slot was cleared).
+    await providerService.catalog(true)
+    expect(refreshes).toBe(2)
+  })
+
   it('keeps provider enablement as a desktop policy separate from authentication', async () => {
     const catalog = await service().catalog(true, new Set(['anthropic']))
     const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic')
