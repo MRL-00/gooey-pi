@@ -90,7 +90,7 @@ function isAllowedBrowserUrl(raw: string): boolean {
   try { const url = new URL(raw); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password } catch { return false }
 }
 
-export function hardenRenderer(window: BrowserWindow): void {
+export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string = () => trustedRendererUrl): void {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-attach-webview', (event, preferences, params) => {
     delete preferences.preload
@@ -115,6 +115,14 @@ export function hardenRenderer(window: BrowserWindow): void {
   window.webContents.on('will-navigate', (event, target) => {
     const current = window.webContents.getURL()
     if (target !== current) event.preventDefault()
+  })
+  // Server redirects and sub-frame navigations bypass will-navigate; hold them
+  // to the same trusted-renderer predicate the IPC gate uses.
+  window.webContents.on('will-redirect', (event) => {
+    if (!isTrustedRendererUrl(event.url, trustedUrl())) event.preventDefault()
+  })
+  window.webContents.on('will-frame-navigate', (event) => {
+    if (!isTrustedRendererUrl(event.url, trustedUrl())) event.preventDefault()
   })
 }
 

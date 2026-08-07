@@ -28,7 +28,7 @@ function hardenedWindow(currentUrl = 'prime-work://app/index.html') {
     setWindowOpenHandler: vi.fn(),
     getURL: () => currentUrl,
   }
-  hardenRenderer({ webContents } as unknown as BrowserWindow)
+  hardenRenderer({ webContents } as unknown as BrowserWindow, () => 'prime-work://app/index.html')
   const handler = (name: string): Handler => {
     const listener = handlers.get(name)
     if (!listener) throw new Error(`No ${name} handler was registered`)
@@ -66,6 +66,19 @@ describe('renderer hardening', () => {
       const event = { preventDefault: vi.fn() }
       handler('will-attach-webview')(...[event, {}, params] as never[])
       expect(event.preventDefault).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('blocks main-window redirects and frame navigations away from the trusted renderer', () => {
+    const { handler } = hardenedWindow()
+    for (const name of ['will-redirect', 'will-frame-navigate']) {
+      const blocked = { url: 'https://attacker.test/', preventDefault: vi.fn() }
+      handler(name)(...[blocked] as never[])
+      expect(blocked.preventDefault, name).toHaveBeenCalledOnce()
+
+      const trusted = { url: 'prime-work://app/index.html', preventDefault: vi.fn() }
+      handler(name)(...[trusted] as never[])
+      expect(trusted.preventDefault, name).not.toHaveBeenCalled()
     }
   })
 })
