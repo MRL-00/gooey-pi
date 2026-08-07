@@ -5,6 +5,7 @@ import {
   eventsForWorkspace,
   isTranscriptTerminalEvent,
   needsTranscriptReconciliation,
+  reconcileTranscriptMessages,
   reconciliationMatches,
   type PendingAgentEvent,
   type TranscriptReconciliationMarker,
@@ -184,7 +185,14 @@ export function useWorkspaceRuntime({
           setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
           return
         }
-        setMessages(pendingLoad.eventBuffer.replay(value))
+        if (pendingLoad.reconciliation) {
+          setMessages(pendingLoad.eventBuffer.replay(value))
+          return
+        }
+        // Background reads (initial and external-sync) merge into the live
+        // list so an optimistic message sent while the read was in flight is
+        // not replaced away by older on-disk state.
+        setMessages((messages) => reconcileTranscriptMessages(messages, pendingLoad.eventBuffer.replay(value)))
       },
       onError: (error) => {
         setMessages((messages) => pendingLoad.eventBuffer.replay(messages))
@@ -243,7 +251,11 @@ export function useWorkspaceRuntime({
     promptAdmissionGenerationRef.current = generation
     reconciliationNeededRef.current = null
     const load = transcriptLoadRef.current
-    if (load?.generation === generation && load.reconciliation) {
+    // Supersede every pending transcript load, not only reconciliations: a
+    // background read resolving after the prompt would otherwise replace the
+    // optimistic user message with older on-disk state. The reconciliation
+    // read after the turn's terminal event restores disk authority.
+    if (load?.generation === generation) {
       transcriptLoadRef.current = null
       deferredReconciliationRef.current = null
       setMessages((current) => load.eventBuffer.replay(current))

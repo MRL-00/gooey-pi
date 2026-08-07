@@ -3,9 +3,11 @@ import {
   authoritativeTranscriptReadIsCurrent,
   isTranscriptTerminalEvent,
   needsTranscriptReconciliation,
+  reconcileTranscriptMessages,
   reconciliationMatches,
   type TranscriptReconciliationMarker,
 } from '../../src/app/agent-events'
+import type { TranscriptMessage } from '../../src/types/api'
 
 const marker: TranscriptReconciliationMarker = {
   generation: 7,
@@ -55,6 +57,32 @@ describe('authoritative transcript reconciliation', () => {
       generation: 7,
       sessionFile: '/sessions/current.jsonl',
     }, null)).toBe(true)
+  })
+
+  it('merges background reads so a trailing optimistic user message survives', () => {
+    const message = (id: string, role: TranscriptMessage['role'], text: string): TranscriptMessage => ({
+      id, role, timestamp: 1, parts: [{ type: 'text', text }],
+    })
+    const persisted = message('record-1', 'assistant', 'earlier answer')
+    const optimistic = message('user-1754500000000', 'user', 'run the tests')
+
+    expect(reconcileTranscriptMessages([persisted, optimistic], [persisted]))
+      .toEqual([persisted, optimistic])
+    expect(reconcileTranscriptMessages(
+      [persisted, optimistic],
+      [persisted, message('record-2', 'user', 'run the tests')],
+    )).toEqual([persisted, message('record-2', 'user', 'run the tests')])
+  })
+
+  it('does not resurrect disk-loaded rows removed by an authoritative rewrite', () => {
+    const message = (id: string, role: TranscriptMessage['role'], text: string): TranscriptMessage => ({
+      id, role, timestamp: 1, parts: [{ type: 'text', text }],
+    })
+    const rewritten = [message('record-9', 'assistant', 'compacted summary')]
+    expect(reconcileTranscriptMessages(
+      [message('record-1', 'assistant', 'earlier'), message('record-2', 'user', 'old prompt')],
+      rewritten,
+    )).toEqual(rewritten)
   })
 
   it('rejects a reconciliation result after a new same-runtime prompt is admitted', () => {
