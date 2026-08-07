@@ -21,8 +21,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.12.0
+          node-version-file: .nvmrc
           cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/.cache/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run typecheck
       - run: npm run check
@@ -33,6 +43,7 @@ jobs:
         with:
           name: coverage
           path: coverage/
+          if-no-files-found: error
 
   hermetic-e2e:
     runs-on: macos-14
@@ -40,8 +51,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.12.0
+          node-version-file: .nvmrc
           cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/.cache/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run build:bundle
       - run: npm run test:e2e:hermetic
@@ -50,6 +71,7 @@ jobs:
         with:
           name: playwright-results
           path: test-results/
+          if-no-files-found: error
 
   packaging-smoke:
     if: github.event_name == 'pull_request'
@@ -74,8 +96,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.12.0
+          node-version-file: .nvmrc
           cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/.cache/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run build:bundle
       - run: npm exec -- electron-builder --dir --${{ matrix.target }} --${{ matrix.arch }} --publish never --config.directories.output=release/${{ matrix.target }}/${{ matrix.arch }} ${{ matrix.extra_args }}
@@ -93,25 +125,44 @@ jobs:
           - runner: macos-14
             package: npm run package:mac:local-qa
             artifact: prime-work-local-qa-macos
-            path: release/mac/
+            # Installers only: never upload the unpacked application directory.
+            path: |
+              release/mac/**/*.dmg
+              release/mac/**/*.zip
           - runner: ubuntu-22.04
             package: npm run package:linux:local-qa
             artifact: prime-work-local-qa-linux
-            path: release/linux/
+            path: |
+              release/linux/**/*.AppImage
+              release/linux/**/*.deb
+              release/linux/**/*.rpm
           - runner: windows-2022
             package: npm run package:win:local-qa
             artifact: prime-work-local-qa-windows
-            path: release/win/
+            path: |
+              release/win/**/*.exe
+              release/win/**/*.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.12.0
+          node-version-file: .nvmrc
           cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/.cache/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: ${{ matrix.package }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
+          if-no-files-found: error

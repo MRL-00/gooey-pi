@@ -194,6 +194,25 @@ describe('release preflight', () => {
     expect(ciWorkflow).toContain('electron-builder --dir')
     expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')
   })
+
+  test('reads the Node version from .nvmrc and hard-fails empty artifact uploads', () => {
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
+    for (const workflow of [releaseWorkflow, ciWorkflow]) {
+      expect(workflow).not.toMatch(/node-version:/)
+      expect(workflow.match(/node-version-file: \.nvmrc/g)?.length).toBeGreaterThan(0)
+      const uploads = workflow.match(/uses: actions\/upload-artifact@/g) ?? []
+      expect(workflow.match(/if-no-files-found: error/g)).toHaveLength(uploads.length)
+      expect(workflow).toContain('actions/cache@')
+    }
+    // Release jobs skip the CI-duplicated verification suite and never upload
+    // an unpacked application directory; linux/win publish their update feeds.
+    expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(3)
+    expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
+    expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
+    expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
+    expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
+  })
 })
 
 describe('fuse hardening configuration', () => {
