@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { contextUsageFromEvent } from '@/app/agent-events'
 import { applySessionLifecycleEvent, sessionLifecycleChange } from '@/app/session-attention'
+import { parseSessionActionSnapshot } from '@/lib/session-actions'
 import type { WorkspaceSnapshot } from '@/app/workspace'
-import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
+import type { PrimeWorkApi, RuntimeInfo, SessionActionSnapshot, SessionRecord } from '@/types/api'
 
 interface UseAgentEventsOptions {
   bridge: PrimeWorkApi | null
@@ -12,6 +13,8 @@ interface UseAgentEventsOptions {
   workspaceRef: React.RefObject<WorkspaceSnapshot>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
   setRuntime: React.Dispatch<React.SetStateAction<RuntimeInfo | null>>
+  reconcileQueuedPrompts?(snapshot: SessionActionSnapshot): void
+  clearQueuedPrompts?(): void
   queueAgentEvent(event: Record<string, unknown>): void
   reconcileTranscriptForEvent(runtimeId: string, event: Record<string, unknown>): void
   showExtensionUi(runtimeId: string, event: Record<string, unknown>): void
@@ -29,6 +32,8 @@ export function useAgentEvents({
   workspaceRef,
   setSessions,
   setRuntime,
+  reconcileQueuedPrompts = () => undefined,
+  clearQueuedPrompts = () => undefined,
   queueAgentEvent,
   reconcileTranscriptForEvent,
   showExtensionUi,
@@ -72,6 +77,13 @@ export function useAgentEvents({
         if (contextUsage) setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, contextUsage } : current)
         return
       }
+      if (type === 'session_action_update') {
+        const sessionActions = parseSessionActionSnapshot(event.actions)
+        if (sessionActions) {
+          setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, sessionActions } : current)
+          reconcileQueuedPrompts(sessionActions)
+        }
+      }
 
       queueAgentEvent(event)
       reconcileTranscriptForEvent(runtimeId, event)
@@ -85,6 +97,15 @@ export function useAgentEvents({
         setRuntime((current) => current?.runtimeId === runtimeId
           ? { ...current, isCompacting: false, isStreaming: event.willRetry === true || current.isStreaming }
           : current)
+      }
+      // A provider auto-retry continues the same turn after a backoff delay:
+      // the agent_end that preceded auto_retry_start was not the end of the
+      // turn, so the runtime stays busy until the retry resolves.
+      if (type === 'auto_retry_start') {
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: true } : current)
+      }
+      if (type === 'auto_retry_end' && event.success !== true) {
+        setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false } : current)
       }
       if (type === 'runtime_exit') {
         clearExtensionUi(runtimeId)
@@ -105,6 +126,8 @@ export function useAgentEvents({
     activeSessionVisible,
     bridge,
     clearExtensionUi,
+    clearQueuedPrompts,
+    reconcileQueuedPrompts,
     workspaceRef,
     queueAgentEvent,
     reconcileTranscriptForEvent,

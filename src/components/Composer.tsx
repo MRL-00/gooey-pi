@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, ChevronDown, Command, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -10,6 +10,7 @@ import type {
   PrimeThinkingLevel,
   PromptDeliveryIntent,
   PromptImage,
+  QueuedPrompt,
   SkillRecord,
 } from '@/types/api'
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
@@ -36,6 +37,10 @@ interface ComposerProps {
   skills: SkillRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
   annotations?: BrowserAnnotation[]
+  /** Messages accepted by Prime but waiting for a turn boundary. */
+  queuedMessages?: QueuedPrompt[]
+  onDeleteQueuedMessage?(message: QueuedPrompt): void
+  onEditQueuedMessage?(message: QueuedPrompt): void
   /** Each bump submits the current draft immediately (Ctrl/Cmd+Enter from the annotation popover). */
   sendSignal?: number
   onModelChange(value: string): void
@@ -104,6 +109,9 @@ export const Composer = memo(function Composer({
   contextUsage,
   skills,
   annotations = EMPTY_ANNOTATIONS,
+  queuedMessages = [],
+  onDeleteQueuedMessage,
+  onEditQueuedMessage,
   sendSignal = 0,
   onModelChange,
   onEffortChange,
@@ -314,6 +322,25 @@ export const Composer = memo(function Composer({
 
   return (
     <div className="composer-wrap">
+      {queuedMessages.length ? (
+        <section className="composer-queue" aria-label="Queued messages" aria-live="polite">
+          <div className="composer-queue__header">
+            <span><Clock3 size={13} />Queued messages</span>
+            <strong>{queuedMessages.length}</strong>
+          </div>
+          <div className="composer-queue__list">
+            {queuedMessages.map((queued) => (
+              <div className="composer-queue__item" key={queued.id}>
+                <span className="composer-queue__text">{queued.text}</span>
+                <span className="composer-queue__actions">
+                  <button type="button" className="composer-queue__action" aria-label={`Edit queued message: ${queued.text}`} title="Edit queued message" onClick={() => { onEditQueuedMessage?.(queued); setValue(queued.text); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Edit3 size={13} /></button>
+                  <button type="button" className="composer-queue__action composer-queue__action--delete" aria-label={`Delete queued message: ${queued.text}`} title="Delete queued message" onClick={() => onDeleteQueuedMessage?.(queued)}><Trash2 size={13} /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className={`composer ${busy || submitting ? 'composer--busy' : ''}`}>
         <textarea
           ref={textareaRef}

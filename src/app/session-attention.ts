@@ -11,6 +11,10 @@ export function sessionLifecycleChange(event: Record<string, unknown>): SessionL
   if (type === 'agent_start' || type === 'turn_start') return { status: 'running', markUnread: false }
   if (type === 'compaction_start') return { status: 'running', markUnread: false }
   if (type === 'compaction_end' && event.willRetry !== true && (event.reason === 'manual' || event.reason === 'requested')) return { status: 'complete', markUnread: false }
+  // A provider auto-retry continues the turn that the preceding agent_end
+  // seemed to finish; a failed auto_retry_end is the turn's real terminal.
+  if (type === 'auto_retry_start') return { status: 'running', markUnread: false }
+  if (type === 'auto_retry_end' && event.success !== true) return { status: 'failed' }
   if (type === 'agent_end') return { status: 'complete', markUnread: true }
   if (type === 'extension_error' || type === 'error' || type === 'transport_error') return { status: 'failed' }
   if (type === 'runtime_exit') return { status: event.expected === true ? 'complete' : 'failed', markUnread: event.expected === true }

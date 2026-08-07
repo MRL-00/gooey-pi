@@ -33,6 +33,8 @@ function effectiveToolId(id: string | undefined, name: string): string {
   return id ?? `tool-fallback:${name}`
 }
 
+const EMPTY_TURN_FALLBACK = 'Completed without a text response.'
+
 export function replayPrimeEvents(
   messages: TranscriptMessage[],
   events: Record<string, unknown>[],
@@ -145,11 +147,20 @@ export function replayPrimeEvents(
       message.completedAt = completedAt
       const parts = partDrafts.get(index)
       if (addFallback && (parts?.length ?? message.parts.length) === 0) {
-        appendNode(draftParts(index), withPartId({ type: 'text', text: 'Completed without a text response.' }))
+        appendNode(draftParts(index), withPartId({ type: 'text', text: EMPTY_TURN_FALLBACK }))
       }
     }
     streaming.clear()
     lastStreamingAssistant = -1
+  }
+  const dropTailFallback = (index: number) => {
+    const draft = draftParts(index)
+    const tail = draft.tail
+    if (tail?.part.type !== 'text' || tail.part.text !== EMPTY_TURN_FALLBACK) return
+    draft.tail = tail.previous
+    if (draft.tail) draft.tail.next = undefined
+    else draft.head = undefined
+    draft.length -= 1
   }
   const materializeDrafts = () => {
     for (const [index, draft] of partDrafts) {
@@ -187,6 +198,18 @@ export function replayPrimeEvents(
       // compaction system row carried over from a previous batch may still be
       // streaming, yet a new turn must open a fresh assistant message.
       if (lastStreamingAssistant < 0 && resumeTailAssistant() === undefined) appendAssistant('assistant')
+      continue
+    }
+    if (type === 'auto_retry_start') {
+      // A provider auto-retry continues the turn that the preceding agent_end
+      // finalized: reopen the tail assistant so the transcript keeps showing
+      // work in progress through the backoff, and drop the empty-turn fallback
+      // the finalize added so retried content does not stream in after it.
+      if (lastStreamingAssistant < 0) {
+        const resumed = resumeTailAssistant()
+        if (resumed === undefined) appendAssistant('assistant')
+        else dropTailFallback(resumed)
+      }
       continue
     }
     if (type === 'message_update') {

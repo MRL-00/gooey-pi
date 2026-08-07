@@ -164,6 +164,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       const admitted = workspace.workspaceRef.current
       const generation = admitted.generation
       let startedPrompt = false
+      let queuedPromptId: string | undefined
+      const followUpExternalSession = async (sessionFile: string): Promise<boolean> => {
+        if (!bridge) return false
+        const accepted = await bridge.sessions.followUp(sessionFile, prompt, intent)
+        if (!accepted) return false
+        if (intent === 'queue') queuedPromptId = workspace.queuePrompt(prompt, intent)
+        return true
+      }
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
         if (images.length > 0 && provider.model !== 'auto' && !provider.selectedModel?.input.includes('image')) {
@@ -193,19 +201,24 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         const tracked = workspace.runtimeIdRef.current ? liveRuntimes.find((item) => item.runtimeId === workspace.runtimeIdRef.current) : undefined
         const belongsHere = Boolean(tracked && owner?.runtimeId === tracked.runtimeId && owner.generation === generation && tracked.cwd === selected.cwd && (!selected.sessionFile || tracked.sessionFile === selected.sessionFile))
         let activeRuntime = belongsHere ? tracked : findRuntimeForWorkspace(liveRuntimes, selected.cwd, selected.sessionFile)
+        const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
+        if (intent === 'queue' && images.length === 0 && (activeRuntime?.isStreaming || selectedSession?.status === 'running')) {
+          queuedPromptId = workspace.queuePrompt(prompt, intent)
+          workspace.setMessages((items) => items.filter((item) => item.id !== userMessage.id))
+          return
+        }
         let startedRuntime = false
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
-          const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
           if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
             throw new Error('Image attachments cannot be queued while this session is active outside Prime Work. Wait for it to finish, then try again.')
           }
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
-            && await bridge.sessions.followUp(selected.sessionFile, prompt, intent)) return
+            && await followUpExternalSession(selected.sessionFile)) return
           try {
             activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
           } catch (startError) {
-            if (images.length === 0 && selected.sessionFile && await bridge.sessions.followUp(selected.sessionFile, prompt, intent)) return
+            if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) return
             throw startError
           }
           startedRuntime = true
@@ -217,6 +230,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         workspace.attachRuntime(activeRuntime, generation)
         if (activeRuntime.isStreaming) {
+          if (intent === 'queue') queuedPromptId = workspace.queuePrompt(prompt, intent)
           await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
         } else {
           startedPrompt = true
@@ -225,6 +239,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
         }
       } catch (error) {
+        if (queuedPromptId) workspace.removeQueuedPrompt(queuedPromptId)
         if (workspace.workspaceRef.current.generation !== generation) return
         const failure = requestFailureMessage(error)
         if (startedPrompt) workspace.setRuntime((current) => current ? { ...current, isStreaming: false } : current)

@@ -171,6 +171,50 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     expect(manager.list()[0]).toMatchObject({ isStreaming: false, isCompacting: false })
   })
 
+  it('stays busy while a provider auto-retry is waiting to restart', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-retry-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'retry-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'retry', isStreaming: false, isCompacting: false } })
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: 50000, contextWindow: 100000, percent: 50 } } })
+  } else if (command.type === 'prompt') {
+    send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    send({ type: 'agent_end' })
+    send({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 450, errorMessage: 'overloaded' })
+    setTimeout(() => send({ type: 'agent_start' }), 450)
+    setTimeout(() => send({ type: 'agent_end' }), 550)
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: 'abort', success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    const manager = managerFor(executable)
+    const events: Array<Record<string, unknown>> = []
+    manager.setEventSink(({ event }) => events.push(event))
+    const runtime = await manager.start({ cwd })
+
+    const completion = manager.runPromptToCompletion(runtime.runtimeId, 'continue')
+    await waitUntil(() => events.some((event) => event.type === 'auto_retry_start'))
+    // get_state reports isStreaming false during the backoff; the retry flag
+    // learned from events must keep the snapshot busy anyway.
+    expect(manager.list()[0]).toMatchObject({ isStreaming: true, isCompacting: false })
+    let settled = false
+    void completion.finally(() => { settled = true })
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250))
+    expect(settled).toBe(false)
+    await completion
+    expect(events.some((event) => event.type === 'agent_start')).toBe(true)
+    expect(manager.list()[0]).toMatchObject({ isStreaming: false, isCompacting: false })
+  })
+
   it('rejects a negative command response with the agent error', async () => {
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: false, error: 'No model credentials are configured' }")
     const manager = managerFor(fake.executable)

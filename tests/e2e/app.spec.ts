@@ -560,6 +560,10 @@ test.describe('Prime Work desktop smoke', () => {
     for (const destination of ['Projects', 'Activity', 'Scheduled', 'Plugins & skills']) {
       await page.getByRole('button', { name: destination, exact: true }).click()
       await expect(page.locator('.page')).toBeVisible()
+      if (destination === 'Plugins & skills') {
+        await expect(page.locator('.feature-strip')).toHaveCount(0)
+        await expect(page.locator('.directory-tools')).toBeVisible()
+      }
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()

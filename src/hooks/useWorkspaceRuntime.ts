@@ -17,7 +17,16 @@ import type { WorkspaceSnapshot } from '@/app/workspace'
 import { createPrimeEventBuffer, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
 import { findRuntimeForWorkspace, workspaceCwd } from '@/lib/workspace'
-import type { PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord, TranscriptMessage } from '@/types/api'
+import type { PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
+
+let queuedPromptSequence = 0
+
+function nextQueuedPromptId(): string {
+  queuedPromptSequence += 1
+  return `queued-${Date.now()}-${queuedPromptSequence}`
+}
+
+
 
 interface TranscriptLoad {
   generation: number
@@ -46,6 +55,7 @@ export function useWorkspaceRuntime({
   reportError,
 }: UseWorkspaceRuntimeOptions) {
   const [messages, setMessages] = useState(initialMessages)
+  const [pendingQueuedPrompts, setPendingQueuedPrompts] = useState<QueuedPrompt[]>([])
   const [activeProjectId, setActiveProjectId] = useState(initialProject?.id)
   const [activeSessionId, setActiveSessionId] = useState(initialSession?.id)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
@@ -147,6 +157,7 @@ export function useWorkspaceRuntime({
       ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer(), reconciliation: false, admissionRevision: 0 }
       : null
     setWorkspaceGeneration(generation)
+    setPendingQueuedPrompts([])
     setActiveProjectId(project?.id)
     setActiveSessionId(session?.id)
     attachRuntime(nextRuntime, generation)
@@ -284,7 +295,10 @@ export function useWorkspaceRuntime({
   const reconcileTranscriptForEvent = useCallback((runtimeId: string, event: Record<string, unknown>) => {
     const selected = workspaceRef.current
     const type = typeof event.type === 'string' ? event.type : ''
-    if (type === 'agent_start' || type === 'turn_start' || type === 'compaction_start') {
+    // auto_retry_start also supersedes any in-flight reconciliation: the
+    // agent_end that scheduled it did not actually end the turn, and the disk
+    // read would replace the still-streaming transcript with finalized rows.
+    if (type === 'agent_start' || type === 'turn_start' || type === 'compaction_start' || type === 'auto_retry_start') {
       const load = transcriptLoadRef.current
       if (load?.generation === selected.generation) {
         transcriptLoadRef.current = null
@@ -339,6 +353,19 @@ export function useWorkspaceRuntime({
     }
     return true
   }, [])
+
+  const queuePrompt = useCallback((text: string, intent: PromptDeliveryIntent): string => {
+    const queued: QueuedPrompt = { id: nextQueuedPromptId(), text, intent }
+    setPendingQueuedPrompts((current) => [...current, queued])
+    return queued.id
+  }, [])
+  const removeQueuedPrompt = useCallback((id: string) => {
+    setPendingQueuedPrompts((current) => current.filter((prompt) => prompt.id !== id))
+  }, [])
+  const clearQueuedPrompts = useCallback(() => {
+    setPendingQueuedPrompts([])
+  }, [])
+  const reconcileQueuedPrompts = useCallback((_snapshot: SessionActionSnapshot) => undefined, [])
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const locallyOwnedActiveSession = Boolean(
@@ -409,6 +436,11 @@ export function useWorkspaceRuntime({
   return {
     messages,
     setMessages,
+    pendingQueuedPrompts,
+    queuePrompt,
+    removeQueuedPrompt,
+    clearQueuedPrompts,
+    reconcileQueuedPrompts,
     activeProjectId,
     activeSessionId,
     runtime,

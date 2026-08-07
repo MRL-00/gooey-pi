@@ -25,6 +25,26 @@ describe('PluginService discovery', () => {
     await expect(first).resolves.toEqual({ skills: expect.any(Array), warnings: [] })
   })
 
+  it('does not report a shared user settings tree as both user and project', async () => {
+    const root = temp()
+    const agentDir = join(root, '.prime', 'agent')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({
+      packages: ['local-package'],
+      mcpServers: { 'local-server': { type: 'stdio', command: 'local-command' } },
+    }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir })
+
+    const catalog = await service.list(root)
+    const packageRecords = catalog.skills.filter((item) => item.kind === 'package' && item.source === 'local-package')
+    const mcpRecords = catalog.skills.filter((item) => item.kind === 'mcp' && item.name === 'local-server')
+
+    expect(packageRecords).toHaveLength(1)
+    expect(packageRecords[0]).toMatchObject({ location: 'user' })
+    expect(mcpRecords).toHaveLength(1)
+    expect(mcpRecords[0]).toMatchObject({ location: 'user' })
+  })
+
   it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')

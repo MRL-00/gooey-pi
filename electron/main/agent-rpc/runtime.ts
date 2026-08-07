@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
+import { emptySessionActionSnapshot, parseSessionActionSnapshot } from '../../../src/lib/session-actions'
 import { killProcessTree, safeChildEnvironment, waitForProcessExit } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
@@ -39,6 +40,11 @@ export class RpcRuntime {
   private requestedServiceTier: PrimeServiceTier = 'default'
   private contextUsageRefresh: Promise<void> | null = null
   private continuationPending = false
+  // Provider auto-retry backoff: agent_end has fired but the agent will
+  // continue the same turn, so the runtime must keep reporting busy. Kept
+  // outside info so get_state refreshes (which report isStreaming false
+  // during the backoff) cannot clear it.
+  private retryPending = false
 
   constructor(
     executable: string,
@@ -48,7 +54,7 @@ export class RpcRuntime {
     private readonly onExit: (runtime: RpcRuntime) => void,
     extraEnvironment: NodeJS.ProcessEnv = {},
   ) {
-    this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false }
+    this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
@@ -68,7 +74,7 @@ export class RpcRuntime {
 
   /** Frozen shallow copy: nested state is replaced wholesale on update, and the IPC boundary clones for the renderer. */
   snapshot(): RuntimeInfo {
-    return Object.freeze(this.continuationPending ? { ...this.info, isStreaming: true } : { ...this.info })
+    return Object.freeze(this.continuationPending || this.retryPending ? { ...this.info, isStreaming: true } : { ...this.info })
   }
 
   async handshake(): Promise<RuntimeInfo> {
@@ -141,7 +147,7 @@ export class RpcRuntime {
   }
 
   private async performStop(): Promise<boolean> {
-    if (this.info.isStreaming || this.info.isCompacting) {
+    if (this.info.isStreaming || this.info.isCompacting || this.retryPending) {
       try { await this.request({ type: 'abort' }, 5_000) } catch { /* close stdin and escalate below */ }
     }
     this.stopped = true
@@ -255,11 +261,19 @@ export class RpcRuntime {
       pending.resolve(value)
       return
     }
+    if (value.type === 'session_action_update') {
+      const actions = parseSessionActionSnapshot(value.actions)
+      if (actions) this.info.sessionActions = actions
+    }
     if (value.type === 'agent_start') {
       this.continuationPending = false
+      this.retryPending = false
       this.info.isStreaming = true
       this.info.isCompacting = false
     } else if (value.type === 'agent_end') {
+      // retryPending is cleared only by agent_start or auto_retry_end, never
+      // by agent_end: a failed run's agent_end is followed by auto_retry_start
+      // when the agent will continue the turn after backoff.
       this.continuationPending = false
       this.info.isStreaming = false
       this.info.isCompacting = false
@@ -267,7 +281,8 @@ export class RpcRuntime {
     else if (value.type === 'compaction_end') {
       this.continuationPending = value.willRetry === true
       this.info.isCompacting = false
-    }
+    } else if (value.type === 'auto_retry_start') this.retryPending = true
+    else if (value.type === 'auto_retry_end') this.retryPending = false
     this.emit(value)
     if (value.type === 'agent_end' || value.type === 'compaction_end') void this.refreshContextUsage()
   }
@@ -301,6 +316,8 @@ export class RpcRuntime {
       this.info.fastModeAvailable = true
       this.requestedServiceTier = raw.serviceTier
     }
+    const sessionActions = parseSessionActionSnapshot(raw.sessionActions)
+    if (sessionActions) this.info.sessionActions = sessionActions
     if (isRecord(raw.model)) {
       this.info.model = {
         provider: typeof raw.model.provider === 'string' ? raw.model.provider : undefined,

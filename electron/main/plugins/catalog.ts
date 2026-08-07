@@ -95,6 +95,15 @@ async function pathExists(path: string): Promise<boolean> {
   try { await lstat(path); return true } catch { return false }
 }
 
+async function canonicalPath(path: string): Promise<string> {
+  try { return await realpath(path) } catch { return resolve(path) }
+}
+
+async function samePath(left: string, right: string): Promise<boolean> {
+  const [canonicalLeft, canonicalRight] = await Promise.all([canonicalPath(left), canonicalPath(right)])
+  return canonicalLeft === canonicalRight
+}
+
 function resolveConfiguredPath(value: string, base: string): string | null {
   if (!value || /^[!+*-]/.test(value) || value.includes('*') || value.includes('?')) return null
   const expanded = value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value
@@ -284,17 +293,35 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   let projectSettings: Record<string, unknown> = {}
   if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
     const projectAgentDir = join(safeProjectPath, '.prime', 'agent')
-    const projectRead = await readSettings(join(projectAgentDir, 'settings.json'), 'project')
-    if (projectRead.warning) warnings.push(projectRead.warning)
-    projectSettings = projectRead.settings
+    const projectSettingsPath = join(projectAgentDir, 'settings.json')
+    const projectSkillsDir = join(safeProjectPath, '.agents', 'skills')
+    const [sameAgentDir, sameSettingsFile, sameProjectSkillsDir] = await Promise.all([
+      samePath(agentDir, projectAgentDir),
+      samePath(join(agentDir, 'settings.json'), projectSettingsPath),
+      samePath(join(homedir(), '.agents', 'skills'), projectSkillsDir),
+    ])
     const projectRoots = [safeProjectPath]
-    await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoots: projectRoots })
-    await collectDirectory(join(safeProjectPath, '.agents', 'skills'), 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
-    await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoots: projectRoots })
-    await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoots: projectRoots })
-    await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, projectRoots)
-    await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, projectRoots)
-    await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, projectRoots)
+    // A project can point back at the same Prime settings and shared skills
+    // directories. Discover those paths once as user-scoped records instead
+    // of presenting every entry twice.
+    if (!sameSettingsFile) {
+      const projectRead = await readSettings(projectSettingsPath, 'project')
+      if (projectRead.warning) warnings.push(projectRead.warning)
+      projectSettings = projectRead.settings
+    }
+    if (!sameAgentDir) {
+      await collectDirectory(join(projectAgentDir, 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoots: projectRoots })
+      await collectDirectory(join(projectAgentDir, 'extensions'), 'extension', 'project', candidates, budget, { containmentRoots: projectRoots })
+      await collectDirectory(join(projectAgentDir, 'prompts'), 'prompt', 'project', candidates, budget, { containmentRoots: projectRoots })
+      if (!sameSettingsFile) {
+        await collectConfigured(projectSettings.skills, projectAgentDir, 'skill', 'project', candidates, budget, projectRoots)
+        await collectConfigured(projectSettings.extensions, projectAgentDir, 'extension', 'project', candidates, budget, projectRoots)
+        await collectConfigured(projectSettings.prompts, projectAgentDir, 'prompt', 'project', candidates, budget, projectRoots)
+      }
+    }
+    if (!sameProjectSkillsDir) {
+      await collectDirectory(projectSkillsDir, 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
+    }
   }
 
   const result = await buildCandidateRecords(candidates, safeProjectPath)

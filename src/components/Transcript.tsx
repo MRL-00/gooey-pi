@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import { ChevronRight, FileCode2, LoaderCircle } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import type { GitStatus, TranscriptMessage } from '@/types/api'
+import { ChangesCard } from './ChangesCard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { MarkdownText } from './MarkdownText'
 import { PrimeMark } from './ui'
@@ -42,6 +43,11 @@ interface TranscriptProps {
   onOpenChanges(): void
   onSuggestion(prompt: string): void
   suggestionsDisabled?: boolean
+  /** Render the pinned changes card here; the app docks it beside the composer when false. */
+  showPinnedChanges?: boolean
+  /** Reserve room for bottom-docked changes and queued-message affordances. */
+  bottomDockHasChanges?: boolean
+  queuedMessageCount?: number
 }
 
 
@@ -62,23 +68,22 @@ function ActiveAssistantMessage({ message, showReasoning, showTools }: { message
   )
 }
 
-function ChangesCard({ git, onOpenChanges }: { git: GitStatus; onOpenChanges(): void }) {
-  const additions = git.files.reduce((sum, file) => sum + file.additions, 0)
-  const deletions = git.files.reduce((sum, file) => sum + file.deletions, 0)
-  return <button type="button" className="changes-card" onClick={onOpenChanges}>
-    <span className="changes-card__icon"><FileCode2 size={16} /></span>
-    <span className="changes-card__text"><strong>{git.files.length} {git.files.length === 1 ? 'file' : 'files'} changed</strong><small>Review changes in the inspector</small></span>
-    <span className="diff-count diff-count--add">+{additions}</span><span className="diff-count diff-count--remove">−{deletions}</span><ChevronRight size={14} />
-  </button>
-}
 
-export function Transcript({ messages, git, loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled }: TranscriptProps) {
+
+export function Transcript({ messages, git, loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled, showPinnedChanges = true, bottomDockHasChanges = false, queuedMessageCount = 0 }: TranscriptProps) {
   const groupedMessages = useMemo(() => coalesceAssistantTurns(messages), [messages])
   const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(groupedMessages)
   const activeAssistantId = useMemo(() => active && groupedMessages.at(-1)?.role === 'assistant' ? groupedMessages.at(-1)?.id : undefined, [active, groupedMessages])
+  const transcriptClasses = [
+    'transcript',
+    'scroll-area',
+    showPinnedChanges && git.files.length ? 'has-pinned-changes' : '',
+    bottomDockHasChanges ? 'has-docked-changes' : '',
+    queuedMessageCount > 0 ? 'has-queued-messages' : '',
+  ].filter(Boolean).join(' ')
 
   return <>
-    <div ref={scrollRef} className={`transcript scroll-area ${git.files.length ? 'has-pinned-changes' : ''}`} aria-busy={loading} onScroll={updatePinnedState}>
+    <div ref={scrollRef} className={transcriptClasses} aria-busy={loading} onScroll={updatePinnedState}>
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       <div className="transcript__inner">
         {loading ? <div className="transcript-loading"><LoaderCircle className="spin" size={16} /> Loading session…</div> : null}
@@ -109,6 +114,6 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
         <div />
       </div>
     </div>
-    {git.files.length ? <div className="transcript-changes-pin"><ChangesCard git={git} onOpenChanges={onOpenChanges} /></div> : null}
+    {showPinnedChanges && git.files.length ? <div className="transcript-changes-pin"><ChangesCard git={git} onOpenChanges={onOpenChanges} /></div> : null}
   </>
 }

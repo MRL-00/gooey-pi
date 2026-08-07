@@ -130,6 +130,7 @@ export interface RuntimeInfo {
   sessionFile?: string
   cwd: string
   isStreaming: boolean
+  sessionActions?: SessionActionSnapshot
   isCompacting?: boolean
   model?: { provider?: string; id?: string; name?: string } | null
   thinkingLevel?: string
@@ -266,6 +267,23 @@ export interface TerminalExitEvent { terminalId: string; exitCode: number; signa
 
 export type MessageEnterAction = 'queue' | 'steer'
 export type PromptDeliveryIntent = 'queue' | 'steer'
+
+export interface QueuedPrompt {
+  id: string
+  text: string
+  intent: PromptDeliveryIntent
+}
+
+export interface SessionActionSnapshot {
+  queuedCount: number
+  steering: string[]
+  followUps: string[]
+  active?: {
+    kind: 'turn' | 'session_command'
+    phase: 'preparing' | 'committing' | 'running'
+    label?: string
+  }
+}
 
 export interface AppSettings {
   theme: ThemeMode

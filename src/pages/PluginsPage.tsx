@@ -97,11 +97,6 @@ export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRe
           <button type="button" className={tab === 'plugins' ? 'is-active' : ''} onClick={() => setTab('plugins')}>Plugins</button>
           <button type="button" className={tab === 'skills' ? 'is-active' : ''} onClick={() => setTab('skills')}>Skills</button>
         </div>
-        <section className="feature-strip">
-          <span className="feature-strip__mark"><ShieldCheck size={20}/></span>
-          <div><span>Featured for local work</span><h2>Browser preview & review</h2><p>Preview local apps, leave precise page comments, and bring visual feedback back into the session.</p></div>
-          <div className="feature-strip__steps"><span><i>1</i>Open a local route</span><span><i>2</i>Annotate the UI</span><span><i>3</i>Ask Prime to fix it</span></div>
-        </section>
         <div className="directory-tools">
           <label className="page-search"><Search size={14}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${tab}`}/></label>
           <select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Directory filter">
