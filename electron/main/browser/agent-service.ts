@@ -17,12 +17,32 @@ const MAX_READ_ELEMENTS = 300
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
 const SCREENSHOT_JPEG_QUALITY = 70
 
-const PRESS_KEYS: Record<string, string> = {
-  enter: 'Return', tab: 'Tab', escape: 'Escape', backspace: 'Backspace', delete: 'Delete',
-  arrowup: 'Up', arrowdown: 'Down', arrowleft: 'Left', arrowright: 'Right',
-  home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown', space: 'Space',
+interface CdpKey {
+  key: string
+  code: string
+  keyCode: number
+  text?: string
 }
-const PRESS_MODIFIERS = new Set(['shift', 'control', 'alt', 'meta'])
+
+const PRESS_KEYS: Record<string, CdpKey> = {
+  enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
+  tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
+  escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
+  delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  arrowup: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+  arrowdown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+  arrowleft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+  arrowright: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+  home: { key: 'Home', code: 'Home', keyCode: 36 },
+  end: { key: 'End', code: 'End', keyCode: 35 },
+  pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
+  pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+}
+// DevTools protocol modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+const PRESS_MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 }
+const CDP_BUTTON_MASKS: Record<string, number> = { left: 1, right: 2, middle: 4 }
 
 interface TabState {
   tabId: string
@@ -299,8 +319,8 @@ export class AgentBrowserService {
       guest.focus()
       await this.glidePointer(tab, guest, point, 'click')
       for (let press = 0; press < clickCount; press += 1) {
-        guest.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
-        guest.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: button as 'left' | 'right' | 'middle', clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, buttons: CDP_BUTTON_MASKS[button], clickCount: press + 1 })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, buttons: 0, clickCount: press + 1 })
       }
       // A click may start a navigation; give the page a moment before reporting.
       await delay(SETTLE_MS)
@@ -317,10 +337,14 @@ export class AgentBrowserService {
         await this.glidePointer(tab, guest, point, 'move')
       }
       guest.focus()
-      await guest.insertText(text)
+      try {
+        await this.dispatchInput(guest, 'Input.insertText', { text })
+      } catch {
+        await guest.insertText(text)
+      }
       if (params.submit === true) {
         await delay(50)
-        this.sendKey(guest, 'Return', [])
+        await this.sendKey(guest, PRESS_KEYS.enter, [])
         await delay(SETTLE_MS)
         await this.waitForLoad(guest, 2_000)
       }
@@ -331,19 +355,21 @@ export class AgentBrowserService {
   async pressKey(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withTab(sessionKey, params, async (tab, guest) => {
       const rawKey = requireString(params.key, 'key', { min: 1, max: 24, trim: true })
-      const keyCode = rawKey.length === 1 ? rawKey : PRESS_KEYS[rawKey.toLowerCase()]
-      if (!keyCode) throw new TypeError(`key must be a single character or one of: ${Object.keys(PRESS_KEYS).join(', ')}`)
+      const key = rawKey.length === 1
+        ? { key: rawKey, code: '', keyCode: rawKey.toUpperCase().charCodeAt(0), text: rawKey }
+        : PRESS_KEYS[rawKey.toLowerCase()]
+      if (!key) throw new TypeError(`key must be a single character or one of: ${Object.keys(PRESS_KEYS).join(', ')}`)
       const modifiers: string[] = []
       if (params.modifiers !== undefined) {
         if (!Array.isArray(params.modifiers)) throw new TypeError('modifiers must be an array')
         for (const modifier of params.modifiers.slice(0, 4)) {
           const name = requireString(modifier, 'modifier', { min: 1, max: 12, trim: true }).toLowerCase()
-          if (!PRESS_MODIFIERS.has(name)) throw new TypeError('modifiers may only include shift, control, alt, meta')
+          if (PRESS_MODIFIER_BITS[name] === undefined) throw new TypeError('modifiers may only include shift, control, alt, meta')
           modifiers.push(name)
         }
       }
       guest.focus()
-      this.sendKey(guest, keyCode, modifiers)
+      await this.sendKey(guest, key, modifiers)
       await delay(SETTLE_MS)
       await this.waitForLoad(guest, 2_000)
       return this.describe(tab, guest)
@@ -363,9 +389,10 @@ export class AgentBrowserService {
       const deltaY = direction === 'up' ? -amount : direction === 'down' ? amount : 0
       if (Number.isSafeInteger(params.x) && Number.isSafeInteger(params.y)) {
         // A wheel event at a point reaches nested scroll containers that
-        // window.scrollBy cannot; wheel deltas are inverted relative to page motion.
+        // window.scrollBy cannot; CDP wheel deltas follow DOM semantics
+        // (positive scrolls down/right).
         await this.glidePointer(tab, guest, { x: params.x as number, y: params.y as number }, 'scroll')
-        guest.sendInputEvent({ type: 'mouseWheel', x: params.x as number, y: params.y as number, deltaX: -deltaX, deltaY: -deltaY, canScroll: true })
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: params.x as number, y: params.y as number, deltaX, deltaY })
         await delay(SETTLE_MS)
         return this.describe(tab, guest)
       }
@@ -577,24 +604,40 @@ export class AgentBrowserService {
       for (let step = 1; step <= steps; step += 1) {
         const progress = step / steps
         const eased = progress * progress * (3 - 2 * progress)
-        guest.sendInputEvent({
-          type: 'mouseMove',
+        await this.dispatchInput(guest, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
           x: Math.round(from.x + (to.x - from.x) * eased),
           y: Math.round(from.y + (to.y - from.y) * eased),
         })
         await delay(durationMs / steps)
       }
     } else {
-      guest.sendInputEvent({ type: 'mouseMove', x: to.x, y: to.y })
+      await this.dispatchInput(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: to.x, y: to.y })
     }
     tab.pointer = { x: to.x, y: to.y }
   }
 
-  private sendKey(guest: WebContents, keyCode: string, modifiers: string[]): void {
-    const eventModifiers = modifiers as Array<'shift' | 'control' | 'alt' | 'meta'>
-    guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers: eventModifiers })
-    guest.sendInputEvent({ type: 'char', keyCode, modifiers: eventModifiers })
-    guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers: eventModifiers })
+  /**
+   * webContents.sendInputEvent does not reach OOPIF-based webview guests
+   * (input routing happens in the embedder); the DevTools protocol Input
+   * domain dispatches with real hit-testing, so all synthetic input goes
+   * through the debugger instead.
+   */
+  private async dispatchInput(guest: WebContents, method: string, params: Record<string, unknown>): Promise<void> {
+    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3')
+    await guest.debugger.sendCommand(method, params)
+  }
+
+  private async sendKey(guest: WebContents, key: CdpKey, modifiers: string[]): Promise<void> {
+    const bits = modifiers.reduce((mask, name) => mask | (PRESS_MODIFIER_BITS[name] ?? 0), 0)
+    const base = { modifiers: bits, key: key.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode }
+    // A key with text uses keyDown so the page also receives the character;
+    // keys without text (arrows, tab) and chorded shortcuts (ctrl/alt/meta
+    // held) use rawKeyDown.
+    const chorded = (bits & (PRESS_MODIFIER_BITS.alt | PRESS_MODIFIER_BITS.control | PRESS_MODIFIER_BITS.meta)) !== 0
+    if (key.text && !chorded) await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'keyDown', text: key.text })
+    else await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'rawKeyDown' })
+    await this.dispatchInput(guest, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
   }
 
   private push(): void {
