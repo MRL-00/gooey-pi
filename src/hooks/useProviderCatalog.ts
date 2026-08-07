@@ -172,6 +172,19 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     setCatalog(await bridge.providers.catalog(true))
   }, [bridge, syncDisabledProviders])
 
+  const setAllDisabled = useCallback(async () => {
+    if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
+    const providerIds = catalog?.providers.map((provider) => provider.id).sort() ?? []
+    if (!providerIds.length) throw new Error('Provider catalogue is not loaded.')
+    await syncDisabledProviders(providerIds)
+    setCatalog(await bridge.providers.catalog(true))
+    const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
+    if (selectedProvider && providerIds.includes(selectedProvider)) {
+      updateModel('auto')
+      updateFast(false)
+    }
+  }, [bridge, catalog?.models, catalog?.providers, syncDisabledProviders, updateFast, updateModel])
+
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     await bridge.providers.startOAuth(providerId)
@@ -190,6 +203,6 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   return {
     model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels,
     refresh, changeModel, changeEffort, changeFast,
-    saveApiKey, logout, setEnabled, setAllEnabled, startOAuth, respondOAuth, cancelOAuth,
+    saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, startOAuth, respondOAuth, cancelOAuth,
   }
 }

@@ -82,7 +82,7 @@ function deferred<T = void>() {
 describe('provider settings behavior and accessibility', () => {
   it('gives each enable checkbox a provider-specific accessible name and reports toggle failure', async () => {
     const onSetEnabled = vi.fn().mockRejectedValue(new Error('Provider policy was not saved'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onSetAllDisabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     const checkbox = container.querySelector<HTMLInputElement>('input[aria-label="Enable Anthropic provider"]')
     expect(checkbox).not.toBeNull()
@@ -95,7 +95,8 @@ describe('provider settings behavior and accessibility', () => {
   it('uses one bulk mutation and exposes the provider and model catalogue UI', async () => {
     const onSetEnabled = vi.fn().mockResolvedValue(undefined)
     const onSetAllEnabled = vi.fn().mockResolvedValue(undefined)
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    const onSetAllDisabled = vi.fn().mockResolvedValue(undefined)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onSetAllDisabled={onSetAllDisabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     expect(container.textContent).toContain('2 providers · 2 models')
     expect(container.textContent).toContain('ChatGPT Plus/Pro')
@@ -104,6 +105,9 @@ describe('provider settings behavior and accessibility', () => {
     expect(button('Add key')).toBeTruthy()
     await click(button('Enable all'))
     expect(onSetAllEnabled).toHaveBeenCalledTimes(1)
+    expect(onSetEnabled).not.toHaveBeenCalled()
+    await click(button('Disable all'))
+    expect(onSetAllDisabled).toHaveBeenCalledTimes(1)
     expect(onSetEnabled).not.toHaveBeenCalled()
 
     await click(button('Models'))
@@ -114,7 +118,7 @@ describe('provider settings behavior and accessibility', () => {
 
   it('keeps API-key failures announced inside the active modal', async () => {
     const onSaveApiKey = vi.fn().mockRejectedValue(new Error('Credential rejected'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onSetAllDisabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     await click(button('Add key'))
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')
@@ -236,5 +240,17 @@ describe('provider runtime mutations', () => {
     expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
     expect(hook.syncDisabledProviders).toHaveBeenCalledWith([])
     expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
+  })
+
+  it('disables every provider and clears an explicitly selected model in one atomic mutation', async () => {
+    const hook = await mountCatalogHook({ command: vi.fn() })
+    await act(async () => { await Promise.resolve() })
+
+    await act(async () => { await hook.value.setAllDisabled() })
+    expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
+    expect(hook.syncDisabledProviders).toHaveBeenCalledWith(['anthropic', 'openai-codex'])
+    expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
+    expect(hook.value.model).toBe('auto')
+    expect(hook.value.fast).toBe(false)
   })
 })

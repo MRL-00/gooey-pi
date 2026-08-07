@@ -8,6 +8,7 @@ interface ProvidersSettingsProps {
   onLogout(providerId: string): Promise<void>
   onSetEnabled(providerId: string, enabled: boolean): Promise<void>
   onSetAllEnabled(): Promise<void>
+  onSetAllDisabled(): Promise<void>
   onStartOAuth(providerId: string): Promise<void>
   onOpenDocs(): void
 }
@@ -15,7 +16,7 @@ interface ProvidersSettingsProps {
 export function ProvidersSettings(props: ProvidersSettingsProps) {
   return (
     <>
-      <header><h1>Providers</h1><p>Connect accounts, choose which providers appear in Prime Work, and browse every model Prime Agent supports.</p></header>
+      <header><h1>Providers</h1><p>Connect accounts, choose which providers and their models appear in Prime Work, and browse every model Prime Agent supports.</p></header>
       <ProviderSettings {...props} />
     </>
   )

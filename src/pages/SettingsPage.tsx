@@ -35,10 +35,11 @@ interface SettingsPageProps {
   onLogoutProvider(providerId: string): Promise<void>
   onSetProviderEnabled(providerId: string, enabled: boolean): Promise<void>
   onSetAllProvidersEnabled(): Promise<void>
+  onSetAllProvidersDisabled(): Promise<void>
   onStartProviderOAuth(providerId: string): Promise<void>
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onStartProviderOAuth }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>('general')
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -62,7 +63,7 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
       case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
       case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
-      case 'providers': return <ProvidersSettings catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
+      case 'providers': return <ProvidersSettings catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />

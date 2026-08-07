@@ -10,6 +10,7 @@ interface ProviderSettingsProps {
   onLogout(providerId: string): Promise<void>
   onSetEnabled(providerId: string, enabled: boolean): Promise<void>
   onSetAllEnabled(): Promise<void>
+  onSetAllDisabled(): Promise<void>
   onStartOAuth(providerId: string): Promise<void>
   onOpenDocs(): void
 }
@@ -24,7 +25,7 @@ function authDescription(provider: PrimeProviderDescriptor): string {
   return `${source} · ${provider.availableModelCount.toLocaleString()} available models`
 }
 
-export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
+export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
   const [view, setView] = useState<'providers' | 'models'>('providers')
   const [query, setQuery] = useState('')
   const [apiKeyProvider, setApiKeyProvider] = useState<PrimeProviderDescriptor | null>(null)
@@ -38,6 +39,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
     return (catalog?.providers ?? []).filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(normalized))
   }, [catalog, query])
   const providerNames = useMemo(() => new Map((catalog?.providers ?? []).map((provider) => [provider.id, provider.name])), [catalog])
+  const providerEnabled = useMemo(() => new Map((catalog?.providers ?? []).map((provider) => [provider.id, provider.enabled])), [catalog])
   const models = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return catalog?.models ?? []
@@ -67,6 +69,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
 
   const closeApiKey = () => { setApiKey(''); setApiKeyError(''); setApiKeyProvider(null) }
   const enableAll = () => run('enable-all', onSetAllEnabled)
+  const disableAll = () => run('disable-all', onSetAllDisabled)
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
@@ -75,7 +78,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
 
   return (
     <section className="settings-group provider-settings">
-      <div className="settings-group__heading"><h2>Prime Agent catalogue</h2><div className="provider-heading-actions">{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>Enable all</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
+      <div className="settings-group__heading"><h2>Prime Agent catalogue</h2><div className="provider-heading-actions">{catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>Disable all</button> : null}{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>Enable all</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
       <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{availableModelCount.toLocaleString()} models are available with your current Prime Agent credentials</small> : null}</div>
       {catalog?.warning ? <p className="provider-catalog-warning" role="status">{catalog.warning}</p> : null}
       <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view">
@@ -104,7 +107,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
           <div className="provider-model-row__capabilities">
             {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
             {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
-            <span className={model.available ? 'is-available' : ''}>{model.available ? 'Available' : 'Needs credentials'}</span>
+            <span className={model.available && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{providerEnabled.get(model.provider) === false ? 'Disabled' : model.available ? 'Available' : 'Needs credentials'}</span>
           </div>
         </div>)}
       </div>}
