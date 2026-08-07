@@ -25,6 +25,28 @@ process.stdout.write(${JSON.stringify(JSON.stringify({ jobs }))} + '\\n')
   return executable
 }
 
+describe('ScheduleService status normalization', () => {
+  it('surfaces raw failed statuses as failed even without lastError', async () => {
+    const service = new ScheduleService(agents(['one'], async () => ({ data: { jobs: [{ ...job('failed-job'), status: 'failed' }] } })), null)
+    expect((await service.list()).map((item) => item.status)).toEqual(['failed'])
+  })
+
+  it('maps unrecognized statuses to unknown instead of completed', async () => {
+    const service = new ScheduleService(agents(['one'], async () => ({
+      data: { jobs: [
+        { ...job('novel'), status: 'archived' },
+        { ...job('novel-with-error'), status: 'archived', lastError: 'boom' },
+        { ...job('recognized'), status: 'paused' },
+      ] },
+    })), null)
+    expect((await service.list()).map((item) => [item.id, item.status])).toEqual([
+      ['novel', 'unknown'],
+      ['novel-with-error', 'unknown'],
+      ['recognized', 'paused'],
+    ])
+  })
+})
+
 describe('ScheduleService catalog completeness', () => {
   it('merges complete runtime catalogs and records their owner', async () => {
     const service = new ScheduleService(agents(['one', 'two'], async (id) => ({ data: { jobs: [job(id)] } })), null)

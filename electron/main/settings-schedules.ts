@@ -67,10 +67,11 @@ function scheduleText(raw: Record<string, unknown>): string {
 function normalizeJob(raw: unknown, desktopRuntimeId?: string): ScheduleRecord | null {
   if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.prompt !== 'string') return null
   const primeStatus = typeof raw.status === 'string' ? raw.status : 'active'
-  let status: ScheduleRecord['status']
-  if (primeStatus === 'active' || primeStatus === 'paused' || primeStatus === 'completed') status = primeStatus
-  else if (typeof raw.lastError === 'string' && raw.lastError) status = 'failed'
-  else status = 'completed'
+  // A raw 'failed' is always surfaced as failed (even without lastError), and a
+  // status this app does not recognize must never be presented as completed.
+  const status: ScheduleRecord['status'] = primeStatus === 'active' || primeStatus === 'paused' || primeStatus === 'completed' || primeStatus === 'failed'
+    ? primeStatus
+    : 'unknown'
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : raw.prompt.replace(/\s+/g, ' ').trim().slice(0, 80)
   return {
     id: raw.id,

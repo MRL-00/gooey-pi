@@ -283,7 +283,7 @@ export interface ScheduleRecord {
   title: string
   schedule: string
   prompt: string
-  status: 'active' | 'paused' | 'completed' | 'failed'
+  status: 'active' | 'paused' | 'completed' | 'failed' | 'unknown'
   nextRun?: string
   lastRun?: string
   runtimeId?: string
