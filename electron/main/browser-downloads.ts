@@ -7,7 +7,7 @@ const MAX_CONCURRENT_DOWNLOADS = 3
 const MAX_WINDOW_BYTES = 1024 * 1024 * 1024
 const WINDOW_MS = 60 * 60 * 1000
 
-interface ActiveDownload { item: DownloadItem; ownerId: number; accountedBytes: number }
+interface ActiveDownload { item: DownloadItem; ownerId: number; receivedBytes: number; outstandingDeclaredBytes: number }
 
 export function automaticDownloadPath(downloadDirectory: string, filename: string, suffix = randomUUID()): string {
   const leaf = basename(filename).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 180) || 'download'
@@ -38,19 +38,29 @@ export class BrowserDownloadGuard {
       return
     }
 
-    const active: ActiveDownload = { item, ownerId: owner!.id, accountedBytes: 0 }
+    // Charge the declared total up front so concurrent admissions cannot
+    // collectively over-commit the window; actual bytes replace the declared
+    // charge as they arrive and the unreceived remainder is refunded on done.
+    const active: ActiveDownload = { item, ownerId: owner!.id, receivedBytes: 0, outstandingDeclaredBytes: Math.max(0, declared) }
     this.active.set(item, active)
+    this.windowBytes += active.outstandingDeclaredBytes
     if (askForDownloads) item.setSaveDialogOptions({ title: 'Save browser download', defaultPath: item.getFilename() })
     else item.setSavePath(automaticDownloadPath(this.downloadDirectory, item.getFilename()))
     item.on('updated', () => {
       this.refreshWindow()
       const received = Math.max(0, item.getReceivedBytes())
-      const delta = Math.max(0, received - active.accountedBytes)
-      active.accountedBytes = received
-      this.windowBytes += delta
+      const delta = Math.max(0, received - active.receivedBytes)
+      active.receivedBytes = received
+      const coveredByDeclaration = Math.min(delta, active.outstandingDeclaredBytes)
+      active.outstandingDeclaredBytes -= coveredByDeclaration
+      this.windowBytes += delta - coveredByDeclaration
       if (received > MAX_DOWNLOAD_BYTES || this.windowBytes > MAX_WINDOW_BYTES) item.cancel()
     })
-    item.once('done', () => this.active.delete(item))
+    item.once('done', () => {
+      this.windowBytes = Math.max(0, this.windowBytes - active.outstandingDeclaredBytes)
+      active.outstandingDeclaredBytes = 0
+      this.active.delete(item)
+    })
   }
 
   cancelOwner(ownerId: number): void {
@@ -68,6 +78,8 @@ export class BrowserDownloadGuard {
   private refreshWindow(): void {
     if (Date.now() - this.windowStartedAt < WINDOW_MS) return
     this.windowStartedAt = Date.now()
-    this.windowBytes = 0
+    let outstanding = 0
+    for (const active of this.active.values()) outstanding += active.outstandingDeclaredBytes
+    this.windowBytes = outstanding
   }
 }

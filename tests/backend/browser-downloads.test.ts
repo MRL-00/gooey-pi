@@ -53,6 +53,36 @@ describe('BrowserDownloadGuard', () => {
     guard.cancelOwner(owner.id); expect(items.slice(0, 3).every((item) => item.cancelled)).toBe(true)
   })
 
+  it('charges declared totals at admission and refunds unreceived bytes on completion', () => {
+    const MB = 1024 * 1024
+    const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
+    const first = new FakeDownload('https://example.test/first', 500 * MB)
+    guard.handle(event(), first as unknown as DownloadItem, owner, true)
+    const second = new FakeDownload('https://example.test/second', 500 * MB)
+    guard.handle(event(), second as unknown as DownloadItem, owner, true)
+
+    // Nothing has been received yet, but the declared totals no longer fit together.
+    const third = new FakeDownload('https://example.test/third', 100 * MB)
+    const denied = event()
+    guard.handle(denied, third as unknown as DownloadItem, owner, true)
+    expect(denied.preventDefault).toHaveBeenCalledOnce()
+
+    // The first download finishes early: actual bytes replace the declared charge.
+    first.received = 100 * MB
+    first.emit('updated')
+    first.emit('done')
+
+    const fourth = new FakeDownload('https://example.test/fourth', 400 * MB)
+    const admitted = event()
+    guard.handle(admitted, fourth as unknown as DownloadItem, owner, true)
+    expect(admitted.preventDefault).not.toHaveBeenCalled()
+
+    const fifth = new FakeDownload('https://example.test/fifth', 100 * MB)
+    const overBudget = event()
+    guard.handle(overBudget, fifth as unknown as DownloadItem, owner, true)
+    expect(overBudget.preventDefault).toHaveBeenCalledOnce()
+  })
+
   it('cancels a streaming download that crosses the per-item byte cap', () => {
     const guard = new BrowserDownloadGuard(allowed, '/safe-downloads')
     const item = new FakeDownload('https://example.test/chunked', -1)
