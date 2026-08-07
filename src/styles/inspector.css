@@ -116,6 +116,36 @@
 .annotation-popover .button { min-height: 26px; font-size: 10.5px; }
 .annotation-count { position: absolute; z-index: 10; left: 9px; bottom: 9px; height: 25px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--annotation); background: var(--surface-raised); box-shadow: 0 2px 8px rgba(0,0,0,.1); font-size: 10px; }
 
+/* Agent-controlled browser tabs */
+.browser-tabstrip { height: 32px; flex: 0 0 32px; display: flex; align-items: stretch; gap: 3px; padding: 3px 7px 0; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.browser-tabstrip > button, .browser-tabstrip__agent { display: flex; align-items: center; gap: 5px; max-width: 180px; padding: 0 9px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0; color: var(--text-secondary); background: transparent; font-size: 10.5px; white-space: nowrap; cursor: pointer; user-select: none; }
+.browser-tabstrip > button.is-active, .browser-tabstrip__agent.is-active { border-color: var(--border); color: var(--text); background: var(--canvas); }
+.browser-tabstrip__agent span { overflow: hidden; text-overflow: ellipsis; }
+.browser-tabstrip__agent > button { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; padding: 0; border-radius: 4px; color: var(--text-tertiary); background: transparent; }
+.browser-tabstrip__agent > button:hover { color: var(--text); background: var(--surface-hover); }
+.browser-panel .browser-preview { position: relative; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+/* visibility (not display) keeps the user webview's guest alive while an agent tab is shown */
+.browser-panel .browser-preview--hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.browser-agent-area { position: relative; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.browser-agent-urlbar { height: 29px; flex: 0 0 29px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); background: var(--surface-subtle); font-size: 10.5px; }
+.browser-agent-urlbar span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-agent-urlbar em { flex: 0 0 auto; font-style: normal; color: var(--text-tertiary); }
+.browser-agent-slot { min-height: 0; flex: 1; background: #fff; }
+.agent-browser-layer { position: fixed; z-index: 90; left: 0; top: 0; width: 1024px; height: 700px; visibility: hidden; pointer-events: none; }
+.agent-browser-layer.is-visible { visibility: visible; pointer-events: auto; }
+.agent-browser-tab { position: absolute; inset: 0; visibility: hidden; }
+.agent-browser-layer.is-visible .agent-browser-tab.is-visible { visibility: visible; }
+
+/* Synthetic cursor mirroring the agent's real input glide */
+.agent-cursor-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 6; }
+.agent-cursor-trail { position: absolute; inset: 0; width: 100%; height: 100%; }
+.agent-cursor-trail__line { stroke: var(--annotation); stroke-width: 2; stroke-linecap: round; opacity: .8; }
+.agent-cursor { position: absolute; left: 0; top: 0; opacity: 0; transition: opacity 280ms ease; will-change: transform; }
+.agent-cursor.is-active { opacity: 1; }
+.agent-cursor.is-idle { opacity: 0; }
+.agent-cursor__dot { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 50%; background: var(--annotation); box-shadow: 0 1px 4px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.12); }
+.agent-cursor-ripple { position: absolute; width: 34px; height: 34px; border: 2px solid var(--annotation); border-radius: 50%; opacity: 0; pointer-events: none; }
+
 /* Files */
 .files-panel { height: 100%; display: flex; flex-direction: column; }
 .files-search { height: 43px; flex: 0 0 43px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }

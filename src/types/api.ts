@@ -410,6 +410,35 @@ export interface NativeHeartbeatRecord {
   runtimeId?: string
 }
 
+/** One agent-controlled browser tab. The registry lives in the main process; the renderer hosts the webview guests and mirrors this state. */
+export interface AgentBrowserTabRecord {
+  tabId: string
+  /** Canonical session file path of the thread this tab belongs to. */
+  sessionFile: string
+  url: string
+  title: string
+  /** Whether a live webview guest is currently bound to this tab. */
+  attached: boolean
+  /** Whether this is the session's currently targeted tab. */
+  active: boolean
+}
+
+export interface AgentBrowserState {
+  tabs: AgentBrowserTabRecord[]
+}
+
+/** Emitted when the agent moves the pointer in a tab, so the UI can animate a synthetic cursor along the same path on the same clock. */
+export interface AgentBrowserPointerEvent {
+  tabId: string
+  sessionFile: string
+  /** Previous pointer position, or null when the cursor first appears in a tab. */
+  from: { x: number; y: number } | null
+  to: { x: number; y: number }
+  action: 'move' | 'click' | 'scroll'
+  /** How long the glide takes; 0 means the cursor appears in place. */
+  durationMs: number
+}
+
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileListing>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
@@ -449,6 +478,14 @@ export interface PrimeWorkApi {
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
   plugins: { list(projectPath?: string): Promise<PluginCatalog>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<PluginCatalog> }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
+  browser: {
+    state(): Promise<AgentBrowserState>
+    attachTab(tabId: string, webContentsId: number): Promise<boolean>
+    selectTab(tabId: string): Promise<boolean>
+    closeTab(tabId: string): Promise<boolean>
+    onChanged(callback: (state: AgentBrowserState) => void): () => void
+    onPointer(callback: (event: AgentBrowserPointerEvent) => void): () => void
+  }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>
     manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord>

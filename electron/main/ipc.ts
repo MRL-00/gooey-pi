@@ -10,6 +10,7 @@ import type { AutomationService } from './schedules/service'
 import type { HeartbeatService } from './schedules/heartbeats'
 import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
+import type { AgentBrowserService } from './browser/agent-service'
 import { requireExistingPath, requireString, requireWebUrl } from './validation'
 
 interface Services {
@@ -24,6 +25,7 @@ interface Services {
   settings: SettingsService
   heartbeats: HeartbeatService
   schedules: AutomationService
+  browser: AgentBrowserService
 }
 
 type IpcEvent = IpcMainInvokeEvent | IpcMainEvent
@@ -168,6 +170,11 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('settings:update', (_event, patch) => services.settings.update(patch))
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())
 
+  handle('browser:state', () => services.browser.state())
+  handle('browser:attach-tab', (_event, tabId, webContentsId) => services.browser.attachTab(tabId, webContentsId))
+  handle('browser:select-tab', (_event, tabId) => services.browser.selectTab(tabId))
+  handle('browser:close-tab', (_event, tabId) => services.browser.closeTab(tabId))
+
   handle('heartbeats:list', () => services.heartbeats.list())
   handle('heartbeats:manage', (_event, id, action) => services.heartbeats.manage(id, action))
 
@@ -196,6 +203,22 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     }
   })
   const unsubscribeScheduleChanges = typeof scheduleSubscription === 'function' ? scheduleSubscription : () => undefined
+  const browserSubscription = services.browser.onDidChange((state) => {
+    for (const [id, contents] of authorized) {
+      if (contents.isDestroyed()) { authorized.delete(id); continue }
+      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
+        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:changed', state)
+    }
+  })
+  const unsubscribeBrowserChanges = typeof browserSubscription === 'function' ? browserSubscription : () => undefined
+  const pointerSubscription = services.browser.onPointer((event) => {
+    for (const [id, contents] of authorized) {
+      if (contents.isDestroyed()) { authorized.delete(id); continue }
+      if (isTrustedRendererUrl(contents.getURL(), expectedRendererUrl)
+        && isTrustedRendererUrl(contents.mainFrame.url, expectedRendererUrl)) contents.send('browser:pointer', event)
+    }
+  })
+  const unsubscribeBrowserPointer = typeof pointerSubscription === 'function' ? pointerSubscription : () => undefined
 
   const registration: IpcRegistration = {
     authorize(webContents) { if (!closed) authorized.set(webContents.id, webContents) },
@@ -207,6 +230,8 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       authorized.clear()
       unsubscribeSessionChanges()
       if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
+      if (typeof unsubscribeBrowserChanges === 'function') unsubscribeBrowserChanges()
+      if (typeof unsubscribeBrowserPointer === 'function') unsubscribeBrowserPointer()
       for (const channel of invokeChannels) ipcMain.removeHandler(channel)
       // Event listeners are removed wholesale only for our private fixed channels.
       for (const channel of eventChannels) ipcMain.removeAllListeners(channel)
