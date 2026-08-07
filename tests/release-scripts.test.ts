@@ -9,7 +9,7 @@ import {
   assertExactArchitectures,
   assertSupportedNode,
   assertUnpackedNativeLayout,
-  expectedUnpackedNativeFiles,
+  expectedUnpackedNativeLayout,
   parseArchitectures,
   parseTeamIdentifier,
   requireReleaseArtifacts,
@@ -31,9 +31,19 @@ const baseEnvironment = {
   APPLE_TEAM_ID: 'TEAM123',
 }
 
+const FIXTURE_ZEROMQ_DIRECTORIES = new Map([
+  ['arm64', 'arm64'],
+  ['x86_64', 'x64'],
+])
+
+function fixtureAddonPath(architecture: string, runtime = 'libc-115-Release') {
+  return `node_modules/zeromq/build/darwin/${FIXTURE_ZEROMQ_DIRECTORIES.get(architecture)}/node/${runtime}/addon.node`
+}
+
 function createUnpackedFixture(architectures = new Set(['arm64'])) {
   const directory = mkdtempSync(join(tmpdir(), 'prime-work-unpacked-'))
-  for (const relativePath of expectedUnpackedNativeFiles(architectures)) {
+  const relativePaths = [...expectedUnpackedNativeLayout(architectures).files, ...[...architectures].map((architecture) => fixtureAddonPath(architecture))]
+  for (const relativePath of relativePaths) {
     const path = join(directory, relativePath)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, 'fixture')
@@ -277,7 +287,7 @@ describe('post-package verification helpers', () => {
     expect(packageJson.build.mac.asarUnpack).toEqual([
       '**/node_modules/node-pty/build/Release/pty.node',
       '**/node_modules/node-pty/build/Release/spawn-helper',
-      '**/node_modules/zeromq/build/darwin/${arch}/node/libc-115-Release/addon.node',
+      '**/node_modules/zeromq/build/darwin/${arch}/node/*-Release/addon.node',
     ])
     expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node'])
     expect(packageJson.build.win.asarUnpack).toEqual([
@@ -295,6 +305,44 @@ describe('post-package verification helpers', () => {
     expect(packageJson.build.directories.output).toBe('release')
   })
 
+  test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(packageJson.build.mac.files).toEqual(['!**/node_modules/zeromq/build/linux/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.linux.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.win.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/linux/**'])
+    // Pin the app to the zeromq range prime-agent uses so the packaged addon
+    // and the agent's runtime expectations cannot drift apart silently.
+    const primeAgent = JSON.parse(readFileSync(new URL('../node_modules/prime-agent/package.json', import.meta.url), 'utf8'))
+    expect(packageJson.dependencies.zeromq).toBe(primeAgent.dependencies.zeromq)
+  })
+
+  test('requires exactly one ZeroMQ addon per architecture regardless of runtime-library name', () => {
+    const architectures = new Set(['arm64'])
+    const duplicatedDirectory = createUnpackedFixture(architectures)
+    const duplicate = join(duplicatedDirectory, fixtureAddonPath('arm64', 'libc-999-Release'))
+    mkdirSync(dirname(duplicate), { recursive: true })
+    writeFileSync(duplicate, 'fixture')
+    try {
+      // Two runtime-library directories for one architecture must fail.
+      expect(() => assertUnpackedNativeLayout(duplicatedDirectory, architectures, () => architectures)).toThrow(/exactly one.*ZeroMQ/i)
+    } finally {
+      rmSync(duplicatedDirectory, { recursive: true, force: true })
+    }
+
+    const futureDirectory = mkdtempSync(join(tmpdir(), 'prime-work-unpacked-'))
+    for (const relativePath of [...expectedUnpackedNativeLayout(architectures).files, fixtureAddonPath('arm64', 'libc-999-Release')]) {
+      const path = join(futureDirectory, relativePath)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, 'fixture')
+    }
+    try {
+      // A future runtime-library name still matches the wildcard exactly once.
+      expect(() => assertUnpackedNativeLayout(futureDirectory, architectures, () => architectures)).not.toThrow()
+    } finally {
+      rmSync(futureDirectory, { recursive: true, force: true })
+    }
+  })
+
   test('accepts the exact unpacked native fixture with complete architecture coverage', () => {
     const architectures = new Set(['arm64'])
     const directory = createUnpackedFixture(architectures)
@@ -308,8 +356,7 @@ describe('post-package verification helpers', () => {
   test('rejects missing and extra unpacked fixture files', () => {
     const architectures = new Set(['arm64'])
     const missingDirectory = createUnpackedFixture(architectures)
-    const missingPath = join(missingDirectory, expectedUnpackedNativeFiles(architectures).at(-1)!)
-    rmSync(missingPath)
+    rmSync(join(missingDirectory, expectedUnpackedNativeLayout(architectures).files.at(-1)!))
     try {
       expect(() => assertUnpackedNativeLayout(missingDirectory, architectures, () => architectures)).toThrow(/Missing unpacked/)
     } finally {
@@ -369,6 +416,14 @@ describe('cross-platform packaging repair', () => {
       return readdirSync(directory, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .some((entry) => globMatchExists(join(directory, entry.name), segments))
+    }
+    if (head.includes('*')) {
+      const pattern = new RegExp(`^${head.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`)
+      const entries = readdirSync(directory, { withFileTypes: true })
+      if (rest.length === 0) return entries.some((entry) => entry.isFile() && pattern.test(entry.name))
+      return entries
+        .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
+        .some((entry) => globMatchExists(join(directory, entry.name), rest))
     }
     const next = join(directory, head)
     if (rest.length === 0) return existsSync(next) && statSync(next).isFile()

@@ -164,15 +164,23 @@ const ZEROMQ_ARCHITECTURE_DIRECTORIES = new Map([
   ['x86_64', 'x64'],
 ])
 
-export function expectedUnpackedNativeFiles(appArchitectures) {
+// The runtime-library directory name ("libc-115-Release" today) encodes the
+// zeromq prebuild's toolchain and changes across zeromq upgrades, so the
+// layout matches it with a wildcard and the verifier asserts exactly one
+// addon per packaged architecture instead of pinning the name.
+export function expectedUnpackedNativeLayout(appArchitectures) {
   if (!appArchitectures.size) throw new Error('Packaged application architecture list is empty')
   const files = [...NODE_PTY_UNPACKED_FILES]
+  const zeroMqAddons = []
   for (const architecture of [...appArchitectures].sort()) {
     const directory = ZEROMQ_ARCHITECTURE_DIRECTORIES.get(architecture)
     if (!directory) throw new Error(`Unsupported packaged application architecture: ${architecture}`)
-    files.push(`node_modules/zeromq/build/darwin/${directory}/node/libc-115-Release/addon.node`)
+    zeroMqAddons.push({
+      label: `node_modules/zeromq/build/darwin/${directory}/node/*-Release/addon.node`,
+      pattern: new RegExp(`^node_modules/zeromq/build/darwin/${directory}/node/[^/]+-Release/addon\\.node$`),
+    })
   }
-  return files
+  return { files, zeroMqAddons }
 }
 
 function listUnpackedEntries(directory, prefix = '', found = { files: [], directories: [] }) {
@@ -197,12 +205,18 @@ function expectedDirectories(files) {
 }
 
 export function assertUnpackedNativeLayout(unpackedDirectory, appArchitectures, readArchitectures) {
-  const expected = expectedUnpackedNativeFiles(appArchitectures)
+  const { files, zeroMqAddons } = expectedUnpackedNativeLayout(appArchitectures)
+  const actual = listUnpackedEntries(unpackedDirectory)
+  const missing = files.filter((path) => !actual.files.includes(path))
+  if (missing.length) throw new Error(`Missing unpacked native runtime file(s): ${missing.join(', ')}`)
+  const expected = [...files]
+  for (const { label, pattern } of zeroMqAddons) {
+    const matches = actual.files.filter((path) => pattern.test(path))
+    if (matches.length !== 1) throw new Error(`Expected exactly one unpacked ZeroMQ addon matching ${label}, found ${matches.length}`)
+    expected.push(matches[0])
+  }
   const expectedSet = new Set(expected)
   const allowedDirectories = expectedDirectories(expected)
-  const actual = listUnpackedEntries(unpackedDirectory)
-  const missing = expected.filter((path) => !actual.files.includes(path))
-  if (missing.length) throw new Error(`Missing unpacked native runtime file(s): ${missing.join(', ')}`)
   const extra = [...actual.files.filter((path) => !expectedSet.has(path)), ...actual.directories.filter((path) => !allowedDirectories.has(path))]
   if (extra.length) throw new Error(`Unexpected unpacked path(s): ${extra.join(', ')}`)
 

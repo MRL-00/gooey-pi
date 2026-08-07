@@ -75,8 +75,10 @@ function assertUnpackedNativeLayout(directory, target, architecture) {
   const unexpected = files.filter((path) => !allowed.has(path) && !zeroMqPattern.test(path))
   const missing = required.filter((path) => !files.includes(path))
   const zeroMq = files.filter((path) => zeroMqPattern.test(path))
-  if (missing.length || !zeroMq.length || unexpected.length) {
-    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ: ${zeroMq.length}; extra: ${unexpected.join(', ') || 'none'})`)
+  // Exactly one ZeroMQ addon per platform/architecture: zero means the native
+  // runtime is missing, more than one means another toolchain's build leaked in.
+  if (missing.length || zeroMq.length !== 1 || unexpected.length) {
+    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ addons: ${zeroMq.length}, expected exactly 1; extra: ${unexpected.join(', ') || 'none'})`)
   }
 }
 
