@@ -64,28 +64,28 @@ export function replayPrimeEvents(
   stats?: PrimeEventReplayStats,
 ): TranscriptMessage[] {
   if (!events.length) return messages
-  // Compaction changes the transcript shape (it closes the current assistant
-  // turn and inserts a system activity item). Keep that infrequent path on
-  // the same reducer as live events so it cannot drift from sequential replay.
-  if (events.some(isCompactionEvent)) return events.reduce((current, event) => applyPrimeEvent(current, event), messages)
-  let next = messages
+  let base = messages
+  let next = base
   let copiedMessages = false
   let lastStreamingAssistant = -1
   const streaming = new Set<number>()
   const draftedMessages = new Set<number>()
   const partDrafts = new Map<number, PartDraft>()
 
-  for (let index = 0; index < messages.length; index += 1) {
-    if (stats) stats.messageScans += 1
-    const message = messages[index]
-    if (!message.streaming) continue
-    streaming.add(index)
-    if (message.role === 'assistant') lastStreamingAssistant = index
+  const scanStreaming = () => {
+    for (let index = 0; index < base.length; index += 1) {
+      if (stats) stats.messageScans += 1
+      const message = base[index]
+      if (!message.streaming) continue
+      streaming.add(index)
+      if (message.role === 'assistant') lastStreamingAssistant = index
+    }
   }
+  scanStreaming()
 
   const copyTranscript = () => {
     if (copiedMessages) return
-    next = messages.slice()
+    next = base.slice()
     copiedMessages = true
     if (stats) stats.transcriptCopies += 1
   }
@@ -176,11 +176,37 @@ export function replayPrimeEvents(
     streaming.clear()
     lastStreamingAssistant = -1
   }
+  const materializeDrafts = () => {
+    for (const [index, draft] of partDrafts) {
+      const parts: MessagePart[] = []
+      for (let node = draft.head; node; node = node.next) parts.push(node.part)
+      draftMessage(index).parts = parts
+    }
+    partDrafts.clear()
+  }
+  const rebase = (transcript: TranscriptMessage[]) => {
+    base = transcript
+    next = transcript
+    copiedMessages = false
+    draftedMessages.clear()
+    streaming.clear()
+    lastStreamingAssistant = -1
+    scanStreaming()
+  }
 
   for (const raw of events) {
     if (stats) stats.eventScans += 1
     const type = string(raw.type) ?? string(raw.event)
     if (!type) continue
+    if (isCompactionEvent(raw)) {
+      // Compaction changes the transcript shape (it closes the current
+      // assistant turn and inserts a system activity row), so it applies to a
+      // materialized transcript: flush the draft, apply the compaction policy,
+      // and re-open drafting on the result.
+      materializeDrafts()
+      rebase(applyCompactionEvent(next, raw) ?? next)
+      continue
+    }
     if (type === 'agent_start' || type === 'turn_start') {
       // Gate on a streaming *assistant* to match the sequential reducer: a
       // compaction system row carried over from a previous batch may still be
@@ -257,11 +283,7 @@ export function replayPrimeEvents(
     }
   }
 
-  for (const [index, draft] of partDrafts) {
-    const parts: MessagePart[] = []
-    for (let node = draft.head; node; node = node.next) parts.push(node.part)
-    draftMessage(index).parts = parts
-  }
+  materializeDrafts()
   return next
 }
 
