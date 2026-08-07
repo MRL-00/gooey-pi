@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { MessagePart, TranscriptMessage } from '@/types/api'
+import { splitAnnotationBlock } from '@/lib/browser-annotations'
 import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { PrimeMark } from '../ui'
@@ -128,8 +129,22 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showRe
   )
 }, (previous, next) => previous.message === next.message && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools)
 
+function UserText({ text }: { text: string }) {
+  // Sent prompts can carry a serialized browser-annotation block; keep it
+  // collapsed in the transcript — it is verbose, model-facing detail.
+  const split = splitAnnotationBlock(text)
+  if (!split.block) return <InlineText text={text} />
+  return <>
+    {split.text && split.text !== '[Page annotations]' ? <InlineText text={split.text} /> : null}
+    <details className="user-annotations">
+      <summary>{split.count > 0 ? `${split.count} page annotation${split.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
+      <pre>{split.block}</pre>
+    </details>
+  </>
+}
+
 export const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
-  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, index) => part.type === 'text' ? <InlineText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null)}</div><MessageActions message={message} /></article>
+  return <article className="message message--user"><div className="user-bubble">{message.parts.map((part, index) => part.type === 'text' ? <UserText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null)}</div><MessageActions message={message} /></article>
 })
 
 export const ActivityMessage = memo(function ActivityMessage({ message }: { message: TranscriptMessage }) {

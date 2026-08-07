@@ -16,7 +16,7 @@ import {
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { BrowserAnnotation, MessageEnterAction, PrimeContextUsage, PrimeModelDescriptor, PrimeProviderDescriptor, PrimeThinkingLevel, PromptDeliveryIntent, PromptImage, SkillRecord } from '@/types/api'
-import { annotationElementLabel, appendAnnotationsToPrompt } from '@/lib/browser-annotations'
+import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
@@ -311,12 +311,11 @@ export const Composer = memo(function Composer({ busy, submitting = false, loadi
         ) : null}
         {annotationsOpen && annotations.length ? <div className="composer-annotations" role="region" aria-label="Page annotation details">
           {annotations.map((annotation, index) => {
-            const snippet = annotation.element.text ? (annotation.element.text.length > 70 ? `${annotation.element.text.slice(0, 70)}…` : annotation.element.text) : ''
             return <div className="composer-annotation" key={annotation.id}>
               <span className="composer-annotation__badge" aria-hidden="true">{index + 1}</span>
               <div className="composer-annotation__body">
                 <p>{annotation.comment}</p>
-                <small>{annotationElementLabel(annotation.element)}{snippet ? ` — “${snippet}”` : ''}{annotation.stale ? ' · page changed' : ''}</small>
+                {annotation.stale ? <small>page changed since capture</small> : null}
               </div>
               <button type="button" aria-label={`Remove annotation ${index + 1}`} onClick={() => onRemoveAnnotation(annotation.id)}><X size={12} /></button>
             </div>

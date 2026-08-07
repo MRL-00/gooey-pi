@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, ExternalLink, History, MessageCirclePlus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { createElement, useEffect, useRef, useState } from 'react'
 import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
-import { annotationElementLabel, MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
+import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
 import type { BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
@@ -189,8 +189,6 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
 
   const count = annotations.annotations.length
   const staleCount = annotations.annotations.filter((annotation) => annotation.stale).length
-  const pendingLabel = pendingElement ? annotationElementLabel(pendingElement) : ''
-  const pendingSnippet = pendingElement?.text ? (pendingElement.text.length > 90 ? `${pendingElement.text.slice(0, 90)}…` : pendingElement.text) : ''
 
   return (
     <div className="browser-panel">
@@ -203,7 +201,7 @@ export function BrowserPanel({ home, onOpenExternal, annotations, pollIntervalMs
       <div className={`browser-viewport ${picking ? 'is-annotating' : ''}`}>
         {webview}
         {picking ? <div className="annotation-hint" role="status"><MessageCirclePlus size={12} /> Click an element in the page to comment on it</div> : null}
-        {pendingElement ? <div className="annotation-layer"><div className="annotation-popover"><div><MessageCirclePlus size={14} /><strong>Comment on element {count + 1}</strong><button type="button" aria-label="Discard annotation" onClick={() => { setPendingElement(null); setAnnotationText('') }}><X size={13} /></button></div><p className="annotation-popover__element">{pendingLabel}{pendingSnippet ? ` — “${pendingSnippet}”` : ''}</p><textarea autoFocus value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="Describe what should change…"/><div><button type="button" className="button" onClick={() => { setPendingElement(null); setAnnotationText('') }}>Cancel</button><button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={saveAnnotation}>Add comment</button></div></div></div> : null}
+        {pendingElement ? <div className="annotation-layer"><div className="annotation-popover"><div><MessageCirclePlus size={14} /><strong>Comment on element {count + 1}</strong><button type="button" aria-label="Discard annotation" onClick={() => { setPendingElement(null); setAnnotationText('') }}><X size={13} /></button></div><textarea autoFocus value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} placeholder="Describe what should change…"/><div><button type="button" className="button" onClick={() => { setPendingElement(null); setAnnotationText('') }}>Cancel</button><button type="button" className="button button--primary" disabled={!annotationText.trim()} onClick={saveAnnotation}>Add comment</button></div></div></div> : null}
         {count ? <div className="annotation-count"><MessageCirclePlus size={12} /> {count} of {MAX_BROWSER_ANNOTATIONS} annotation{count === 1 ? '' : 's'}{staleCount ? ` · ${staleCount} from earlier pages` : ''}</div> : null}
         {notice ? <p className="annotation-notice" role="alert">{notice}</p> : null}
       </div>

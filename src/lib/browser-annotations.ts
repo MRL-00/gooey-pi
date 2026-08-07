@@ -154,3 +154,27 @@ export function appendAnnotationsToPrompt(prompt: string, annotations: BrowserAn
   if (annotations.length === 0) return prompt
   return `${prompt}\n\n${serializeAnnotations(annotations)}`
 }
+
+export interface AnnotationBlockSplit {
+  /** The user's own message text with the annotation block removed. */
+  text: string
+  /** The raw serialized annotation block, or null when the text has none. */
+  block: string | null
+  count: number
+}
+
+/**
+ * Splits a sent prompt back into the user's text and the serialized
+ * annotation block so the transcript can render the block collapsed. The
+ * model still receives the full prompt; this only affects display.
+ */
+export function splitAnnotationBlock(text: string): AnnotationBlockSplit {
+  const begin = text.indexOf(BLOCK_BEGIN)
+  if (begin === -1) return { text, block: null, count: 0 }
+  const end = text.indexOf(BLOCK_END, begin)
+  if (end === -1) return { text, block: null, count: 0 }
+  const block = text.slice(begin, end + BLOCK_END.length)
+  const rest = `${text.slice(0, begin)}${text.slice(end + BLOCK_END.length)}`.trim()
+  const count = (block.match(/^--- Annotation \d+ of \d+ ---$/gm) ?? []).length
+  return { text: rest, block, count }
+}

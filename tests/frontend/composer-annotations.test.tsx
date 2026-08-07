@@ -116,7 +116,8 @@ describe('Composer annotation attachment', () => {
     // Untrusted text renders as text, never as markup.
     expect(panel?.querySelector('img')).toBeNull()
     expect(panel?.textContent).toContain('<img src=x onerror=alert(1)> fix this')
-    expect(panel?.textContent).toContain('button#a.btn')
+    // Rows show only the comment (plus staleness); DOM labels are intentionally omitted.
+    expect(panel?.textContent).not.toContain('button#a.btn')
     expect(panel?.textContent).toContain('page changed')
 
     await act(async () => { (container.querySelector('button[aria-label="Remove annotation 2"]') as HTMLButtonElement).click() })

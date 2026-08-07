@@ -129,8 +129,8 @@ describe('BrowserPanel annotation mode', () => {
     expect(executed.some((code) => code.includes('__primeAnnotator.stop()'))).toBe(true)
     const popover = container.querySelector('.annotation-popover')
     expect(popover?.textContent).toContain('Comment on element 1')
-    expect(popover?.textContent).toContain('button#cta.btn')
-    expect(popover?.textContent).toContain('Join now')
+    // The DOM label is intentionally not shown; the header and comment field suffice.
+    expect(popover?.textContent).not.toContain('button#cta.btn')
 
     await setComment('Make this button blue')
     await act(async () => { (container.querySelector('.button--primary') as HTMLButtonElement).click() })
