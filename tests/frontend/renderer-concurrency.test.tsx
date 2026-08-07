@@ -125,6 +125,41 @@ describe('settings queue reconciliation', () => {
 })
 
 describe('transcript read ownership', () => {
+  it('keeps live compaction visible when it supersedes a terminal transcript read', async () => {
+    const staleRead = deferred<TranscriptMessage[]>()
+    const read = vi.fn()
+      .mockResolvedValueOnce([message('loaded')])
+      .mockImplementationOnce(() => staleRead.promise)
+    const bridge = { sessions: { read } } as unknown as PrimeWorkApi
+    let state!: ReturnType<typeof useWorkspaceRuntime>
+    function WorkspaceProbe() {
+      state = useWorkspaceRuntime({
+        bridge, initialProject: project, initialSession: session, projects: [project], sessions: [session],
+        initialMessages: [], reportError: vi.fn(),
+      })
+      return <Probe />
+    }
+    await act(async () => { root.render(<WorkspaceProbe />); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { state.attachRuntime(runtime, 0) })
+    await act(async () => {
+      state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'agent_end' })
+      await Promise.resolve()
+    })
+    expect(read).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      const event = { type: 'compaction_start', reason: 'threshold' }
+      state.queueAgentEvent(event)
+      state.reconcileTranscriptForEvent(runtime.runtimeId, event)
+      await Promise.resolve()
+    })
+    expect(state.messages.at(-1)?.parts[0]).toMatchObject({ type: 'compaction', status: 'running' })
+
+    await act(async () => { staleRead.resolve([message('stale')]); await staleRead.promise; await Promise.resolve() })
+    expect(state.messages.at(-1)?.parts[0]).toMatchObject({ type: 'compaction', status: 'running' })
+    expect(state.messages.some((item) => item.id === 'stale')).toBe(false)
+  })
+
   it('performs one initial read and rejects an older same-runtime reconciliation after prompt admission', async () => {
     const staleRead = deferred<TranscriptMessage[]>()
     const read = vi.fn()

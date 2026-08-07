@@ -212,7 +212,7 @@ export function useWorkspaceRuntime({
     const type = typeof event.type === 'string' ? event.type : ''
     if (type === 'agent_start' || type === 'turn_start' || type === 'compaction_start') {
       const load = transcriptLoadRef.current
-      if (load?.generation === selected.generation && load.reconciliation) {
+      if (load?.generation === selected.generation) {
         transcriptLoadRef.current = null
         deferredReconciliationRef.current = null
         setMessages((current) => load.eventBuffer.replay(current))
