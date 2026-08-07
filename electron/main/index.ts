@@ -375,7 +375,7 @@ else void app.whenReady().then(async () => {
   const browserProfile = session.fromPartition('persist:prime-work-browser')
   browserProfile.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserProfile.setPermissionCheckHandler(() => false)
-  if (!!app.isPackaged) {
+  if (app.isPackaged) {
     browserSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
