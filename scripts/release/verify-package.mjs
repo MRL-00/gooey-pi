@@ -140,7 +140,7 @@ export function assertRequestedArchitecture(artifacts, arch) {
   }
 }
 
-export async function verifyPackage({ mode, releaseDirectory = resolve('release'), env = process.env, arch }) {
+export async function verifyPackage({ mode, releaseDirectory = resolve('release'), env = process.env, arch = undefined }) {
   if (mode !== 'public' && mode !== 'qa') throw new Error('Verification mode must be public or qa')
   if (!existsSync(releaseDirectory)) throw new Error(`Release directory does not exist: ${releaseDirectory}`)
   const expectedTeam = env.RELEASE_SIGNING_TEAM_ID?.trim()
