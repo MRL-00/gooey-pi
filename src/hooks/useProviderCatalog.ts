@@ -117,8 +117,14 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     const effectiveModel = catalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id)
     if (effectiveModel) updateModel(effectiveModel.key)
     if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) updateEffort(runtime.thinkingLevel as PrimeThinkingLevel)
+  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.thinkingLevel, updateEffort, updateModel])
+
+  // Scoped to the runtime's reported tier so a catalog refresh cannot revert
+  // an optimistic fast-mode toggle that the runtime has not confirmed yet.
+  useEffect(() => {
+    if (!runtime) return
     updateFast(runtime.serviceTier === 'priority')
-  }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.serviceTier, runtime?.thinkingLevel, updateEffort, updateFast, updateModel])
+  }, [runtime?.runtimeId, runtime?.serviceTier, updateFast])
 
   const changeModel = useCallback((nextModelKey: string) => {
     const previous = { model: modelRef.current, effort: effortRef.current, fast: fastRef.current }

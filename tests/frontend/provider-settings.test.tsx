@@ -242,6 +242,20 @@ describe('provider runtime mutations', () => {
     expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
   })
 
+  it('keeps an optimistic fast-mode toggle across a catalog refresh', async () => {
+    const hook = await mountCatalogHook({ command: vi.fn().mockResolvedValue({}) })
+    await act(async () => { await Promise.resolve() })
+
+    act(() => hook.value.changeFast(true))
+    expect(hook.value.fast).toBe(true)
+
+    // A refresh returns a new catalog object; the runtime's stale serviceTier must not revert the toggle.
+    hook.catalogMock.mockResolvedValue({ ...catalog })
+    await act(async () => { await hook.value.refresh(true) })
+
+    expect(hook.value.fast).toBe(true)
+  })
+
   it('disables every provider and clears an explicitly selected model in one atomic mutation', async () => {
     const hook = await mountCatalogHook({ command: vi.fn() })
     await act(async () => { await Promise.resolve() })
