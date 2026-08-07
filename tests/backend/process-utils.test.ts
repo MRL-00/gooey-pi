@@ -1,8 +1,9 @@
+import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, primeAgentCandidates, primeAgentExecutableName, runProcess, stopChildProcesses } from '../../electron/main/process-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, runProcess, stopChildProcesses, waitForProcessExit } from '../../electron/main/process-utils'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -85,6 +86,101 @@ setInterval(() => {}, 1000)
     expect(completed.every((result) => result.signal === 'SIGKILL' || result.signal === 'SIGTERM')).toBe(true)
     expect(readdirSync(dir)).not.toContain('queued-ran')
   }, 15_000)
+})
+
+describe('killProcessTree', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('escalates through the POSIX ladder over descendants, group, and direct handle until exit', async () => {
+    const kills: Array<[number, NodeJS.Signals]> = []
+    const direct: NodeJS.Signals[] = []
+    const kill = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal: NodeJS.Signals) => {
+      kills.push([pid, signal])
+      return true
+    }) as typeof process.kill)
+    let exited = false
+    const result = await killProcessTree(4_242, {
+      platform: 'linux',
+      ladder: [{ signal: 'SIGTERM', waitMs: 5 }, { signal: 'SIGKILL', waitMs: 5 }],
+      descendants: [5_001],
+      hasExited: () => exited,
+      waitForExit: async () => { exited = kills.some(([, signal]) => signal === 'SIGKILL'); return exited },
+      signalDirect: (signal) => direct.push(signal),
+    })
+
+    expect(result).toBe(true)
+    expect(kills).toEqual([[5_001, 'SIGTERM'], [-4_242, 'SIGTERM'], [5_001, 'SIGKILL'], [-4_242, 'SIGKILL']])
+    expect(direct).toEqual(['SIGTERM', 'SIGKILL'])
+    kill.mockRestore()
+  })
+
+  it('stops before the first rung when the process already exited', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation((() => true) as typeof process.kill)
+    const result = await killProcessTree(4_242, {
+      platform: 'linux',
+      ladder: [{ signal: 'SIGTERM', waitMs: 5 }],
+      hasExited: () => true,
+    })
+
+    expect(result).toBe(true)
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('collapses the win32 ladder into one awaited taskkill /pid <pid> /T /F', async () => {
+    const taskkillPids: number[] = []
+    const direct: Array<NodeJS.Signals | undefined> = []
+    const kill = vi.spyOn(process, 'kill').mockImplementation((() => true) as typeof process.kill)
+    const result = await killProcessTree(7_777, {
+      platform: 'win32',
+      ladder: [{ signal: 'SIGTERM', waitMs: 350 }, { signal: 'SIGKILL', waitMs: 0 }],
+      runTaskkill: async (pid) => { taskkillPids.push(pid) },
+      signalDirect: (signal) => direct.push(signal),
+    })
+
+    expect(result).toBe(true)
+    expect(taskkillPids).toEqual([7_777])
+    expect(direct).toEqual(['SIGKILL'])
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('reports win32 exit through the observer within the ladder budget', async () => {
+    let exited = false
+    const result = await killProcessTree(7_777, {
+      platform: 'win32',
+      ladder: [{ signal: 'SIGTERM', waitMs: 100 }],
+      runTaskkill: async () => { exited = true },
+      hasExited: () => exited,
+    })
+
+    expect(result).toBe(true)
+  })
+
+  it('terminates a real SIGTERM-resistant process through the ladder', async () => {
+    const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    await new Promise((resolveReady) => child.stdout.once('data', resolveReady))
+
+    const result = await killProcessTree(child.pid!, {
+      ladder: [{ signal: 'SIGTERM', waitMs: 200 }, { signal: 'SIGKILL', waitMs: 3_000 }],
+      hasExited: () => child.exitCode !== null || child.signalCode !== null,
+      waitForExit: (timeoutMs) => waitForProcessExit(child, timeoutMs),
+      signalDirect: (signal) => child.kill(signal),
+    })
+
+    expect(result).toBe(true)
+    expect(child.signalCode).toBe('SIGKILL')
+  }, 10_000)
+})
+
+describe('waitForProcessExit', () => {
+  it('resolves immediately for an exited child and observes a later close within the timeout', async () => {
+    const exited = spawn(process.execPath, ['-e', ''])
+    await new Promise((resolveClose) => exited.once('close', resolveClose))
+    await expect(waitForProcessExit(exited, 5)).resolves.toBe(true)
+
+    const running = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120)'])
+    await expect(waitForProcessExit(running, 10)).resolves.toBe(false)
+    await expect(waitForProcessExit(running, 5_000)).resolves.toBe(true)
+  }, 10_000)
 })
 
 describe('Prime Agent discovery candidates', () => {

@@ -30,18 +30,123 @@ export function beginProcessShutdown(): void {
   for (const pending of pendingAdmissions.splice(0)) pending.reject(error)
 }
 
-function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (child.pid && process.platform !== 'win32') {
-    try { process.kill(-child.pid, signal); return } catch { /* fall through */ }
+export interface KillLadderRung {
+  signal: NodeJS.Signals
+  /** How long to wait for exit after this rung before escalating to the next one. */
+  waitMs: number
+}
+
+export interface KillProcessTreeOptions {
+  ladder: readonly KillLadderRung[]
+  /** True once the target process exited; consulted before every escalation. */
+  hasExited?: () => boolean
+  /** Waits up to timeoutMs and resolves true when the process exits earlier. Defaults to a plain delay. */
+  waitForExit?: (timeoutMs: number) => Promise<boolean>
+  /** Extra direct signal for handles that own the process (for example a pty). Defaults to signalling the PID. */
+  signalDirect?: (signal: NodeJS.Signals) => void
+  /** Descendant PIDs signalled alongside the process group; needed when children detach from it (POSIX only). */
+  descendants?: readonly number[]
+  /** Test seams. */
+  platform?: NodeJS.Platform
+  runTaskkill?: (pid: number) => Promise<void>
+}
+
+const delay = (milliseconds: number) => new Promise<void>((resolveDelay) => {
+  const timer = setTimeout(resolveDelay, milliseconds)
+  timer.unref()
+})
+
+/** Force-kills a Windows process tree; bounded, awaited, and never throws. */
+function runWindowsTaskkill(pid: number): Promise<void> {
+  return new Promise((resolveKill) => {
+    let child: ChildProcess
+    try {
+      child = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, shell: false, stdio: 'ignore' })
+    } catch { resolveKill(); return }
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveKill()
+    }
+    const timer = setTimeout(() => {
+      try { child.kill() } catch { /* taskkill already exited */ }
+      finish()
+    }, 5_000)
+    timer.unref()
+    child.once('error', finish)
+    child.once('close', finish)
+  })
+}
+
+/**
+ * The one process-tree terminator: walks the signal ladder over the process
+ * group (plus any explicitly listed detached descendants) until the target
+ * exits. On win32 there is no graceful tier, so the whole ladder collapses
+ * into a single awaited, bounded `taskkill /pid <pid> /T /F`.
+ * Resolves true once the target is known to have exited (always true when no
+ * exit observer is provided).
+ */
+export async function killProcessTree(pid: number, options: KillProcessTreeOptions): Promise<boolean> {
+  const platform = options.platform ?? process.platform
+  const waitForExit = options.waitForExit ?? (async (timeoutMs: number) => { await delay(timeoutMs); return options.hasExited?.() ?? false })
+  if (platform === 'win32') {
+    await (options.runTaskkill ?? runWindowsTaskkill)(pid)
+    try { options.signalDirect?.('SIGKILL') } catch { /* already exited */ }
+    if (!options.hasExited) return true
+    if (options.hasExited()) return true
+    const budget = options.ladder.reduce((total, rung) => total + rung.waitMs, 0)
+    return budget > 0 ? waitForExit(budget) : options.hasExited()
   }
-  try { child.kill(signal) } catch { /* already exited */ }
+  const signalTree = (signal: NodeJS.Signals): void => {
+    for (const descendant of options.descendants ?? []) {
+      try { process.kill(descendant, signal) } catch { /* already exited */ }
+    }
+    try { process.kill(-pid, signal) } catch { /* no process group */ }
+    try {
+      if (options.signalDirect) options.signalDirect(signal)
+      else process.kill(pid, signal)
+    } catch { /* already exited */ }
+  }
+  for (const rung of options.ladder) {
+    if (options.hasExited?.()) return true
+    signalTree(rung.signal)
+    if (rung.waitMs > 0 && await waitForExit(rung.waitMs)) return true
+  }
+  return options.hasExited?.() ?? true
+}
+
+/** Resolves true when the child exits within timeoutMs (immediately when it already has). */
+export function waitForProcessExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+  return new Promise((resolveWait) => {
+    const onClose = (): void => {
+      clearTimeout(timer)
+      resolveWait(true)
+    }
+    const timer = setTimeout(() => {
+      child.removeListener('close', onClose)
+      resolveWait(false)
+    }, timeoutMs)
+    timer.unref()
+    child.once('close', onClose)
+  })
+}
+
+function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) {
+    try { child.kill(signal) } catch { /* already exited */ }
+    return
+  }
+  void killProcessTree(child.pid, {
+    ladder: [{ signal, waitMs: 0 }],
+    signalDirect: (rungSignal) => child.kill(rungSignal),
+  })
 }
 
 function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<void> {
-  return Promise.race([
-    Promise.all(children.map((child) => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise<void>((resolveExit) => child.once('close', () => resolveExit())))).then(() => undefined),
-    new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, timeoutMs)),
-  ])
+  return Promise.all(children.map((child) => waitForProcessExit(child, timeoutMs))).then(() => undefined)
 }
 
 function drainProcessQueue(): void {
