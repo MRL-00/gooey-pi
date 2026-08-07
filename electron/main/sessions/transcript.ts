@@ -166,11 +166,17 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
         }
         next = { ...part, args }
       } else if (part.type === 'compaction') {
+        const boundedText = (value: string | undefined): string | undefined => {
+          if (!value || textBudget <= 0) return undefined
+          const text = boundedString(value, textBudget)
+          textBudget -= text.length
+          return text
+        }
         next = {
           ...part,
-          summary: part.summary ? boundedString(part.summary, textBudget) : undefined,
-          error: part.error ? boundedString(part.error, textBudget) : undefined,
-          customInstructions: part.customInstructions ? boundedString(part.customInstructions, textBudget) : undefined,
+          summary: boundedText(part.summary),
+          error: boundedText(part.error),
+          customInstructions: boundedText(part.customInstructions),
         }
       } else {
         let data: string | undefined
