@@ -160,6 +160,7 @@ describe('settings field ownership', () => {
       activeHarness: 'agent',
       ompApprovalMode: 'agent',
       voiceTranscriptionProvider: 'voice',
+      voiceOpenAiLiveTranscriptionModel: 'voice',
       voiceOpenAiTranscriptionModel: 'voice',
       voiceGroqTranscriptionModel: 'voice',
       voiceDeepgramTranscriptionModel: 'voice',

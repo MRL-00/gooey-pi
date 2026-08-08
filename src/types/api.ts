@@ -340,6 +340,7 @@ export interface AppSettings {
   /** Speech-to-text path used by the composer microphone. */
   voiceTranscriptionProvider: VoiceTranscriptionProvider
   /** Provider model IDs stay configurable without exposing provider credentials. */
+  voiceOpenAiLiveTranscriptionModel: string
   voiceOpenAiTranscriptionModel: string
   voiceGroqTranscriptionModel: string
   voiceDeepgramTranscriptionModel: string

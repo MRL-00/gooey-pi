@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telemetry: false,
   disabledProviders: [],
   voiceTranscriptionProvider: 'openai-live',
+  voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
   voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',
   voiceGroqTranscriptionModel: 'whisper-large-v3-turbo',
   voiceDeepgramTranscriptionModel: 'nova-3',

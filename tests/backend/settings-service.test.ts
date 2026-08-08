@@ -37,6 +37,7 @@ describe('SettingsService.update', () => {
       activeHarness: 'omp',
       ompApprovalMode: 'always-ask',
       voiceTranscriptionProvider: 'groq',
+      voiceOpenAiLiveTranscriptionModel: 'gpt-realtime-whisper',
       voiceOpenAiTranscriptionModel: 'gpt-4o-mini-transcribe',
       voiceGroqTranscriptionModel: 'whisper-large-v3',
       voiceDeepgramTranscriptionModel: 'nova-3-general',

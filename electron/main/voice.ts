@@ -200,12 +200,12 @@ function realtimeSession(settings: AppSettings): Record<string, unknown> {
   }
 }
 
-function transcriptionSession(): Record<string, unknown> {
+function transcriptionSession(settings: AppSettings): Record<string, unknown> {
   return {
     type: 'transcription',
     audio: {
       input: {
-        transcription: { model: 'gpt-live-transcribe', delay: 'low' },
+        transcription: { model: settings.voiceOpenAiLiveTranscriptionModel, delay: 'low' },
         turn_detection: null,
       },
     },
@@ -239,7 +239,8 @@ export class VoiceService {
     const key = await this.secrets.get('openai')
     const form = new FormData()
     form.set('sdp', sdp)
-    form.set('session', JSON.stringify(request.mode === 'conversation' ? realtimeSession(this.options.settings()) : transcriptionSession()))
+    const settings = this.options.settings()
+    form.set('session', JSON.stringify(request.mode === 'conversation' ? realtimeSession(settings) : transcriptionSession(settings)))
     const response = await this.withTimeout('https://api.openai.com/v1/realtime/calls', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}` },

@@ -31,6 +31,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   activeHarness: 'agent',
   ompApprovalMode: 'agent',
   voiceTranscriptionProvider: 'voice',
+  voiceOpenAiLiveTranscriptionModel: 'voice',
   voiceOpenAiTranscriptionModel: 'voice',
   voiceGroqTranscriptionModel: 'voice',
   voiceDeepgramTranscriptionModel: 'voice',

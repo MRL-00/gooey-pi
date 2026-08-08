@@ -73,6 +73,19 @@ describe('VoiceService', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('uses the selected native streaming transcription model', async () => {
+    const settings = { ...defaultSettings(), voiceOpenAiLiveTranscriptionModel: 'gpt-realtime-whisper' }
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const form = init?.body as FormData
+      const session = JSON.parse(String(form.get('session'))) as { audio: { input: { transcription: { model: string } } } }
+      expect(session.audio.input.transcription.model).toBe('gpt-realtime-whisper')
+      return new Response('v=0\r\no=answer')
+    })
+    const { service } = makeService({ settings: () => settings, fetch: fetchMock as typeof fetch })
+    await service.saveApiKey('openai', 'sk-test')
+    await service.createRealtimeCall({ mode: 'transcription', sdp: 'v=0\r\no=offer-value' })
+  })
+
   it('starts an explicitly requested task immediately in an existing granted project', async () => {
     const { service, agent } = makeService()
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'prime-project', prompt: 'Implement the feature', title: 'Voice feature' } })
