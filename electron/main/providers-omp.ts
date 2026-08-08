@@ -132,7 +132,7 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     const model = catalog.models.find((candidate) => candidate.key === key)
     if (!model) throw new Error('Model was not found in the OMP catalog')
     const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
-    if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled in Prime Work`)
+    if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled`)
     if (!model.available) throw new Error(`Provider ${model.provider} is not configured for ${model.name}`)
     return model
   }

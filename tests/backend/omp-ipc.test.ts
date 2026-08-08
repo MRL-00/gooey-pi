@@ -196,12 +196,15 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.sessions.followUp).toHaveBeenCalledWith(PRIME_SESSION, 'hello', 'queue')
   })
 
-  it('routes providers:catalog by harness with the shared disabled-provider set', async () => {
+  it('routes providers:catalog by harness; only Prime applies the disabled-provider set', async () => {
     await expect(harness.invoke('providers:catalog', true)).resolves.toMatchObject({ from: 'prime' })
     expect(harness.services.providers.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
 
+    // Provider disabling is a Prime-only surface: the OMP catalog is never
+    // filtered by Prime's disabled set (OMP settings are read-only, so a
+    // shared set could not be undone from the OMP side).
     await expect(harness.invoke('providers:catalog', true, 'omp')).resolves.toMatchObject({ from: 'omp' })
-    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
+    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true)
   })
 
   it('rejects provider auth mutations aimed at the omp harness', async () => {

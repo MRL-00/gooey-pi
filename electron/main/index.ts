@@ -341,12 +341,15 @@ async function bootstrap(): Promise<void> {
   )
   // The OMP manager exists whether or not the omp CLI is installed; starting a
   // runtime without it fails with the adapter's per-harness not-found error.
+  // Provider disabling is a Prime-only surface: OMP settings are read-only, so
+  // applying Prime's disabled set here would couple identically-named
+  // providers across harnesses with no way to undo it from the OMP side.
   const ompManager = new AgentRpcManager(
     ompExecutable,
     (cwd) => ompProjects.authorizeCwd(cwd),
     (path) => ompSessions.requireSessionPath(path),
     ompCatalog,
-    disabledProviders,
+    () => new Set(),
     OMP_RPC_ADAPTER,
     () => {
       const mode = stateStore.getSettings().ompApprovalMode

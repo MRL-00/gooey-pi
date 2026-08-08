@@ -182,7 +182,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('agent:list', () => [...services.agents.list(), ...services.omp.agents.list()])
 
   const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders))
-  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force, new Set(services.settings.get().disabledProviders))
+  // Provider disabling is Prime-only; the OMP catalog never applies it (see
+  // the OMP manager construction in index.ts).
+  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force)
   handle('providers:catalog', (_event, force, harness) => requireHarness(harness) === 'omp' ? ompProviderCatalog(force === true) : providerCatalog(force === true))
   handle('providers:save-api-key', async (_event, providerId, apiKey, harness) => {
     requirePrimeProviderAuth(harness)
