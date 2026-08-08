@@ -962,6 +962,12 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Summary' }).click()
     await page.getByLabel(/Toggle terminal/).click()
     await expect(page.locator('.terminal-drawer .xterm')).toBeVisible()
+    await expect(page.locator('.terminal-live-dot.is-connected')).toBeVisible()
+    const firstTerminalLine = () => page.locator('.terminal-surface:not([hidden]) .xterm-rows').evaluate((rows) =>
+      [...rows.children].map((row) => row.textContent?.trim() ?? '').find(Boolean) ?? '',
+    )
+    await expect.poll(firstTerminalLine).toMatch(/\S/)
+    expect(await firstTerminalLine()).not.toBe('%')
     await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(1)
     const activeTerminal = page.locator('.terminal-surface:not([hidden]) .xterm-helper-textarea')
     await activeTerminal.click()

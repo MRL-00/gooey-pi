@@ -148,6 +148,10 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
     terminal.open(container)
     terminalRef.current = terminal
     fitRef.current = fit
+    // Spawn the shell at the drawer's real dimensions. Creating the PTY at
+    // xterm's 80x24 default and fitting on the next frame makes zsh redraw its
+    // first prompt, leaving its reverse-video `%` end-of-line marker behind.
+    try { fit.fit() } catch { /* initial layout is not ready */ }
     requestAnimationFrame(() => { try { fit.fit() } catch { /* initial layout is not ready */ } })
 
     const themeObserver = new MutationObserver(() => { terminal.options.theme = terminalTheme() })
