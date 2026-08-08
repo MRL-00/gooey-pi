@@ -57,7 +57,7 @@ export function usePanelLayout({
 
   useEffect(() => {
     if (!compactLayout || !inspectorOpen) return
-    const targets = [...document.querySelectorAll<HTMLElement>('.title-toolbar, .conversation-pane, .terminal-drawer, .workspace-row > .resize-handle')]
+    const targets = [...document.querySelectorAll<HTMLElement>('.title-toolbar, .conversation-pane, .terminal-drawer, .session-workspace > .resize-handle')]
     for (const target of targets) target.inert = true
     return () => { for (const target of targets) target.inert = false }
   }, [compactLayout, inspectorOpen, terminalOpen])

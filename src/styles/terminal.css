@@ -1,6 +1,6 @@
 /* Terminal */
 .terminal-drawer { height: var(--terminal-height, clamp(260px, 34vh, 390px)); flex: 0 0 var(--terminal-height, clamp(260px, 34vh, 390px)); display: flex; flex-direction: column; min-height: 0; background: var(--terminal-bg); animation: drawer-in 180ms ease-out; }
-.terminal-drawer.is-maximized { position: absolute; z-index: 60; inset: 52px 0 0; height: auto; flex-basis: auto; }
+.terminal-drawer.is-maximized { position: absolute; z-index: 60; inset: 0; height: auto; flex-basis: auto; }
 .terminal-toolbar { height: 37px; flex: 0 0 37px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; border-bottom: 1px solid var(--terminal-border); color: var(--terminal-control); background: var(--terminal-toolbar-bg); }
 .terminal-tabs, .terminal-actions { height: 100%; display: flex; align-items: center; gap: 2px; }
 .terminal-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }

@@ -29,7 +29,7 @@
   .panel-scrim--sidebar { inset: 0; z-index: 19; }
   .inspector { position: fixed; z-index: 80; top: 52px; right: 0; bottom: 0; width: min(620px, 88vw); min-width: 0; flex-basis: auto; box-shadow: -12px 0 30px rgba(0,0,0,.14); }
   .panel-scrim--inspector { z-index: 70; }
-  .workspace-row > .resize-handle--vertical { display: none; }
+  .session-workspace > .resize-handle--vertical { display: none; }
   .conversation-pane { min-width: 0; }
   .title-toolbar__identity { justify-content: center; }
   .directory-list { grid-template-columns: 1fr; }
