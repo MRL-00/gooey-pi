@@ -269,11 +269,12 @@ export interface GitDiff { path?: string; staged: boolean; text: string; truncat
 export type ProcessFailureReason = 'timeout' | 'overflow' | 'exit' | 'blocked'
 export interface ProcessOutcome { ok: boolean; output: string; reason?: ProcessFailureReason }
 
-export interface TerminalSpawnOptions { cwd: string; shell?: string; cols?: number; rows?: number }
+export interface TerminalSpawnOptions { cwd: string; sessionPath?: string; shell?: string; cols?: number; rows?: number }
 export interface TerminalDataEvent { terminalId: string; data: string }
 export interface TerminalExitEvent { terminalId: string; exitCode: number; signal?: number }
 export interface TerminalSelectionContext { tabId: string; label: string; text: string; truncated: boolean }
-export interface TerminalPromptContext extends TerminalSelectionContext { cwd?: string; content: string; contentTruncated: boolean }
+export interface TerminalPromptContext extends TerminalSelectionContext { cwd?: string }
+export interface TerminalActiveContext { label: string; content: string; truncated: boolean }
 
 export type MessageEnterAction = 'queue' | 'steer'
 export type PromptDeliveryIntent = 'queue' | 'steer'
@@ -476,8 +477,10 @@ export interface PrimeWorkApi {
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>
+    bindSession(terminalId: string, sessionPath: string): Promise<boolean>
     input(terminalId: string, data: string): void
     resize(terminalId: string, cols: number, rows: number): void
+    setActiveContext(terminalId: string, context: TerminalActiveContext): void
     kill(terminalId: string): Promise<boolean>
     onData(callback: (event: TerminalDataEvent) => void): () => void
     onExit(callback: (event: TerminalExitEvent) => void): () => void

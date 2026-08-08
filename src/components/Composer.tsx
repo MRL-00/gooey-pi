@@ -178,7 +178,7 @@ export const Composer = memo(function Composer({
   const submit = async (intent: PromptDeliveryIntent = 'queue') => {
     const currentImages = imagesRef.current
     const currentAnnotations = annotationsRef.current
-    const currentTerminalContext = getTerminalContext?.()
+    const currentTerminalContext = terminalSelection?.text ? getTerminalContext?.() : undefined
     const hasTerminalSelection = Boolean(currentTerminalContext?.text)
     const prompt = value.trim() || (currentImages.length > 0
       ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
@@ -472,7 +472,7 @@ export const Composer = memo(function Composer({
             <pre>{terminalSelection.text}</pre>
           </div>
         ) : null}
-        {images.length || annotations.length || terminalSelection ? (
+        {images.length || annotations.length || terminalSelection?.text ? (
           <div className="composer-attachments" aria-label="Attachments">
             {annotations.length ? (
               <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
@@ -500,23 +500,20 @@ export const Composer = memo(function Composer({
                 </button>
               </div>
             ) : null}
-            {terminalSelection ? (
-              <div className={`composer-attachment composer-attachment--terminal ${terminalSelection.text ? 'has-selection' : ''}`} title={terminalSelection.text ? `Selected text from ${terminalSelection.label}` : `${terminalSelection.label} will be included with your message`}>
+            {terminalSelection?.text ? (
+              <div className="composer-attachment composer-attachment--terminal has-selection" title={`Selected text from ${terminalSelection.label}`}>
                 <button
                   type="button"
                   className="composer-attachment__expand"
-                  aria-expanded={terminalSelection.text ? terminalSelectionOpen : undefined}
-                  aria-label={terminalSelection.text ? `Inspect selected text from ${terminalSelection.label}` : `Active terminal ${terminalSelection.label}`}
-                  disabled={!terminalSelection.text}
+                  aria-expanded={terminalSelectionOpen}
+                  aria-label={`Inspect selected text from ${terminalSelection.label}`}
                   onClick={() => setTerminalSelectionOpen((open) => !open)}
                 >
                   <SquareTerminal size={13} />
                   <span>{terminalSelection.label}</span>
-                  {terminalSelection.text ? <><small>selected</small><ChevronDown size={11} className={terminalSelectionOpen ? 'is-open' : ''} /></> : null}
+                  <><small>selected</small><ChevronDown size={11} className={terminalSelectionOpen ? 'is-open' : ''} /></>
                 </button>
-                {terminalSelection.text ? (
-                  <button type="button" className="composer-attachment__clear" aria-label="Clear terminal selection" onClick={onClearTerminalSelection}><X size={12} /></button>
-                ) : null}
+                <button type="button" className="composer-attachment__clear" aria-label="Clear terminal selection" onClick={onClearTerminalSelection}><X size={12} /></button>
               </div>
             ) : null}
             {images.map((image) => (

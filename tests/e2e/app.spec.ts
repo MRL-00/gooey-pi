@@ -1027,6 +1027,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Enter')
     const outputLine = page.locator('.terminal-surface:not([hidden]) .xterm-rows > div').filter({ hasText: 'terminal-selection-marker' }).last()
     await expect(outputLine).toBeVisible()
+    await expect(page.locator('.composer-attachment--terminal')).toHaveCount(0)
 
     const selectOutput = async () => {
       const box = await outputLine.boundingBox()
@@ -1051,10 +1052,10 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('dialog', { name: 'Choose a release channel' })).toBeVisible()
     await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
     const prompt = JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8')) as { message: string }
-    expect(prompt.message).toContain('Explain the terminal output\n\n===== BEGIN ACTIVE TERMINAL CONTEXT =====')
+    expect(prompt.message).toContain('Explain the terminal output\n\n===== BEGIN TERMINAL SELECTION CONTEXT =====')
     expect(prompt.message).toContain('--- Selected text ---')
     expect(prompt.message).toContain('terminal-selection-marker')
-    expect(prompt.message).toContain('--- Terminal buffer ---')
+    expect(prompt.message).not.toContain('Terminal buffer')
     await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
   })
 

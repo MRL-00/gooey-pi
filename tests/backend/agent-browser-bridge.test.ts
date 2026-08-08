@@ -30,9 +30,14 @@ function fakeService() {
   return { calls, service: service as unknown as AgentBrowserService }
 }
 
+function fakeTerminals() {
+  return { readActive: vi.fn((sessionKey: string) => ({ label: 'zsh 2', cwd: '/project', content: '$ npm test\npassed', truncated: false, sessionKey })) }
+}
+
 async function fixture(scope: { cwd: string; sessionPath?: string } = { cwd: '/project', sessionPath: '/sessions/one.jsonl' }) {
   const { calls, service } = fakeService()
-  const bridge = new AgentBrowserBridge({ service, extensionPath: '/app/extensions/prime-work-browser.ts', skillPath: '/app/skills/prime-work-browser' })
+  const terminals = fakeTerminals()
+  const bridge = new AgentBrowserBridge({ service, terminals, extensionPath: '/app/extensions/prime-work-browser.ts', skillPath: '/app/skills/prime-work-browser' })
   await bridge.start()
   bridges.push(bridge)
   const environment = bridge.environmentFor(scope)
@@ -43,7 +48,7 @@ async function fixture(scope: { cwd: string; sessionPath?: string } = { cwd: '/p
     })
     return { status: response.status, body: await response.json() as { ok: boolean; result?: unknown; error?: string } }
   }
-  return { bridge, calls, environment, call }
+  return { bridge, calls, terminals, environment, call }
 }
 
 describe('AgentBrowserBridge', () => {
@@ -95,11 +100,20 @@ describe('AgentBrowserBridge', () => {
     expect(calls[1].sessionKey.endsWith('late.jsonl')).toBe(true)
   })
 
+  it('reads only the active terminal scoped to the runtime session', async () => {
+    const { terminals, call } = await fixture()
+    const response = await call('terminal.read', { sessionKey: '/sessions/other.jsonl' })
+    expect(response.status).toBe(200)
+    expect(terminals.readActive).toHaveBeenCalledOnce()
+    expect(terminals.readActive.mock.calls[0][0].endsWith('one.jsonl')).toBe(true)
+    expect(response.body.result).toMatchObject({ label: 'zsh 2', content: '$ npm test\npassed' })
+  })
+
   it('propagates service failures as bounded errors', async () => {
     const { calls, service } = fakeService()
     void calls
     ;(service as unknown as Record<string, unknown>).readPage = vi.fn(async () => { throw new Error('boom') })
-    const bridge = new AgentBrowserBridge({ service, extensionPath: '/x.ts', skillPath: '/s' })
+    const bridge = new AgentBrowserBridge({ service, terminals: fakeTerminals(), extensionPath: '/x.ts', skillPath: '/s' })
     await bridge.start()
     bridges.push(bridge)
     const environment = bridge.environmentFor({ cwd: '/project', sessionPath: '/sessions/one.jsonl' })

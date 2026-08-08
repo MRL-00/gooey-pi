@@ -17,6 +17,23 @@ const waitFor = async (predicate: () => boolean, timeout = 4_000) => {
 }
 
 describe('TerminalService', () => {
+  it('publishes only the active terminal snapshot for its session', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-context-')); dirs.push(cwd)
+    const owner = { id: 40, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => testShell, async (path) => path)
+    const first = await service.create(owner, { cwd, shell: testShell, cols: 80, rows: 24 })
+    const second = await service.create(owner, { cwd, sessionPath: '/sessions/one.jsonl', shell: testShell, cols: 80, rows: 24 })
+    await service.bindSession(owner, first.terminalId, '/sessions/one.jsonl')
+    service.setActiveContext(owner, first.terminalId, { label: 'zsh 1', content: '$ first', truncated: false })
+    expect(service.readActive('/sessions/one.jsonl')).toMatchObject({ label: 'zsh 1', content: '$ first', cwd })
+    service.setActiveContext(owner, second.terminalId, { label: 'zsh 2', content: '$ second', truncated: false })
+    expect(service.readActive('/sessions/one.jsonl')).toMatchObject({ label: 'zsh 2', content: '$ second', cwd })
+    await service.kill(owner, second.terminalId)
+    expect(service.readActive('/sessions/one.jsonl')).toBeUndefined()
+    await expect(service.bindSession(owner, first.terminalId, '/sessions/two.jsonl')).rejects.toThrow('another task')
+    await service.kill(owner, first.terminalId)
+  })
+
   it('kills descendant processes when a terminal closes', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-')); dirs.push(cwd)
     const pidFile = join(cwd, 'background.pid')

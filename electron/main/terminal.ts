@@ -5,8 +5,9 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import * as pty from 'node-pty'
-import type { TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { TerminalActiveContext, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 import { killProcessTree, safeChildEnvironment } from './process-utils'
+import { canonicalSessionPath } from './session-paths'
 import { isPathWithin, rejectUnknownKeys, requireInteger, requireRecord, requireString } from './validation'
 
 interface OwnedTerminal {
@@ -15,6 +16,8 @@ interface OwnedTerminal {
   ownerId: number
   cwd: string
   shell: string
+  sessionPath?: string
+  activeContext?: TerminalActiveContext
   outputWindowStartedAt: number
   outputWindowBytes: number
   pendingOutput: string
@@ -48,6 +51,7 @@ function systemShells(): Set<string> {
 const MAX_TERMINAL_OUTPUT_BYTES_PER_SECOND = 16 * 1024 * 1024
 const MAX_TOTAL_TERMINAL_OUTPUT_BYTES_PER_SECOND = 32 * 1024 * 1024
 const MAX_TERMINAL_IPC_CHUNK_BYTES = 1024 * 1024
+const MAX_TERMINAL_CONTEXT_CHARS = 48 * 1024
 
 const execFileAsync = promisify(execFile)
 
@@ -80,6 +84,7 @@ function shellArguments(shell: string): string[] {
 
 export class TerminalService {
   private readonly terminals = new Map<string, OwnedTerminal>()
+  private readonly activeBySession = new Map<string, string>()
   private readonly terminationPromises = new Map<OwnedTerminal, Promise<void>>()
   private readonly allowedShells = systemShells()
   private totalOutputWindowStartedAt = Date.now()
@@ -88,6 +93,7 @@ export class TerminalService {
   constructor(
     private readonly authorizeCwd: (cwd: string) => Promise<string>,
     private readonly configuredShell: () => string,
+    private readonly authorizeSessionPath: (path: string) => Promise<string> = async (path) => canonicalSessionPath(path),
   ) {}
 
   validateShell(value: unknown): string {
@@ -110,8 +116,11 @@ export class TerminalService {
 
   async create(owner: WebContents, raw: unknown): Promise<{ terminalId: string; shell: string }> {
     const options = requireRecord(raw, 'terminal options')
-    rejectUnknownKeys(options, ['cwd', 'shell', 'cols', 'rows'], 'terminal options')
+    rejectUnknownKeys(options, ['cwd', 'sessionPath', 'shell', 'cols', 'rows'], 'terminal options')
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
+    const sessionPath = options.sessionPath === undefined
+      ? undefined
+      : canonicalSessionPath(await this.authorizeSessionPath(requireString(options.sessionPath, 'sessionPath', { min: 1, max: 4096 })))
     if (owner.isDestroyed()) throw new Error('Terminal owner was closed')
     if (this.terminals.size >= 8) throw new Error('Prime Work supports at most eight concurrent terminals')
     const shell = this.validateShell(options.shell ?? this.configuredShell())
@@ -121,12 +130,13 @@ export class TerminalService {
     const terminal = pty.spawn(shell, shellArguments(shell), { cwd, cols, rows, name: 'xterm-256color', env })
     if (owner.isDestroyed()) { try { terminal.kill() } catch { /* owner closed during spawn */ }; throw new Error('Terminal owner was closed') }
     const terminalId = randomUUID()
-    const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, cwd, shell, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false, exited: false }
+    const owned: OwnedTerminal = { terminal, owner, ownerId: owner.id, cwd, shell, sessionPath, outputWindowStartedAt: Date.now(), outputWindowBytes: 0, pendingOutput: '', pendingOutputBytes: 0, terminating: false, exited: false }
     this.terminals.set(terminalId, owned)
     terminal.onData((data) => this.forwardOutput(terminalId, owned, data))
     terminal.onExit(({ exitCode, signal }) => {
       owned.exited = true
       this.terminals.delete(terminalId)
+      this.removeActive(terminalId, owned)
       if (owned.flushTimer) clearTimeout(owned.flushTimer)
       this.flushOutput(terminalId, owned)
       if (!owner.isDestroyed()) { try { owner.send('terminal:exit', { terminalId, exitCode, signal } satisfies TerminalExitEvent) } catch { /* renderer exited */ } }
@@ -140,9 +150,39 @@ export class TerminalService {
     terminal.terminal.write(data)
   }
 
+  async bindSession(owner: WebContents, idValue: unknown, sessionPathValue: unknown): Promise<boolean> {
+    const id = requireString(idValue, 'terminalId', { min: 1, max: 128 })
+    this.owned(owner, id)
+    const sessionPath = canonicalSessionPath(await this.authorizeSessionPath(requireString(sessionPathValue, 'sessionPath', { min: 1, max: 4096 })))
+    const terminal = this.owned(owner, id)
+    if (terminal.sessionPath && terminal.sessionPath !== sessionPath) throw new Error('Terminal already belongs to another task')
+    terminal.sessionPath = sessionPath
+    return true
+  }
+
   resize(owner: WebContents, idValue: unknown, colsValue: unknown, rowsValue: unknown): void {
     const terminal = this.owned(owner, idValue)
     terminal.terminal.resize(requireInteger(colsValue, 'cols', 2, 1_000), requireInteger(rowsValue, 'rows', 1, 1_000))
+  }
+
+  setActiveContext(owner: WebContents, idValue: unknown, raw: unknown): void {
+    const terminal = this.owned(owner, idValue)
+    if (!terminal.sessionPath) return
+    const context = requireRecord(raw, 'terminal context')
+    rejectUnknownKeys(context, ['label', 'content', 'truncated'], 'terminal context')
+    const label = requireString(context.label, 'terminal label', { min: 1, max: 128, trim: true })
+    const content = requireString(context.content, 'terminal content', { max: MAX_TERMINAL_CONTEXT_CHARS })
+    if (typeof context.truncated !== 'boolean') throw new TypeError('terminal context truncated must be a boolean')
+    terminal.activeContext = { label, content, truncated: context.truncated }
+    this.activeBySession.set(terminal.sessionPath, requireString(idValue, 'terminalId', { min: 1, max: 128 }))
+  }
+
+  readActive(sessionPathValue: string): (TerminalActiveContext & { cwd: string }) | undefined {
+    const sessionPath = canonicalSessionPath(sessionPathValue)
+    const id = this.activeBySession.get(sessionPath)
+    const terminal = id ? this.terminals.get(id) : undefined
+    if (!terminal || terminal.sessionPath !== sessionPath || !terminal.activeContext || terminal.terminating) return undefined
+    return { ...terminal.activeContext, cwd: terminal.cwd }
   }
 
   async kill(owner: WebContents, idValue: unknown): Promise<boolean> {
@@ -198,6 +238,7 @@ export class TerminalService {
     if (active) return active
     owned.terminating = true
     this.terminals.delete(id)
+    this.removeActive(id, owned)
     const operation = this.terminateProcess(id, owned)
     this.terminationPromises.set(owned, operation)
     void operation.finally(() => { if (this.terminationPromises.get(owned) === operation) this.terminationPromises.delete(owned) })
@@ -242,5 +283,9 @@ export class TerminalService {
     const terminal = this.terminals.get(id)
     if (!terminal || terminal.ownerId !== owner.id) throw new Error('Terminal was not found')
     return terminal
+  }
+
+  private removeActive(id: string, terminal: OwnedTerminal): void {
+    if (terminal.sessionPath && this.activeBySession.get(terminal.sessionPath) === id) this.activeBySession.delete(terminal.sessionPath)
   }
 }

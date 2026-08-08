@@ -51,8 +51,10 @@ const api: PrimeWorkApi = {
   },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),
+    bindSession: (terminalId, sessionPath) => ipcRenderer.invoke('terminal:bind-session', terminalId, sessionPath),
     input: (terminalId, data) => { ipcRenderer.send('terminal:input', terminalId, data) },
     resize: (terminalId, cols, rows) => { ipcRenderer.send('terminal:resize', terminalId, cols, rows) },
+    setActiveContext: (terminalId, context) => { ipcRenderer.send('terminal:set-active-context', terminalId, context) },
     kill: (terminalId) => ipcRenderer.invoke('terminal:kill', terminalId),
     onData: (callback) => subscribe<TerminalDataEvent>('terminal:data', callback),
     onExit: (callback) => subscribe<TerminalExitEvent>('terminal:exit', callback),

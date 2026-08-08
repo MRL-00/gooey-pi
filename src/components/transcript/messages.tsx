@@ -180,10 +180,10 @@ function UserText({ text }: { text: string }) {
           <pre>{annotations.block}</pre>
         </details>
       ) : null}
-      {terminal.block ? (
+      {terminal.selection ? (
         <details className="user-annotations user-terminal-context">
-          <summary>{terminal.hasSelection ? `Selected text and active buffer from ${terminal.label ?? 'terminal'}` : `Active buffer from ${terminal.label ?? 'terminal'}`}</summary>
-          <pre>{terminal.block}</pre>
+          <summary>{`Selected text from ${terminal.label ?? 'terminal'}`}</summary>
+          <pre>{terminal.selection}</pre>
         </details>
       ) : null}
     </>

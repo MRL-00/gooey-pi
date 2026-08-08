@@ -150,8 +150,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
+  handle('terminal:bind-session', (event, terminalId, sessionPath) => services.terminals.bindSession(event.sender, terminalId, sessionPath))
   on('terminal:input', (event, terminalId, data) => services.terminals.input(event.sender, terminalId, data))
   on('terminal:resize', (event, terminalId, cols, rows) => services.terminals.resize(event.sender, terminalId, cols, rows))
+  on('terminal:set-active-context', (event, terminalId, context) => services.terminals.setActiveContext(event.sender, terminalId, context))
   handle('terminal:kill', (event, terminalId) => services.terminals.kill(event.sender, terminalId))
 
   handle('git:status', (_event, cwd) => services.git.status(cwd))

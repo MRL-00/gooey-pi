@@ -213,11 +213,11 @@ describe('Composer annotation attachment', () => {
 
 describe('Composer terminal context attachment', () => {
   const selection: TerminalSelectionContext = { tabId: 'terminal-2', label: 'zsh 2', text: 'npm test\n1 failed', truncated: false }
-  const terminalContext: TerminalPromptContext = { ...selection, cwd: '/workspace', content: '$ npm test\n1 failed', contentTruncated: false }
+  const terminalContext: TerminalPromptContext = { ...selection, cwd: '/workspace' }
 
-  it('shows the active terminal without enabling an empty send until text is selected', () => {
+  it('does not show an attachment or enable send without selected terminal text', () => {
     renderComposer({ terminalSelection: { ...selection, text: '' } })
-    expect(container.querySelector('.composer-attachment--terminal')?.textContent).toContain('zsh 2')
+    expect(container.querySelector('.composer-attachment--terminal')).toBeNull()
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
   })
 
@@ -239,16 +239,16 @@ describe('Composer terminal context attachment', () => {
     expect(container.querySelector('button[aria-label="Clear terminal selection"]')).toBeNull()
   })
 
-  it('reads and appends the current active buffer only when submitting', async () => {
+  it('reads and appends only the current terminal selection when submitting', async () => {
     const getTerminalContext = vi.fn(() => terminalContext)
     const { onSend } = renderComposer({ terminalSelection: selection, getTerminalContext })
     expect(getTerminalContext).not.toHaveBeenCalled()
     await setDraft('Explain the failure')
     await clickSend()
     expect(getTerminalContext).toHaveBeenCalledTimes(1)
-    expect(onSend.mock.calls[0][0]).toContain('Explain the failure\n\n===== BEGIN ACTIVE TERMINAL CONTEXT =====')
+    expect(onSend.mock.calls[0][0]).toContain('Explain the failure\n\n===== BEGIN TERMINAL SELECTION CONTEXT =====')
     expect(onSend.mock.calls[0][0]).toContain('--- Selected text ---\nnpm test\n1 failed')
-    expect(onSend.mock.calls[0][0]).toContain('--- Terminal buffer ---\n$ npm test\n1 failed')
+    expect(onSend.mock.calls[0][0]).not.toContain('Terminal buffer')
   })
 })
 

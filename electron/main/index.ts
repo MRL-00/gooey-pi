@@ -318,7 +318,11 @@ async function bootstrap(): Promise<void> {
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
-  terminals = new TerminalService((cwd) => projects.authorizeCwd(cwd), () => stateStore.getSettings().terminalShell)
+  terminals = new TerminalService(
+    (cwd) => projects.authorizeCwd(cwd),
+    () => stateStore.getSettings().terminalShell,
+    (path) => sessions.requireSessionPath(path),
+  )
   projects.bindProviders({
     sessions: listCatalogSessions,
     branch: (cwd) => git.branch(cwd),
@@ -391,7 +395,7 @@ async function bootstrap(): Promise<void> {
   const browserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'prime-work-browser.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'prime-work-browser.ts')
-  const browserBridge = new AgentBrowserBridge({ service: browserService, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
+  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
   await browserBridge.start()
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
