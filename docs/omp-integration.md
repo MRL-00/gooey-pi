@@ -46,7 +46,9 @@ The renderer sends the same command objects it sends today; the OMP command sche
 | `set_service_tier {serviceTier}` | `set_fast_mode {enabled: serviceTier === 'priority'}` |
 | everything else | unchanged (`prompt`, `steer`, `follow_up`, `abort`, `new_session`, `get_state`, `set_model`, `set_thinking_level`, `switch_session`, `compact`, `set_auto_compaction`, `set_auto_retry`, `set_session_name`, `set_steering_mode`, `set_follow_up_mode`, `get_*`, `extension_ui_response`) |
 
-Prime-only commands (`send_message`, heartbeat family, `clone`) are rejected by the OMP schema with a clear error. `prompt` responses may carry `data.agentInvoked === false` (local slash command, no agent turn); the runtime must not treat that as a hung turn — completion is `agent_end` (with `isTerminal !== false`) **or** `agentInvoked:false` / a later `prompt_result` frame.
+Prime-only commands (`send_message`, heartbeat family, `clone`) are rejected by the OMP schema with a clear error. `prompt` responses may carry `data.agentInvoked === false` (local slash command, no agent turn) and OMP may later push a standalone `prompt_result` frame. No dedicated handling exists or is needed: Prime Work never blocks on per-prompt turn completion (the renderer's busy state is event- and state-driven, and `runPromptToCompletion` is a Prime-only scheduled-run path), so a local-only prompt simply completes its request/response cycle, and `prompt_result` frames are forwarded as unknown events the reducer ignores.
+
+The OMP argv contract (`--mode rpc`, `--cwd`, `--resume`, `--model`, `--thinking`, `--approval-mode`, `--extension`) was verified live against omp 17.2.11: `omp --help` lists every long form, and the in-app validation run spawned a runtime with all of them accepted.
 
 ### Event normalization (main process, before forwarding)
 
