@@ -321,7 +321,7 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
                 <span>{tab.shellName} {tab.number}</span>
                 <span className={`terminal-live-dot ${tab.connected ? 'is-connected' : ''}`}/>
               </button>
-              <button type="button" className="terminal-tab__close" aria-label={`Close terminal ${tab.number}`} onClick={() => closeTerminal(tab.id)}><X size={11}/></button>
+              <button type="button" className="terminal-tab__close" aria-label={`Close tab ${tab.number}`} onClick={() => closeTerminal(tab.id)}><X size={11}/></button>
             </div>
           ))}
           <IconButton label="New terminal" size="small" disabled={tabs.length >= MAX_TERMINAL_TABS} onClick={addTerminal}><Plus size={14}/></IconButton>

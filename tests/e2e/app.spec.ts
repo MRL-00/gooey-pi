@@ -364,7 +364,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
     await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
@@ -929,7 +929,7 @@ test.describe('Prime Work desktop smoke', () => {
     await terminalHandle.focus()
     await page.keyboard.press('ArrowDown')
     expect((await drawer.boundingBox())!.height).toBeLessThan(terminalAfter!.height)
-    await page.getByLabel('Close terminal').click()
+    await page.getByLabel('Close terminal', { exact: true }).click()
   })
 
   test('recreates the terminal in the active secondary-folder cwd', async () => {
@@ -951,7 +951,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.terminal-drawer .xterm-rows')).not.toContainText('secondary-project')
   })
 
-  test('opens a real PTY and exposes only functional terminal controls', async () => {
+  test('opens independent terminal tabs inside the conversation column', async () => {
     const project = await page.evaluate(async () => {
       const projects = await window.prime.projects.list()
       const selected = projects[0]
@@ -962,15 +962,94 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: 'Summary' }).click()
     await page.getByLabel(/Toggle terminal/).click()
     await expect(page.locator('.terminal-drawer .xterm')).toBeVisible()
-    await expect(page.getByLabel(/New terminal/)).toHaveCount(0)
+    await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(1)
+    const activeTerminal = page.locator('.terminal-surface:not([hidden]) .xterm-helper-textarea')
+    await activeTerminal.click()
+    await page.keyboard.type('echo first-terminal')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).toContainText('first-terminal')
+
+    await page.getByLabel('New terminal').click()
+    await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(2)
+    await activeTerminal.click()
+    await page.keyboard.type('echo second-terminal')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).toContainText('second-terminal')
+
+    await page.getByRole('tab', { name: /zsh 1/ }).click()
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).toContainText('first-terminal')
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).not.toContainText('second-terminal')
+
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(1)
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).not.toContainText(/first-terminal|second-terminal/)
     await expect(page.getByLabel(/Split terminal/)).toHaveCount(0)
+
+    const geometry = await page.evaluate(() => {
+      const session = document.querySelector('.session-workspace')!.getBoundingClientRect()
+      const conversation = document.querySelector('.conversation-column')!.getBoundingClientRect()
+      const terminal = document.querySelector('.terminal-drawer')!.getBoundingClientRect()
+      const inspector = document.querySelector('.inspector')!.getBoundingClientRect()
+      return {
+        terminalRight: terminal.right,
+        conversationRight: conversation.right,
+        sessionTop: session.top,
+        sessionBottom: session.bottom,
+        inspectorTop: inspector.top,
+        inspectorBottom: inspector.bottom,
+      }
+    })
+    expect(Math.abs(geometry.terminalRight - geometry.conversationRight)).toBeLessThanOrEqual(1)
+    expect(Math.abs(geometry.inspectorTop - geometry.sessionTop)).toBeLessThanOrEqual(1)
+    expect(Math.abs(geometry.inspectorBottom - geometry.sessionBottom)).toBeLessThanOrEqual(1)
+
     const drawer = page.locator('.terminal-drawer')
     const before = await drawer.evaluate((node) => node.getBoundingClientRect().height)
     await page.getByLabel('Maximize terminal').click()
     await expect(drawer).toHaveClass(/is-maximized/)
     expect(await drawer.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThan(before)
     await page.getByLabel('Restore terminal').click()
-    await page.getByLabel('Close terminal').click()
+    await page.getByLabel('Close terminal', { exact: true }).click()
+  })
+
+  test('attaches and removes active terminal selection context', async () => {
+    await page.getByRole('tab', { name: 'Summary' }).click()
+    await page.getByLabel(/Toggle terminal/).click()
+    const input = page.locator('.terminal-surface:not([hidden]) .xterm-helper-textarea')
+    await input.click()
+    await page.keyboard.type("printf 'terminal-selection-marker\\n'")
+    await page.keyboard.press('Enter')
+    const outputLine = page.locator('.terminal-surface:not([hidden]) .xterm-rows > div').filter({ hasText: 'terminal-selection-marker' }).last()
+    await expect(outputLine).toBeVisible()
+
+    const selectOutput = async () => {
+      const box = await outputLine.boundingBox()
+      expect(box).not.toBeNull()
+      await page.mouse.move(box!.x + 2, box!.y + box!.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(Math.min(box!.x + box!.width - 2, box!.x + 190), box!.y + box!.height / 2, { steps: 5 })
+      await page.mouse.up()
+      await expect(page.getByLabel(/Inspect selected text from/)).toBeVisible()
+    }
+
+    await selectOutput()
+    const clearBox = await outputLine.boundingBox()
+    expect(clearBox).not.toBeNull()
+    await page.mouse.click(clearBox!.x + 2, clearBox!.y + clearBox!.height / 2)
+    await expect(page.getByLabel(/Inspect selected text from/)).toHaveCount(0)
+    await selectOutput()
+
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Explain the terminal output')
+    await composer.press('Enter')
+    await expect(page.getByRole('dialog', { name: 'Choose a release channel' })).toBeVisible()
+    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
+    const prompt = JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8')) as { message: string }
+    expect(prompt.message).toContain('Explain the terminal output\n\n===== BEGIN ACTIVE TERMINAL CONTEXT =====')
+    expect(prompt.message).toContain('--- Selected text ---')
+    expect(prompt.message).toContain('terminal-selection-marker')
+    expect(prompt.message).toContain('--- Terminal buffer ---')
+    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
   })
 
   test('closes and recreates the last macOS window cleanly', async () => {
