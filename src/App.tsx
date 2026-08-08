@@ -271,16 +271,30 @@ export default function App() {
   })
   const handleVoiceTaskStarted = useCallback(async (task: VoiceTaskStarted) => {
     if (!bridge) return
-    const project = projects.find((candidate) => candidate.id === task.projectId && candidate.harness === task.harness)
-    if (!project) { reportError('The voice task started, but its project is no longer available.'); return }
+    const projectCatalog = task.harness === activeHarness ? projects : await bridge.projects.list(task.harness)
+    const project = projectCatalog.find((candidate) => candidate.id === task.projectId && candidate.harness === task.harness)
+    if (!project) {
+      const error = new Error('The voice task started, but its project is no longer available.')
+      reportError(error)
+      throw error
+    }
     try {
-      const runtime = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === task.runtimeId)
+      const [runtime, sessionCatalog] = await Promise.all([
+        bridge.agent.list().then((items) => items.find((candidate) => candidate.runtimeId === task.runtimeId)),
+        bridge.sessions.list(project.primaryFolder, true, task.harness),
+      ])
       if (!runtime) throw new Error('The voice task started, but its runtime could not be attached.')
-      workspace.activateWorkspace(project, undefined, runtime)
+      const session = sessionCatalog.find((candidate) => candidate.filePath === task.sessionFile)
+      if (!session) throw new Error('The voice task started, but its saved session was not found in the project catalog.')
+      if (task.harness !== activeHarness) await settingsState.updateSettings({ activeHarness: task.harness })
+      setProjects(projectCatalog)
+      setSessions(sessionCatalog)
+      workspace.activateWorkspace(project, session, runtime)
       setView('session')
       setPaletteOpen(false)
-    } catch (error) { reportError(error) }
-  }, [bridge, projects, reportError, workspace.activateWorkspace])
+      setToast(`Started “${session.title}” in ${project.name} with ${task.harness === 'omp' ? 'OMP' : 'Prime'}.`)
+    } catch (error) { reportError(error); throw error }
+  }, [activeHarness, bridge, projects, reportError, settingsState.updateSettings, workspace.activateWorkspace])
   const closeTerminal = useCallback((id: string) => {
     terminalDrawerRefs.current.delete(id)
     setTerminalSessions((current) => current.filter((terminal) => terminal.id !== id))

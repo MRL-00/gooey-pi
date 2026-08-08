@@ -91,7 +91,18 @@ describe('VoiceService', () => {
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'prime-project', prompt: 'Implement the feature', title: 'Voice feature' } })
     expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
     expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'prompt', message: 'Implement the feature' })
-    expect(result.task).toMatchObject({ projectId: 'prime-project', runtimeId: 'runtime-1' })
+    expect(agent.command).toHaveBeenCalledWith('runtime-1', { type: 'get_state' })
+    expect(result.task).toEqual({
+      projectId: 'prime-project', projectName: 'prime project', harness: 'prime',
+      runtimeId: 'runtime-1', sessionFile: '/tmp/session.jsonl',
+    })
+  })
+
+  it('does not report success when the harness fails to expose a saved session', async () => {
+    const { service, agent } = makeService()
+    agent.list.mockReturnValue([])
+    await expect(service.executeTool({ name: 'start_task', arguments: { project_id: 'prime-project', prompt: 'Implement it' } })).rejects.toThrow(/did not create a visible session/)
+    expect(agent.stop).toHaveBeenCalledWith('runtime-1')
   })
 
   it('never promotes an inferred project into a voice task grant', async () => {

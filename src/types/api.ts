@@ -393,7 +393,7 @@ export interface VoiceTaskStarted {
   projectName: string
   harness: HarnessId
   runtimeId: string
-  sessionFile?: string
+  sessionFile: string
 }
 
 export type VoiceToolRequest =

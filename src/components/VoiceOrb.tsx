@@ -7,7 +7,7 @@ type OrbState = 'connecting' | 'listening' | 'user-speaking' | 'thinking' | 'age
 interface VoiceOrbProps {
   voice: PrimeWorkApi['voice']
   onClose(): void
-  onTaskStarted(task: VoiceTaskStarted): void
+  onTaskStarted(task: VoiceTaskStarted): Promise<void>
 }
 
 interface OrbPosition { x: number; y: number }
@@ -39,6 +39,8 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState('')
+  const [taskReceipt, setTaskReceipt] = useState<VoiceTaskStarted | null>(null)
+  const [taskOpened, setTaskOpened] = useState(false)
   const [position, setPosition] = useState(initialPosition)
   const streamRef = useRef<MediaStream | null>(null)
   const channelRef = useRef<RTCDataChannel | null>(null)
@@ -60,15 +62,29 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
       if (!request) return
       handledCallsRef.current.add(callId)
       setOrbState('thinking')
+      if (request.name === 'start_task') setError('')
       try {
         const result = await voice.executeTool(request)
         if (!active || channel.readyState !== 'open') return
         channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: result.output } }))
         channel.send(JSON.stringify({ type: 'response.create' }))
-        if (result.task) onTaskStarted(result.task)
+        if (result.task) {
+          setTaskReceipt(result.task)
+          setTaskOpened(false)
+          void onTaskStarted(result.task).then(() => {
+            if (active) setTaskOpened(true)
+          }).catch((failure) => {
+            if (!active) return
+            setError(`The task started, but Prime Work could not open it: ${failure instanceof Error ? failure.message : 'Unknown error'}`)
+          })
+        }
       } catch (failure) {
         if (!active || channel.readyState !== 'open') return
         const message = failure instanceof Error ? failure.message : 'Voice tool failed'
+        if (request.name === 'start_task') {
+          setTaskReceipt(null)
+          setError(`Task was not started: ${message}`)
+        }
         channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify({ error: message }) } }))
         channel.send(JSON.stringify({ type: 'response.create' }))
       }
@@ -164,6 +180,11 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
         </div>
       </div>
       {error ? <p role="alert">{error}</p> : null}
+      {taskReceipt ? <div className="voice-orb__receipt" role="status">
+        <strong>Task started</strong>
+        <span>{taskReceipt.projectName} · {taskReceipt.harness === 'omp' ? 'OMP' : 'Prime'}</span>
+        <small>{taskOpened ? 'Opened in the sidebar' : 'Opening task…'}</small>
+      </div> : null}
     </aside>
   )
 }

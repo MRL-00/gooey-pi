@@ -15,6 +15,10 @@
 .voice-orb__controls button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: var(--surface-raised); box-shadow: 0 4px 12px color-mix(in srgb, #000 16%, transparent); }
 .voice-orb__controls button:hover { color: var(--text); background: var(--surface-hover); }
 .voice-orb > p { width: 210px; margin: 3px 0 0 50%; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--surface-raised); font-size: 9.5px; line-height: 1.35; transform: translateX(-50%); }
+.voice-orb__receipt { width: 210px; margin: 3px 0 0 50%; padding: 8px 10px; display: grid; gap: 2px; border: 1px solid color-mix(in srgb, var(--success) 38%, var(--border)); border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent); transform: translateX(-50%); }
+.voice-orb__receipt strong { color: var(--success); font-size: 10.5px; font-weight: 680; }
+.voice-orb__receipt span { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.voice-orb__receipt small { color: var(--text-secondary); font-size: 9px; }
 .voice-orb--user-speaking .voice-orb__core { animation: orb-user 520ms ease-in-out infinite alternate; }
 .voice-orb--user-speaking .voice-orb__halo { opacity: .58; animation-duration: 760ms; }
 .voice-orb--thinking .voice-orb__core { animation: orb-thinking 1.7s ease-in-out infinite; }

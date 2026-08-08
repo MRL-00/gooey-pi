@@ -151,6 +151,7 @@ function orchestrationInstructions(): string {
     'Call start_task only when the user explicitly asks you to start, create, kick off, delegate, or run a task.',
     'An explicit request to start work is sufficient authorization. Do not ask for a second confirmation.',
     'Only start tasks inside projects returned by list_projects. Never invent project IDs.',
+    'When the user asks to start work, you must call start_task. Never say a task started unless start_task returned started true.',
     'After starting a task, say which project and harness received it.',
   ].join(' ')
 }
@@ -320,11 +321,16 @@ export class VoiceService {
     try {
       await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
       if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
+      await manager.command(runtime.runtimeId, { type: 'get_state' })
     } catch (error) {
       await manager.stop(runtime.runtimeId).catch(() => false)
       throw error
     }
     const current = manager.list().find((candidate) => candidate.runtimeId === runtime.runtimeId) ?? runtime
+    if (!current.sessionFile) {
+      await manager.stop(runtime.runtimeId).catch(() => false)
+      throw new Error(`${project.harness === 'omp' ? 'OMP' : 'Prime Agent'} accepted the prompt but did not create a visible session. The task was not reported as started.`)
+    }
     const task: VoiceTaskStarted = {
       projectId: project.id, projectName: project.name, harness: project.harness,
       runtimeId: current.runtimeId, sessionFile: current.sessionFile,

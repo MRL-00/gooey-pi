@@ -69,9 +69,9 @@ describe('realtime voice surface', () => {
   })
 
   it('executes a start_task call and reports the started task to the workspace', async () => {
-    const task = { projectId: 'p1', projectName: 'Prime', harness: 'prime' as const, runtimeId: 'r1' }
+    const task = { projectId: 'p1', projectName: 'Prime', harness: 'prime' as const, runtimeId: 'r1', sessionFile: '/tmp/session.jsonl' }
     const executeTool = vi.fn(async () => ({ output: '{"started":true}', task }))
-    const onTaskStarted = vi.fn()
+    const onTaskStarted = vi.fn(async () => undefined)
     const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool } as unknown as PrimeWorkApi['voice']
     await act(async () => root.render(<VoiceOrb voice={voice} onClose={vi.fn()} onTaskStarted={onTaskStarted} />))
     await act(async () => {
@@ -80,5 +80,20 @@ describe('realtime voice surface', () => {
     })
     expect(executeTool).toHaveBeenCalledWith({ name: 'start_task', arguments: { project_id: 'p1', prompt: 'Build it' } })
     expect(onTaskStarted).toHaveBeenCalledWith(task)
+    expect(container.textContent).toContain('Task started')
+    expect(container.textContent).toContain('Prime · Prime')
+    expect(container.textContent).toContain('Opened in the sidebar')
+  })
+
+  it('shows a durable failure instead of claiming an unconfirmed task started', async () => {
+    const executeTool = vi.fn(async () => { throw new Error('OMP did not create a visible session') })
+    const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} onClose={vi.fn()} onTaskStarted={vi.fn(async () => undefined)} />))
+    await act(async () => {
+      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-2', name: 'start_task', arguments: JSON.stringify({ project_id: 'p1', prompt: 'Build it' }) }) }))
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('Task was not started: OMP did not create a visible session')
+    expect(container.textContent).not.toContain('Task started')
   })
 })
