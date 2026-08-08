@@ -332,12 +332,29 @@ test.describe('Prime Work desktop smoke', () => {
     await composer.press('Enter')
     await expect(page.getByRole('button', { name: 'Stop Prime' })).toBeVisible()
 
+    await composer.fill('send this queued task now')
+    await composer.press('Enter')
+    const queuedTray = page.getByRole('region', { name: 'Queued messages' })
+    await queuedTray.locator('.composer-queue__item').hover()
+    await expect(queuedTray.locator('.composer-queue__actions')).toHaveCSS('opacity', '1')
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(1)
+    const sendImmediately = queuedTray.getByRole('button', { name: /^Send queued message immediately:/ })
+    await expect(sendImmediately).toHaveAttribute('title', 'Send queued message immediately')
+    await sendImmediately.click()
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(0)
+    const queuedSteerMarker = join(fixtureRoot, 'steer-args.json')
+    await expect.poll(() => existsSync(queuedSteerMarker)).toBe(true)
+    expect(JSON.parse(readFileSync(queuedSteerMarker, 'utf8'))).toMatchObject({ type: 'steer', message: 'send this queued task now' })
+
     await composer.fill('change direction now')
     await composer.press('Control+Enter')
     await expect(page.locator('.message--user').filter({ hasText: 'change direction now' })).toBeVisible()
 
     const marker = join(fixtureRoot, 'steer-args.json')
-    await expect.poll(() => existsSync(marker)).toBe(true)
+    await expect.poll(() => {
+      if (!existsSync(marker)) return ''
+      return JSON.parse(readFileSync(marker, 'utf8')).message
+    }).toBe('change direction now')
     expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({ type: 'steer', message: 'change direction now' })
     await expect(composer).toHaveValue('')
   })

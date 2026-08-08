@@ -20,7 +20,8 @@ describe('composer queue tray', () => {
     container.remove()
   })
 
-  it('shows user queues in one tray and supports editing or deleting them', () => {
+  it('shows queued messages with immediate send, edit, and delete actions', () => {
+    const onSend = vi.fn()
     const onEdit = vi.fn()
     const onDelete = vi.fn()
     const queued = { id: 'queue-1', text: 'run tests', intent: 'queue' as const }
@@ -46,7 +47,7 @@ describe('composer queue tray', () => {
       onModelChange={vi.fn()}
       onEffortChange={vi.fn()}
       onFastChange={vi.fn()}
-      onSend={vi.fn()}
+      onSend={onSend}
       onStop={vi.fn()}
     />))
 
@@ -54,6 +55,16 @@ describe('composer queue tray', () => {
     expect(tray?.querySelectorAll('.composer-queue__item')).toHaveLength(1)
     expect(tray?.textContent).toContain('run tests')
     expect(tray?.nextElementSibling?.classList.contains('composer')).toBe(true)
+    const actions = [...(tray?.querySelectorAll<HTMLButtonElement>('.composer-queue__action') ?? [])]
+    expect(actions.map((action) => action.title)).toEqual([
+      'Send queued message immediately',
+      'Edit queued message',
+      'Delete queued message',
+    ])
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Send queued message immediately"]')?.click())
+    expect(onDelete).toHaveBeenCalledWith(queued)
+    expect(onSend).toHaveBeenCalledWith('run tests', [], 'steer')
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label^="Edit queued message"]')?.click())
     expect(onEdit).toHaveBeenCalledWith(queued)
