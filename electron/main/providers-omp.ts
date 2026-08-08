@@ -1,3 +1,4 @@
+import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
 import { runProcess, safeChildEnvironment } from './process-utils'
@@ -42,13 +43,15 @@ function toThinkingLevels(reasoning: boolean, thinking: unknown): PrimeThinkingL
 /**
  * OMP carries no per-model fast-mode metadata: its `set_fast_mode` command is
  * a session-level toggle. Advertising support on every model would surface
- * the Fast toggle across the UI (Composer, schedules, provider settings) for
- * models where the flag does nothing, so this mirrors Prime's
- * `supportsFastMode` predicate — the Codex gpt-5.4/5.5/5.6 family — which is
- * the set of models fast mode actually affects in both harnesses.
+ * the Fast toggle across the UI for models where the flag does nothing, so
+ * this delegates to the same `supportsFastMode` predicate Prime uses — the
+ * model family can then never drift between harnesses. OMP's catalog JSON
+ * does not report the API variant, but the openai-codex provider maps 1:1
+ * onto the openai-codex-responses API the predicate requires, and every other
+ * provider fails its provider check regardless of the API value.
  */
 function toFastModeSupported(provider: string, id: string): boolean {
-  return provider === 'openai-codex' && (id === 'gpt-5.4' || id === 'gpt-5.5' || id === 'gpt-5.6' || id.startsWith('gpt-5.6-'))
+  return supportsFastMode({ provider, id, api: 'openai-codex-responses' } as Parameters<typeof supportsFastMode>[0])
 }
 
 /** Validates one untrusted CLI model entry; returns null when any field is hostile or malformed. */
