@@ -65,6 +65,31 @@ function cleanText(value: unknown, label: string, max = 1_000_000): string {
   return requireString(value, label, { min: 1, max, trim: true })
 }
 
+function localContext(harness: HarnessId): Record<string, string> {
+  const now = new Date()
+  const resolved = Intl.DateTimeFormat().resolvedOptions()
+  const offsetMinutes = -now.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const hours = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')
+  const minutes = String(Math.abs(offsetMinutes) % 60).padStart(2, '0')
+  const timeZoneParts = resolved.timeZone.split('/')
+  const timeZoneCity = timeZoneParts.length > 1 ? timeZoneParts.at(-1)?.replaceAll('_', ' ') : undefined
+  const countryCode = new Intl.Locale(resolved.locale).region
+  const locationHint = [timeZoneCity, countryCode].filter(Boolean).join(', ')
+  return {
+    local_time: new Intl.DateTimeFormat(resolved.locale, { dateStyle: 'full', timeStyle: 'long', timeZone: resolved.timeZone }).format(now),
+    iso_time: now.toISOString(),
+    time_zone: resolved.timeZone,
+    utc_offset: `${sign}${hours}:${minutes}`,
+    locale: resolved.locale,
+    active_harness: harness,
+    ...(timeZoneCity ? { time_zone_city: timeZoneCity } : {}),
+    ...(countryCode ? { country_code: countryCode } : {}),
+    ...(locationHint ? { location_hint: locationHint } : {}),
+    location_precision: timeZoneCity ? 'time-zone-derived approximation' : 'country or time-zone only',
+  }
+}
+
 class VoiceSecretStore {
   private loaded = false
   private values: SecretFile['secrets'] = {}
@@ -154,7 +179,8 @@ function orchestrationInstructions(harness: HarnessId): string {
     'You are the voice orchestrator inside Prime Work, a desktop client for Prime Agent and OMP.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
-    'Use get_local_context for the local date, time, time zone, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness.',
+    'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness.',
+    'For local weather or another location-sensitive lookup when the user did not name a place: first call get_local_context, then call search_web with its location_hint included in the query. Do not ask the user for a location unless get_local_context returns no usable location_hint. Treat the hint as approximate.',
     'Call start_task only when the user explicitly asks you to start, create, kick off, delegate, or run a task.',
     'An explicit request to start work is sufficient authorization. Do not ask for a second confirmation.',
     'Only start tasks inside projects returned by list_projects. Never invent project IDs.',
@@ -199,12 +225,12 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
       },
       {
         type: 'function', name: 'get_local_context',
-        description: 'Get the local date, time, time zone, locale, UTC offset, and currently selected harness for quick contextual questions.',
+        description: 'Get the local date, time, time zone, timezone-derived approximate location hint, locale, UTC offset, and selected harness. Call this before local weather or another location-sensitive lookup when the user did not name a place.',
         parameters: { type: 'object', additionalProperties: false, properties: {} },
       },
       {
         type: 'function', name: 'search_web',
-        description: 'Search the live web for a quick current-information question and return a cited answer.',
+        description: 'Search the live web for a quick current-information question and return a cited answer. For local weather with no named place, first call get_local_context and include its location_hint in this query.',
         parameters: {
           type: 'object', additionalProperties: false,
           properties: { query: { type: 'string' } },
@@ -354,23 +380,7 @@ export class VoiceService {
   }
 
   private getLocalContext(harness: HarnessId): VoiceToolResult {
-    const now = new Date()
-    const resolved = Intl.DateTimeFormat().resolvedOptions()
-    const offsetMinutes = -now.getTimezoneOffset()
-    const sign = offsetMinutes >= 0 ? '+' : '-'
-    const hours = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')
-    const minutes = String(Math.abs(offsetMinutes) % 60).padStart(2, '0')
-    return {
-      output: JSON.stringify({
-        local_time: new Intl.DateTimeFormat(resolved.locale, { dateStyle: 'full', timeStyle: 'long', timeZone: resolved.timeZone }).format(now),
-        iso_time: now.toISOString(),
-        time_zone: resolved.timeZone,
-        utc_offset: `${sign}${hours}:${minutes}`,
-        locale: resolved.locale,
-        active_harness: harness,
-        location_precision: 'time-zone only',
-      }),
-    }
+    return { output: JSON.stringify(localContext(harness)) }
   }
 
   private async searchWeb(args: Record<string, unknown>): Promise<VoiceToolResult> {

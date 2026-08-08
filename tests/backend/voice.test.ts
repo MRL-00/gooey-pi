@@ -67,6 +67,8 @@ describe('VoiceService', () => {
       expect(session.instructions).toContain('locked to the currently selected OMP harness')
       expect(session.instructions).toContain('Do not include phrases such as start a session')
       expect(session.instructions).toContain('"Determine the next logical feature to add to this project and explain why."')
+      expect(session.instructions).toContain('first call get_local_context, then call search_web')
+      expect(session.instructions).toContain('Do not ask the user for a location unless get_local_context returns no usable location_hint')
       expect(session.tools.map((tool) => tool.name)).toEqual(['list_projects', 'start_task', 'get_local_context', 'search_web'])
       return new Response('v=0\r\no=answer')
     })
@@ -147,7 +149,8 @@ describe('VoiceService', () => {
     expect(context.active_harness).toBe('omp')
     expect(context.time_zone).toBeTruthy()
     expect(context.utc_offset).toMatch(/^[+-]\d{2}:\d{2}$/)
-    expect(context.location_precision).toBe('time-zone only')
+    expect(context.location_hint).toBeTruthy()
+    expect(context.location_precision).toMatch(/time-zone|country/)
   })
 
   it('uses low-context Responses web search for quick voice lookups', async () => {

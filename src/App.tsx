@@ -9,6 +9,7 @@ import { ResizeHandle } from '@/components/ResizeHandle'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
 import { errorMessage } from '@/lib/errors'
 import { createSingleFlightAdmission, findProjectForSession, gitStatusForWorkspace, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
+import { waitForVoiceSession } from '@/lib/voice'
 import { SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { AgentBrowserLayer, type AgentSlotRect } from '@/components/AgentBrowserLayer'
@@ -286,13 +287,13 @@ export default function App() {
       throw error
     }
     try {
-      const [runtime, sessionCatalog] = await Promise.all([
+      const [runtime, sessionResolution] = await Promise.all([
         bridge.agent.list().then((items) => items.find((candidate) => candidate.runtimeId === task.runtimeId)),
-        bridge.sessions.list(project.primaryFolder, true, task.harness),
+        waitForVoiceSession(task.sessionFile, () => bridge.sessions.list(project.primaryFolder, true, task.harness)),
       ])
       if (!runtime) throw new Error('The voice task started, but its runtime could not be attached.')
-      const session = sessionCatalog.find((candidate) => candidate.filePath === task.sessionFile)
-      if (!session) throw new Error('The voice task started, but its saved session was not found in the project catalog.')
+      if (!sessionResolution) throw new Error('The voice task started, but its saved session did not appear in the project catalog.')
+      const { session, sessions: sessionCatalog } = sessionResolution
       if (task.harness !== activeHarness) await settingsState.updateSettings({ activeHarness: task.harness })
       setProjects(projectCatalog)
       setSessions(sessionCatalog)
