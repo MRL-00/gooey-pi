@@ -1,4 +1,5 @@
-import type { PrimeModelCatalog, PrimeModelDescriptor } from '../../src/types/api'
+import type { PrimeModelCatalog } from '../../src/types/api'
+import type { ProviderCatalog } from './agent-rpc'
 import type { PrimeProviderService } from './providers'
 
 /**
@@ -14,10 +15,8 @@ import type { PrimeProviderService } from './providers'
  * the manager never touches them and they are Prime-specific — OMP
  * authentication is owned by the omp CLI itself.
  */
-export interface ModelCatalogProvider {
+export interface ModelCatalogProvider extends ProviderCatalog {
   catalog(force?: boolean, disabledProviders?: ReadonlySet<string>): Promise<PrimeModelCatalog>
-  requireAvailableModel(rawKey: unknown, disabledProviders?: ReadonlySet<string>): Promise<PrimeModelDescriptor>
-  capabilities(provider: string | undefined, modelId: string | undefined): Promise<PrimeModelDescriptor | undefined>
 }
 
 /**
