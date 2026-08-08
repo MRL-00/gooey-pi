@@ -182,11 +182,29 @@ setTimeout(() => { process.stdout.write(${JSON.stringify(JSON.stringify(sampleCa
     // After settling, a forced refresh spawns again (the in-flight slot was cleared).
     await service.catalog(true)
     expect(runs()).toBe(2)
+  })
 
-    // invalidate() drops the cache so an unforced call refreshes too.
-    service.invalidate()
-    await service.catalog()
-    expect(runs()).toBe(3)
+  it('serves the last good catalog with a warning when a refresh fails', async () => {
+    const stateFile = join(tempDir(), 'mode')
+    // First run succeeds; every later run exits non-zero.
+    const executable = fakeOmp(`
+const fs = require('node:fs')
+if (fs.existsSync(${JSON.stringify(stateFile)})) process.exit(7)
+fs.writeFileSync(${JSON.stringify(stateFile)}, 'ran')
+process.stdout.write(${JSON.stringify(JSON.stringify(sampleCatalog))})
+`)
+    const service = new OmpModelCatalogService(executable)
+    const fresh = await service.catalog(true)
+    expect(fresh.warning).toBeUndefined()
+
+    const stale = await service.catalog(true)
+    expect(stale.models.length).toBe(fresh.models.length)
+    expect(stale.warning).toMatch(/could not be refreshed/)
+    expect(stale.warning).toMatch(/last loaded catalog/)
+
+    // With no prior catalog the failure still surfaces.
+    const failingOnly = new OmpModelCatalogService(fakeOmp('process.exit(7)'))
+    await expect(failingOnly.catalog(true)).rejects.toThrow(/exited with status 7/)
   })
 
   it('rejects hostile model entries and sanitizes suspicious fields', async () => {

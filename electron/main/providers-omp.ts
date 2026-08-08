@@ -123,7 +123,19 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     if (!this.catalogRefresh) {
       this.catalogRefresh = this.refreshCatalog().finally(() => { this.catalogRefresh = null })
     }
-    return this.withEnabledState(await this.catalogRefresh, disabledProviders)
+    try {
+      return this.withEnabledState(await this.catalogRefresh, disabledProviders)
+    } catch (error) {
+      // A failed refresh degrades to the last good catalog instead of an
+      // error; first-ever loads still surface the failure.
+      if (!this.cachedCatalog) throw error
+      const reason = error instanceof Error ? error.message : String(error)
+      const staleWarning = `The OMP model catalog could not be refreshed (${reason}); showing the last loaded catalog.`
+      return this.withEnabledState({
+        ...this.cachedCatalog,
+        warning: this.cachedCatalog.warning ? `${this.cachedCatalog.warning} ${staleWarning}` : staleWarning,
+      }, disabledProviders)
+    }
   }
 
   async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
@@ -140,11 +152,6 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
   async capabilities(provider: string | undefined, modelId: string | undefined): Promise<PrimeModelDescriptor | undefined> {
     if (!provider || !modelId) return undefined
     return (await this.catalog()).models.find((model) => model.provider === provider && model.id === modelId)
-  }
-
-  invalidate(): void {
-    this.cachedCatalog = null
-    this.cachedAt = 0
   }
 
   private async refreshCatalog(): Promise<PrimeModelCatalog> {
@@ -212,7 +219,11 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     return this.cachedCatalog
   }
 
-  /** Probes `omp --version` once per service instance; the CLI prints `omp/<semver>`. */
+  /**
+   * Probes `omp --version` (the CLI prints `omp/<semver>`). Only a successful
+   * probe is cached: a transient failure answers 'unknown' for this call and
+   * retries on the next catalog refresh.
+   */
   private async resolveVersion(): Promise<string> {
     if (this.version) return this.version
     try {
@@ -224,11 +235,11 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
       const match = result.code === 0 && !result.timedOut && !result.outputExceeded
         ? result.stdout.trim().match(/^omp\/([0-9A-Za-z.+-]{1,64})$/)
         : null
-      this.version = match?.[1] ?? 'unknown'
+      this.version = match?.[1] ?? null
     } catch {
-      this.version = 'unknown'
+      this.version = null
     }
-    return this.version
+    return this.version ?? 'unknown'
   }
 
   private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>): PrimeModelCatalog {
