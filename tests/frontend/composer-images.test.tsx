@@ -295,7 +295,8 @@ describe('Composer context usage and stop control', () => {
     expect(dial?.getAttribute('aria-valuenow')).toBe('50')
     expect(dial?.style.getPropertyValue('--context-percent')).toBe('50%')
     expect(actions?.firstElementChild).toBe(dial)
-    expect(dial?.nextElementSibling?.getAttribute('aria-label')).toBe('Send message')
+    expect(dial?.nextElementSibling?.getAttribute('aria-label')).toBe('Start dictation')
+    expect(dial?.nextElementSibling?.nextElementSibling?.getAttribute('aria-label')).toBe('Send message')
   })
 
   it('shows unavailable usage honestly and uses a square stop icon', () => {

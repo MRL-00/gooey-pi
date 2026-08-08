@@ -159,6 +159,14 @@ describe('settings field ownership', () => {
       disabledProviders: 'providers',
       activeHarness: 'agent',
       ompApprovalMode: 'agent',
+      voiceTranscriptionProvider: 'voice',
+      voiceOpenAiTranscriptionModel: 'voice',
+      voiceGroqTranscriptionModel: 'voice',
+      voiceDeepgramTranscriptionModel: 'voice',
+      voiceLocalWhisperExecutable: 'voice',
+      voiceLocalWhisperModel: 'voice',
+      voiceRealtimeModel: 'voice',
+      voiceRealtimeVoice: 'voice',
     })
   })
 })

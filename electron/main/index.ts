@@ -27,6 +27,7 @@ import { ompSessionServiceOptions } from './sessions/omp'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
 import { VoiceService } from './voice'
+import { isAllowedRendererAudioPermission } from './voice-permissions'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
@@ -531,8 +532,12 @@ else void app.whenReady().then(async () => {
   registerRendererProtocol()
   if (process.platform === 'darwin') app.dock?.setIcon(appIconPath())
   const browserSession = session.defaultSession
-  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
-  browserSession.setPermissionCheckHandler(() => false)
+  browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const mediaTypes = permission === 'media' && 'mediaTypes' in details ? details.mediaTypes : undefined
+    callback(permission === 'media' && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, mediaTypes))
+  })
+  browserSession.setPermissionCheckHandler((contents, permission, _origin, details) => Boolean(contents && permission === 'media' && details.isMainFrame
+    && isAllowedRendererAudioPermission(contents.getURL(), contents.mainFrame.url, trustedRendererUrl, details.mediaType ? [details.mediaType] : undefined)))
   const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserProfile.setPermissionCheckHandler(() => false)

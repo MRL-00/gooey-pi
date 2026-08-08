@@ -90,6 +90,9 @@
       "icon": "assets/icon.icns",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Prime Work uses the microphone for dictation and realtime voice sessions you start."
+      },
       "notarize": true,
       "asarUnpack": [
         "**/node_modules/node-pty/build/Release/pty.node",

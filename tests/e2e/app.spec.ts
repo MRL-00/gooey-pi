@@ -392,7 +392,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
@@ -407,6 +407,19 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(menu.getByRole('menuitemradio', { name: /OMP Work/ })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(menu).toHaveCount(0)
+  })
+
+  test('exposes Voice settings and places both voice controls in their requested positions', async () => {
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Voice', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Voice' })).toBeVisible()
+    await expect(page.getByRole('combobox').filter({ has: page.locator('option[value="openai-live"]') })).toHaveValue('openai-live')
+    await expect(page.getByText('OpenAI native streaming', { exact: true })).toBeAttached()
+    await page.locator('.session-row').first().click()
+    const toolbarLabels = await page.locator('.title-toolbar__actions button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))
+    expect(toolbarLabels.slice(0, 2)).toEqual(['Open realtime voice', 'Toggle terminal (⌘J)'])
+    const composerLabels = await page.locator('.composer__actions > *').evaluateAll((controls) => controls.map((control) => control.getAttribute('aria-label')))
+    expect(composerLabels).toEqual(['Context usage', 'Start dictation', 'Send message'])
   })
 
   test('switches to OMP Work and lists the OMP session catalog, then returns to Prime', async () => {
