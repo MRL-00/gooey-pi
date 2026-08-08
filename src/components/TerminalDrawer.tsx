@@ -1,5 +1,5 @@
-import { Maximize2, Minimize2, Terminal as TerminalIcon, Trash2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Maximize2, Minimize2, Plus, Terminal as TerminalIcon, Trash2, X } from 'lucide-react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -17,6 +17,27 @@ interface TerminalDrawerProps {
   onClose(): void
   onError?(message: string): void
 }
+
+interface TerminalTab {
+  id: string
+  number: number
+  shellName: string
+  connected: boolean
+}
+
+interface TerminalViewHandle {
+  clear(): void
+}
+
+interface TerminalViewProps {
+  cwd?: string
+  shell?: string
+  visible: boolean
+  onStateChange(state: Pick<TerminalTab, 'shellName' | 'connected'>): void
+  onError?(message: string): void
+}
+
+const MAX_TERMINAL_TABS = 8
 
 const terminalTheme = (): ITheme => {
   const computed = getComputedStyle(document.documentElement)
@@ -45,14 +66,27 @@ const terminalTheme = (): ITheme => {
   }
 }
 
-export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError }: TerminalDrawerProps) {
+const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView({ cwd, shell, visible, onStateChange, onError }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const terminalIdRef = useRef<string | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
-  const [shellName, setShellName] = useState(shell?.split('/').at(-1) ?? 'zsh')
-  const [connected, setConnected] = useState(false)
-  const [maximized, setMaximized] = useState(false)
+  const visibleRef = useRef(visible)
+  const onStateChangeRef = useRef(onStateChange)
+  const onErrorRef = useRef(onError)
+  visibleRef.current = visible
+  onStateChangeRef.current = onStateChange
+  onErrorRef.current = onError
+
+  useImperativeHandle(ref, () => ({ clear: () => terminalRef.current?.clear() }), [])
+
+  useEffect(() => {
+    if (!visible) return
+    requestAnimationFrame(() => {
+      try { fitRef.current?.fit() } catch { /* tab is transitioning */ }
+      terminalRef.current?.focus()
+    })
+  }, [visible])
 
   useEffect(() => {
     const container = containerRef.current
@@ -71,8 +105,9 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(container)
-    terminalRef.current = terminal; fitRef.current = fit
-    requestAnimationFrame(() => fit.fit())
+    terminalRef.current = terminal
+    fitRef.current = fit
+    requestAnimationFrame(() => { try { fit.fit() } catch { /* initial layout is not ready */ } })
 
     const themeObserver = new MutationObserver(() => { terminal.options.theme = terminalTheme() })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
@@ -82,10 +117,18 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
     let cancelled = false
     const bufferedData = new Map<string, string>()
     const bufferedExits = new Map<string, number>()
-    const announceExit = (exitCode: number) => { terminal.writeln(`
-\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`); setConnected(false) }
-    const inputDisposable = terminal.onData((data) => { const id = terminalIdRef.current; if (id && window.prime) window.prime.terminal.input(id, data) })
-    const resizeDisposable = terminal.onResize(({ cols, rows }) => { const id = terminalIdRef.current; if (id && window.prime) window.prime.terminal.resize(id, cols, rows) })
+    const announceExit = (exitCode: number) => {
+      terminal.writeln(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`)
+      onStateChangeRef.current({ shellName: shell?.split('/').at(-1) ?? 'terminal', connected: false })
+    }
+    const inputDisposable = terminal.onData((data) => {
+      const id = terminalIdRef.current
+      if (id && window.prime) window.prime.terminal.input(id, data)
+    })
+    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      const id = terminalIdRef.current
+      if (id && window.prime) window.prime.terminal.resize(id, cols, rows)
+    })
 
     if (window.prime && cwd) {
       // Subscribe before create resolves: a fast shell can emit its prompt or exit before the IPC reply.
@@ -102,15 +145,19 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
       })
       window.prime.terminal.create({ cwd, shell, cols: terminal.cols, rows: terminal.rows }).then(({ terminalId, shell: actualShell }) => {
         if (cancelled) { void window.prime.terminal.kill(terminalId); return }
-        terminalIdRef.current = terminalId; setShellName(actualShell.split('/').at(-1) ?? actualShell); setConnected(true)
+        terminalIdRef.current = terminalId
+        onStateChangeRef.current({ shellName: actualShell.split('/').at(-1) ?? actualShell, connected: true })
         const initialOutput = bufferedData.get(terminalId)
         if (initialOutput) terminal.write(initialOutput)
         const earlyExit = bufferedExits.get(terminalId)
-        bufferedData.clear(); bufferedExits.clear()
+        bufferedData.clear()
+        bufferedExits.clear()
         if (earlyExit !== undefined) announceExit(earlyExit)
       }).catch((error: unknown) => {
         if (cancelled) return
-        const message = error instanceof Error ? error.message : 'Unable to start terminal'; terminal.writeln(`\x1b[31m${message}\x1b[0m`); onError?.(message)
+        const message = error instanceof Error ? error.message : 'Unable to start terminal'
+        terminal.writeln(`\x1b[31m${message}\x1b[0m`)
+        onErrorRef.current?.(message)
       })
     } else {
       terminal.writeln('\x1b[38;5;141mPrime Work terminal\x1b[0m')
@@ -118,24 +165,111 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
       terminal.write('\r\n\x1b[32m➜\x1b[0m \x1b[36mprime-work\x1b[0m \x1b[90mgit:(main)\x1b[0m ')
     }
 
-    const observer = new ResizeObserver(() => requestAnimationFrame(() => { try { fit.fit() } catch { /* drawer is transitioning */ } }))
+    const observer = new ResizeObserver(() => {
+      if (!visibleRef.current) return
+      requestAnimationFrame(() => { try { fit.fit() } catch { /* drawer is transitioning */ } })
+    })
     observer.observe(container)
     return () => {
-      cancelled = true; themeObserver.disconnect(); observer.disconnect(); offData?.(); offExit?.(); inputDisposable.dispose(); resizeDisposable.dispose()
-      const id = terminalIdRef.current; terminalIdRef.current = null
+      cancelled = true
+      themeObserver.disconnect()
+      observer.disconnect()
+      offData?.()
+      offExit?.()
+      inputDisposable.dispose()
+      resizeDisposable.dispose()
+      const id = terminalIdRef.current
+      terminalIdRef.current = null
       if (id && window.prime) void window.prime.terminal.kill(id)
-      terminal.dispose(); terminalRef.current = null; fitRef.current = null
+      terminal.dispose()
+      terminalRef.current = null
+      fitRef.current = null
     }
-  }, [cwd, shell, onError])
+  }, [cwd, shell])
+
+  return <div className="terminal-surface" ref={containerRef} hidden={!visible}/>
+})
+
+function createTab(number: number, shell?: string): TerminalTab {
+  return {
+    id: crypto.randomUUID(),
+    number,
+    shellName: shell?.split('/').at(-1) ?? 'zsh',
+    connected: false,
+  }
+}
+
+export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError }: TerminalDrawerProps) {
+  const nextNumberRef = useRef(2)
+  const viewRefs = useRef(new Map<string, TerminalViewHandle>())
+  const [tabs, setTabs] = useState<TerminalTab[]>(() => [createTab(1, shell)])
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id)
+  const [maximized, setMaximized] = useState(false)
+
+  const addTerminal = () => {
+    if (tabs.length >= MAX_TERMINAL_TABS) {
+      onError?.(`Prime Work supports at most ${MAX_TERMINAL_TABS} concurrent terminals.`)
+      return
+    }
+    const tab = createTab(nextNumberRef.current++, shell)
+    setTabs((current) => [...current, tab])
+    setActiveTabId(tab.id)
+  }
+
+  const closeTerminal = (tabId: string) => {
+    const index = tabs.findIndex((tab) => tab.id === tabId)
+    if (index === -1) return
+    if (tabs.length === 1) {
+      onClose()
+      return
+    }
+    const nextTabs = tabs.filter((tab) => tab.id !== tabId)
+    setTabs(nextTabs)
+    viewRefs.current.delete(tabId)
+    if (activeTabId === tabId) setActiveTabId(nextTabs[Math.min(index, nextTabs.length - 1)].id)
+  }
+
+  const updateTab = (tabId: string, state: Pick<TerminalTab, 'shellName' | 'connected'>) => {
+    setTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, ...state } : tab))
+  }
 
   return (
     <section className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal">
       {!maximized ? <ResizeHandle orientation="horizontal" label="Resize terminal" value={height} min={minHeight} max={maxHeight} defaultValue={defaultHeight} onChange={onHeightChange} /> : null}
       <div className="terminal-toolbar">
-        <div className="terminal-tabs"><div className="is-active"><TerminalIcon size={14}/><span>{shellName}</span><span className={`terminal-live-dot ${connected ? 'is-connected' : ''}`}/></div></div>
-        <div className="terminal-actions"><span className="terminal-cwd" title={cwd}>{cwd?.split('/').at(-1) ?? 'No project'}</span><IconButton label="Clear terminal" onClick={() => terminalRef.current?.clear()}><Trash2 size={13}/></IconButton><IconButton label={maximized ? 'Restore terminal' : 'Maximize terminal'} onClick={() => setMaximized((value) => !value)}>{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</IconButton><IconButton label="Close terminal" onClick={onClose}><X size={14}/></IconButton></div>
+        <div className="terminal-tabs" role="tablist" aria-label="Terminal tabs">
+          {tabs.map((tab) => (
+            <div className={`terminal-tab ${tab.id === activeTabId ? 'is-active' : ''}`} key={tab.id}>
+              <button type="button" role="tab" aria-selected={tab.id === activeTabId} onClick={() => setActiveTabId(tab.id)}>
+                <TerminalIcon size={14}/>
+                <span>{tab.shellName} {tab.number}</span>
+                <span className={`terminal-live-dot ${tab.connected ? 'is-connected' : ''}`}/>
+              </button>
+              <button type="button" className="terminal-tab__close" aria-label={`Close terminal ${tab.number}`} onClick={() => closeTerminal(tab.id)}><X size={11}/></button>
+            </div>
+          ))}
+          <IconButton label="New terminal" size="small" disabled={tabs.length >= MAX_TERMINAL_TABS} onClick={addTerminal}><Plus size={14}/></IconButton>
+        </div>
+        <div className="terminal-actions">
+          <span className="terminal-cwd" title={cwd}>{cwd?.split('/').at(-1) ?? 'No project'}</span>
+          <IconButton label="Clear terminal" onClick={() => viewRefs.current.get(activeTabId)?.clear()}><Trash2 size={13}/></IconButton>
+          <IconButton label={maximized ? 'Restore terminal' : 'Maximize terminal'} onClick={() => setMaximized((value) => !value)}>{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</IconButton>
+          <IconButton label="Close terminal" onClick={onClose}><X size={14}/></IconButton>
+        </div>
       </div>
-      <div className="terminal-surface" ref={containerRef}/>
+      <div className="terminal-views">
+        {tabs.map((tab) => (
+          <TerminalView
+            key={tab.id}
+            ref={(handle) => { if (handle) viewRefs.current.set(tab.id, handle); else viewRefs.current.delete(tab.id) }}
+            cwd={cwd}
+            shell={shell}
+            visible={tab.id === activeTabId}
+            onStateChange={(state) => updateTab(tab.id, state)}
+            onError={onError}
+          />
+        ))}
+      </div>
     </section>
   )
 }
