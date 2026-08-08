@@ -1,4 +1,5 @@
 import {
+  AudioWaveform,
   GitBranch,
   PanelLeft,
   PanelRight,
@@ -23,9 +24,11 @@ interface TitleToolbarProps {
   onToggleInspector(): void
   onToggleTerminal(): void
   onOpenBrowser(): void
+  voiceOpen?: boolean
+  onToggleVoice?(): void
 }
 
-export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser }: TitleToolbarProps) {
+export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice }: TitleToolbarProps) {
   return (
     <header className="title-toolbar drag-region">
       {!sidebarOpen ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
@@ -37,6 +40,7 @@ export function TitleToolbar({ project, view, productName = 'Prime Work', sideba
         {project?.gitBranch && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{project.gitBranch}</span> : null}
       </div>
       <div className="title-toolbar__actions no-drag">
+        {view === 'session' && onToggleVoice ? <IconButton className={voiceOpen ? 'is-active voice-toggle--active' : ''} label={voiceOpen ? 'Close realtime voice' : 'Open realtime voice'} onClick={onToggleVoice}><AudioWaveform size={17} /></IconButton> : null}
         {view === 'session' ? <IconButton className={terminalOpen ? 'is-active' : ''} label="Toggle terminal (⌘J)" onClick={onToggleTerminal}><Terminal size={17} /></IconButton> : null}
         {view === 'session' ? <IconButton label="Open browser (⌘⇧B)" onClick={onOpenBrowser}><BrowserGlobe size={18} /></IconButton> : null}
         {view === 'session' ? <IconButton className={inspectorOpen ? 'is-active' : ''} label="Toggle inspector" onClick={onToggleInspector}><PanelRight size={16} /></IconButton> : null}

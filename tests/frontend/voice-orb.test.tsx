@@ -1,0 +1,84 @@
+// @vitest-environment jsdom
+
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TitleToolbar } from '../../src/components/TitleToolbar'
+import { VoiceOrb } from '../../src/components/VoiceOrb'
+import type { PrimeWorkApi } from '../../src/types/api'
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+class FakeDataChannel extends EventTarget {
+  readyState: RTCDataChannelState = 'open'
+  send = vi.fn()
+  close = vi.fn()
+}
+
+class FakePeer extends EventTarget {
+  static latest: FakePeer
+  channel = new FakeDataChannel()
+  close = vi.fn()
+  addTrack = vi.fn()
+  setLocalDescription = vi.fn(async () => undefined)
+  setRemoteDescription = vi.fn(async () => undefined)
+  createOffer = vi.fn(async () => ({ type: 'offer' as const, sdp: 'v=0\r\no=test-offer-value' }))
+  createDataChannel = vi.fn(() => this.channel as unknown as RTCDataChannel)
+  constructor() { super(); FakePeer.latest = this }
+}
+
+describe('realtime voice surface', () => {
+  let container: HTMLDivElement
+  let root: Root
+  const track = { enabled: true, stop: vi.fn() }
+  const stream = { getTracks: () => [track], getAudioTracks: () => [track] }
+
+  beforeEach(() => {
+    track.enabled = true; track.stop.mockReset()
+    vi.stubGlobal('RTCPeerConnection', FakePeer)
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn(async () => stream) } })
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    container.remove()
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it('places the waveform toggle immediately before the terminal button', () => {
+    act(() => root.render(<TitleToolbar view="session" sidebarOpen inspectorOpen terminalOpen={false} voiceOpen onToggleSidebar={vi.fn()} onToggleInspector={vi.fn()} onToggleTerminal={vi.fn()} onOpenBrowser={vi.fn()} onToggleVoice={vi.fn()} />))
+    const labels = [...container.querySelectorAll<HTMLButtonElement>('.title-toolbar__actions button')].map((button) => button.getAttribute('aria-label'))
+    expect(labels.slice(0, 2)).toEqual(['Close realtime voice', 'Toggle terminal (⌘J)'])
+  })
+
+  it('shows mute and close controls and disables the microphone track when muted', async () => {
+    const voice = {
+      createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'),
+      executeTool: vi.fn(),
+    } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} onClose={vi.fn()} onTaskStarted={vi.fn()} />))
+    const mute = container.querySelector<HTMLButtonElement>('[aria-label="Mute realtime voice"]')!
+    expect(container.querySelector('[aria-label="Close realtime voice"]')).not.toBeNull()
+    await act(async () => mute.click())
+    expect(track.enabled).toBe(false)
+    expect(container.querySelector('[aria-label="Unmute realtime voice"]')).not.toBeNull()
+  })
+
+  it('executes a start_task call and reports the started task to the workspace', async () => {
+    const task = { projectId: 'p1', projectName: 'Prime', harness: 'prime' as const, runtimeId: 'r1' }
+    const executeTool = vi.fn(async () => ({ output: '{"started":true}', task }))
+    const onTaskStarted = vi.fn()
+    const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} onClose={vi.fn()} onTaskStarted={onTaskStarted} />))
+    await act(async () => {
+      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-1', name: 'start_task', arguments: JSON.stringify({ project_id: 'p1', prompt: 'Build it' }) }) }))
+      await Promise.resolve()
+    })
+    expect(executeTool).toHaveBeenCalledWith({ name: 'start_task', arguments: { project_id: 'p1', prompt: 'Build it' } })
+    expect(onTaskStarted).toHaveBeenCalledWith(task)
+  })
+})

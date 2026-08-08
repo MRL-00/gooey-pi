@@ -25,7 +25,7 @@ import { useSidebarActions } from '@/hooks/useSidebarActions'
 import { useStableCallback } from '@/hooks/useStableCallback'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, WorkspaceView } from '@/types/api'
+import type { GitStatus, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, VoiceTaskStarted, WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -33,6 +33,7 @@ const TerminalDrawer = lazy(() => import('@/components/TerminalDrawer').then((mo
 const CommandPalette = lazy(() => import('@/components/CommandPalette').then((module) => ({ default: module.CommandPalette })))
 const ExtensionUiModal = lazy(() => import('@/components/ExtensionUiModal').then((module) => ({ default: module.ExtensionUiModal })))
 const ProviderAuthModal = lazy(() => import('@/components/ProviderAuthModal').then((module) => ({ default: module.ProviderAuthModal })))
+const VoiceOrb = lazy(() => import('@/components/VoiceOrb').then((module) => ({ default: module.VoiceOrb })))
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })))
 const ActivityPage = lazy(() => import('@/pages/ActivityPage').then((module) => ({ default: module.ActivityPage })))
 const ScheduledPage = lazy(() => import('@/pages/ScheduledPage').then((module) => ({ default: module.ScheduledPage })))
@@ -66,6 +67,7 @@ export default function App() {
   const [view, setView] = useState<WorkspaceView>('session')
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [voiceOrbOpen, setVoiceOrbOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
@@ -249,6 +251,18 @@ export default function App() {
     setProjects, setSessions, setGitSnapshot, setView, setPaletteOpen, setToast, setSubmitting,
     refreshSchedules, refreshHeartbeats, reportError,
   })
+  const handleVoiceTaskStarted = useCallback(async (task: VoiceTaskStarted) => {
+    if (!bridge) return
+    const project = projects.find((candidate) => candidate.id === task.projectId && candidate.harness === task.harness)
+    if (!project) { reportError('The voice task started, but its project is no longer available.'); return }
+    try {
+      const runtime = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === task.runtimeId)
+      if (!runtime) throw new Error('The voice task started, but its runtime could not be attached.')
+      workspace.activateWorkspace(project, undefined, runtime)
+      setView('session')
+      setPaletteOpen(false)
+    } catch (error) { reportError(error) }
+  }, [bridge, projects, reportError, workspace.activateWorkspace])
   const closeTerminal = useCallback((id: string) => {
     terminalDrawerRefs.current.delete(id)
     setTerminalSessions((current) => current.filter((terminal) => terminal.id !== id))
@@ -340,7 +354,7 @@ export default function App() {
     {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
-      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
+      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={() => setVoiceOrbOpen((open) => !open)} onOpenBrowser={openBrowser} />
       <div className="workbench__content">{view === 'session' ? <div ref={layout.workspaceRowRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.sessionWorkspaceRef} className="conversation-column">
           <main className="conversation-pane">
@@ -357,6 +371,7 @@ export default function App() {
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
       </div> : <Suspense fallback={<LoadingPanel label={view} />}>{page}</Suspense>}</div>
     </div>
+    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} onClose={() => setVoiceOrbOpen(false)} onTaskStarted={handleVoiceTaskStarted} /></Suspense> : null}
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open harness={activeHarness} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
     {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}

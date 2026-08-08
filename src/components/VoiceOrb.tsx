@@ -1,0 +1,169 @@
+import { Mic, MicOff, X } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import type { PrimeWorkApi, VoiceTaskStarted, VoiceToolRequest } from '@/types/api'
+
+type OrbState = 'connecting' | 'listening' | 'user-speaking' | 'thinking' | 'agent-speaking' | 'error'
+
+interface VoiceOrbProps {
+  voice: PrimeWorkApi['voice']
+  onClose(): void
+  onTaskStarted(task: VoiceTaskStarted): void
+}
+
+interface OrbPosition { x: number; y: number }
+
+function initialPosition(): OrbPosition {
+  try {
+    const saved = JSON.parse(localStorage.getItem('prime-work:voice-orb-position') ?? '') as Partial<OrbPosition>
+    if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) return { x: Number(saved.x), y: Number(saved.y) }
+  } catch { /* use the default */ }
+  return { x: Math.max(20, window.innerWidth - 178), y: 78 }
+}
+
+function clampPosition(position: OrbPosition): OrbPosition {
+  return {
+    x: Math.max(12, Math.min(window.innerWidth - 148, position.x)),
+    y: Math.max(58, Math.min(window.innerHeight - 172, position.y)),
+  }
+}
+
+function toolRequest(name: unknown, args: unknown): VoiceToolRequest | null {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+  if (name === 'list_projects') return { name, arguments: args as { query?: string; harness?: 'prime' | 'omp' } }
+  if (name === 'start_task') return { name, arguments: args as { project_id: string; prompt: string; title?: string } }
+  if (name === 'search_web') return { name, arguments: args as { query: string } }
+  return null
+}
+
+export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
+  const [orbState, setOrbState] = useState<OrbState>('connecting')
+  const [muted, setMuted] = useState(false)
+  const [error, setError] = useState('')
+  const [position, setPosition] = useState(initialPosition)
+  const streamRef = useRef<MediaStream | null>(null)
+  const channelRef = useRef<RTCDataChannel | null>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
+  const handledCallsRef = useRef(new Set<string>())
+
+  useEffect(() => {
+    let active = true
+    const peer = new RTCPeerConnection()
+    const channel = peer.createDataChannel('oai-events')
+    channelRef.current = channel
+
+    const execute = async (callId: string, name: unknown, rawArguments: unknown) => {
+      if (handledCallsRef.current.has(callId)) return
+      let args: unknown
+      try { args = typeof rawArguments === 'string' ? JSON.parse(rawArguments) : rawArguments } catch { args = null }
+      const request = toolRequest(name, args)
+      if (!request) return
+      handledCallsRef.current.add(callId)
+      setOrbState('thinking')
+      try {
+        const result = await voice.executeTool(request)
+        if (!active || channel.readyState !== 'open') return
+        channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: result.output } }))
+        channel.send(JSON.stringify({ type: 'response.create' }))
+        if (result.task) onTaskStarted(result.task)
+      } catch (failure) {
+        if (!active || channel.readyState !== 'open') return
+        const message = failure instanceof Error ? failure.message : 'Voice tool failed'
+        channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify({ error: message }) } }))
+        channel.send(JSON.stringify({ type: 'response.create' }))
+      }
+    }
+
+    channel.addEventListener('open', () => { if (active) setOrbState('listening') })
+    channel.addEventListener('message', (event) => {
+      let payload: unknown
+      try { payload = JSON.parse(String(event.data)) } catch { return }
+      if (!payload || typeof payload !== 'object') return
+      const message = payload as Record<string, unknown>
+      if (message.type === 'input_audio_buffer.speech_started') setOrbState('user-speaking')
+      else if (message.type === 'input_audio_buffer.speech_stopped' || message.type === 'response.created') setOrbState('thinking')
+      else if (message.type === 'response.audio.delta' || message.type === 'output_audio_buffer.started') setOrbState('agent-speaking')
+      else if (message.type === 'output_audio_buffer.stopped' || message.type === 'response.done') setOrbState('listening')
+      else if (message.type === 'response.function_call_arguments.done' && typeof message.call_id === 'string') void execute(message.call_id, message.name, message.arguments)
+      else if (message.type === 'response.output_item.done' && message.item && typeof message.item === 'object') {
+        const item = message.item as Record<string, unknown>
+        if (item.type === 'function_call' && typeof item.call_id === 'string') void execute(item.call_id, item.name, item.arguments)
+      } else if (message.type === 'error') {
+        setError('The realtime voice session reported an error.')
+        setOrbState('error')
+      }
+    })
+    peer.addEventListener('track', (event) => {
+      if (audioRef.current) audioRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track])
+    })
+
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
+        if (!active) { for (const track of stream.getTracks()) track.stop(); return }
+        streamRef.current = stream
+        for (const track of stream.getTracks()) peer.addTrack(track, stream)
+        const offer = await peer.createOffer()
+        await peer.setLocalDescription(offer)
+        const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '' })
+        if (!active) return
+        await peer.setRemoteDescription({ type: 'answer', sdp: answer })
+      } catch (failure) {
+        if (!active) return
+        setError(failure instanceof Error ? failure.message : 'Could not start realtime voice.')
+        setOrbState('error')
+      }
+    })()
+
+    return () => {
+      active = false
+      channelRef.current = null
+      try { channel.close() } catch { /* already closed */ }
+      peer.close()
+      for (const track of streamRef.current?.getTracks() ?? []) track.stop()
+      streamRef.current = null
+      if (audioRef.current) audioRef.current.srcObject = null
+    }
+  }, [onTaskStarted, voice])
+
+  const toggleMute = () => {
+    const next = !muted
+    setMuted(next)
+    for (const track of streamRef.current?.getAudioTracks() ?? []) track.enabled = !next
+    if (next) setOrbState('listening')
+  }
+
+  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('button')) return
+    dragRef.current = { pointerId: event.pointerId, dx: event.clientX - position.x, dy: event.clientY - position.y }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const drag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = dragRef.current
+    if (!current || current.pointerId !== event.pointerId) return
+    setPosition(clampPosition({ x: event.clientX - current.dx, y: event.clientY - current.dy }))
+  }
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    dragRef.current = null
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    localStorage.setItem('prime-work:voice-orb-position', JSON.stringify(position))
+  }
+
+  const status = muted ? 'Muted' : orbState === 'connecting' ? 'Connecting' : orbState === 'user-speaking' ? 'Listening to you' : orbState === 'thinking' ? 'Thinking' : orbState === 'agent-speaking' ? 'Speaking' : orbState === 'error' ? 'Voice unavailable' : 'Listening'
+  return (
+    <aside className={`voice-orb voice-orb--${orbState} ${muted ? 'is-muted' : ''}`} style={{ '--orb-x': `${position.x}px`, '--orb-y': `${position.y}px` } as CSSProperties} aria-label="Realtime voice session">
+      <audio ref={audioRef} autoPlay />
+      <div className="voice-orb__drag" onPointerDown={beginDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        <div className="voice-orb__halo" aria-hidden="true" />
+        <div className="voice-orb__core" aria-hidden="true"><i /><i /><i /></div>
+        <span className="voice-orb__status">{status}</span>
+        <div className="voice-orb__controls">
+          <button type="button" aria-label={muted ? 'Unmute realtime voice' : 'Mute realtime voice'} onClick={toggleMute}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
+          <button type="button" aria-label="Close realtime voice" onClick={onClose}><X size={16} /></button>
+        </div>
+      </div>
+      {error ? <p role="alert">{error}</p> : null}
+    </aside>
+  )
+}
