@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, ShieldCheck, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -8,17 +8,20 @@ import type {
   PrimeModelDescriptor,
   PrimeProviderDescriptor,
   PrimeThinkingLevel,
+  PrimeWorkApi,
   PromptDeliveryIntent,
   PromptImage,
   QueuedPrompt,
   SkillRecord,
   TerminalPromptContext,
   TerminalSelectionContext,
+  VoiceTranscriptionProvider,
 } from '@/types/api'
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
+import { useDictation } from '@/hooks/useDictation'
 import { IconButton, PrimeMark, SelectControl } from './ui'
 
 interface ComposerProps {
@@ -42,6 +45,8 @@ interface ComposerProps {
   /** @deprecated Shortcuts are fixed: Enter queues and Ctrl/Cmd+Enter steers. */
   messageEnterAction?: MessageEnterAction
   contextUsage?: PrimeContextUsage
+  voice?: PrimeWorkApi['voice'] | null
+  transcriptionProvider?: VoiceTranscriptionProvider
   skills: SkillRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
   annotations?: BrowserAnnotation[]
@@ -121,6 +126,8 @@ export const Composer = memo(function Composer({
   shortName = 'Prime',
   imageInputSupported,
   contextUsage,
+  voice,
+  transcriptionProvider = 'openai-live',
   skills,
   annotations = EMPTY_ANNOTATIONS,
   terminalSelection,
@@ -146,6 +153,7 @@ export const Composer = memo(function Composer({
   const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
   const [attachmentError, setAttachmentError] = useState('')
   const [processingImages, setProcessingImages] = useState(false)
+  const dictation = useDictation(voice, transcriptionProvider, setAttachmentError)
   const menuId = useId()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submittingRef = useRef(false)
@@ -181,15 +189,16 @@ export const Composer = memo(function Composer({
     void submit()
   }, [sendSignal])
 
-  const submit = async (intent: PromptDeliveryIntent = 'queue') => {
+  const submit = async (intent: PromptDeliveryIntent = 'queue', valueOverride?: string) => {
     const currentImages = imagesRef.current
     const currentAnnotations = annotationsRef.current
     const currentTerminalContext = terminalSelection?.text ? getTerminalContext?.() : undefined
     const hasTerminalSelection = Boolean(currentTerminalContext?.text)
-    const prompt = value.trim() || (currentImages.length > 0
+    const draftValue = valueOverride ?? value
+    const prompt = draftValue.trim() || (currentImages.length > 0
       ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
       : currentAnnotations.length > 0 ? '[Page annotations]' : '[Terminal selection]')
-    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0 && !hasTerminalSelection) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
+    if ((!draftValue.trim() && currentImages.length === 0 && currentAnnotations.length === 0 && !hasTerminalSelection) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
     if (pendingImagesRef.current > 0) {
       setAttachmentError('Wait for the pasted image to finish processing before sending.')
       return
@@ -208,7 +217,7 @@ export const Composer = memo(function Composer({
       return
     }
     submittingRef.current = true
-    const submittedValue = value
+    const submittedValue = draftValue
     const submittedComposerImages = currentImages
     setValue('')
     imagesRef.current = []
@@ -232,6 +241,15 @@ export const Composer = memo(function Composer({
       submittingRef.current = false
       if (mountedRef.current) textareaRef.current?.focus()
     }
+  }
+
+  const finishDictation = async (send: boolean) => {
+    const transcript = await dictation.finish()
+    if (!transcript) return
+    const next = value.trimEnd() ? `${value.trimEnd()} ${transcript}` : transcript
+    setValue(next)
+    if (send) await submit('queue', next)
+    else requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
   const addPastedImages = async (files: File[]) => {
@@ -345,6 +363,14 @@ export const Composer = memo(function Composer({
       : 'Context usage unavailable until the next response'
   const contextDisplayPercent = contextPercent === null ? null : Math.min(99, Math.round(contextPercent))
   const contextStyle = { '--context-percent': `${contextPercent ?? 0}%` } as CSSProperties
+  const sendQueuedMessageImmediately = async (queued: QueuedPrompt) => {
+    onDeleteQueuedMessage?.(queued)
+    try {
+      await onSend(queued.text, [], 'steer')
+    } catch {
+      // sendPrompt reports failures itself; there is no composer draft to restore.
+    }
+  }
 
   return (
     <div className="composer-wrap">
@@ -359,6 +385,7 @@ export const Composer = memo(function Composer({
               <div className="composer-queue__item" key={queued.id}>
                 <span className="composer-queue__text">{queued.text}</span>
                 <span className="composer-queue__actions">
+                  <button type="button" className="composer-queue__action" aria-label={`Send queued message immediately: ${queued.text}`} title="Send queued message immediately" onClick={() => { void sendQueuedMessageImmediately(queued) }}><ArrowUp size={13} /></button>
                   <button type="button" className="composer-queue__action" aria-label={`Edit queued message: ${queued.text}`} title="Edit queued message" onClick={() => { onEditQueuedMessage?.(queued); setValue(queued.text); requestAnimationFrame(() => textareaRef.current?.focus()) }}><Edit3 size={13} /></button>
                   <button type="button" className="composer-queue__action composer-queue__action--delete" aria-label={`Delete queued message: ${queued.text}`} title="Delete queued message" onClick={() => onDeleteQueuedMessage?.(queued)}><Trash2 size={13} /></button>
                 </span>
@@ -596,7 +623,7 @@ export const Composer = memo(function Composer({
             </span>
           </div>
           <div className="composer__actions">
-            <span
+            {dictation.state === 'connecting' || dictation.state === 'recording' ? <button type="button" className="context-usage-dial context-usage-dial--cancel" aria-label="Cancel dictation" title="Cancel dictation" onClick={dictation.cancel}><X size={14} /></button> : <span
               className={`context-usage-dial ${contextPercent === null ? 'is-unavailable' : contextPercent >= 95 ? 'is-critical' : contextPercent >= 80 ? 'is-warning' : ''}`}
               role="meter"
               tabIndex={0}
@@ -610,8 +637,19 @@ export const Composer = memo(function Composer({
               style={contextStyle}
             >
               <span>{contextDisplayPercent ?? '—'}</span>
-            </span>
-            {busy ? (
+            </span>}
+            <button
+              type="button"
+              className={`dictation-button ${dictation.state === 'recording' ? 'is-recording' : ''}`}
+              aria-label={dictation.state === 'recording' ? 'Stop and transcribe dictation' : dictation.state === 'connecting' ? 'Connecting microphone' : dictation.state === 'transcribing' ? 'Transcribing dictation' : 'Start dictation'}
+              disabled={!voice || loading || disabled || submitting || dictation.state === 'connecting' || dictation.state === 'transcribing'}
+              onClick={() => { if (dictation.state === 'recording') void finishDictation(false); else void dictation.start() }}
+            >
+              {dictation.state === 'recording' ? <Square size={10} fill="currentColor" /> : dictation.state === 'connecting' || dictation.state === 'transcribing' ? <LoaderCircle className="is-spinning" size={15} /> : <Mic size={15} />}
+            </button>
+            {dictation.state === 'recording' ? (
+              <button type="button" className="send-button" aria-label="Transcribe and send message" onClick={() => void finishDictation(true)}><ArrowUp size={17} /></button>
+            ) : busy ? (
               <button type="button" className="send-button send-button--stop" aria-label="Stop Prime" onClick={() => void onStop()}>
                 <Square size={10} fill="currentColor" aria-hidden="true" />
               </button>

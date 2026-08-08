@@ -72,6 +72,16 @@
 .context-usage-dial.is-unavailable { --context-color: var(--text-tertiary); }
 .context-usage-dial.is-warning { --context-color: var(--warning); }
 .context-usage-dial.is-critical { --context-color: var(--danger); }
+.context-usage-dial--cancel { padding: 0; border: 0; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface-selected)); cursor: pointer; }
+.context-usage-dial--cancel::before, .context-usage-dial--cancel::after { display: none; }
+.context-usage-dial--cancel svg { position: relative; z-index: 1; }
+.dictation-button { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 0; border-radius: 50%; color: var(--text-secondary); background: transparent; }
+.dictation-button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.dictation-button:disabled { color: var(--text-tertiary); opacity: .65; }
+.dictation-button.is-recording { color: white; background: var(--danger); animation: dictation-pulse 1.2s ease-in-out infinite; }
+.is-spinning { animation: spin 900ms linear infinite; }
+@keyframes dictation-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--danger) 14%, transparent); transform: scale(1.05); } }
+@keyframes spin { to { transform: rotate(360deg); } }
 .select-control { height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-secondary); background: var(--surface-subtle); }
 .select-control:hover { color: var(--text); background: var(--surface-hover); }
 .select-control select { max-width: 122px; border: 0; outline: 0; color: inherit; background: transparent; appearance: none; font-size: 11px; font-weight: 520; }
