@@ -119,7 +119,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       return { harness: 'omp', service: services.omp.sessions }
     }
   }
-  /** Auth mutations stay Prime-only: OMP credentials are owned by the omp CLI. */
+  /** OMP credentials stay CLI-owned; desktop-only visibility is routed separately below. */
   const requirePrimeProviderAuth = (harness: unknown): void => {
     if (requireHarness(harness) === 'omp') throw new Error('OMP provider authentication is managed by the omp CLI')
   }
@@ -187,9 +187,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('agent:list', () => [...services.agents.list(), ...services.omp.agents.list()])
 
   const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders))
-  // Provider disabling is Prime-only; the OMP catalog never applies it (see
-  // the OMP manager construction in index.ts).
-  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force)
+  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force, new Set(services.settings.get().ompDisabledProviders))
   handle('providers:catalog', (_event, force, harness) => requireHarness(harness) === 'omp' ? ompProviderCatalog(force === true) : providerCatalog(force === true))
   handle('providers:save-api-key', async (_event, providerId, apiKey, harness) => {
     requirePrimeProviderAuth(harness)
@@ -202,16 +200,28 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     return providerCatalog(true)
   })
   handle('providers:set-enabled', async (_event, providerId, enabled, harness) => {
-    requirePrimeProviderAuth(harness)
+    const target = requireHarness(harness)
     const id = requireString(providerId, 'providerId', { min: 1, max: 128, trim: true })
     if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
-    const catalog = await providerCatalog()
+    const catalog = target === 'omp' ? await ompProviderCatalog() : await providerCatalog()
     if (!catalog.providers.some((provider) => provider.id === id)) throw new Error('Provider was not found')
-    const disabled = new Set(services.settings.get().disabledProviders)
+    const settingsKey = target === 'omp' ? 'ompDisabledProviders' : 'disabledProviders'
+    const disabled = new Set(services.settings.get()[settingsKey])
     if (enabled) disabled.delete(id)
     else disabled.add(id)
-    await services.settings.update({ disabledProviders: [...disabled].sort() })
-    return providerCatalog()
+    await services.settings.update({ [settingsKey]: [...disabled].sort() })
+    return target === 'omp' ? ompProviderCatalog() : providerCatalog()
+  })
+  handle('providers:set-disabled', async (_event, providerIds, harness) => {
+    const target = requireHarness(harness)
+    if (!Array.isArray(providerIds) || providerIds.length > 256) throw new TypeError('providerIds must be a bounded array')
+    const ids = [...new Set(providerIds.map((value, index) => requireString(value, `providerIds[${index}]`, { min: 1, max: 128, trim: true })))].sort()
+    const catalog = target === 'omp' ? await ompProviderCatalog() : await providerCatalog()
+    const known = new Set(catalog.providers.map((provider) => provider.id))
+    if (ids.some((id) => !known.has(id))) throw new Error('Provider was not found')
+    const settingsKey = target === 'omp' ? 'ompDisabledProviders' : 'disabledProviders'
+    await services.settings.update({ [settingsKey]: ids })
+    return target === 'omp' ? ompProviderCatalog() : providerCatalog()
   })
   handle('providers:start-oauth', (_event, providerId, harness) => {
     requirePrimeProviderAuth(harness)

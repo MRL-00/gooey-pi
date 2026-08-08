@@ -65,6 +65,14 @@ export class SettingsService {
           return id
         }))]
       },
+      ompDisabledProviders: (value) => {
+        if (!Array.isArray(value) || value.length > 256) throw new TypeError('ompDisabledProviders must be a bounded array')
+        return [...new Set(value.map((entry, index) => {
+          const id = requireString(entry, `ompDisabledProviders[${index}]`, { min: 1, max: 128, trim: true })
+          if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(id)) throw new TypeError(`ompDisabledProviders[${index}] is not a valid provider ID`)
+          return id
+        }))]
+      },
     }
     const keys = Object.keys(validators) as Array<keyof AppSettings>
     rejectUnknownKeys(raw, keys, 'settings patch')

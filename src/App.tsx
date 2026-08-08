@@ -107,8 +107,7 @@ export default function App() {
     const next = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
     if (next && workspace.workspaceRef.current.generation === generation) workspace.attachRuntime(next, generation)
   }, [bridge, workspace.attachRuntime, workspace.workspaceRef])
-  const syncDisabledProviders = useCallback((disabledProviders: string[]) => settingsState.updateSettings({ disabledProviders }), [settingsState.updateSettings])
-  const provider = useProviderCatalog({ bridge, harness: activeHarness, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, syncDisabledProviders, reportError })
+  const provider = useProviderCatalog({ bridge, harness: activeHarness, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, reportError })
   const activeSession = useMemo(() => sessions.find((session) => session.id === workspace.activeSessionId), [sessions, workspace.activeSessionId])
   const activeProject = useMemo(() => findProjectForSession(projects, activeSession)
     ?? projects.find((project) => project.id === workspace.activeProjectId)
@@ -409,7 +408,7 @@ export default function App() {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
-      }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal('https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
+      }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(activeHarness === 'omp' ? 'https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md' : 'https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
     {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}

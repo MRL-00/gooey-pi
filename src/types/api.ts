@@ -342,7 +342,10 @@ export interface AppSettings {
   showToolCalls: boolean
   messageEnterAction: MessageEnterAction
   telemetry: boolean
+  /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]
+  /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */
+  ompDisabledProviders: string[]
   /** Harness whose workspace the renderer shows; defaults to 'prime'. */
   activeHarness: HarnessId
   /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
@@ -573,7 +576,8 @@ export interface PrimeWorkApi {
     catalog(force?: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
     saveApiKey(providerId: string, apiKey: string): Promise<PrimeModelCatalog>
     logout(providerId: string): Promise<PrimeModelCatalog>
-    setEnabled(providerId: string, enabled: boolean): Promise<PrimeModelCatalog>
+    setEnabled(providerId: string, enabled: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
+    setDisabled(providerIds: string[], harness?: HarnessId): Promise<PrimeModelCatalog>
     startOAuth(providerId: string): Promise<{ flowId: string }>
     respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
     cancelOAuth(flowId: string): Promise<boolean>

@@ -22,11 +22,10 @@ interface UseProviderCatalogOptions {
   harness?: HarnessId
   runtime: RuntimeInfo | null
   syncRuntime(runtimeId: string): Promise<void>
-  syncDisabledProviders(providerIds: string[]): Promise<void> | void
   reportError(error: unknown): void
 }
 
-export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRuntime, syncDisabledProviders, reportError }: UseProviderCatalogOptions) {
+export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRuntime, reportError }: UseProviderCatalogOptions) {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
@@ -188,10 +187,8 @@ export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRun
     )
   }, [bridge, queueRuntimeMutation, runtime, updateFast])
 
-  // Provider auth and enablement always operate on the prime catalog: the
-  // bridge methods validate against prime, and the OMP settings surface is
-  // read-only, so these writes land in the prime cache slot regardless of the
-  // harness currently shown.
+  // Credentials remain Prime-only, while desktop-owned provider visibility is
+  // stored independently for each harness.
   const saveApiKey = useCallback(async (providerId: string, apiKey: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     setCatalogFor('prime', await bridge.providers.saveApiKey(providerId, apiKey))
@@ -204,31 +201,29 @@ export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRun
 
   const setEnabled = useCallback(async (providerId: string, enabled: boolean) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
-    const next = await bridge.providers.setEnabled(providerId, enabled)
-    setCatalogFor('prime', next)
+    const next = await bridge.providers.setEnabled(providerId, enabled, harness)
+    setCatalogFor(harness, next)
     const disabledProviders = next.providers.filter((provider) => !provider.enabled).map((provider) => provider.id)
     const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
     if (selectedProvider && disabledProviders.includes(selectedProvider)) { updateModel('auto'); updateFast(false) }
-  }, [bridge, catalog?.models, setCatalogFor, updateFast, updateModel])
+  }, [bridge, catalog?.models, harness, setCatalogFor, updateFast, updateModel])
 
   const setAllEnabled = useCallback(async () => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
-    await syncDisabledProviders([])
-    setCatalogFor('prime', await bridge.providers.catalog(true, 'prime'))
-  }, [bridge, setCatalogFor, syncDisabledProviders])
+    setCatalogFor(harness, await bridge.providers.setDisabled([], harness))
+  }, [bridge, harness, setCatalogFor])
 
   const setAllDisabled = useCallback(async () => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     const providerIds = catalog?.providers.map((provider) => provider.id).sort() ?? []
     if (!providerIds.length) throw new Error('Provider catalogue is not loaded.')
-    await syncDisabledProviders(providerIds)
-    setCatalogFor('prime', await bridge.providers.catalog(true, 'prime'))
+    setCatalogFor(harness, await bridge.providers.setDisabled(providerIds, harness))
     const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
     if (selectedProvider && providerIds.includes(selectedProvider)) {
       updateModel('auto')
       updateFast(false)
     }
-  }, [bridge, catalog?.models, catalog?.providers, setCatalogFor, syncDisabledProviders, updateFast, updateModel])
+  }, [bridge, catalog?.models, catalog?.providers, harness, setCatalogFor, updateFast, updateModel])
 
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')

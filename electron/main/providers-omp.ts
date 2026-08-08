@@ -158,11 +158,14 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
   }
 
   private async refreshCatalog(): Promise<PrimeModelCatalog> {
-    const result = await runProcess(this.executable!, ['models', '--json'], {
-      timeoutMs: this.timeoutMs,
-      maxBytes: this.maxOutputBytes,
-      env: safeChildEnvironment(),
-    })
+    const [result, version] = await Promise.all([
+      runProcess(this.executable!, ['models', '--json'], {
+        timeoutMs: this.timeoutMs,
+        maxBytes: this.maxOutputBytes,
+        env: safeChildEnvironment(),
+      }),
+      this.resolveVersion(),
+    ])
     if (result.outputExceeded) throw new Error(`OMP model catalog output exceeded ${this.maxOutputBytes.toLocaleString()} bytes`)
     if (result.timedOut) throw new Error('The OMP model catalog request timed out')
     if (result.code !== 0) throw new Error(`omp models exited with status ${result.code}`)
@@ -192,7 +195,7 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
         name: id.slice(0, 200),
         authMethod: 'external',
         configured: true,
-        authLabel: 'Managed by the omp CLI',
+        authLabel: 'Credentials managed by the omp CLI',
         modelCount: providerModels.length,
         availableModelCount: providerModels.filter((model) => model.available).length,
         enabled: true,
@@ -212,7 +215,7 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     ].filter((warning): warning is string => Boolean(warning))
 
     this.cachedCatalog = {
-      primeVersion: await this.resolveVersion(),
+      primeVersion: version,
       refreshedAt: new Date().toISOString(),
       models,
       providers,

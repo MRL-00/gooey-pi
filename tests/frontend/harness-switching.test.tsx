@@ -308,6 +308,7 @@ describe('sidebar brand switcher', () => {
           onNavigate={noop}
           onNewSession={noop}
           onAddProject={noop}
+          onRemoveProject={noop}
           onClose={noop}
           onOpenPalette={noop}
           onRenameSession={async () => undefined}
@@ -364,7 +365,7 @@ describe('provider catalog per harness', () => {
   const ompCatalog: PrimeModelCatalog = {
     primeVersion: '17.2.11', refreshedAt: '2026-08-06T00:00:00.000Z',
     models: [{ key: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna GPT-5.6', reasoning: true, input: ['text', 'image'], contextWindow: 400_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'medium', 'high'], fastModeSupported: false, available: true }],
-    providers: [{ id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, authLabel: 'Managed by the omp CLI', modelCount: 1, availableModelCount: 1, enabled: true }],
+    providers: [{ id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, authLabel: 'Credentials managed by the omp CLI', modelCount: 1, availableModelCount: 1, enabled: true }],
   }
 
   it('fetches per harness, caches catalogs, and resets the model selection on switch', async () => {
@@ -378,10 +379,9 @@ describe('provider catalog per harness', () => {
     } as unknown as PrimeWorkApi
     let state!: ReturnType<typeof useProviderCatalog>
     const syncRuntime = async () => undefined
-    const syncDisabledProviders = () => undefined
     const reportError = vi.fn()
     function CatalogProbe({ harness }: { harness: HarnessId }) {
-      state = useProviderCatalog({ bridge, harness, runtime: null, syncRuntime, syncDisabledProviders, reportError })
+      state = useProviderCatalog({ bridge, harness, runtime: null, syncRuntime, reportError })
       return <Probe />
     }
     await act(async () => { root.render(<CatalogProbe harness="prime" />); await Promise.resolve() })
@@ -434,12 +434,12 @@ describe('OMP settings surfaces', () => {
     expect(onUpdate).toHaveBeenCalledWith({ ompApprovalMode: 'write' })
   })
 
-  it('renders the OMP provider catalog read-only with the CLI auth label', async () => {
+  it('renders OMP provider toggles while keeping credentials CLI-owned', async () => {
     const catalog: PrimeModelCatalog = {
       primeVersion: '17.2.11', refreshedAt: '2026-08-06T00:00:00.000Z',
       models: [{ key: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna GPT-5.6', reasoning: true, input: ['text'], contextWindow: 400_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'high'], fastModeSupported: false, available: true }],
       providers: [
-        { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, authLabel: 'Managed by the omp CLI', modelCount: 1, availableModelCount: 1, enabled: true },
+        { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, authLabel: 'Credentials managed by the omp CLI', modelCount: 1, availableModelCount: 1, enabled: true },
         { id: 'anthropic', name: 'Anthropic', authMethod: 'external', configured: true, modelCount: 0, availableModelCount: 0, enabled: true },
       ],
     }
@@ -449,10 +449,12 @@ describe('OMP settings surfaces', () => {
     })
 
     expect(container.textContent).toContain('OMP catalogue')
-    expect(container.textContent).toContain('Managed by the omp CLI')
-    expect(container.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(container.textContent).toContain('Credentials managed by the omp CLI')
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2)
     const buttonLabels = [...container.querySelectorAll('button')].map((button) => button.textContent ?? '')
-    for (const label of ['Connect', 'Reconnect', 'Add key', 'Replace key', 'Setup', 'Disable all', 'Enable all']) {
+    expect(buttonLabels.some((text) => text.includes('Hide all'))).toBe(true)
+    expect(buttonLabels.some((text) => text.includes('Credential setup'))).toBe(true)
+    for (const label of ['Connect', 'Reconnect', 'Add key', 'Replace key', 'Disable all', 'Enable all']) {
       expect(buttonLabels.some((text) => text.includes(label))).toBe(false)
     }
   })

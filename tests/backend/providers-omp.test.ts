@@ -86,7 +86,7 @@ describe('OMP model catalog service', () => {
     const anthropic = catalog.providers[0]
     expect(anthropic.authMethod).toBe('external')
     expect(anthropic.configured).toBe(true)
-    expect(anthropic.authLabel).toBe('Managed by the omp CLI')
+    expect(anthropic.authLabel).toBe('Credentials managed by the omp CLI')
     expect(anthropic.modelCount).toBe(2)
     expect(anthropic.availableModelCount).toBe(2)
     expect(anthropic.enabled).toBe(true)

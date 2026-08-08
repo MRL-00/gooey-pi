@@ -35,7 +35,7 @@ async function closeHermeticApp(target: ElectronApplication | undefined): Promis
   await closeEvent
 }
 
-function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; sessionFile: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; sessionFile: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
@@ -262,10 +262,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 })
 `)
   chmodSync(executable, 0o755)
-  return { userData, home, project, executable, sessionFile: realpathSync(sessionFile) }
+  const ompExecutable = join(fixtureRoot, 'omp-fixture.cjs')
+  writeFileSync(ompExecutable, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args.includes('--version')) { process.stdout.write('omp/17.2.11\\n'); process.exit(0) }
+if (args[0] === 'models' && args.includes('--json')) {
+  process.stdout.write(JSON.stringify({ models: [
+    { provider: 'anthropic', id: 'claude-fixture', name: 'Claude Fixture', contextWindow: 200000, maxTokens: 8192, reasoning: true, thinking: ['low', 'high'], input: ['text'] },
+    { provider: 'openai-codex', id: 'gpt-fixture', name: 'GPT Fixture', contextWindow: 200000, maxTokens: 8192, reasoning: true, thinking: ['low', 'high'], input: ['text'] },
+  ] })); process.exit(0)
+}
+process.exit(2)
+`)
+  chmodSync(ompExecutable, 0o755)
+  return { userData, home, project, executable, ompExecutable, sessionFile: realpathSync(sessionFile) }
 }
 
-function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEnv {
+function hermeticEnvironment(home: string, executable: string, ompExecutable: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: home,
     PATH: process.env.PATH,
@@ -275,6 +288,7 @@ function hermeticEnvironment(home: string, executable: string): NodeJS.ProcessEn
     LC_ALL: 'C',
     NO_COLOR: '1',
     PRIME_AGENT_BINARY: executable,
+    OMP_BINARY: ompExecutable,
   }
   for (const key of ['USER', 'LOGNAME', '__CF_USER_TEXT_ENCODING']) if (process.env[key]) env[key] = process.env[key]
   return env
@@ -296,7 +310,7 @@ test.describe('Prime Work desktop smoke', () => {
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable) as Record<string, string>,
+          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable) as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
@@ -450,6 +464,23 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
+  })
+
+  test('persists a desktop-only OMP provider toggle and removes its models from the picker', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Providers', exact: true }).click()
+    const anthropic = page.getByRole('checkbox', { name: 'Show anthropic provider' })
+    await expect(anthropic).toBeChecked()
+    await page.getByTitle('Hide provider in OMP').filter({ has: anthropic }).click()
+    await expect(anthropic).not.toBeChecked()
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual(['anthropic'])
+
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+    const modelPicker = page.getByRole('combobox', { name: 'Model' })
+    await expect(modelPicker.locator('option', { hasText: 'GPT Fixture' })).toHaveCount(1)
+    await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(0)
   })
 
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {

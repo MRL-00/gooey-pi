@@ -6,7 +6,7 @@ import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { Modal } from '@/components/ui'
 
 interface ProviderSettingsProps {
-  /** Active harness. OMP renders the catalog read-only: auth and enablement live in the omp CLI. */
+  /** Active harness. OMP credentials stay CLI-owned; visibility toggles only affect Prime Work. */
   harness?: HarnessId
   catalog: PrimeModelCatalog | null
   onRefresh(): Promise<void>
@@ -30,7 +30,7 @@ function authDescription(provider: PrimeProviderDescriptor): string {
 }
 
 export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
-  const readOnly = harness !== 'prime'
+  const externalAuth = harness === 'omp'
   const agentName = HARNESS_AGENT_NAMES[harness]
   const [view, setView] = useState<'providers' | 'models'>('providers')
   const [query, setQuery] = useState('')
@@ -79,13 +79,13 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
-  const availableModelCount = catalog?.models.filter((model) => model.available).length ?? 0
+  const availableModelCount = catalog?.models.filter((model) => model.available && providerEnabled.get(model.provider) !== false).length ?? 0
   const disabledCount = catalog?.providers.filter((provider) => !provider.enabled).length ?? 0
 
   return (
     <section className="settings-group provider-settings">
-      <div className="settings-group__heading"><h2>{agentName} catalogue</h2><div className="provider-heading-actions">{!readOnly && catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>Disable all</button> : null}{!readOnly && disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>Enable all</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
-      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{availableModelCount.toLocaleString()} models are available with your current {agentName} credentials</small> : null}</div>
+      <div className="settings-group__heading"><h2>{agentName} catalogue</h2><div className="provider-heading-actions">{catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>{externalAuth ? 'Hide all' : 'Disable all'}</button> : null}{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>{externalAuth ? 'Show all' : 'Enable all'}</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
+      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{externalAuth ? `${availableModelCount.toLocaleString()} models are shown in Prime Work; OMP checks credentials when you launch one` : `${availableModelCount.toLocaleString()} models are available with your current ${agentName} credentials`}</small> : null}</div>
       {catalog?.warning ? <p className="provider-catalog-warning" role="status">{catalog.warning}</p> : null}
       <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view">
         <button type="button" role="tab" aria-selected={view === 'providers'} className={view === 'providers' ? 'is-active' : ''} onClick={() => { setView('providers'); setQuery('') }}>Providers <span>{providerCount.toLocaleString()}</span></button>
@@ -96,22 +96,15 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
       {view === 'providers' ? <div className="provider-list">
         {providers.map((provider) => {
           const busy = busyProvider === provider.id
-          // The OMP catalog is read-only: authentication and enablement are
-          // managed by the omp CLI, so rows only describe the auth source.
-          if (readOnly) {
-            return <div className="provider-row" key={provider.id}>
-              <div className="provider-row__identity"><strong>{provider.name}</strong><small>{provider.authLabel ?? 'Managed by the omp CLI'}</small></div>
-            </div>
-          }
           return <div className="provider-row" key={provider.id}>
-            <label className="provider-row__toggle" title={provider.enabled ? 'Disable provider in Prime Work' : 'Enable provider in Prime Work'}><input type="checkbox" aria-label={`Enable ${provider.name} provider`} checked={provider.enabled} disabled={busy} onChange={(event) => void run(provider.id, () => onSetEnabled(provider.id, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
-            <div className="provider-row__identity"><strong>{provider.name}</strong><small>{authDescription(provider)}</small></div>
-            <div className="provider-row__actions">
+            <label className="provider-row__toggle" title={provider.enabled ? `Hide provider in ${agentName}` : `Show provider in ${agentName}`}><input type="checkbox" aria-label={`Show ${provider.name} provider`} checked={provider.enabled} disabled={busy} onChange={(event) => void run(provider.id, () => onSetEnabled(provider.id, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
+            <div className="provider-row__identity"><strong>{provider.name}</strong><small>{externalAuth ? `${provider.authLabel ?? 'Credentials managed by the omp CLI'} · ${provider.availableModelCount.toLocaleString()} models` : authDescription(provider)}</small></div>
+            {externalAuth ? <div className="provider-row__actions"><button type="button" className="button" onClick={onOpenDocs}><ExternalLink size={13} /> Credential setup</button></div> : <div className="provider-row__actions">
               {provider.authMethod === 'oauth' ? <button type="button" className="button" disabled={busy} onClick={() => void run(provider.id, () => onStartOAuth(provider.id))}><LogIn size={13} /> {provider.configured ? 'Reconnect' : 'Connect'}</button> : null}
               {provider.authMethod === 'api_key' ? <button type="button" className="button" disabled={busy} onClick={() => { setError(''); setApiKeyError(''); setApiKey(''); setApiKeyProvider(provider) }}><KeyRound size={13} /> {provider.configured ? 'Replace key' : 'Add key'}</button> : null}
               {provider.authMethod === 'external' ? <button type="button" className="button" onClick={onOpenDocs}><ExternalLink size={13} /> Setup</button> : null}
               {provider.configured && provider.authSource === 'stored' ? <button type="button" className="button button--icon" aria-label={`Log out of ${provider.name}`} disabled={busy} onClick={() => void run(provider.id, () => onLogout(provider.id))}><LogOut size={13} /></button> : null}
-            </div>
+            </div>}
           </div>
         })}
       </div> : <div className="provider-list provider-model-list">
@@ -120,7 +113,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
           <div className="provider-model-row__capabilities">
             {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
             {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
-            <span className={model.available && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{providerEnabled.get(model.provider) === false ? 'Disabled' : model.available ? 'Available' : 'Needs credentials'}</span>
+            <span className={model.available && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{providerEnabled.get(model.provider) === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
           </div>
         </div>)}
       </div>}
@@ -136,7 +129,7 @@ export function ProvidersSettings(props: ProviderSettingsProps) {
   return (
     <>
       <header><h1>Providers</h1><p>{props.harness === 'omp'
-        ? 'Browse every model the omp CLI exposes. Provider authentication is managed by omp itself.'
+        ? 'Choose which OMP providers and models appear in Prime Work. These visibility settings do not change OMP itself; credentials remain managed by OMP.'
         : 'Connect accounts, choose which providers and their models appear in Prime Work, and browse every model Prime Agent supports.'}</p></header>
       <ProviderSettings {...props} />
     </>

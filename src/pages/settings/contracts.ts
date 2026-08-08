@@ -29,6 +29,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   messageEnterAction: 'agent',
   telemetry: 'privacy',
   disabledProviders: 'providers',
+  ompDisabledProviders: 'providers',
   activeHarness: 'agent',
   ompApprovalMode: 'agent',
   voiceTranscriptionProvider: 'voice',

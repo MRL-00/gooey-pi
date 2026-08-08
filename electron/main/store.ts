@@ -41,6 +41,7 @@ export function defaultSettings(): AppSettings {
     messageEnterAction: 'queue',
     telemetry: false,
     disabledProviders: [],
+    ompDisabledProviders: [],
     activeHarness: 'prime',
     ompApprovalMode: 'inherit',
     voiceTranscriptionProvider: 'openai-live',
@@ -115,6 +116,9 @@ function parseSettings(value: unknown): AppSettings {
     disabledProviders: Array.isArray(value.disabledProviders)
       ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
       : defaults.disabledProviders,
+    ompDisabledProviders: Array.isArray(value.ompDisabledProviders)
+      ? [...new Set(value.ompDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
+      : defaults.ompDisabledProviders,
     activeHarness: parseHarness(value.activeHarness),
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
     voiceTranscriptionProvider: value.voiceTranscriptionProvider === 'openai-live' || value.voiceTranscriptionProvider === 'openai' || value.voiceTranscriptionProvider === 'groq' || value.voiceTranscriptionProvider === 'deepgram' || value.voiceTranscriptionProvider === 'local-whisper' ? value.voiceTranscriptionProvider : defaults.voiceTranscriptionProvider,

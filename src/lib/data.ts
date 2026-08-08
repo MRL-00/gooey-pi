@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   messageEnterAction: 'queue',
   telemetry: false,
   disabledProviders: [],
+  ompDisabledProviders: [],
   voiceTranscriptionProvider: 'openai-live',
   voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
   voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',

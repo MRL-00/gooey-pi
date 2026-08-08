@@ -84,7 +84,7 @@ describe('provider settings behavior and accessibility', () => {
     const onSetEnabled = vi.fn().mockRejectedValue(new Error('Provider policy was not saved'))
     await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onSetAllDisabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
-    const checkbox = container.querySelector<HTMLInputElement>('input[aria-label="Enable Anthropic provider"]')
+    const checkbox = container.querySelector<HTMLInputElement>('input[aria-label="Show Anthropic provider"]')
     expect(checkbox).not.toBeNull()
     await click(checkbox!)
 
@@ -160,8 +160,9 @@ describe('provider runtime mutations', () => {
   function mountCatalogHook(options: {
     command: PrimeWorkApi['agent']['command']
     syncRuntime?: (runtimeId: string) => Promise<void>
-    syncDisabledProviders?: (providerIds: string[]) => Promise<void>
     setEnabled?: PrimeWorkApi['providers']['setEnabled']
+    setDisabled?: PrimeWorkApi['providers']['setDisabled']
+    harness?: 'prime' | 'omp'
     reportError?: (error: unknown) => void
   }) {
     let value: ReturnType<typeof useProviderCatalog> | undefined
@@ -172,16 +173,16 @@ describe('provider runtime mutations', () => {
         catalog: catalogMock,
         onAuthEvent: vi.fn().mockReturnValue(() => undefined),
         setEnabled: options.setEnabled ?? vi.fn().mockResolvedValue(catalog),
+        setDisabled: options.setDisabled ?? vi.fn().mockResolvedValue(catalog),
       },
     } as unknown as PrimeWorkApi
     const syncRuntime = options.syncRuntime ?? vi.fn().mockResolvedValue(undefined)
-    const syncDisabledProviders = options.syncDisabledProviders ?? vi.fn().mockResolvedValue(undefined)
     const reportError = options.reportError ?? vi.fn()
     function Harness() {
-      value = useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledProviders, reportError })
+      value = useProviderCatalog({ bridge, harness: options.harness, runtime, syncRuntime, reportError })
       return null
     }
-    return render(<Harness />).then(() => ({ get value() { return value! }, catalogMock, syncRuntime, syncDisabledProviders, reportError }))
+    return render(<Harness />).then(() => ({ get value() { return value! }, catalogMock, syncRuntime, setDisabled: bridge.providers.setDisabled, reportError }))
   }
 
   it('serializes rapid reasoning changes and rolls back/synchronizes the latest rejection', async () => {
@@ -228,18 +229,15 @@ describe('provider runtime mutations', () => {
     const hook = await mountCatalogHook({ command: vi.fn(), setEnabled })
 
     await act(async () => { await hook.value.setEnabled('anthropic', true) })
-    expect(setEnabled).toHaveBeenCalledWith('anthropic', true)
-    expect(hook.syncDisabledProviders).not.toHaveBeenCalled()
+    expect(setEnabled).toHaveBeenCalledWith('anthropic', true, 'prime')
     expect(hook.value.catalog?.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(true)
   })
 
-  it('enables every provider with one atomic settings mutation and refreshes the catalogue', async () => {
+  it('enables every provider with one atomic main-process mutation', async () => {
     const hook = await mountCatalogHook({ command: vi.fn() })
 
     await act(async () => { await hook.value.setAllEnabled() })
-    expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
-    expect(hook.syncDisabledProviders).toHaveBeenCalledWith([])
-    expect(hook.catalogMock).toHaveBeenLastCalledWith(true, 'prime')
+    expect(hook.setDisabled).toHaveBeenCalledWith([], 'prime')
   })
 
   it('keeps an optimistic fast-mode toggle across a catalog refresh', async () => {
@@ -261,10 +259,20 @@ describe('provider runtime mutations', () => {
     await act(async () => { await Promise.resolve() })
 
     await act(async () => { await hook.value.setAllDisabled() })
-    expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
-    expect(hook.syncDisabledProviders).toHaveBeenCalledWith(['anthropic', 'openai-codex'])
-    expect(hook.catalogMock).toHaveBeenLastCalledWith(true, 'prime')
+    expect(hook.setDisabled).toHaveBeenCalledWith(['anthropic', 'openai-codex'], 'prime')
     expect(hook.value.model).toBe('auto')
     expect(hook.value.fast).toBe(false)
+  })
+
+  it('routes OMP provider visibility to the OMP desktop-settings bucket', async () => {
+    const next = { ...catalog, providers: catalog.providers.map((provider) => provider.id === 'anthropic' ? { ...provider, enabled: true } : provider) }
+    const setEnabled = vi.fn().mockResolvedValue(next)
+    const setDisabled = vi.fn().mockResolvedValue(next)
+    const hook = await mountCatalogHook({ command: vi.fn(), harness: 'omp', setEnabled, setDisabled })
+
+    await act(async () => { await hook.value.setEnabled('anthropic', true) })
+    expect(setEnabled).toHaveBeenCalledWith('anthropic', true, 'omp')
+    await act(async () => { await hook.value.setAllEnabled() })
+    expect(setDisabled).toHaveBeenCalledWith([], 'omp')
   })
 })

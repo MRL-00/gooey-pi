@@ -7,7 +7,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
 - The sidebar brand in the top-left gains a chevron. Clicking it opens a harness switcher: **Prime Work** (Prime Intellect butterfly) or **OMP Work** (OMP pi-plug mark, `assets/brand/omp-icon.svg`, MIT-licensed from the oh-my-pi repo).
 - Switching harness swaps the whole workspace context: each harness has its own granted projects, session catalog, model catalog, and runtimes. Settings gain an `activeHarness` field; the choice persists.
 - All existing features work on OMP where the harness supports them: streaming transcripts, steering/follow-ups, abort, model + thinking selection, compaction, session resume/switch/rename/fork(branch), extension-UI dialogs (which is also how OMP surfaces **tool approval prompts**), browser capability bridge, git/terminal (harness-agnostic already).
-- Prime-only for now (hidden when OMP is active): schedules/heartbeats (built on `prime-agent schedule`), daemon-socket follow-up to out-of-app sessions, provider OAuth management (OMP auth is managed by the `omp` CLI; the settings page says so).
+- Prime-only for now (hidden when OMP is active): schedules/heartbeats (built on `prime-agent schedule`), daemon-socket follow-up to out-of-app sessions, provider OAuth management. OMP credentials remain CLI-owned; Prime Work keeps a separate `ompDisabledProviders` list that only controls which providers appear in its OMP model picker.
 
 ## OMP facts (verified on this machine, omp 17.2.11)
 
@@ -87,7 +87,7 @@ HarnessDescriptor {
 
 - `useAppSettings` carries `activeHarness`; `App.tsx` scopes workspaces, sessions, projects, and the model catalog by it. Switching harness behaves like a workspace switch (generation bump; running runtimes of the other harness keep running but are not shown).
 - `Sidebar` brand becomes a button with chevron → dropdown listing both harnesses with logos (`PrimeMark` / new `OmpMark` in `src/components/ui.tsx`, adapted to `currentColor` + orange accent). Title strings, `TitleToolbar` fallback, and settings harness card follow the active harness.
-- Settings: Agent section shows both harness status cards; an OMP-only "Approval mode" select (Inherit config / Always ask / Write / YOLO → argv flag only when not Inherit); Providers section per harness (OMP side is read-only catalog + "auth is managed by the omp CLI").
+- Settings: Agent section shows both harness status cards; an OMP-only "Approval mode" select (Inherit config / Always ask / Write / YOLO → argv flag only when not Inherit); Providers section per harness. OMP provider toggles update Prime Work's desktop state only, independently from Prime's provider list and without changing OMP configuration; authentication remains owned by OMP.
 
 ## Security invariants (unchanged)
 

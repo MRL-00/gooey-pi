@@ -35,6 +35,7 @@ describe('SettingsService.update', () => {
       messageEnterAction: 'steer',
       telemetry: false,
       disabledProviders: ['openai', 'openai', 'google'],
+      ompDisabledProviders: ['anthropic', 'anthropic'],
       activeHarness: 'omp',
       ompApprovalMode: 'always-ask',
       voiceTranscriptionProvider: 'groq',
@@ -52,7 +53,7 @@ describe('SettingsService.update', () => {
       defaultInspectorTab: 'changes', browserHome: 'https://example.test/',
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
-      telemetry: false, disabledProviders: ['openai', 'google'],
+      telemetry: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask',
       voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
     })
@@ -80,6 +81,8 @@ describe('SettingsService.update', () => {
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ ompDisabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
+    await expect(service.update({ ompDisabledProviders: Array.from({ length: 257 }, () => 'p') })).rejects.toThrow(/bounded/)
     await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
     await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
     await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)

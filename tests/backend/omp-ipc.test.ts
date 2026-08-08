@@ -30,6 +30,15 @@ interface Harness {
 }
 
 function buildServices() {
+  const settingsState = { disabledProviders: ['blocked'], ompDisabledProviders: ['anthropic'] }
+  const catalog = (from: string, disabled: ReadonlySet<string> = new Set()) => ({
+    from,
+    models: [
+      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude' },
+      { key: 'openai/gpt', provider: 'openai', id: 'gpt' },
+    ],
+    providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: !disabled.has(id) })),
+  })
   const primeSessionGate = vi.fn(async (path: unknown) => {
     if (path === PRIME_SESSION) return path
     throw new TypeError('Session path is outside the Prime session directory')
@@ -40,7 +49,7 @@ function buildServices() {
   })
   return {
     meta: { version: '0.0.0-test' },
-    projects: { ...serviceStub(), list: vi.fn(async () => ['prime-projects']), grantInferred: vi.fn(async () => 'prime-grant') },
+    projects: { ...serviceStub(), list: vi.fn(async () => ['prime-projects']), listWorktrees: vi.fn(async () => ['prime-worktrees']), openWorktree: vi.fn(async () => 'prime-open'), createWorktree: vi.fn(async () => 'prime-create'), grantInferred: vi.fn(async () => 'prime-grant') },
     sessions: {
       ...serviceStub(),
       onDidChange: vi.fn(() => () => undefined),
@@ -62,13 +71,17 @@ function buildServices() {
     terminals: serviceStub(),
     git: serviceStub(),
     plugins: serviceStub(),
-    providers: { ...serviceStub(), catalog: vi.fn(async () => ({ providers: [], models: [], from: 'prime' })), saveApiKey: vi.fn(async () => undefined) },
-    settings: { ...serviceStub(), get: vi.fn(() => ({ disabledProviders: ['blocked'] })) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined) },
+    settings: {
+      ...serviceStub(),
+      get: vi.fn(() => settingsState),
+      update: vi.fn(async (patch: Partial<typeof settingsState>) => { Object.assign(settingsState, patch); return settingsState }),
+    },
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
-      projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), grantInferred: vi.fn(async () => 'omp-grant') },
+      projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), listWorktrees: vi.fn(async () => ['omp-worktrees']), openWorktree: vi.fn(async () => 'omp-open'), createWorktree: vi.fn(async () => 'omp-create'), grantInferred: vi.fn(async () => 'omp-grant') },
       sessions: {
         ...serviceStub(),
         onDidChange: vi.fn(() => () => undefined),
@@ -87,7 +100,9 @@ function buildServices() {
         stop: vi.fn(async () => true),
         list: vi.fn(() => [{ runtimeId: 'omp-runtime', harness: 'omp' }]),
       },
-      catalog: { catalog: vi.fn(async () => ({ providers: [], models: [], from: 'omp' })) },
+      catalog: {
+        catalog: vi.fn(async (_force, disabled) => catalog('omp', disabled)),
+      },
     },
   }
 }
@@ -168,6 +183,12 @@ describe('harness-aware IPC routing', () => {
     await expect(harness.invoke('projects:grant-inferred', '/somewhere', 'omp')).resolves.toBe('omp-grant')
     expect(harness.services.omp.projects.grantInferred).toHaveBeenCalledWith('/somewhere')
     expect(harness.services.projects.grantInferred).not.toHaveBeenCalled()
+    await expect(harness.invoke('projects:list-worktrees', '/repo', 'omp')).resolves.toEqual(['omp-worktrees'])
+    await expect(harness.invoke('projects:open-worktree', '/repo', '/linked', 'omp')).resolves.toBe('omp-open')
+    await expect(harness.invoke('projects:create-worktree', '/repo', 'feature', 'omp')).resolves.toBe('omp-create')
+    expect(harness.services.omp.projects.listWorktrees).toHaveBeenCalledWith('/repo')
+    expect(harness.services.omp.projects.openWorktree).toHaveBeenCalledWith('/repo', '/linked')
+    expect(harness.services.omp.projects.createWorktree).toHaveBeenCalledWith('/repo', 'feature')
   })
 
   it('routes session file operations by which harness root authorizes the path', async () => {
@@ -196,22 +217,32 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.sessions.followUp).toHaveBeenCalledWith(PRIME_SESSION, 'hello', 'queue')
   })
 
-  it('routes providers:catalog by harness; only Prime applies the disabled-provider set', async () => {
+  it('routes providers:catalog with independent desktop visibility per harness', async () => {
     await expect(harness.invoke('providers:catalog', true)).resolves.toMatchObject({ from: 'prime' })
     expect(harness.services.providers.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
 
-    // Provider disabling is a Prime-only surface: the OMP catalog is never
-    // filtered by Prime's disabled set (OMP settings are read-only, so a
-    // shared set could not be undone from the OMP side).
     await expect(harness.invoke('providers:catalog', true, 'omp')).resolves.toMatchObject({ from: 'omp' })
-    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true)
+    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']))
   })
 
-  it('rejects provider auth mutations aimed at the omp harness', async () => {
+  it('stores OMP provider visibility in desktop settings without mutating OMP', async () => {
+    await expect(harness.invoke('providers:set-enabled', 'openai', false, 'omp')).resolves.toMatchObject({
+      from: 'omp',
+      providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: false }],
+    })
+    expect(harness.services.settings.update).toHaveBeenCalledWith({ ompDisabledProviders: ['anthropic', 'openai'] })
+
+    await expect(harness.invoke('providers:set-disabled', ['openai'], 'omp')).resolves.toMatchObject({
+      from: 'omp',
+      providers: [{ id: 'anthropic', enabled: true }, { id: 'openai', enabled: false }],
+    })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['openai'] })
+  })
+
+  it('rejects provider credential mutations aimed at the omp harness', async () => {
     for (const [channel, args] of [
       ['providers:save-api-key', ['openai', 'key']],
       ['providers:logout', ['openai']],
-      ['providers:set-enabled', ['openai', true]],
       ['providers:start-oauth', ['openai']],
     ] as const) {
       await expect(async () => harness.invoke(channel, ...args, 'omp'), channel).rejects.toThrow('managed by the omp CLI')
