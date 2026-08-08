@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -143,9 +143,13 @@ describe('OMP model catalog service', () => {
   it('kills a hung CLI at the timeout', async () => {
     const pidFile = join(tempDir(), 'omp.pid')
     const executable = fakeOmp(`require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`)
-    const service = new OmpModelCatalogService(executable, { timeoutMs: 400 })
+    const service = new OmpModelCatalogService(executable, { timeoutMs: 3_000 })
 
-    await expect(service.catalog(true)).rejects.toThrow(/timed out/)
+    const pending = expect(service.catalog(true)).rejects.toThrow(/timed out/)
+    // The pid file must exist before the timeout fires, or a slow test host
+    // could kill the child before it ever wrote the file.
+    await waitUntil(() => existsSync(pidFile))
+    await pending
     const pid = Number(readFileSync(pidFile, 'utf8'))
     expect(Number.isInteger(pid) && pid > 0).toBe(true)
     await waitUntil(() => !processExists(pid))
