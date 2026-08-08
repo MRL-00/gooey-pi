@@ -3,6 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ChangesCard } from '../../src/components/ChangesCard'
 import { ChangesPanel } from '../../src/components/inspector/ChangesPanel'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -19,6 +20,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  Reflect.deleteProperty(window, 'prime')
   vi.restoreAllMocks()
 })
 
@@ -40,6 +42,40 @@ describe('ChangesPanel status states', () => {
     expect(container.textContent).toContain('Git status timed out')
     expect(container.textContent).not.toContain('No Git repository')
     act(() => { container.querySelector('button')!.click() })
+    expect(onRefreshGit).toHaveBeenCalledTimes(1)
+  })
+  it('dismisses the file changes card without opening the inspector', async () => {
+    const onOpenChanges = vi.fn()
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(<ChangesCard git={{ isRepo: true, files: [{ path: 'file.txt', status: 'M', staged: false, additions: 1, deletions: 0 }] }} onOpenChanges={onOpenChanges} onClose={onClose} />)
+    })
+
+    act(() => { container.querySelector<HTMLButtonElement>('.changes-card__close')!.click() })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onOpenChanges).not.toHaveBeenCalled()
+  })
+
+  it('confirms undoing the selected file before restoring it', async () => {
+    const restore = vi.fn(async () => true)
+    const diff = vi.fn(async () => ({ path: 'file.txt', staged: false, text: '', truncated: false }))
+    Object.defineProperty(window, 'prime', { configurable: true, value: { git: { diff, restore } } })
+    const onRefreshGit = vi.fn(async () => undefined)
+
+    await act(async () => {
+      root.render(<ChangesPanel cwd="/project" git={{ isRepo: true, files: [{ path: 'file.txt', status: 'M', staged: false, additions: 1, deletions: 0 }] }} onRefreshGit={onRefreshGit} />)
+      await Promise.resolve()
+    })
+    act(() => {
+      [...container.querySelectorAll<HTMLButtonElement>('.diff-header button')].find((button) => button.textContent?.includes('Undo changes'))!.click()
+    })
+    expect(document.body.textContent).toContain('This discards the staged and unstaged changes')
+
+    await act(async () => {
+      [...document.body.querySelectorAll<HTMLButtonElement>('.modal__footer button')].find((button) => button.textContent === 'Undo changes')!.click()
+      await Promise.resolve()
+    })
+    expect(restore).toHaveBeenCalledWith('/project', ['file.txt'])
     expect(onRefreshGit).toHaveBeenCalledTimes(1)
   })
 })

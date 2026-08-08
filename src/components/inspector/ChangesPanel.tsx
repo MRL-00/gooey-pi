@@ -31,7 +31,7 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
   const [loading, setLoading] = useState(false)
   const [commitOpen, setCommitOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
-  const [confirmRestore, setConfirmRestore] = useState<string | null>(null)
+  const [confirmUndo, setConfirmUndo] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
   const visibleFiles = git.files.filter((file) => scope === 'staged' ? file.staged : !file.staged)
   const activeSelectedPath = visibleFiles.some((file) => file.path === selectedPath) ? selectedPath : undefined
@@ -115,12 +115,12 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
           {visibleFiles.length === 0 ? <p className="file-changes__empty">No {scope} changes.</p> : null}
         </div>
         <div className="diff-pane scroll-area">
-          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{scope === 'unstaged' ? <button type="button" onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}{scope === 'unstaged' ? <button type="button" className="danger-action" onClick={() => setConfirmRestore(selectedPath)}><RotateCcw size={12} /> Revert</button> : null}</div></div> : null}
+          {selectedPath ? <div className="diff-header"><div><FileCode2 size={13} /><span>{selectedPath}</span></div><div>{scope === 'unstaged' ? <button type="button" onClick={() => void mutate('stage', [selectedPath])}><ArrowDownToLine size={12} /> Stage</button> : <button type="button" onClick={() => void mutate('unstage', [selectedPath])}><Undo2 size={12} /> Unstage</button>}<button type="button" className="danger-action" onClick={() => setConfirmUndo(selectedPath)}><Undo2 size={12} /> Undo changes</button></div></div> : null}
           {loading ? <div className="diff-loading"><LoaderCircle className="spin" size={15} /> Loading diff…</div> : <DiffView text={diff} />}
         </div>
       </div>
       {commitOpen ? <Modal title="Commit staged changes" onClose={() => setCommitOpen(false)} footer={<><button className="button" type="button" onClick={() => setCommitOpen(false)}>Cancel</button><button className="button button--primary" type="button" disabled={!commitMessage.trim()} onClick={() => void commit()}>Commit changes</button></>}><label className="field"><span>Commit message</span><div className="commit-message-input"><input autoFocus value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder="Describe this change" /><button type="button" className="button button--compact" onClick={fillCommitSummary} title="Generate a summary from staged files"><Sparkles size={13} /> Generate summary</button></div></label><p className="muted-copy">This will commit all staged files on <code>{git.branch}</code>.</p></Modal> : null}
-      {confirmRestore ? <Modal title="Revert file changes?" onClose={() => setConfirmRestore(null)} footer={<><button className="button" type="button" onClick={() => setConfirmRestore(null)}>Cancel</button><button className="button button--danger" type="button" onClick={() => { const path = confirmRestore; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmRestore(null) }) }}>Revert file</button></>}><p>Uncommitted changes to <code>{confirmRestore}</code> will be permanently discarded.</p></Modal> : null}
+      {confirmUndo ? <Modal title="Undo file changes?" onClose={() => setConfirmUndo(null)} footer={<><button className="button" type="button" onClick={() => setConfirmUndo(null)}>Cancel</button><button className="button button--danger" type="button" onClick={() => { const path = confirmUndo; void mutate('restore', [path]).then((ok) => { if (ok) setConfirmUndo(null) }) }}>Undo changes</button></>}><p>This discards the staged and unstaged changes to <code>{confirmUndo}</code> and restores the file to its last commit. A new untracked file will be deleted.</p></Modal> : null}
     </div>
   )
 }

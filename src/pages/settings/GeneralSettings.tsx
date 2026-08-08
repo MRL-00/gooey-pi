@@ -10,6 +10,7 @@ export function GeneralSettings({ settings, onUpdate }: SettingsSectionProps) {
         <h2>Window</h2>
         <SettingsToggle checked={settings.sidebarOpen} onChange={(sidebarOpen) => { void onUpdate({ sidebarOpen }) }} label="Show project sidebar" description="Keep projects and sessions visible when the app opens." />
         <SettingsToggle checked={settings.inspectorOpen} onChange={(inspectorOpen) => { void onUpdate({ inspectorOpen }) }} label="Open session inspector" description="Show the summary pane for newly opened sessions." />
+        <SettingsToggle checked={settings.showFileChangesPopup} onChange={(showFileChangesPopup) => { void onUpdate({ showFileChangesPopup }) }} label="Show file changes popup" description="Show the review card above the composer when the workspace has uncommitted changes." />
       </section>
       <section className="settings-group">
         <h2>Session defaults</h2>

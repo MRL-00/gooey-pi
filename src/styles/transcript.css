@@ -110,12 +110,16 @@
 .image-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .message--activity { margin: 3px 0 18px 38px; }
 .message--activity .work-timeline { padding: 0; }
-.changes-card { width: 100%; min-height: 57px; display: flex; align-items: center; gap: 10px; margin: 12px 0 9px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-raised); text-align: left; }
+.changes-card { width: 100%; min-height: 57px; display: flex; align-items: center; gap: 7px; margin: 12px 0 9px; padding: 9px 7px 9px 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-raised); text-align: left; }
+.changes-card__open { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; padding: 0; color: inherit; background: transparent; text-align: left; }
 .changes-card:hover { background: var(--surface-subtle); border-color: var(--border-strong); }
-.changes-card__icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; color: var(--success); background: var(--success-soft); }
+.changes-card__open:hover { color: var(--text); }
+.changes-card__icon { width: 32px; height: 32px; display: grid; flex: 0 0 32px; place-items: center; border-radius: 7px; color: var(--success); background: var(--success-soft); }
 .changes-card__text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .changes-card__text strong { font-size: 12.5px; font-weight: 560; }
 .changes-card__text small { color: var(--text-tertiary); font-size: 10.5px; }
+.changes-card__close { width: 28px; height: 28px; display: grid; flex: 0 0 28px; place-items: center; padding: 0; border-radius: 6px; color: var(--text-tertiary); background: transparent; }
+.changes-card__close:hover { color: var(--text); background: var(--surface-hover); }
 .diff-count { padding: 1px 5px; border-radius: 4px; font: 10.5px/1.5 "SFMono-Regular", Menlo, monospace; }
 .diff-count--add { color: var(--success); background: var(--diff-add); }
 .diff-count--remove { color: var(--danger); background: var(--diff-remove); }

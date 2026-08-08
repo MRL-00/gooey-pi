@@ -23,6 +23,7 @@ describe('SettingsService.update', () => {
       theme: 'dark',
       sidebarOpen: false,
       inspectorOpen: true,
+      showFileChangesPopup: false,
       terminalOpen: true,
       defaultInspectorTab: 'changes',
       browserHome: 'https://example.test/',
@@ -47,7 +48,7 @@ describe('SettingsService.update', () => {
       voiceRealtimeVoice: 'cedar',
     })
     expect(next).toMatchObject({
-      theme: 'dark', sidebarOpen: false, inspectorOpen: true, terminalOpen: true,
+      theme: 'dark', sidebarOpen: false, inspectorOpen: true, showFileChangesPopup: false, terminalOpen: true,
       defaultInspectorTab: 'changes', browserHome: 'https://example.test/',
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',

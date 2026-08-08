@@ -126,6 +126,20 @@ describe('GitService', () => {
     expect(changes.find((file) => file.staged)?.additions).toBe(1)
     expect(changes.find((file) => !file.staged)?.additions).toBe(1)
   })
+  it('restores staged, unstaged, and untracked changes to a clean worktree', async () => {
+    const cwd = repository('prime-work-git-restore-all-')
+    const service = new GitService(async () => cwd)
+
+    writeFileSync(join(cwd, 'file.txt'), 'base\nstaged\n')
+    await service.stage(cwd, ['file.txt'])
+    writeFileSync(join(cwd, 'file.txt'), 'base\nstaged\nunstaged\n')
+    writeFileSync(join(cwd, 'new.txt'), 'new\n')
+
+    expect(await service.restore(cwd, ['file.txt', 'new.txt'])).toBe(true)
+    expect(readFileSync(join(cwd, 'file.txt'), 'utf8')).toBe('base\n')
+    expect(existsSync(join(cwd, 'new.txt'))).toBe(false)
+    expect((await service.status(cwd)).files).toEqual([])
+  })
 
   it('does not execute repository fsmonitor, external diff, hook, or filter programs and strips process secrets/config injection', async () => {
     const cwd = repository('prime-work-git-hostile-')

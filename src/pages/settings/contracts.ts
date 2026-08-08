@@ -17,6 +17,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   theme: 'appearance',
   sidebarOpen: 'general',
   inspectorOpen: 'general',
+  showFileChangesPopup: 'general',
   terminalOpen: 'terminal',
   defaultInspectorTab: 'general',
   browserHome: 'browser',

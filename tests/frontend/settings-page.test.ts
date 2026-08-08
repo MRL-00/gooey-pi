@@ -146,6 +146,7 @@ describe('settings field ownership', () => {
       theme: 'appearance',
       sidebarOpen: 'general',
       inspectorOpen: 'general',
+      showFileChangesPopup: 'general',
       terminalOpen: 'terminal',
       defaultInspectorTab: 'general',
       browserHome: 'browser',

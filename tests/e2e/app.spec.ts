@@ -968,6 +968,32 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.file-changes')).toContainText('secondary-change.txt')
     await page.getByRole('button', { name: /Unstage$/ }).last().click()
   })
+  test('dismisses the file changes popup, disables it in settings, and undoes a file', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const changesCard = page.locator('.changes-card')
+    await expect(changesCard).toBeVisible()
+    await changesCard.getByRole('button', { name: 'Dismiss file changes' }).click()
+    await expect(changesCard).toHaveCount(0)
+
+    await page.keyboard.press('Meta+,')
+    const popupToggle = page.getByRole('checkbox', { name: 'Show file changes popup' })
+    await expect(popupToggle).toBeChecked()
+    await popupToggle.focus()
+    await popupToggle.press('Space')
+    await expect(popupToggle).not.toBeChecked()
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).showFileChangesPopup)).toBe(false)
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    await expect(page.locator('.changes-card')).toHaveCount(0)
+
+    await page.getByRole('tab', { name: 'Changes' }).click()
+    await page.locator('.file-changes > button').first().click()
+    await page.getByRole('button', { name: 'Undo changes', exact: true }).click()
+    const undoDialog = page.getByRole('dialog', { name: 'Undo file changes?' })
+    await expect(undoDialog).toContainText('staged and unstaged changes')
+    await undoDialog.getByRole('button', { name: 'Undo changes', exact: true }).click()
+    await expect.poll(() => readFileSync(join(fixtureRoot, 'secondary-project', 'secondary-change.txt'), 'utf8')).toBe('base\n')
+    await expect(page.locator('.file-changes')).toContainText('No unstaged changes.')
+  })
 
   test('resizes the inspector horizontally and terminal vertically', async () => {
     await page.getByRole('button', { name: /^New session/ }).first().click()

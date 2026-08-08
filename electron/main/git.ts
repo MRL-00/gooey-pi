@@ -253,8 +253,13 @@ async function commitIdentityOverrides(cwd: string, config: ReadonlyMap<string, 
   ]
 }
 
-function changedPathsFromStatus(output: string): string[] {
-  const paths: string[] = []
+interface ChangedPathState {
+  untracked: boolean
+  restorePaths: string[]
+}
+
+function changedPathStatesFromStatus(output: string): Map<string, ChangedPathState> {
+  const states = new Map<string, ChangedPathState>()
   let cursor = 0
   while (cursor < output.length) {
     const field = nextNulField(output, cursor)
@@ -262,12 +267,20 @@ function changedPathsFromStatus(output: string): string[] {
     const record = field.value
     if (!record || record.startsWith('## ') || record.length < 4) continue
     const code = record.slice(0, 2)
-    const path = record.slice(3)
-    if (path) paths.push(path)
-    if (code.includes('R') || code.includes('C')) cursor = nextNulField(output, cursor).cursor
+    const pathValue = record.slice(3)
+    if (!pathValue) continue
+    const path = requireGitPath(pathValue, 'Git status path')
+    const restorePaths = [path]
+    if (code.includes('R') || code.includes('C')) {
+      const previous = nextNulField(output, cursor)
+      cursor = previous.cursor
+      if (previous.value) restorePaths.push(requireGitPath(previous.value, 'Git status path'))
+    }
+    states.set(path, { untracked: code === '??', restorePaths })
   }
-  return paths
+  return states
 }
+
 
 async function rejectFilteredPaths(cwd: string, paths: readonly string[], overrides: readonly string[]): Promise<void> {
   if (!paths.length) return
@@ -402,7 +415,7 @@ export class GitService {
       const { cwd, overrides } = await this.withRepositoryGuards(cwdValue)
       const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
       requireProcessSuccess('Git status', statusResult)
-      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+      await rejectFilteredPaths(cwd, [...changedPathStatesFromStatus(statusResult.stdout).keys()], overrides)
       const [unstagedResult, stagedResult] = await Promise.all([
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
         runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--cached', '--numstat', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides),
@@ -431,7 +444,7 @@ export class GitService {
     if (!path) {
       const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
       requireProcessSuccess('Git status', statusResult)
-      await rejectFilteredPaths(cwd, changedPathsFromStatus(statusResult.stdout), overrides)
+      await rejectFilteredPaths(cwd, [...changedPathStatesFromStatus(statusResult.stdout).keys()], overrides)
     }
     const result = await runGit(cwd, args, { timeoutMs: 30_000, maxBytes: GIT_DIFF_OUTPUT_LIMIT }, overrides)
     if (result.outputExceeded) {
@@ -461,8 +474,35 @@ export class GitService {
     return true
   }
 
-  async restore(cwd: unknown, paths: unknown): Promise<boolean> {
-    return this.mutate(cwd, paths, ['restore', '--worktree'])
+  async restore(cwdValue: unknown, pathsValue: unknown): Promise<boolean> {
+    const paths = this.validPaths(pathsValue)
+    const { cwd, overrides } = await this.withRepositoryGuards(cwdValue, paths)
+    const statusResult = await runGit(cwd, ['status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=all', '-z'], { timeoutMs: 15_000, maxBytes: GIT_STATUS_OUTPUT_LIMIT }, overrides)
+    requireProcessSuccess('Git status', statusResult)
+    const states = changedPathStatesFromStatus(statusResult.stdout)
+    const selectedStates = paths.map((path) => states.get(path))
+    if (selectedStates.some((state) => !state)) throw new Error('Git restore refused because the selected path has no pending changes')
+    const restorePaths = [...new Set(selectedStates.flatMap((state) => state!.restorePaths))]
+    await rejectFilteredPaths(cwd, restorePaths, overrides)
+    const untracked = restorePaths.filter((path) => states.get(path)?.untracked === true)
+    const tracked = restorePaths.filter((path) => !untracked.includes(path))
+    const head = await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: 5_000, maxBytes: 64 * 1024 }, overrides)
+    if (head.code !== 0 && head.code !== 1) requireProcessSuccess('Git HEAD inspection', head)
+    if (head.code === 0) {
+      if (tracked.length) {
+        const result = await runGit(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
+        requireProcessSuccess('Git restore', result)
+      }
+    } else if (tracked.length) {
+      const result = await runGit(cwd, ['rm', '--cached', '--ignore-unmatch', '-r', '-f', '--', ...tracked], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
+      requireProcessSuccess('Git restore', result)
+    }
+    const pathsToClean = head.code === 0 ? untracked : restorePaths
+    if (pathsToClean.length) {
+      const result = await runGit(cwd, ['clean', '-f', '--', ...pathsToClean], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }, overrides)
+      requireProcessSuccess('Git clean', result)
+    }
+    return true
   }
 
   async commit(cwdValue: unknown, messageValue: unknown): Promise<ProcessOutcome> {

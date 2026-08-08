@@ -72,6 +72,7 @@ export default function App() {
   const [voiceOrbOpen, setVoiceOrbOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [changesCardDismissed, setChangesCardDismissed] = useState(false)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const queuedFlushRef = useRef(false)
   const gitRequestRef = useRef(0)
@@ -122,6 +123,10 @@ export default function App() {
     || Boolean(activeTerminalSessionPath && terminal.sessionPath === activeTerminalSessionPath)), [activeTerminalSessionPath, terminalSessionKey, terminalSessions])
   const terminalOpen = Boolean(activeTerminalSession)
   const git = gitStatusForWorkspace(gitSnapshot, activeCwd)
+  useEffect(() => { setChangesCardDismissed(false) }, [activeCwd])
+  useEffect(() => {
+    if (!git.files.length || !settingsState.settings.showFileChangesPopup) setChangesCardDismissed(false)
+  }, [git.files.length, settingsState.settings.showFileChangesPopup])
   const layout = usePanelLayout({
     sidebarOpen: settingsState.sidebarOpen,
     inspectorOpen: settingsState.inspectorOpen, setInspectorOpen: settingsState.setInspectorOpen,
@@ -295,6 +300,30 @@ export default function App() {
       setToast(`Started “${session.title}” in ${project.name} with ${task.harness === 'omp' ? 'OMP' : 'Prime'}.`)
     } catch (error) { reportError(error); throw error }
   }, [activeHarness, bridge, projects, reportError, settingsState.updateSettings, workspace.activateWorkspace])
+  const addOrReplaceProject = useCallback((project: ProjectRecord) => {
+    setProjects((current) => {
+      const existing = current.findIndex((item) => item.id === project.id || item.primaryFolder === project.primaryFolder)
+      if (existing < 0) return [...current, project]
+      return current.map((item, index) => index === existing ? project : item)
+    })
+  }, [])
+  const openWorktree = useCallback(async (worktree: GitWorktree) => {
+    if (!bridge || !activeProject?.primaryFolder) return
+    try {
+      const project = await bridge.projects.openWorktree(activeProject.primaryFolder, worktree.path, activeProject.harness)
+      addOrReplaceProject(project)
+      newSession(project)
+    } catch (error) { reportError(error); throw error }
+  }, [activeProject, addOrReplaceProject, bridge, newSession, reportError])
+  const createWorktree = useCallback(async (branch: string) => {
+    if (!bridge || !activeProject?.primaryFolder) return
+    try {
+      const project = await bridge.projects.createWorktree(activeProject.primaryFolder, branch, activeProject.harness)
+      if (!project) return
+      addOrReplaceProject(project)
+      newSession(project)
+    } catch (error) { reportError(error); throw error }
+  }, [activeProject, addOrReplaceProject, bridge, newSession, reportError])
   const closeTerminal = useCallback((id: string) => {
     terminalDrawerRefs.current.delete(id)
     setTerminalSessions((current) => current.filter((terminal) => terminal.id !== id))
@@ -390,10 +419,10 @@ export default function App() {
       <div className="workbench__content">{view === 'session' ? <div ref={layout.workspaceRowRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.sessionWorkspaceRef} className="conversation-column">
           <main className="conversation-pane">
-            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} harness={activeHarness} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} showPinnedChanges={false} bottomDockHasChanges={git.files.length > 0} queuedMessageCount={queuedMessages.length} /></Suspense>
+            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} harness={activeHarness} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} showPinnedChanges={false} bottomDockHasChanges={Boolean(git.files.length && settingsState.settings.showFileChangesPopup && !changesCardDismissed)} queuedMessageCount={queuedMessages.length} /></Suspense>
             <div className="conversation-bottom-dock">
-              {git.files.length ? <ChangesCard git={git} onOpenChanges={openChanges} /> : null}
-              <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} voice={bridge?.voice} transcriptionProvider={settingsState.settings.voiceTranscriptionProvider} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={workspace.runtime?.fastModeAvailable !== false} agentName={HARNESS_AGENT_NAMES[activeHarness]} shortName={HARNESS_SHORT_NAMES[activeHarness]} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} annotations={browserAnnotations.annotations} terminalSelection={terminalSelection} getTerminalContext={() => activeTerminalSession ? terminalDrawerRefs.current.get(activeTerminalSession.id)?.readSelectionContext() : undefined} queuedMessages={queuedMessages} onDeleteQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} onEditQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} sendSignal={browserAnnotations.sendSignal} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} onRemoveAnnotation={browserAnnotations.remove} onClearAnnotations={browserAnnotations.clear} onClearTerminalSelection={() => { if (activeTerminalSession) terminalDrawerRefs.current.get(activeTerminalSession.id)?.clearSelection() }} />
+              {git.files.length && settingsState.settings.showFileChangesPopup && !changesCardDismissed ? <ChangesCard git={git} onOpenChanges={openChanges} onClose={() => setChangesCardDismissed(true)} /> : null}
+              <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} voice={bridge?.voice} transcriptionProvider={settingsState.settings.voiceTranscriptionProvider} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={workspace.runtime?.fastModeAvailable !== false} worktrees={worktrees} activeWorktreePath={activeProject?.primaryFolder} checkoutLabel={git.branch ?? activeProject?.gitBranch ?? activeProject?.name} worktreesLoading={worktreesLoading} onOpenWorktree={bridge && activeProject && !activeProject.inferred && worktrees.length > 0 ? openWorktree : undefined} onCreateWorktree={bridge && activeProject && !activeProject.inferred && worktrees.length > 0 ? createWorktree : undefined} agentName={HARNESS_AGENT_NAMES[activeHarness]} shortName={HARNESS_SHORT_NAMES[activeHarness]} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} annotations={browserAnnotations.annotations} terminalSelection={terminalSelection} getTerminalContext={() => activeTerminalSession ? terminalDrawerRefs.current.get(activeTerminalSession.id)?.readSelectionContext() : undefined} queuedMessages={queuedMessages} onDeleteQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} onEditQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} sendSignal={browserAnnotations.sendSignal} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} onRemoveAnnotation={browserAnnotations.remove} onClearAnnotations={browserAnnotations.clear} onClearTerminalSelection={() => { if (activeTerminalSession) terminalDrawerRefs.current.get(activeTerminalSession.id)?.clearSelection() }} />
             </div>
           </main>
           {terminalSessions.map((terminal) => <Suspense key={terminal.id} fallback={terminal.id === activeTerminalSession?.id ? <LoadingPanel label="terminal" /> : null}><TerminalDrawer ref={(handle) => { if (handle) terminalDrawerRefs.current.set(terminal.id, handle); else terminalDrawerRefs.current.delete(terminal.id) }} visible={terminal.id === activeTerminalSession?.id} cwd={terminal.cwd} sessionPath={terminal.sessionPath} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={() => closeTerminal(terminal.id)} onError={reportError} onSelectionChange={(selection) => { if (terminal.id === activeTerminalSession?.id) setTerminalSelection(selection) }} /></Suspense>)}

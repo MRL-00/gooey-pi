@@ -331,6 +331,7 @@ export interface AppSettings {
   theme: ThemeMode
   sidebarOpen: boolean
   inspectorOpen: boolean
+  showFileChangesPopup: boolean
   terminalOpen: boolean
   defaultInspectorTab: InspectorTab
   browserHome: string

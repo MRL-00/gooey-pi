@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ompApprovalMode: 'inherit',
   sidebarOpen: true,
   inspectorOpen: true,
+  showFileChangesPopup: true,
   terminalOpen: false,
   defaultInspectorTab: 'summary',
   browserHome: 'http://localhost:3000',

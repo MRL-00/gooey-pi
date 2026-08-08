@@ -20,6 +20,7 @@ export class SettingsService {
       },
       sidebarOpen: (value) => requireBoolean(value, 'sidebarOpen'),
       inspectorOpen: (value) => requireBoolean(value, 'inspectorOpen'),
+      showFileChangesPopup: (value) => requireBoolean(value, 'showFileChangesPopup'),
       terminalOpen: (value) => requireBoolean(value, 'terminalOpen'),
       browserAskForDownloads: (value) => requireBoolean(value, 'browserAskForDownloads'),
       reduceMotion: (value) => requireBoolean(value, 'reduceMotion'),
