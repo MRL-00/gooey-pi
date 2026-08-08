@@ -227,8 +227,14 @@ export default function App() {
   useEffect(() => {
     if (!bridge) return
     void refreshHeartbeats()
+    // Prime Agent emits this event for both /heartbeat and rlm_heartbeat
+    // mutations. The 30s poll remains a recovery path for jobs created by a
+    // resident daemon outside this renderer, but normal changes are immediate.
+    const unsubscribe = bridge.agent.onEvent(({ event }) => {
+      if (event.type === 'heartbeats_changed') void refreshHeartbeats()
+    })
     const interval = window.setInterval(() => { void refreshHeartbeats() }, 30_000)
-    return () => window.clearInterval(interval)
+    return () => { unsubscribe(); window.clearInterval(interval) }
   }, [bridge, refreshHeartbeats])
   const {
     toggleSidebar, toggleInspector, grantProject,

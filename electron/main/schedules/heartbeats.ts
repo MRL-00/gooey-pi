@@ -62,7 +62,7 @@ export class HeartbeatService {
     return [...byId.values()].sort((left, right) => (left.nextRunAt ?? 'z').localeCompare(right.nextRunAt ?? 'z'))
   }
 
-  async manage(idValue: unknown, actionValue: unknown): Promise<NativeHeartbeatRecord> {
+  async manage(idValue: unknown, actionValue: unknown): Promise<NativeHeartbeatRecord | null> {
     const id = requireId(idValue, 'heartbeat id')
     if (actionValue !== 'pause' && actionValue !== 'resume' && actionValue !== 'stop') throw new TypeError('Invalid heartbeat action')
     const heartbeat = (await this.list()).find((candidate) => candidate.id === id)
@@ -77,13 +77,22 @@ export class HeartbeatService {
       const updated = isRecord(response.data) && response.data.heartbeat !== undefined
         ? normalizeHeartbeat(response.data.heartbeat, runtime.runtimeId)
         : null
+      if (actionValue === 'stop') {
+        // A stop is a deletion, not a stale status update. Returning null makes
+        // every caller drop the row immediately; the follow-up catalog read is
+        // the authoritative orphan check.
+        if ((await this.list()).some((candidate) => candidate.id === id)) throw new Error('Heartbeat stop did not remove the job')
+        return null
+      }
       if (updated) return updated
-      if (actionValue === 'stop') return heartbeat
       return { ...heartbeat, status: actionValue === 'pause' ? 'paused' : 'active' }
     }
     if (actionValue === 'stop' && this.primeAgentPath) {
       const result = await runProcess(this.primeAgentPath, ['schedule', 'cancel', heartbeat.id], { timeoutMs: 30_000, maxBytes: 1024 * 1024 })
-      if (result.code === 0 && !result.timedOut && !result.outputExceeded) return heartbeat
+      if (result.code === 0 && !result.timedOut && !result.outputExceeded) {
+        if ((await this.list()).some((candidate) => candidate.id === id)) throw new Error('Heartbeat stop did not remove the job')
+        return null
+      }
     }
     throw new Error('Open the owning Prime session before pausing or resuming this native heartbeat')
   }

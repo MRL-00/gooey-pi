@@ -528,7 +528,7 @@ export interface PrimeWorkApi {
   }
   heartbeats: {
     list(): Promise<NativeHeartbeatRecord[]>
-    manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord>
+    manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord | null>
   }
   schedules: {
     list(): Promise<AutomationScheduleRecord[]>
