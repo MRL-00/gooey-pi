@@ -10,12 +10,19 @@ export type WorkspaceView = 'session' | 'projects' | 'activity' | 'scheduled' | 
 export type InspectorTab = 'summary' | 'changes' | 'browser' | 'files'
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'complete' | 'failed' | 'unknown'
 
+export const HARNESS_IDS = ['prime', 'omp'] as const
+export type HarnessId = (typeof HARNESS_IDS)[number]
+
+export interface HarnessStatus {
+  path: string | null
+  version: string | null
+}
+
 export interface AppMeta {
   version: string
   platform: NodeJS.Platform
   homeDir: string
-  primeAgentPath: string | null
-  primeAgentVersion: string | null
+  harnesses: Record<HarnessId, HarnessStatus>
 }
 
 export interface ProjectRecord {

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PROCESS_CONCURRENCY_LIMIT, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { HARNESSES } from '../../electron/main/harness'
+import { PROCESS_CONCURRENCY_LIMIT, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
 vi.mock('node:child_process', async (importOriginal) => {
@@ -233,6 +234,38 @@ describe('Prime Agent discovery candidates', () => {
     expect(candidates).toContain('C:\\Program Files\\Prime Agent\\prime-agent.exe')
     expect(candidates).toContain('D:\\bin\\prime-agent.exe')
     expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\Programs\\Prime Agent\\prime-agent.exe')
+  })
+})
+
+describe('OMP discovery candidates', () => {
+  it('uses native executable names for every supported desktop platform', () => {
+    expect(HARNESSES.omp.executableName('darwin')).toBe('omp')
+    expect(HARNESSES.omp.executableName('linux')).toBe('omp')
+    expect(HARNESSES.omp.executableName('win32')).toBe('omp.exe')
+  })
+
+  it('honors only absolute OMP_BINARY overrides and scans absolute PATH entries', () => {
+    const relative = harnessExecutableCandidates(HARNESSES.omp, { OMP_BINARY: 'bin/omp', PATH: '/usr/bin:relative/bin' }, 'linux')
+    expect(relative).not.toContain('bin/omp')
+    expect(relative).not.toContain('relative/bin/omp')
+    expect(relative).toContain('/usr/bin/omp')
+    const absolute = harnessExecutableCandidates(HARNESSES.omp, { OMP_BINARY: '/opt/tools/omp', PATH: '/usr/bin' }, 'linux')
+    expect(absolute[0]).toBe('/opt/tools/omp')
+  })
+
+  it('searches the OMP posix fallback directories without Prime-only locations', () => {
+    const candidates = harnessExecutableCandidates(HARNESSES.omp, { PATH: '/usr/bin' }, 'darwin')
+    expect(candidates).toContain(join(homedir(), '.local', 'bin', 'omp'))
+    expect(candidates).toContain('/opt/homebrew/bin/omp')
+    expect(candidates).toContain('/usr/local/bin/omp')
+    expect(candidates.every((candidate) => isAbsolutePathForPlatform(candidate, 'darwin'))).toBe(true)
+  })
+
+  it('adds no bundled-resources or Windows Programs candidates for OMP', () => {
+    const candidates = harnessExecutableCandidates(HARNESSES.omp, { Path: 'C:\\bin', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local' }, 'win32')
+    expect(candidates).toContain('C:\\bin\\omp.exe')
+    expect(candidates.some((candidate) => candidate.includes('Programs'))).toBe(false)
+    expect(candidates.some((candidate) => candidate.includes('resources'))).toBe(false)
   })
 })
 

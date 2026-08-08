@@ -1,6 +1,9 @@
 import { Bot, Keyboard, ShieldCheck } from 'lucide-react'
+import { HARNESS_IDS, type HarnessId } from '@/types/api'
 import type { SettingsMetaSectionProps } from './contracts'
 import { SettingsToggle } from './SettingsToggle'
+
+const HARNESS_NAMES: Record<HarnessId, string> = { prime: 'Prime Agent', omp: 'OMP' }
 
 export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionProps) {
   return (
@@ -8,14 +11,20 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       <header><h1>Prime Agent</h1><p>Runtime discovery, model providers, and workspace permissions.</p></header>
       <section className="settings-group">
         <h2>Runtime</h2>
-        <div className="runtime-card">
-          <span className={meta?.primeAgentPath ? 'is-online' : ''}><Bot size={17} /></span>
-          <div>
-            <strong>{meta?.primeAgentPath ? 'Prime Agent is ready' : 'Prime Agent not detected'}</strong>
-            <small>{meta?.primeAgentPath ?? 'Install Prime Agent and restart the app.'}</small>
-          </div>
-          {meta?.primeAgentVersion ? <code>v{meta.primeAgentVersion}</code> : null}
-        </div>
+        {HARNESS_IDS.map((harness) => {
+          const name = HARNESS_NAMES[harness]
+          const status = meta?.harnesses[harness]
+          return (
+            <div className="runtime-card" key={harness}>
+              <span className={status?.path ? 'is-online' : ''}><Bot size={17} /></span>
+              <div>
+                <strong>{status?.path ? `${name} is ready` : `${name} not detected`}</strong>
+                <small>{status?.path ?? `Install ${name} and restart the app.`}</small>
+              </div>
+              {status?.version ? <code>v{status.version}</code> : null}
+            </div>
+          )
+        })}
       </section>
       <section className="settings-group">
         <h2>Transcript</h2>

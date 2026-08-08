@@ -1,9 +1,10 @@
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { delimiter, join, posix, win32 } from 'node:path'
+import { delimiter, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
+import { HARNESSES, type HarnessDescriptor } from './harness'
 
 import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
 
@@ -223,37 +224,46 @@ export function isAbsolutePathForPlatform(value: string, platform = process.plat
   return platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value)
 }
 
-export function primeAgentExecutableName(platform = process.platform): string {
-  return platform === 'win32' ? 'prime-agent.exe' : 'prime-agent'
-}
-
-export function primeAgentCandidates(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
+export function harnessExecutableCandidates(
+  descriptor: HarnessDescriptor,
+  env: NodeJS.ProcessEnv = process.env,
+  platform = process.platform,
+): string[] {
   const pathApi = platform === 'win32' ? win32 : posix
-  const executable = primeAgentExecutableName(platform)
+  const executable = descriptor.executableName(platform)
   const candidates: string[] = []
-  if (env.PRIME_AGENT_BINARY && isAbsolutePathForPlatform(env.PRIME_AGENT_BINARY, platform)) candidates.push(env.PRIME_AGENT_BINARY)
+  const configured = env[descriptor.binaryEnvVar]
+  if (configured && isAbsolutePathForPlatform(configured, platform)) candidates.push(configured)
   if (typeof process.resourcesPath === 'string') {
-    candidates.push(pathApi.join(process.resourcesPath, 'agent', executable))
-    candidates.push(pathApi.join(process.resourcesPath, 'agent', 'bin', executable))
+    for (const segments of descriptor.bundledResourceDirs) candidates.push(pathApi.join(process.resourcesPath, ...segments, executable))
   }
   for (const directory of (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter)) {
     if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
   }
-  if (platform === 'win32') {
-    const localAppData = env.LOCALAPPDATA
-    if (localAppData && isAbsolutePathForPlatform(localAppData, platform)) candidates.push(pathApi.join(localAppData, 'Programs', 'Prime Agent', executable))
-  } else {
-    candidates.push('/opt/homebrew/bin/prime-agent', '/usr/local/bin/prime-agent', join(homedir(), '.local', 'bin', executable))
+  const fallbackDirs = platform === 'win32' ? descriptor.windowsCandidateDirs(env) : descriptor.posixCandidateDirs(homedir())
+  for (const directory of fallbackDirs) {
+    if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
   }
   return [...new Set(candidates)]
 }
 
-export async function findPrimeAgent(): Promise<string | null> {
-  const candidates = primeAgentCandidates()
-  for (const candidate of [...new Set(candidates)]) {
+export async function findHarnessExecutable(descriptor: HarnessDescriptor): Promise<string | null> {
+  for (const candidate of harnessExecutableCandidates(descriptor)) {
     try { await access(candidate, fsConstants.X_OK); return candidate } catch { /* continue */ }
   }
   return null
+}
+
+export function primeAgentExecutableName(platform = process.platform): string {
+  return HARNESSES.prime.executableName(platform)
+}
+
+export function primeAgentCandidates(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
+  return harnessExecutableCandidates(HARNESSES.prime, env, platform)
+}
+
+export async function findPrimeAgent(): Promise<string | null> {
+  return findHarnessExecutable(HARNESSES.prime)
 }
 
 export function runProcess(file: string, args: readonly string[], options: {

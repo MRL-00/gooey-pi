@@ -9,7 +9,8 @@ import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
-import { beginProcessShutdown, findPrimeAgent, runProcess, stopChildProcesses } from './process-utils'
+import { HARNESSES } from './harness'
+import { beginProcessShutdown, findHarnessExecutable, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { ProjectService } from './projects'
@@ -97,7 +98,7 @@ function resolveRendererUrl(): string {
   return parsed.href
 }
 
-async function primeVersion(executable: string | null): Promise<string | null> {
+async function harnessVersion(executable: string | null): Promise<string | null> {
   if (!executable) return null
   try {
     const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 64 * 1024 })
@@ -293,7 +294,10 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 }
 
 async function bootstrap(): Promise<void> {
-  const executable = await findPrimeAgent()
+  const [executable, ompExecutable] = await Promise.all([
+    findHarnessExecutable(HARNESSES.prime),
+    findHarnessExecutable(HARNESSES.omp),
+  ])
   if (shutdownStarted) return
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
   store = stateStore
@@ -400,14 +404,19 @@ async function bootstrap(): Promise<void> {
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
-  const detectedPrimeVersion = await primeVersion(executable)
+  const [detectedPrimeVersion, detectedOmpVersion] = await Promise.all([
+    harnessVersion(executable),
+    harnessVersion(ompExecutable),
+  ])
   if (shutdownStarted) return
   const meta: AppMeta = {
     version: app.getVersion(),
     platform: process.platform,
     homeDir: homedir(),
-    primeAgentPath: executable,
-    primeAgentVersion: detectedPrimeVersion,
+    harnesses: {
+      prime: { path: executable, version: detectedPrimeVersion },
+      omp: { path: ompExecutable, version: detectedOmpVersion },
+    },
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService }, trustedRendererUrl)
