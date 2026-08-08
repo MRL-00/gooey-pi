@@ -1,35 +1,54 @@
-import { KeyRound, Radio, ShieldCheck, Trash2, Volume2, Waves } from 'lucide-react'
+import { Check, KeyRound, Laptop, Mic2, Radio, RefreshCw, ShieldCheck, Trash2, Waves } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { errorMessage } from '@/lib/errors'
-import type { AppSettings, PrimeWorkApi, VoiceCredentialProvider, VoiceCredentialStatus, VoiceTranscriptionProvider } from '@/types/api'
 import { Modal } from '@/components/ui'
+import { errorMessage } from '@/lib/errors'
+import {
+  DEEPGRAM_MODELS,
+  GROQ_MODELS,
+  OPENAI_FILE_MODELS,
+  OPENAI_LIVE_MODELS,
+  REALTIME_MODELS,
+  REALTIME_VOICES,
+  VOICE_PROVIDER_OPTIONS,
+  optionsWithCurrent,
+  type VoiceOption,
+} from '@/lib/voice-options'
+import type { AppSettings, PrimeWorkApi, VoiceCredentialProvider, VoiceCredentialStatus, VoiceTranscriptionProvider } from '@/types/api'
 import type { SettingsSectionProps } from './contracts'
 
-const TRANSCRIPTION_OPTIONS: Array<{ value: VoiceTranscriptionProvider; label: string }> = [
-  { value: 'openai-live', label: 'OpenAI native streaming' },
-  { value: 'openai', label: 'OpenAI file transcription' },
-  { value: 'groq', label: 'Groq Whisper' },
-  { value: 'deepgram', label: 'Deepgram' },
-  { value: 'local-whisper', label: 'Local whisper.cpp' },
-]
-
-const CREDENTIALS: Array<{ id: VoiceCredentialProvider; name: string; detail: string }> = [
-  { id: 'openai', name: 'OpenAI', detail: 'Realtime orb, native streaming, file transcription, and web search' },
-  { id: 'groq', name: 'Groq', detail: 'Fast hosted Whisper transcription' },
-  { id: 'deepgram', name: 'Deepgram', detail: 'Hosted streaming-quality speech recognition' },
+const CREDENTIALS: Array<{ id: VoiceCredentialProvider; name: string; monogram: string; detail: string }> = [
+  { id: 'openai', name: 'OpenAI', monogram: 'OA', detail: 'Required for live dictation and the realtime orb.' },
+  { id: 'groq', name: 'Groq', monogram: 'GQ', detail: 'Used only when Groq is your dictation provider.' },
+  { id: 'deepgram', name: 'Deepgram', monogram: 'DG', detail: 'Used only when Deepgram is your dictation provider.' },
 ]
 
 interface VoiceSettingsProps extends SettingsSectionProps {
   voice: PrimeWorkApi['voice'] | null
 }
 
-function SettingInput({ label, description, value, onCommit }: { label: string; description: string; value: string; onCommit(value: string): void }) {
+function ModelSelect({ label, description, value, options, onChange }: { label: string; description: string; value: string; options: VoiceOption[]; onChange(value: string): void }) {
+  const choices = optionsWithCurrent(options, value)
+  const selected = choices.find((option) => option.value === value)
+  return (
+    <label className="voice-choice-row">
+      <span><strong>{label}</strong><small>{description}</small></span>
+      <span className="voice-choice-control">
+        <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+          {choices.map((option) => <option key={option.value} value={option.value}>{option.label}{option.recommended ? ' · Recommended' : ''}</option>)}
+        </select>
+        {selected ? <small>{selected.detail}</small> : null}
+      </span>
+    </label>
+  )
+}
+
+function PathInput({ label, description, placeholder, value, onCommit }: { label: string; description: string; placeholder: string; value: string; onCommit(value: string): void }) {
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
   return (
-    <label className="settings-row settings-row--stack voice-setting-field">
+    <label className="voice-path-field">
       <span><strong>{label}</strong><small>{description}</small></span>
-      <input value={draft} spellCheck={false} onChange={(event) => setDraft(event.target.value)} onBlur={() => { if (draft !== value) onCommit(draft) }} />
+      <input aria-label={label} value={draft} placeholder={placeholder} spellCheck={false} onChange={(event) => setDraft(event.target.value)} onBlur={() => { if (draft !== value) onCommit(draft) }} />
     </label>
   )
 }
@@ -64,56 +83,108 @@ export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps)
   }
 
   const closeCredential = () => { if (!busy) { setCredential(null); setApiKey(''); setFailure('') } }
+  const openCredential = (provider: VoiceCredentialProvider) => { setFailure(''); setCredential(provider) }
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => { void onUpdate({ [key]: value } as Pick<AppSettings, K>) }
+  const provider = VOICE_PROVIDER_OPTIONS.find((option) => option.value === settings.voiceTranscriptionProvider) ?? VOICE_PROVIDER_OPTIONS[0]
+  const selectedCredential = provider.credential
+  const selectedConfigured = selectedCredential ? status?.configured[selectedCredential] ?? false : true
 
   return (
     <>
-      <header><h1>Voice</h1><p>Choose transcription services, keep API keys in protected desktop storage, and configure the realtime voice orchestrator.</p></header>
-      <section className="settings-group">
-        <h2><Waves size={14} /> Dictation</h2>
-        <label className="settings-row">
-          <span><strong>Transcription service</strong><small>Native streaming appears alongside file and local models.</small></span>
-          <select value={settings.voiceTranscriptionProvider} onChange={(event) => update('voiceTranscriptionProvider', event.target.value as VoiceTranscriptionProvider)}>
-            {TRANSCRIPTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-        <SettingInput label="OpenAI file model" description="Used by OpenAI file transcription." value={settings.voiceOpenAiTranscriptionModel} onCommit={(value) => update('voiceOpenAiTranscriptionModel', value)} />
-        <SettingInput label="Groq model" description="An available Groq audio transcription model." value={settings.voiceGroqTranscriptionModel} onCommit={(value) => update('voiceGroqTranscriptionModel', value)} />
-        <SettingInput label="Deepgram model" description="An available Deepgram speech model." value={settings.voiceDeepgramTranscriptionModel} onCommit={(value) => update('voiceDeepgramTranscriptionModel', value)} />
-        <SettingInput label="whisper.cpp executable" description="Absolute path to the local whisper-cli executable." value={settings.voiceLocalWhisperExecutable} onCommit={(value) => update('voiceLocalWhisperExecutable', value)} />
-        <SettingInput label="Local Whisper model" description="Absolute path to a local GGML model file." value={settings.voiceLocalWhisperModel} onCommit={(value) => update('voiceLocalWhisperModel', value)} />
-      </section>
+      <header className="voice-settings-header">
+        <span className="voice-settings-header__icon"><Mic2 size={19} /></span>
+        <div><h1>Voice</h1><p>Connect a speech service, choose a model, then use the microphone or realtime orb.</p></div>
+      </header>
 
-      <section className="settings-group">
-        <h2><Radio size={14} /> Realtime orb</h2>
-        <SettingInput label="Realtime model" description="A Realtime API model with audio and function calling." value={settings.voiceRealtimeModel} onCommit={(value) => update('voiceRealtimeModel', value)} />
-        <SettingInput label="Voice" description="The synthesized voice used by the orb." value={settings.voiceRealtimeVoice} onCommit={(value) => update('voiceRealtimeVoice', value)} />
-      </section>
-
-      <section className="settings-group">
-        <h2><ShieldCheck size={14} /> Service credentials</h2>
-        <p className="settings-group__description">Keys are encrypted by macOS and never returned to the renderer. Environment variables are also recognized.</p>
-        <div className="voice-credential-list">
-          {CREDENTIALS.map((provider) => {
-            const configured = status?.configured[provider.id] ?? false
-            const source = status?.source[provider.id]
-            return <div className="voice-credential-row" key={provider.id}>
-              <span><strong>{provider.name}</strong><small>{provider.detail}</small></span>
-              <span className="voice-credential-actions">
-                <i className={configured ? 'is-configured' : ''}>{configured ? source === 'environment' ? 'Environment' : 'Saved' : 'Not configured'}</i>
-                <button type="button" className="button" disabled={!voice || busy} onClick={() => { setFailure(''); setCredential(provider.id) }}><KeyRound size={13} /> {configured ? 'Replace' : 'Add key'}</button>
-                {source === 'saved' ? <button type="button" className="button button--icon" aria-label={`Remove ${provider.name} API key`} disabled={busy} onClick={() => void removeCredential(provider.id)}><Trash2 size={13} /></button> : null}
-              </span>
-            </div>
-          })}
+      {!voice ? (
+        <div className="voice-bridge-notice" role="status">
+          <RefreshCw size={17} />
+          <span><strong>Reload to enable voice services</strong><small>This window opened with an older desktop bridge. Reload once to enable secure API-key storage.</small></span>
+          <button type="button" className="button button--primary" onClick={() => window.location.reload()}>Reload Voice</button>
         </div>
+      ) : null}
+
+      <section className="voice-section" aria-labelledby="voice-connections-title">
+        <div className="voice-section__heading">
+          <span><ShieldCheck size={15} /></span>
+          <div><h2 id="voice-connections-title">Connections</h2><p>Add a key for any hosted service you want to use. Keys stay encrypted on this Mac.</p></div>
+        </div>
+        {voice ? <div className="voice-connection-grid">
+          {CREDENTIALS.map((item) => {
+            const configured = status?.configured[item.id] ?? false
+            const source = status?.source[item.id]
+            return (
+              <article className={`voice-connection-card${configured ? ' is-connected' : ''}`} key={item.id}>
+                <span className="voice-provider-mark" aria-hidden="true">{item.monogram}</span>
+                <div className="voice-connection-card__body">
+                  <span className="voice-connection-card__title"><strong>{item.name}</strong><i>{status === null ? 'Checking…' : configured ? source === 'environment' ? 'Environment key' : 'Connected' : 'Not connected'}</i></span>
+                  <small>{item.detail}</small>
+                </div>
+                <button type="button" className="button" disabled={busy} onClick={() => openCredential(item.id)}><KeyRound size={13} /> {configured ? 'Replace key' : 'Add key'}</button>
+                {source === 'saved' ? <button type="button" className="button button--icon" aria-label={`Remove ${item.name} API key`} disabled={busy} onClick={() => void removeCredential(item.id)}><Trash2 size={13} /></button> : null}
+              </article>
+            )
+          })}
+        </div> : null}
         {failure && !credential ? <p className="settings-error" role="alert">{failure}</p> : null}
       </section>
 
-      {credential ? <Modal title={`Connect ${CREDENTIALS.find((item) => item.id === credential)?.name ?? credential}`} onClose={closeCredential} footer={<><button type="button" className="button" disabled={busy} onClick={closeCredential}>Cancel</button><button type="button" className="button button--primary" disabled={busy || !apiKey.trim()} onClick={() => void saveCredential()}>Save API key</button></>}>
-        <p className="modal-intro">The key is encrypted by the desktop main process and cleared from this form when it closes.</p>
+      <section className="voice-section" aria-labelledby="voice-dictation-title">
+        <div className="voice-section__heading">
+          <span><Waves size={15} /></span>
+          <div><h2 id="voice-dictation-title">Dictation</h2><p>This controls the microphone beside Send.</p></div>
+        </div>
+        <div className="voice-setup-card">
+          <label className="voice-choice-row">
+            <span><strong>Service</strong><small>Choose where your microphone audio is transcribed.</small></span>
+            <span className="voice-choice-control">
+              <select aria-label="Dictation service" value={settings.voiceTranscriptionProvider} onChange={(event) => update('voiceTranscriptionProvider', event.target.value as VoiceTranscriptionProvider)}>
+                {VOICE_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}{option.recommended ? ' · Recommended' : ''}</option>)}
+              </select>
+              <small>{provider.detail}</small>
+            </span>
+          </label>
+
+          {settings.voiceTranscriptionProvider === 'openai-live' ? <ModelSelect label="Dictation model" description="Streams text while you are speaking." value={settings.voiceOpenAiLiveTranscriptionModel} options={OPENAI_LIVE_MODELS} onChange={(value) => update('voiceOpenAiLiveTranscriptionModel', value)} /> : null}
+          {settings.voiceTranscriptionProvider === 'openai' ? <ModelSelect label="Dictation model" description="Transcribes after you stop recording." value={settings.voiceOpenAiTranscriptionModel} options={OPENAI_FILE_MODELS} onChange={(value) => update('voiceOpenAiTranscriptionModel', value)} /> : null}
+          {settings.voiceTranscriptionProvider === 'groq' ? <ModelSelect label="Dictation model" description="Choose speed or maximum Whisper accuracy." value={settings.voiceGroqTranscriptionModel} options={GROQ_MODELS} onChange={(value) => update('voiceGroqTranscriptionModel', value)} /> : null}
+          {settings.voiceTranscriptionProvider === 'deepgram' ? <ModelSelect label="Dictation model" description="Choose a general or audio-specific Nova model." value={settings.voiceDeepgramTranscriptionModel} options={DEEPGRAM_MODELS} onChange={(value) => update('voiceDeepgramTranscriptionModel', value)} /> : null}
+          {settings.voiceTranscriptionProvider === 'local-whisper' ? (
+            <div className="voice-local-setup">
+              <span className="voice-local-setup__intro"><Laptop size={15} /><span><strong>Local whisper.cpp setup</strong><small>These are file paths because Prime Work runs your installed whisper.cpp directly. Hosted services do not need them.</small></span></span>
+              <PathInput label="whisper-cli executable" description="Path to the whisper.cpp command-line program." placeholder="/opt/homebrew/bin/whisper-cli" value={settings.voiceLocalWhisperExecutable} onCommit={(value) => update('voiceLocalWhisperExecutable', value)} />
+              <PathInput label="GGML model file" description="Path to the downloaded whisper.cpp model." placeholder="/path/to/ggml-large-v3-turbo.bin" value={settings.voiceLocalWhisperModel} onCommit={(value) => update('voiceLocalWhisperModel', value)} />
+            </div>
+          ) : null}
+
+          {selectedCredential ? (
+            <div className={`voice-requirement${selectedConfigured ? ' is-ready' : ''}`}>
+              <span>{selectedConfigured ? <Check size={13} /> : <KeyRound size={13} />}{selectedConfigured ? `${CREDENTIALS.find((item) => item.id === selectedCredential)?.name} is connected` : `${CREDENTIALS.find((item) => item.id === selectedCredential)?.name} key required`}</span>
+              {!selectedConfigured && voice ? <button type="button" onClick={() => openCredential(selectedCredential)}>Add key</button> : null}
+            </div>
+          ) : <div className="voice-requirement is-ready"><span><Check size={13} />Runs locally with no API key</span></div>}
+        </div>
+      </section>
+
+      <section className="voice-section" aria-labelledby="voice-realtime-title">
+        <div className="voice-section__heading">
+          <span><Radio size={15} /></span>
+          <div><h2 id="voice-realtime-title">Realtime orb</h2><p>The draggable voice agent. It uses your OpenAI connection.</p></div>
+        </div>
+        <div className="voice-setup-card">
+          <ModelSelect label="Realtime model" description="Handles conversation, web search, and task delegation." value={settings.voiceRealtimeModel} options={REALTIME_MODELS} onChange={(value) => update('voiceRealtimeModel', value)} />
+          <ModelSelect label="Speaking voice" description="The voice you hear when the orb responds." value={settings.voiceRealtimeVoice} options={REALTIME_VOICES} onChange={(value) => update('voiceRealtimeVoice', value)} />
+          <div className={`voice-requirement${status?.configured.openai ? ' is-ready' : ''}`}>
+            <span>{status?.configured.openai ? <Check size={13} /> : <KeyRound size={13} />}{status?.configured.openai ? 'OpenAI is connected' : 'OpenAI key required'}</span>
+            {!status?.configured.openai && voice ? <button type="button" onClick={() => openCredential('openai')}>Add key</button> : null}
+          </div>
+        </div>
+      </section>
+
+      {credential ? <Modal title={`Connect ${CREDENTIALS.find((item) => item.id === credential)?.name ?? credential}`} onClose={closeCredential} footer={<><button type="button" className="button" disabled={busy} onClick={closeCredential}>Cancel</button><button type="button" className="button button--primary" disabled={busy || !apiKey.trim()} onClick={() => void saveCredential()}>{busy ? 'Saving…' : 'Save API key'}</button></>}>
+        <p className="modal-intro">Paste the provider API key. Prime Work encrypts it in the desktop process and never reads it back into this screen.</p>
         {failure ? <p className="settings-error" role="alert">{failure}</p> : null}
-        <label className="field"><span>API key</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} onChange={(event) => setApiKey(event.target.value)} /></label>
+        <label className="field"><span>API key</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} placeholder="Paste API key" onChange={(event) => setApiKey(event.target.value)} /></label>
       </Modal> : null}
     </>
   )
