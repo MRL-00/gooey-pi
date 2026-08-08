@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, MessageCirclePlus, Plus, ShieldCheck, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -12,8 +12,11 @@ import type {
   PromptImage,
   QueuedPrompt,
   SkillRecord,
+  TerminalPromptContext,
+  TerminalSelectionContext,
 } from '@/types/api'
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
+import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { IconButton, PrimeMark, SelectControl } from './ui'
@@ -38,6 +41,10 @@ interface ComposerProps {
   skills: SkillRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
   annotations?: BrowserAnnotation[]
+  /** The active terminal is visible as context; selected text expands this attachment. */
+  terminalSelection?: TerminalSelectionContext
+  /** Reads the active xterm buffer only at submit time, avoiding output-driven renderer updates. */
+  getTerminalContext?(): TerminalPromptContext | undefined
   /** Messages accepted by Prime but waiting for a turn boundary. */
   queuedMessages?: QueuedPrompt[]
   onDeleteQueuedMessage?(message: QueuedPrompt): void
@@ -52,6 +59,7 @@ interface ComposerProps {
   onRemoveAnnotation?(id: string): void
   /** Called after a send that included the annotations, and by the attachment's remove control. */
   onClearAnnotations?(): void
+  onClearTerminalSelection?(): void
 }
 
 const commands = [
@@ -109,6 +117,8 @@ export const Composer = memo(function Composer({
   contextUsage,
   skills,
   annotations = EMPTY_ANNOTATIONS,
+  terminalSelection,
+  getTerminalContext,
   queuedMessages = [],
   onDeleteQueuedMessage,
   onEditQueuedMessage,
@@ -120,12 +130,14 @@ export const Composer = memo(function Composer({
   onStop,
   onRemoveAnnotation = noop,
   onClearAnnotations = noop,
+  onClearTerminalSelection = noop,
 }: ComposerProps) {
   const [value, setValue] = useState(takeComposerDraft)
   const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [images, setImages] = useState<ComposerImage[]>([])
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
+  const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
   const [attachmentError, setAttachmentError] = useState('')
   const [processingImages, setProcessingImages] = useState(false)
   const menuId = useId()
@@ -150,6 +162,9 @@ export const Composer = memo(function Composer({
   useEffect(() => {
     if (annotations.length === 0) setAnnotationsOpen(false)
   }, [annotations.length])
+  useEffect(() => {
+    if (!terminalSelection?.text) setTerminalSelectionOpen(false)
+  }, [terminalSelection?.text])
 
   // Ctrl/Cmd+Enter in the annotation popover bumps sendSignal to submit the
   // draft (with the just-saved annotation) without switching focus here.
@@ -163,8 +178,12 @@ export const Composer = memo(function Composer({
   const submit = async (intent: PromptDeliveryIntent = 'queue') => {
     const currentImages = imagesRef.current
     const currentAnnotations = annotationsRef.current
-    const prompt = value.trim() || (currentImages.length > 0 ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]') : '[Page annotations]')
-    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
+    const currentTerminalContext = getTerminalContext?.()
+    const hasTerminalSelection = Boolean(currentTerminalContext?.text)
+    const prompt = value.trim() || (currentImages.length > 0
+      ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
+      : currentAnnotations.length > 0 ? '[Page annotations]' : '[Terminal selection]')
+    if ((!value.trim() && currentImages.length === 0 && currentAnnotations.length === 0 && !hasTerminalSelection) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
     if (pendingImagesRef.current > 0) {
       setAttachmentError('Wait for the pasted image to finish processing before sending.')
       return
@@ -176,7 +195,8 @@ export const Composer = memo(function Composer({
     const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
     // Annotations ride along inside the prompt as a delimited plain-text block.
     const promptWithAnnotations = appendAnnotationsToPrompt(prompt, currentAnnotations)
-    const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: promptWithAnnotations, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
+    const promptWithContext = appendTerminalContextToPrompt(promptWithAnnotations, currentTerminalContext)
+    const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: promptWithContext, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
     if (new TextEncoder().encode(frame).byteLength > MAX_IMAGE_PROMPT_BYTES) {
       setAttachmentError('This message and its attachments are too large to send. Shorten the message or remove an attachment.')
       return
@@ -190,7 +210,7 @@ export const Composer = memo(function Composer({
     setAttachmentError('')
     setMenu(null)
     try {
-      await onSend(promptWithAnnotations, submittedImages, intent)
+      await onSend(promptWithContext, submittedImages, intent)
       // The annotations were delivered: clear the attachment and page markers.
       if (currentAnnotations.length > 0) onClearAnnotations()
     } catch {
@@ -442,7 +462,17 @@ export const Composer = memo(function Composer({
             })}
           </div>
         ) : null}
-        {images.length || annotations.length ? (
+        {terminalSelectionOpen && terminalSelection?.text ? (
+          <div className="composer-terminal-selection" role="region" aria-label="Selected terminal text">
+            <div>
+              <SquareTerminal size={14} aria-hidden="true" />
+              <strong>{terminalSelection.label}</strong>
+              {terminalSelection.truncated ? <small>start truncated</small> : null}
+            </div>
+            <pre>{terminalSelection.text}</pre>
+          </div>
+        ) : null}
+        {images.length || annotations.length || terminalSelection ? (
           <div className="composer-attachments" aria-label="Attachments">
             {annotations.length ? (
               <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
@@ -468,6 +498,25 @@ export const Composer = memo(function Composer({
                 >
                   <X size={12} />
                 </button>
+              </div>
+            ) : null}
+            {terminalSelection ? (
+              <div className={`composer-attachment composer-attachment--terminal ${terminalSelection.text ? 'has-selection' : ''}`} title={terminalSelection.text ? `Selected text from ${terminalSelection.label}` : `${terminalSelection.label} will be included with your message`}>
+                <button
+                  type="button"
+                  className="composer-attachment__expand"
+                  aria-expanded={terminalSelection.text ? terminalSelectionOpen : undefined}
+                  aria-label={terminalSelection.text ? `Inspect selected text from ${terminalSelection.label}` : `Active terminal ${terminalSelection.label}`}
+                  disabled={!terminalSelection.text}
+                  onClick={() => setTerminalSelectionOpen((open) => !open)}
+                >
+                  <SquareTerminal size={13} />
+                  <span>{terminalSelection.label}</span>
+                  {terminalSelection.text ? <><small>selected</small><ChevronDown size={11} className={terminalSelectionOpen ? 'is-open' : ''} /></> : null}
+                </button>
+                {terminalSelection.text ? (
+                  <button type="button" className="composer-attachment__clear" aria-label="Clear terminal selection" onClick={onClearTerminalSelection}><X size={12} /></button>
+                ) : null}
               </div>
             ) : null}
             {images.map((image) => (
@@ -568,7 +617,7 @@ export const Composer = memo(function Composer({
                 type="button"
                 className="send-button"
                 aria-label="Send message"
-                disabled={(!value.trim() && images.length === 0 && annotations.length === 0) || processingImages || submitting || loading || disabled}
+                disabled={(!value.trim() && images.length === 0 && annotations.length === 0 && !terminalSelection?.text) || processingImages || submitting || loading || disabled}
                 onClick={() => void submit()}
               >
                 <ArrowUp size={17} />

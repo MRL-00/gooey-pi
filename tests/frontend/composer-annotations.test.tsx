@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import { Composer } from '../../src/components/Composer'
 import { groupModelsByProvider } from '../../src/hooks/useProviderCatalog'
-import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage } from '../../src/types/api'
+import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage, TerminalPromptContext, TerminalSelectionContext } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -70,9 +70,12 @@ interface RenderOptions {
   onSend?: Mock<(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent) => Promise<void>>
   onRemoveAnnotation?: Mock<(id: string) => void>
   onClearAnnotations?: Mock<() => void>
+  terminalSelection?: TerminalSelectionContext
+  getTerminalContext?: () => TerminalPromptContext | undefined
+  onClearTerminalSelection?: Mock<() => void>
 }
 
-function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn() }: RenderOptions = {}) {
+function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn(), terminalSelection, getTerminalContext, onClearTerminalSelection = vi.fn() }: RenderOptions = {}) {
   act(() =>
     root.render(
       <Composer
@@ -89,6 +92,8 @@ function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async
         messageEnterAction="queue"
         skills={[]}
         annotations={annotations}
+        terminalSelection={terminalSelection}
+        getTerminalContext={getTerminalContext}
         sendSignal={sendSignal}
         onModelChange={vi.fn()}
         onEffortChange={vi.fn()}
@@ -97,10 +102,11 @@ function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async
         onStop={vi.fn()}
         onRemoveAnnotation={onRemoveAnnotation}
         onClearAnnotations={onClearAnnotations}
+        onClearTerminalSelection={onClearTerminalSelection}
       />,
     ),
   )
-  return { onSend, onRemoveAnnotation, onClearAnnotations }
+  return { onSend, onRemoveAnnotation, onClearAnnotations, onClearTerminalSelection }
 }
 
 const setDraft = async (value: string) => {
@@ -202,6 +208,47 @@ describe('Composer annotation attachment', () => {
     renderComposer()
     expect(container.querySelector('.composer-attachment--annotations')).toBeNull()
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
+  })
+})
+
+describe('Composer terminal context attachment', () => {
+  const selection: TerminalSelectionContext = { tabId: 'terminal-2', label: 'zsh 2', text: 'npm test\n1 failed', truncated: false }
+  const terminalContext: TerminalPromptContext = { ...selection, cwd: '/workspace', content: '$ npm test\n1 failed', contentTruncated: false }
+
+  it('shows the active terminal without enabling an empty send until text is selected', () => {
+    renderComposer({ terminalSelection: { ...selection, text: '' } })
+    expect(container.querySelector('.composer-attachment--terminal')?.textContent).toContain('zsh 2')
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
+  })
+
+  it('expands and clears highlighted terminal text through its live attachment', async () => {
+    const { onClearTerminalSelection } = renderComposer({ terminalSelection: selection })
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(false)
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Inspect selected text from zsh 2"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('.composer-terminal-selection')?.textContent).toContain('npm test')
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Clear terminal selection"]') as HTMLButtonElement).click()
+    })
+    expect(onClearTerminalSelection).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      renderComposer({ terminalSelection: { ...selection, text: '' }, onClearTerminalSelection })
+    })
+    expect(container.querySelector('.composer-terminal-selection')).toBeNull()
+    expect(container.querySelector('button[aria-label="Clear terminal selection"]')).toBeNull()
+  })
+
+  it('reads and appends the current active buffer only when submitting', async () => {
+    const getTerminalContext = vi.fn(() => terminalContext)
+    const { onSend } = renderComposer({ terminalSelection: selection, getTerminalContext })
+    expect(getTerminalContext).not.toHaveBeenCalled()
+    await setDraft('Explain the failure')
+    await clickSend()
+    expect(getTerminalContext).toHaveBeenCalledTimes(1)
+    expect(onSend.mock.calls[0][0]).toContain('Explain the failure\n\n===== BEGIN ACTIVE TERMINAL CONTEXT =====')
+    expect(onSend.mock.calls[0][0]).toContain('--- Selected text ---\nnpm test\n1 failed')
+    expect(onSend.mock.calls[0][0]).toContain('--- Terminal buffer ---\n$ npm test\n1 failed')
   })
 })
 

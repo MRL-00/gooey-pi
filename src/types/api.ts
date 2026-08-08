@@ -272,6 +272,8 @@ export interface ProcessOutcome { ok: boolean; output: string; reason?: ProcessF
 export interface TerminalSpawnOptions { cwd: string; shell?: string; cols?: number; rows?: number }
 export interface TerminalDataEvent { terminalId: string; data: string }
 export interface TerminalExitEvent { terminalId: string; exitCode: number; signal?: number }
+export interface TerminalSelectionContext { tabId: string; label: string; text: string; truncated: boolean }
+export interface TerminalPromptContext extends TerminalSelectionContext { cwd?: string; content: string; contentTruncated: boolean }
 
 export type MessageEnterAction = 'queue' | 'steer'
 export type PromptDeliveryIntent = 'queue' | 'steer'

@@ -3,6 +3,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { boundTerminalText, TERMINAL_CONTEXT_MAX_CHARS, TERMINAL_SELECTION_MAX_CHARS } from '@/lib/terminal-context'
+import type { TerminalPromptContext, TerminalSelectionContext } from '@/types/api'
 import { IconButton } from './ui'
 import { ResizeHandle } from './ResizeHandle'
 
@@ -16,6 +18,7 @@ interface TerminalDrawerProps {
   onHeightChange(height: number): void
   onClose(): void
   onError?(message: string): void
+  onSelectionChange?(selection?: TerminalSelectionContext): void
 }
 
 interface TerminalTab {
@@ -27,6 +30,8 @@ interface TerminalTab {
 
 interface TerminalViewHandle {
   clear(): void
+  clearSelection(): void
+  read(): Pick<TerminalPromptContext, 'text' | 'truncated' | 'content' | 'contentTruncated'>
 }
 
 interface TerminalViewProps {
@@ -34,7 +39,13 @@ interface TerminalViewProps {
   shell?: string
   visible: boolean
   onStateChange(state: Pick<TerminalTab, 'shellName' | 'connected'>): void
+  onSelectionChange(text: string, truncated: boolean): void
   onError?(message: string): void
+}
+
+export interface TerminalDrawerHandle {
+  clearSelection(): void
+  readContext(): TerminalPromptContext | undefined
 }
 
 const MAX_TERMINAL_TABS = 8
@@ -66,19 +77,49 @@ const terminalTheme = (): ITheme => {
   }
 }
 
-const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView({ cwd, shell, visible, onStateChange, onError }, ref) {
+function readTerminalContent(terminal: Terminal): { content: string; contentTruncated: boolean } {
+  const buffer = terminal.buffer.active
+  const lines: string[] = []
+  let current = ''
+  for (let index = 0; index < buffer.length; index += 1) {
+    const line = buffer.getLine(index)
+    if (!line) continue
+    const text = line.translateToString(true)
+    if (line.isWrapped) current += text
+    else {
+      if (current) lines.push(current)
+      current = text
+    }
+  }
+  if (current) lines.push(current)
+  const bounded = boundTerminalText(lines.join('\n'), TERMINAL_CONTEXT_MAX_CHARS)
+  return { content: bounded.text, contentTruncated: bounded.truncated }
+}
+
+const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView({ cwd, shell, visible, onStateChange, onSelectionChange, onError }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const terminalIdRef = useRef<string | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const visibleRef = useRef(visible)
   const onStateChangeRef = useRef(onStateChange)
+  const onSelectionChangeRef = useRef(onSelectionChange)
   const onErrorRef = useRef(onError)
   visibleRef.current = visible
   onStateChangeRef.current = onStateChange
+  onSelectionChangeRef.current = onSelectionChange
   onErrorRef.current = onError
 
-  useImperativeHandle(ref, () => ({ clear: () => terminalRef.current?.clear() }), [])
+  useImperativeHandle(ref, () => ({
+    clear: () => terminalRef.current?.clear(),
+    clearSelection: () => terminalRef.current?.clearSelection(),
+    read: () => {
+      const terminal = terminalRef.current
+      if (!terminal) return { text: '', truncated: false, content: '', contentTruncated: false }
+      const selection = boundTerminalText(terminal.getSelection(), TERMINAL_SELECTION_MAX_CHARS)
+      return { text: selection.text, truncated: selection.truncated, ...readTerminalContent(terminal) }
+    },
+  }), [])
 
   useEffect(() => {
     if (!visible) return
@@ -129,6 +170,10 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
       const id = terminalIdRef.current
       if (id && window.prime) window.prime.terminal.resize(id, cols, rows)
     })
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      const selection = boundTerminalText(terminal.getSelection(), TERMINAL_SELECTION_MAX_CHARS)
+      onSelectionChangeRef.current(selection.text, selection.truncated)
+    })
 
     if (window.prime && cwd) {
       // Subscribe before create resolves: a fast shell can emit its prompt or exit before the IPC reply.
@@ -178,6 +223,7 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
       offExit?.()
       inputDisposable.dispose()
       resizeDisposable.dispose()
+      selectionDisposable.dispose()
       const id = terminalIdRef.current
       terminalIdRef.current = null
       if (id && window.prime) void window.prime.terminal.kill(id)
@@ -199,12 +245,42 @@ function createTab(number: number, shell?: string): TerminalTab {
   }
 }
 
-export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError }: TerminalDrawerProps) {
+export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerProps>(function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError, onSelectionChange }, ref) {
   const nextNumberRef = useRef(2)
   const viewRefs = useRef(new Map<string, TerminalViewHandle>())
   const [tabs, setTabs] = useState<TerminalTab[]>(() => [createTab(1, shell)])
   const [activeTabId, setActiveTabId] = useState(() => tabs[0].id)
   const [maximized, setMaximized] = useState(false)
+  const tabsRef = useRef(tabs)
+  const activeTabIdRef = useRef(activeTabId)
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  tabsRef.current = tabs
+  activeTabIdRef.current = activeTabId
+  onSelectionChangeRef.current = onSelectionChange
+
+  const currentSelection = (tabId: string): TerminalSelectionContext | undefined => {
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
+    const value = viewRefs.current.get(tabId)?.read()
+    if (!tab || !value) return undefined
+    return { tabId, label: `${tab.shellName} ${tab.number}`, text: value.text, truncated: value.truncated }
+  }
+
+  useImperativeHandle(ref, () => ({
+    clearSelection: () => viewRefs.current.get(activeTabIdRef.current)?.clearSelection(),
+    readContext: () => {
+      const tabId = activeTabIdRef.current
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
+      const value = viewRefs.current.get(tabId)?.read()
+      if (!tab || !value) return undefined
+      return { tabId, label: `${tab.shellName} ${tab.number}`, cwd, ...value }
+    },
+  }), [cwd])
+
+  useEffect(() => {
+    onSelectionChangeRef.current?.(currentSelection(activeTabId))
+  }, [activeTabId])
+
+  useEffect(() => () => onSelectionChangeRef.current?.(undefined), [])
 
   const addTerminal = () => {
     if (tabs.length >= MAX_TERMINAL_TABS) {
@@ -266,10 +342,14 @@ export function TerminalDrawer({ cwd, shell, height, minHeight, maxHeight, defau
             shell={shell}
             visible={tab.id === activeTabId}
             onStateChange={(state) => updateTab(tab.id, state)}
+            onSelectionChange={(text, truncated) => {
+              if (activeTabIdRef.current !== tab.id) return
+              onSelectionChangeRef.current?.({ tabId: tab.id, label: `${tab.shellName} ${tab.number}`, text, truncated })
+            }}
             onError={onError}
           />
         ))}
       </div>
     </section>
   )
-}
+})

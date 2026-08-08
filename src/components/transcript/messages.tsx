@@ -2,6 +2,7 @@ import { memo, useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
+import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { PrimeMark } from '../ui'
@@ -165,17 +166,26 @@ export const AssistantMessage = memo(
 )
 
 function UserText({ text }: { text: string }) {
-  // Sent prompts can carry a serialized browser-annotation block; keep it
-  // collapsed in the transcript — it is verbose, model-facing detail.
-  const split = splitAnnotationBlock(text)
-  if (!split.block) return <InlineText text={text} />
+  // Sent prompts can carry verbose model-facing context blocks. Keep both
+  // collapsed in the transcript while preserving the user's own message.
+  const terminal = splitTerminalContextBlock(text)
+  const annotations = splitAnnotationBlock(terminal.text)
+  if (!annotations.block && !terminal.block) return <InlineText text={text} />
   return (
     <>
-      {split.text && split.text !== '[Page annotations]' ? <InlineText text={split.text} /> : null}
-      <details className="user-annotations">
-        <summary>{split.count > 0 ? `${split.count} page annotation${split.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
-        <pre>{split.block}</pre>
-      </details>
+      {annotations.text && annotations.text !== '[Page annotations]' && annotations.text !== '[Terminal selection]' ? <InlineText text={annotations.text} /> : null}
+      {annotations.block ? (
+        <details className="user-annotations">
+          <summary>{annotations.count > 0 ? `${annotations.count} page annotation${annotations.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
+          <pre>{annotations.block}</pre>
+        </details>
+      ) : null}
+      {terminal.block ? (
+        <details className="user-annotations user-terminal-context">
+          <summary>{terminal.hasSelection ? `Selected text and active buffer from ${terminal.label ?? 'terminal'}` : `Active buffer from ${terminal.label ?? 'terminal'}`}</summary>
+          <pre>{terminal.block}</pre>
+        </details>
+      ) : null}
     </>
   )
 }
