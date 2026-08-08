@@ -30,7 +30,7 @@ const catalog: PrimeModelCatalog = {
   ],
 }
 const runtime: RuntimeInfo = {
-  runtimeId: 'runtime-1', cwd: '/tmp/project', isStreaming: false,
+  runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/project', isStreaming: false,
   model: { provider: model.provider, id: model.id, name: model.name },
   thinkingLevel: 'medium', serviceTier: 'default',
 }

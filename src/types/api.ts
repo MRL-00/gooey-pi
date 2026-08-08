@@ -140,6 +140,7 @@ export interface PrimeContextUsage {
 
 export interface RuntimeInfo {
   runtimeId: string
+  harness: HarnessId
   sessionId?: string
   sessionFile?: string
   cwd: string

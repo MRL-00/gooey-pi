@@ -33,6 +33,7 @@ const session = (id: string, projectPath: string, filePath: string): SessionReco
 
 const runtime = (runtimeId: string, cwd: string, sessionFile: string, isStreaming = false): RuntimeInfo => ({
   runtimeId,
+  harness: 'prime',
   cwd,
   sessionFile,
   isStreaming,

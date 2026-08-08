@@ -2,9 +2,18 @@ import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../.
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
+import { PRIME_RPC_ADAPTER, type HarnessRpcAdapter } from './harness-adapter'
 import { RpcRuntime } from './runtime'
 import type { RpcObject } from './types'
-import type { PrimeProviderService } from '../providers'
+
+/**
+ * Structural slice of the provider catalog the manager needs; PrimeProviderService
+ * satisfies it today and a future OMP model catalog can be injected in its place.
+ */
+export interface ProviderCatalog {
+  requireAvailableModel(rawKey: unknown, disabledProviders?: ReadonlySet<string>): Promise<PrimeModelDescriptor>
+  capabilities(provider: string | undefined, modelId: string | undefined): Promise<PrimeModelDescriptor | undefined>
+}
 
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
@@ -19,8 +28,11 @@ export class AgentRpcManager {
     private readonly executable: string | null,
     private readonly authorizeCwd: (cwd: string) => Promise<string>,
     private readonly validateSessionPath: (path: string) => Promise<string>,
-    private readonly providers?: PrimeProviderService,
+    private readonly providers?: ProviderCatalog,
     private readonly disabledProviders: () => ReadonlySet<string> = () => new Set(),
+    private readonly adapter: HarnessRpcAdapter = PRIME_RPC_ADAPTER,
+    /** Approval-mode override consumed only by harness arg builders that support it (OMP). */
+    private readonly approvalMode: () => string | undefined = () => undefined,
   ) {}
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
@@ -38,40 +50,40 @@ export class AgentRpcManager {
 
   async start(raw: unknown): Promise<RuntimeInfo> {
     this.requireOpen()
-    if (!this.executable) throw new Error('Prime Agent executable was not found')
+    if (!this.executable) throw new Error(`${this.adapter.agentName} executable was not found`)
     const options = requireRecord(raw, 'options')
     rejectUnknownKeys(options, ['cwd', 'sessionPath', 'model', 'thinking', 'fast'], 'options')
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
     this.requireOpen()
-    const args = ['--mode', 'rpc', '--cwd', cwd]
     const sessionPath = options.sessionPath === undefined
       ? undefined
       : await this.validateSessionPath(requireString(options.sessionPath, 'sessionPath', { max: 4096 }))
-    if (sessionPath) args.push('--resume', sessionPath)
     let selectedModel: PrimeModelDescriptor | undefined
+    let modelId: string | undefined
     if (options.model !== undefined) {
       selectedModel = this.providers
         ? await this.providers.requireAvailableModel(options.model, this.disabledProviders())
         : undefined
-      const model = selectedModel?.id ?? requireString(options.model, 'model', { min: 1, max: 256, trim: true })
-      if (model.startsWith('-') || /[\r\n]/.test(model)) throw new TypeError('Invalid model')
-      if (selectedModel) args.push('--provider', selectedModel.provider)
-      args.push('--model', model)
+      modelId = selectedModel?.id ?? requireString(options.model, 'model', { min: 1, max: 256, trim: true })
     }
+    let thinking: string | undefined
     if (options.thinking !== undefined) {
-      const thinking = requireString(options.thinking, 'thinking', { min: 1, max: 16, trim: true })
+      thinking = requireString(options.thinking, 'thinking', { min: 1, max: 16, trim: true })
       if (!isThinkingLevel(thinking)) throw new TypeError('Invalid thinking level')
       if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
-      args.push('--thinking', thinking)
     }
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
     const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath })
-    for (const skillPath of [runtimeEnvironment.PRIME_WORK_SCHEDULE_SKILL_PATH, runtimeEnvironment.PRIME_WORK_BROWSER_SKILL_PATH]) {
-      if (skillPath && !skillPath.startsWith('-') && !/[\r\n]/.test(skillPath)) args.push('--skill', skillPath)
-    }
-    const extensionPath = runtimeEnvironment.PRIME_WORK_BROWSER_EXTENSION_PATH
-    if (extensionPath && !extensionPath.startsWith('-') && !/[\r\n]/.test(extensionPath)) args.push('--extension', extensionPath)
+    const args = this.adapter.buildStartArgs({
+      cwd,
+      sessionPath,
+      providerId: selectedModel?.provider,
+      modelId,
+      thinking,
+      approvalMode: this.approvalMode(),
+      environment: runtimeEnvironment,
+    })
     const runtime = await this.admitRuntime(() => new RpcRuntime(
       this.executable!,
       args,
@@ -82,6 +94,8 @@ export class AgentRpcManager {
         this.runtimes.delete(closed.runtimeId)
       },
       runtimeEnvironment,
+      {},
+      this.adapter,
     ))
     try {
       await runtime.handshake()
@@ -106,6 +120,10 @@ export class AgentRpcManager {
     const runtime = this.requireRuntime(runtimeId)
     const command = await validateRpcCommand(rawCommand, this.validateSessionPath)
     this.requireOpen()
+    // Validation is harness-independent; the harness vocabulary applies after
+    // it. set_service_tier passes through untranslated because the fast-mode
+    // interception below routes it via runtime.setServiceTier instead.
+    const translated = this.adapter.translateCommand(command)
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders())
     }
@@ -118,7 +136,7 @@ export class AgentRpcManager {
     if (Array.isArray(command.images) && command.images.length > 0 && runtime.snapshot().imageInputSupported === false) {
       throw new Error('The active model does not accept images. Choose a vision model and try again.')
     }
-    const response = await runtime.command(command)
+    const response = await runtime.command(translated)
     if (command.type === 'set_model' || command.type === 'cycle_model') {
       const preference = runtime.serviceTierPreference()
       await this.decorate(runtime)
@@ -198,7 +216,7 @@ export class AgentRpcManager {
   }
 
   private requireOpen(): void {
-    if (this.closed) throw new Error('Prime Agent manager is shutting down')
+    if (this.closed) throw new Error(`${this.adapter.agentName} manager is shutting down`)
   }
 
   private async admitRuntime(createRuntime: () => RpcRuntime): Promise<RpcRuntime> {

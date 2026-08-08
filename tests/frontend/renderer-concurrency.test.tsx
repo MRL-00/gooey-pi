@@ -39,7 +39,7 @@ const session: SessionRecord = {
 const message = (text: string): TranscriptMessage => ({
   id: text, role: 'assistant', timestamp: 1, streaming: true, parts: [{ type: 'text', text }],
 })
-const runtime: RuntimeInfo = { runtimeId: 'runtime', cwd: '/project', sessionFile: session.filePath, isStreaming: false }
+const runtime: RuntimeInfo = { runtimeId: 'runtime', harness: 'prime', cwd: '/project', sessionFile: session.filePath, isStreaming: false }
 
 let container: HTMLDivElement
 let root: Root
@@ -459,7 +459,7 @@ describe('bootstrap critical path', () => {
     // A live event arrives while agent.list() is still in flight.
     runtimeSessionsRef.current.set('live-runtime', '/sessions/live.jsonl')
     await act(async () => {
-      runtimes.resolve([{ runtimeId: 'listed-runtime', cwd: '/project', sessionFile: '/sessions/listed.jsonl', isStreaming: false }])
+      runtimes.resolve([{ runtimeId: 'listed-runtime', harness: 'prime', cwd: '/project', sessionFile: '/sessions/listed.jsonl', isStreaming: false }])
       await runtimes.promise
       await Promise.resolve()
     })

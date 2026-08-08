@@ -1,11 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { emptySessionActionSnapshot, parseSessionActionSnapshot } from '../../../src/lib/session-actions'
+import { RPC_READ_FRAME_LIMIT_BYTES } from '../jsonl-limits'
 import { killProcessTree, safeChildEnvironment, waitForProcessExit } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
+import { PRIME_RPC_ADAPTER, parseContextUsage, type HarnessRpcAdapter } from './harness-adapter'
 import { FramedRpcTransport, type QueuedRpcWrite } from './transport'
 import type { RpcObject } from './types'
 
@@ -32,13 +34,15 @@ const DEFAULT_COMPACTION_WATCHDOG_TIMINGS: CompactionWatchdogTimings = {
   idleWindowMs: 30_000,
 }
 
-function parseContextUsage(raw: unknown): PrimeContextUsage | null {
-  if (!isRecord(raw) || !Number.isSafeInteger(raw.contextWindow) || Number(raw.contextWindow) <= 0) return null
-  const tokens = raw.tokens === null ? null : Number.isSafeInteger(raw.tokens) && Number(raw.tokens) >= 0 ? Number(raw.tokens) : undefined
-  const percent = raw.percent === null ? null : typeof raw.percent === 'number' && Number.isFinite(raw.percent) && raw.percent >= 0 ? raw.percent : undefined
-  if (tokens === undefined || percent === undefined) return null
-  return { tokens, contextWindow: Number(raw.contextWindow), percent }
+interface ChunkAssembly {
+  count: number
+  nextIndex: number
+  bytes: number
+  parts: Buffer[]
 }
+
+const MAX_RPC_CHUNK_COUNT = 4096
+const MAX_CONCURRENT_RPC_CHUNK_IDS = 4
 
 export class RpcRuntime {
   readonly runtimeId = randomUUID()
@@ -74,6 +78,9 @@ export class RpcRuntime {
   private watchdogDisposed = false
   private lastActivityAt = Date.now()
   private lastRealCompactionEventAt = 0
+  // v2 chunked frames: base64 rpc_chunk sequences reassembled per chunkId,
+  // bounded by the shared read frame limit and small concurrency caps.
+  private readonly chunkAssemblies = new Map<string, ChunkAssembly>()
 
   constructor(
     executable: string,
@@ -83,9 +90,10 @@ export class RpcRuntime {
     private readonly onExit: (runtime: RpcRuntime) => void,
     extraEnvironment: NodeJS.ProcessEnv = {},
     watchdogTimings: Partial<CompactionWatchdogTimings> = {},
+    private readonly adapter: HarnessRpcAdapter = PRIME_RPC_ADAPTER,
   ) {
     this.watchdogTimings = { ...DEFAULT_COMPACTION_WATCHDOG_TIMINGS, ...watchdogTimings }
-    this.info = { runtimeId: this.runtimeId, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
+    this.info = { runtimeId: this.runtimeId, harness: this.adapter.id, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
@@ -98,7 +106,7 @@ export class RpcRuntime {
     this.child.once('error', (error) => this.fail(error))
     this.child.once('close', (code, signal) => {
       this.disposeCompactionWatchdog()
-      this.fail(new Error(`Prime Agent RPC exited (${code ?? signal ?? 'unknown'})`))
+      this.fail(new Error(`${this.adapter.agentName} RPC exited (${code ?? signal ?? 'unknown'})`))
       this.emit({ type: 'runtime_exit', code, signal, expected: this.stopped })
       this.onExit(this)
     })
@@ -111,6 +119,12 @@ export class RpcRuntime {
   }
 
   async handshake(): Promise<RuntimeInfo> {
+    // Harnesses with a versioned protocol must agree on the version before any
+    // other request; unsolicited frames (ready, available_commands_update) may
+    // arrive before or after this and are simply forwarded.
+    if (this.adapter.negotiateProtocolVersion !== undefined) {
+      await this.request({ type: 'negotiate_protocol', protocolVersion: this.adapter.negotiateProtocolVersion }, 60_000)
+    }
     const response = await this.request({ type: 'get_state' }, 60_000)
     this.updateFromState(response.data)
     const contextDeadline = new Promise<void>((resolve) => {
@@ -138,7 +152,7 @@ export class RpcRuntime {
       return false
     }
     try {
-      await this.request({ type: 'set_service_tier', serviceTier }, 10_000)
+      await this.request(this.adapter.buildServiceTierCommand(serviceTier), 10_000)
       this.requestedServiceTier = serviceTier
       this.info.serviceTier = serviceTier
       this.info.fastModeAvailable = true
@@ -166,7 +180,7 @@ export class RpcRuntime {
       const state = await this.request({ type: 'get_state' }, 60_000)
       this.updateFromState(state.data)
       void this.refreshContextUsage()
-    } else if (response.success === true && ['prompt', 'new_session', 'switch_session', 'clone', 'fork'].includes(String(command.type))) {
+    } else if (response.success === true && ['prompt', 'new_session', 'switch_session', 'clone', 'fork', 'branch'].includes(String(command.type))) {
       void this.request({ type: 'get_state' }, 60_000).then((state) => {
         this.updateFromState(state.data)
         return this.refreshContextUsage()
@@ -338,36 +352,46 @@ export class RpcRuntime {
   private handleLine(line: string): void {
     let value: unknown
     try { value = JSON.parse(line) } catch {
-      this.emit({ type: 'transport_error', error: 'Prime Agent emitted malformed JSON' })
+      this.emit({ type: 'transport_error', error: `${this.adapter.agentName} emitted malformed JSON` })
       return
     }
-    if (!isRecord(value) || typeof value.type !== 'string') return
-    if (value.type !== 'response') this.lastActivityAt = Date.now()
-    if (value.type === 'response' && typeof value.id === 'string') {
-      const pending = this.pending.get(value.id)
+    this.handleFrame(value)
+  }
+
+  private handleFrame(raw: unknown): void {
+    if (!isRecord(raw) || typeof raw.type !== 'string') return
+    if (raw.type !== 'response') this.lastActivityAt = Date.now()
+    if (raw.type === 'response' && typeof raw.id === 'string') {
+      const pending = this.pending.get(raw.id)
       if (!pending) {
         // A late answer to a request that timed out after its write flushed
         // is consumed, not surfaced as an orphan.
-        if (this.uncertainDeliveries.delete(value.id)) return
-        this.emit({ type: 'orphan_response', command: value.command })
+        if (this.uncertainDeliveries.delete(raw.id)) return
+        this.emit({ type: 'orphan_response', command: raw.command })
         return
       }
       clearTimeout(pending.timer)
       this.pendingBytes -= pending.bytes
-      this.pending.delete(value.id)
-      if (value.command !== pending.command) {
-        pending.reject(new Error(`Prime Agent returned a mismatched response for ${pending.command}`))
-        this.emit({ type: 'transport_error', error: 'Prime Agent returned a mismatched RPC response' })
+      this.pending.delete(raw.id)
+      if (raw.command !== pending.command) {
+        pending.reject(new Error(`${this.adapter.agentName} returned a mismatched response for ${pending.command}`))
+        this.emit({ type: 'transport_error', error: `${this.adapter.agentName} returned a mismatched RPC response` })
         return
       }
-      if (value.success !== true) {
-        const detail = typeof value.error === 'string' && value.error.trim() ? value.error.trim().slice(0, 4_000) : `RPC command ${pending.command} failed`
+      if (raw.success !== true) {
+        const detail = typeof raw.error === 'string' && raw.error.trim() ? raw.error.trim().slice(0, 4_000) : `RPC command ${pending.command} failed`
         pending.reject(new Error(detail))
         return
       }
-      pending.resolve(value)
+      pending.resolve(raw)
       return
     }
+    if (this.adapter.chunkedFrames && raw.type === 'rpc_chunk') {
+      this.handleChunkFrame(raw)
+      return
+    }
+    const value = this.adapter.normalizeEvent(raw)
+    if (!value) return
     if (value.type === 'session_action_update') {
       const actions = parseSessionActionSnapshot(value.actions)
       if (actions) this.info.sessionActions = actions
@@ -411,6 +435,70 @@ export class RpcRuntime {
     if (value.type === 'agent_end' || value.type === 'compaction_end') void this.refreshContextUsage()
   }
 
+  private handleChunkFrame(frame: RpcObject): void {
+    const chunkId = frame.chunkId
+    if (typeof chunkId !== 'string' || !chunkId || chunkId.length > 128) {
+      this.failChunkReassembly(undefined, 'chunked frame carried an invalid chunkId')
+      return
+    }
+    const index = frame.index
+    const count = frame.count
+    if (!Number.isSafeInteger(index) || Number(index) < 0
+      || !Number.isSafeInteger(count) || Number(count) < 1 || Number(count) > MAX_RPC_CHUNK_COUNT
+      || typeof frame.data !== 'string') {
+      this.failChunkReassembly(chunkId, 'chunked frame carried invalid sequencing')
+      return
+    }
+    const assembly = this.chunkAssemblies.get(chunkId)
+    if (!assembly) {
+      if (index !== 0) {
+        this.failChunkReassembly(chunkId, 'chunk indices arrived out of order')
+        return
+      }
+      if (this.chunkAssemblies.size >= MAX_CONCURRENT_RPC_CHUNK_IDS) {
+        this.failChunkReassembly(chunkId, 'too many concurrent chunk reassemblies')
+        return
+      }
+    } else if (index !== assembly.nextIndex || count !== assembly.count) {
+      this.failChunkReassembly(chunkId, 'chunk indices arrived out of order')
+      return
+    }
+    if (frame.data.length % 4 !== 0 || !/^[A-Za-z\d+/]*={0,2}$/.test(frame.data)) {
+      this.failChunkReassembly(chunkId, 'chunk data was not valid base64')
+      return
+    }
+    const decoded = Buffer.from(frame.data, 'base64')
+    if (frame.byteLength !== undefined && frame.byteLength !== decoded.length) {
+      this.failChunkReassembly(chunkId, 'chunk byteLength did not match its data')
+      return
+    }
+    const current = assembly ?? { count: Number(count), nextIndex: 0, bytes: 0, parts: [] }
+    if (current.bytes + decoded.length > RPC_READ_FRAME_LIMIT_BYTES) {
+      this.failChunkReassembly(chunkId, 'chunked frame exceeded the maximum frame size')
+      return
+    }
+    current.bytes += decoded.length
+    current.parts.push(decoded)
+    current.nextIndex += 1
+    if (current.nextIndex < current.count) {
+      this.chunkAssemblies.set(chunkId, current)
+      return
+    }
+    this.chunkAssemblies.delete(chunkId)
+    let value: unknown
+    try { value = JSON.parse(Buffer.concat(current.parts).toString('utf8')) } catch {
+      this.emit({ type: 'transport_error', error: `${this.adapter.agentName} emitted a malformed chunked frame` })
+      return
+    }
+    this.handleFrame(value)
+  }
+
+  /** A broken reassembly is dropped without killing the runtime: the agent is still running, so the renderer reconciles from disk. */
+  private failChunkReassembly(chunkId: string | undefined, error: string): void {
+    if (chunkId !== undefined) this.chunkAssemblies.delete(chunkId)
+    this.emit({ type: 'transport_limit', kind: 'chunk', error })
+  }
+
   private refreshContextUsage(): Promise<void> {
     this.contextUsageRefresh ??= this.performContextUsageRefresh().finally(() => { this.contextUsageRefresh = null })
     return this.contextUsageRefresh
@@ -435,10 +523,17 @@ export class RpcRuntime {
     if (typeof raw.isStreaming === 'boolean') this.info.isStreaming = raw.isStreaming
     if (typeof raw.isCompacting === 'boolean') this.info.isCompacting = raw.isCompacting
     if (typeof raw.thinkingLevel === 'string') this.info.thinkingLevel = raw.thinkingLevel
-    if (raw.serviceTier === 'default' || raw.serviceTier === 'priority') {
-      this.info.serviceTier = raw.serviceTier
+    const reading = this.adapter.readState(raw)
+    if (reading.serviceTier) {
+      this.info.serviceTier = reading.serviceTier
       this.info.fastModeAvailable = true
-      this.requestedServiceTier = raw.serviceTier
+      this.requestedServiceTier = reading.serviceTier
+    }
+    if (reading.contextUsage) {
+      // Harnesses that report usage inside get_state feed the same authoritative
+      // path as the get_session_stats refresh.
+      this.info.contextUsage = reading.contextUsage
+      this.emit({ type: 'context_usage', contextUsage: reading.contextUsage })
     }
     const sessionActions = parseSessionActionSnapshot(raw.sessionActions)
     if (sessionActions) this.info.sessionActions = sessionActions
