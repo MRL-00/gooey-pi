@@ -144,12 +144,12 @@ export default function App() {
   const refreshGit = useCallback(async () => {
     const requestId = ++gitRequestRef.current
     const cwd = activeCwd
-    if (!bridge || !cwd) { setGitSnapshot({ cwd, status: { isRepo: false, files: [] } }); return }
+    if (!bridge || !cwd || activeProject?.inferred) { setGitSnapshot({ cwd, status: { isRepo: false, files: [] } }); return }
     try {
       const next = await bridge.git.status(cwd)
       if (gitRequestRef.current === requestId && workspace.workspaceRef.current.cwd === cwd) setGitSnapshot({ cwd, status: next })
     } catch (error) { if (gitRequestRef.current === requestId && workspace.workspaceRef.current.cwd === cwd) reportError(error) }
-  }, [activeCwd, bridge, reportError, workspace.workspaceRef])
+  }, [activeCwd, activeProject?.inferred, bridge, reportError, workspace.workspaceRef])
 
   useAgentEvents({
     bridge, runtimeIdRef: workspace.runtimeIdRef, runtimeSessionsRef: workspace.runtimeSessionsRef,

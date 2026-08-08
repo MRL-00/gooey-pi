@@ -88,8 +88,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     const generation = workspace.activateWorkspace(project, session)
     setView('session')
     try {
-      const granted = await grantProject(project)
-      if (bridge && !granted.inferred) await bridge.projects.touch(granted.id, granted.harness)
+      // Inferred projects come from the harness's global session history and
+      // remain display-only until the user performs an action that needs a
+      // filesystem grant (starting work or opening a terminal).
+      if (bridge && !project.inferred) await bridge.projects.touch(project.id, project.harness)
       await workspace.reconcileRuntime(generation)
     } catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
@@ -101,7 +103,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     if (!project) { reportError('This session is not contained by an available project.'); return }
     const generation = workspace.activateWorkspace(project, session)
     setView('session')
-    try { await grantProject(project); await workspace.reconcileRuntime(generation) }
+    try { await workspace.reconcileRuntime(generation) }
     catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
   const newSession = (requestedProject?: ProjectRecord) => {
