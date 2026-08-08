@@ -11,10 +11,15 @@ describe('message shortcuts', () => {
     expect(messageActionForKey(event({ ctrlKey: true }))).toBe('steer')
   })
 
+  it('treats Cmd+Enter as the macOS alias for steering', () => {
+    expect(messageActionForKey(event({ metaKey: true }))).toBe('steer')
+    expect(messageActionForKey(event({ metaKey: true, ctrlKey: true }))).toBe('steer')
+    expect(messageActionForKey(event({ metaKey: true, shiftKey: true }))).toBeNull()
+  })
+
   it('leaves newlines, composition, and unsupported modifiers alone', () => {
     expect(messageActionForKey(event({ shiftKey: true }))).toBeNull()
     expect(messageActionForKey(event({ isComposing: true }))).toBeNull()
-    expect(messageActionForKey(event({ metaKey: true }))).toBeNull()
     expect(messageActionForKey(event({ altKey: true }))).toBeNull()
     expect(messageActionForKey(event({ key: 'a' }))).toBeNull()
   })

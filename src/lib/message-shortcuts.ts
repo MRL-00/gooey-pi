@@ -10,6 +10,7 @@ export interface MessageShortcutEvent {
 }
 
 export function messageActionForKey(event: MessageShortcutEvent): PromptDeliveryIntent | null {
-  if (event.key !== 'Enter' || event.isComposing || event.shiftKey || event.metaKey || event.altKey) return null
-  return event.ctrlKey ? 'steer' : 'queue'
+  if (event.key !== 'Enter' || event.isComposing || event.shiftKey || event.altKey) return null
+  // Cmd+Enter is the macOS-native alias for Ctrl+Enter; both steer.
+  return event.ctrlKey || event.metaKey ? 'steer' : 'queue'
 }

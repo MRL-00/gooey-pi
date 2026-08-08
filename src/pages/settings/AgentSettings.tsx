@@ -60,7 +60,7 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       <section className="settings-group">
         <h2>Message shortcuts</h2>
         <div className="settings-row">
-          <span><strong>Enter while {shortName} is working</strong><small>Enter queues a message. Ctrl+Enter steers the current turn. Shift+Enter adds a new line.</small></span>
+          <span><strong>Enter while {shortName} is working</strong><small>Enter queues a message. Ctrl+Enter or ⌘+Enter steers the current turn. Shift+Enter adds a new line.</small></span>
         </div>
         <div className="shortcut-row"><span><Keyboard size={14} />Queue message</span><kbd>Enter</kbd></div>
         <div className="shortcut-row"><span><Keyboard size={14} />Steer current turn</span><kbd>Ctrl Enter</kbd></div>

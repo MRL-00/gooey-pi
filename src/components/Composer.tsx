@@ -39,7 +39,7 @@ interface ComposerProps {
   /** Active harness short name for inline copy ("Prime" / "OMP"). */
   shortName?: string
   imageInputSupported: boolean
-  /** @deprecated Shortcuts are fixed: Enter queues and Ctrl+Enter steers. */
+  /** @deprecated Shortcuts are fixed: Enter queues and Ctrl/Cmd+Enter steers. */
   messageEnterAction?: MessageEnterAction
   contextUsage?: PrimeContextUsage
   skills: SkillRecord[]
