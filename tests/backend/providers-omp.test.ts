@@ -1,0 +1,251 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { ModelCatalogProvider } from '../../electron/main/model-catalog'
+import { OMP_NOT_INSTALLED_WARNING, OmpModelCatalogService, MAX_CATALOG_PROVIDERS } from '../../electron/main/providers-omp'
+
+const dirs: string[] = []
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'prime-work-omp-'))
+  dirs.push(dir)
+  return dir
+}
+
+/** Fabricates a fake omp CLI as an executable node script, mirroring the fake-agent pattern in agent-rpc.test.ts. */
+function fakeOmp(body: string): string {
+  const executable = join(tempDir(), 'fake-omp.cjs')
+  writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === '--version') { process.stdout.write('omp/1.2.3\\n'); process.exit(0) }
+if (process.argv[2] !== 'models' || process.argv[3] !== '--json') { process.exit(2) }
+${body}
+`)
+  chmodSync(executable, 0o755)
+  return executable
+}
+
+function fakeOmpWithCatalog(payload: unknown): string {
+  return fakeOmp(`process.stdout.write(${JSON.stringify(JSON.stringify(payload))})`)
+}
+
+const sampleCatalog = {
+  models: [
+    { provider: 'anthropic', id: 'claude-fable-5', selector: 'anthropic/claude-fable-5', name: 'Claude Fable 5', contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true, thinking: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], input: ['text', 'image'], cost: { input: 5, output: 25 } },
+    { provider: 'anthropic', id: 'claude-3-5-sonnet-20240620', selector: 'anthropic/claude-3-5-sonnet-20240620', name: 'Claude Sonnet 3.5', contextWindow: 200_000, maxTokens: 8_192, reasoning: false, thinking: null, input: ['text', 'image'], cost: {} },
+    { provider: 'openai-codex', id: 'gpt-5.6-luna', selector: 'openai-codex/gpt-5.6-luna', name: 'Luna GPT-5.6', contextWindow: 400_000, maxTokens: 128_000, reasoning: true, thinking: ['low', 'medium', 'high', 'xhigh'], input: ['text'], cost: {} },
+  ],
+}
+
+const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+  }
+}
+
+const processExists = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
+
+describe('OMP model catalog service', () => {
+  it('parses the CLI catalog into Prime descriptor shapes', async () => {
+    const service: ModelCatalogProvider = new OmpModelCatalogService(fakeOmpWithCatalog(sampleCatalog))
+    const catalog = await service.catalog(true)
+
+    expect(catalog.primeVersion).toBe('1.2.3')
+    expect(catalog.warning).toBeUndefined()
+    expect(catalog.models.map((model) => model.key)).toEqual([
+      'anthropic/claude-fable-5',
+      'anthropic/claude-3-5-sonnet-20240620',
+      'openai-codex/gpt-5.6-luna',
+    ])
+
+    const fable = catalog.models[0]
+    expect(fable.name).toBe('Claude Fable 5')
+    expect(fable.contextWindow).toBe(1_000_000)
+    expect(fable.maxTokens).toBe(128_000)
+    expect(fable.reasoning).toBe(true)
+    expect(fable.input).toEqual(['text', 'image'])
+    expect(fable.availableThinkingLevels).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+    expect(fable.fastModeSupported).toBe(false)
+    expect(fable.available).toBe(true)
+
+    const sonnet = catalog.models[1]
+    expect(sonnet.availableThinkingLevels).toEqual(['off'])
+    expect(sonnet.reasoning).toBe(false)
+
+    const luna = catalog.models[2]
+    expect(luna.availableThinkingLevels).toEqual(['off', 'low', 'medium', 'high', 'xhigh'])
+    expect(luna.fastModeSupported).toBe(true)
+    expect(luna.input).toEqual(['text'])
+
+    expect(catalog.providers.map((provider) => provider.id)).toEqual(['anthropic', 'openai-codex'])
+    const anthropic = catalog.providers[0]
+    expect(anthropic.authMethod).toBe('external')
+    expect(anthropic.configured).toBe(true)
+    expect(anthropic.authLabel).toBe('Managed by the omp CLI')
+    expect(anthropic.modelCount).toBe(2)
+    expect(anthropic.availableModelCount).toBe(2)
+    expect(anthropic.enabled).toBe(true)
+  })
+
+  it('resolves availability, capabilities, and desktop provider enablement', async () => {
+    const service = new OmpModelCatalogService(fakeOmpWithCatalog(sampleCatalog))
+
+    const model = await service.requireAvailableModel('openai-codex/gpt-5.6-luna')
+    expect(model.provider).toBe('openai-codex')
+    expect(model.id).toBe('gpt-5.6-luna')
+
+    await expect(service.requireAvailableModel('nope/none')).rejects.toThrow(/not found in the OMP catalog/)
+    await expect(service.requireAvailableModel('anthropic/claude-fable-5', new Set(['anthropic']))).rejects.toThrow(/disabled/)
+    const disabledView = await service.catalog(false, new Set(['anthropic']))
+    expect(disabledView.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(false)
+    expect(disabledView.providers.find((provider) => provider.id === 'openai-codex')?.enabled).toBe(true)
+
+    expect(await service.capabilities('anthropic', 'claude-fable-5')).toMatchObject({ key: 'anthropic/claude-fable-5' })
+    expect(await service.capabilities('anthropic', undefined)).toBeUndefined()
+    expect(await service.capabilities(undefined, 'claude-fable-5')).toBeUndefined()
+  })
+
+  it('returns an empty catalog with a clear status when OMP is not installed', async () => {
+    const service = new OmpModelCatalogService(null)
+    const catalog = await service.catalog(true)
+
+    expect(catalog.models).toEqual([])
+    expect(catalog.providers).toEqual([])
+    expect(catalog.warning).toBe(OMP_NOT_INSTALLED_WARNING)
+    expect(catalog.primeVersion).toBe('unknown')
+    await expect(service.requireAvailableModel('anthropic/claude-fable-5')).rejects.toThrow(/not found/)
+  })
+
+  it('rejects malformed JSON without caching a catalog', async () => {
+    const service = new OmpModelCatalogService(fakeOmp("process.stdout.write('not json {{')"))
+    await expect(service.catalog(true)).rejects.toThrow(/malformed model catalog JSON/)
+    await expect(service.catalog()).rejects.toThrow(/malformed model catalog JSON/)
+  })
+
+  it('rejects valid JSON with an unexpected top-level shape', async () => {
+    const service = new OmpModelCatalogService(fakeOmpWithCatalog({ models: 'nope' }))
+    await expect(service.catalog(true)).rejects.toThrow(/unexpected model catalog shape/)
+    const arrayService = new OmpModelCatalogService(fakeOmpWithCatalog([1, 2, 3]))
+    await expect(arrayService.catalog(true)).rejects.toThrow(/unexpected model catalog shape/)
+  })
+
+  it('rejects oversized CLI output at the byte cap', async () => {
+    const executable = fakeOmp("process.stdout.write('x'.repeat(256 * 1024))")
+    const service = new OmpModelCatalogService(executable, { maxOutputBytes: 4_096 })
+    await expect(service.catalog(true)).rejects.toThrow(/catalog output exceeded/)
+  })
+
+  it('kills a hung CLI at the timeout', async () => {
+    const pidFile = join(tempDir(), 'omp.pid')
+    const executable = fakeOmp(`require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`)
+    const service = new OmpModelCatalogService(executable, { timeoutMs: 400 })
+
+    await expect(service.catalog(true)).rejects.toThrow(/timed out/)
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    expect(Number.isInteger(pid) && pid > 0).toBe(true)
+    await waitUntil(() => !processExists(pid))
+  })
+
+  it('caches within the TTL and single-flights concurrent refreshes', async () => {
+    const counterFile = join(tempDir(), 'runs')
+    const executable = fakeOmp(`
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(counterFile)}, 'x')
+setTimeout(() => { process.stdout.write(${JSON.stringify(JSON.stringify(sampleCatalog))}) }, 50)
+`)
+    const service = new OmpModelCatalogService(executable)
+    const runs = () => { try { return readFileSync(counterFile, 'utf8').length } catch { return 0 } }
+
+    const [first, second, third] = await Promise.all([
+      service.catalog(true),
+      service.catalog(true),
+      service.catalog(true, new Set(['anthropic'])),
+    ])
+    expect(runs()).toBe(1)
+    expect(first.models.length).toBe(second.models.length)
+    expect(third.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(false)
+    expect(first.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(true)
+
+    // Within the TTL an unforced call serves the cache without a new spawn.
+    await service.catalog()
+    expect(runs()).toBe(1)
+
+    // After settling, a forced refresh spawns again (the in-flight slot was cleared).
+    await service.catalog(true)
+    expect(runs()).toBe(2)
+
+    // invalidate() drops the cache so an unforced call refreshes too.
+    service.invalidate()
+    await service.catalog()
+    expect(runs()).toBe(3)
+  })
+
+  it('rejects hostile model entries and sanitizes suspicious fields', async () => {
+    const service = new OmpModelCatalogService(fakeOmpWithCatalog({
+      models: [
+        sampleCatalog.models[0],
+        'not-an-object',
+        null,
+        ['nested', 'array'],
+        { provider: '../evil', id: 'escape', name: 'Bad provider' },
+        { provider: 'anthropic', id: 'bad id with spaces', name: 'Bad id' },
+        { provider: 'anthropic', id: 'no-name', name: 42 },
+        { provider: 'anthropic', id: 'bad-reasoning', name: 'Bad reasoning', reasoning: 'yes' },
+        { provider: 'anthropic', id: 'bad-thinking', name: 'Bad thinking', reasoning: true, thinking: 'high' },
+        { provider: 'anthropic', id: 'claude-fable-5', name: 'Duplicate key' },
+        {
+          provider: 'zai',
+          id: 'glm-5',
+          name: `Padded${'x'.repeat(2_000)}`,
+          reasoning: true,
+          thinking: [{ hostile: true }, 'medium', 'turbo', 'max'],
+          input: ['text', 'video', { type: 'image' }],
+          contextWindow: '200000',
+          maxTokens: -5,
+        },
+      ],
+    }))
+    const catalog = await service.catalog(true)
+
+    expect(catalog.models.map((model) => model.key)).toEqual(['anthropic/claude-fable-5', 'zai/glm-5'])
+    expect(catalog.models[0].name).toBe('Claude Fable 5')
+    const glm = catalog.models[1]
+    expect(glm.name.length).toBe(500)
+    expect(glm.availableThinkingLevels).toEqual(['off', 'medium', 'max'])
+    expect(glm.input).toEqual(['text'])
+    expect(glm.contextWindow).toBe(0)
+    expect(glm.maxTokens).toBe(0)
+    expect(catalog.warning).toMatch(/could not validate/)
+    expect(catalog.providers.map((provider) => provider.id)).toEqual(['anthropic', 'zai'])
+  })
+
+  it('caps runaway catalogs at the model and provider limits', async () => {
+    const models: unknown[] = []
+    // Provider overflow entries come first so they land inside the 5,000-model
+    // cap and exercise the 256-provider cap independently.
+    for (let index = 0; index < 300; index += 1) {
+      models.push({ provider: `overflow-${String(index).padStart(3, '0')}`, id: 'model', name: `Overflow ${index}`, reasoning: false, thinking: null, input: ['text'], contextWindow: 1, maxTokens: 1 })
+    }
+    for (let index = 0; index < 5_010; index += 1) {
+      models.push({ provider: 'anthropic', id: `model-${index}`, name: `Model ${index}`, reasoning: false, thinking: null, input: ['text'], contextWindow: 1, maxTokens: 1 })
+    }
+    const service = new OmpModelCatalogService(fakeOmpWithCatalog({ models }))
+    const catalog = await service.catalog(true)
+
+    expect(catalog.models).toHaveLength(5_000)
+    expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    const names = catalog.providers.map((provider) => provider.name)
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
+    expect(catalog.warning).toMatch(/models/)
+  })
+
+  it('rejects a CLI that exits with a failure status', async () => {
+    const service = new OmpModelCatalogService(fakeOmp('process.exit(3)'))
+    await expect(service.catalog(true)).rejects.toThrow(/exited with status 3/)
+  })
+})
