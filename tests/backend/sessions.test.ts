@@ -8,7 +8,7 @@ import { AgentRpcManager } from '../../electron/main/agent-rpc'
 import { ProjectService } from '../../electron/main/projects'
 import { SessionService, type SessionServiceOptions } from '../../electron/main/sessions'
 import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
-import { createSessionMetadataReader, METADATA_VERIFY_TAIL_BYTES, readSessionMetadata, type SessionMetadata } from '../../electron/main/sessions/metadata'
+import { applyLiveMetadata, createSessionMetadataReader, METADATA_VERIFY_TAIL_BYTES, readSessionMetadata, type SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
@@ -57,6 +57,29 @@ function metadata(filePath: string, projectPath: string, id: string): SessionMet
     unread: false,
   }
 }
+
+describe('live session metadata', () => {
+  const liveMetadata = (): SessionMetadata => ({
+    id: 'session', filePath: '/sessions/session.jsonl', projectPath: '/project', title: 'Untitled session',
+    createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    status: 'unknown', depth: 0, pinned: false,
+  })
+
+  it('does not show stale inactive daemon work as running', () => {
+    const record = liveMetadata()
+    applyLiveMetadata(record, { lifecycle: 'live', isSessionActive: false, activity: 'working', isStreaming: true })
+    expect(record.status).toBe('idle')
+  })
+
+  it('keeps active and legacy busy daemon sessions running', () => {
+    const active = liveMetadata()
+    const legacy = liveMetadata()
+    applyLiveMetadata(active, { lifecycle: 'live', isSessionActive: true, activity: 'working' })
+    applyLiveMetadata(legacy, { lifecycle: 'live', isStreaming: true })
+    expect(active.status).toBe('running')
+    expect(legacy.status).toBe('running')
+  })
+})
 
 describe('session discovery work bounds', () => {
   it('uses UUIDv7 timestamps for deterministic bounded pre-I/O admission', () => {

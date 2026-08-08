@@ -38,8 +38,9 @@ export function statusFrom(
 }
 
 export function applyLiveMetadata(metadata: SessionMetadata, live: JsonRecord): void {
+  const active = live.isSessionActive !== false
   if (live.workerState === 'failed') metadata.status = 'failed'
-  else if (live.isStreaming === true || live.activity === 'working' || live.isCompacting === true) metadata.status = 'running'
+  else if (active && (live.isStreaming === true || live.activity === 'working' || live.isCompacting === true)) metadata.status = 'running'
   else if (live.lifecycle === 'archived') metadata.status = 'complete'
   else if (live.taskState === 'completed') metadata.status = 'complete'
   else if (live.taskState === 'needs_input') metadata.status = 'waiting'
