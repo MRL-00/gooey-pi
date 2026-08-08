@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, protocol, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -26,6 +26,7 @@ import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
+import { VoiceService } from './voice'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
@@ -391,6 +392,18 @@ async function bootstrap(): Promise<void> {
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
+  const voice = new VoiceService({
+    secretPath: join(app.getPath('userData'), 'voice-secrets.json'),
+    secretCodec: {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value),
+    },
+    settings: () => stateStore.getSettings(),
+    projects: { prime: projects, omp: ompProjects },
+    agents: { prime: agents, omp: ompManager },
+    runProcess,
+  })
   const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const scheduleSkillPath = app.isPackaged
@@ -486,7 +499,7 @@ async function bootstrap(): Promise<void> {
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService,
+    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog },
   }, trustedRendererUrl)
   // Both managers share the one renderer forwarding path: envelopes carry the

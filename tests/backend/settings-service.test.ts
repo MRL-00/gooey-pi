@@ -36,6 +36,14 @@ describe('SettingsService.update', () => {
       disabledProviders: ['openai', 'openai', 'google'],
       activeHarness: 'omp',
       ompApprovalMode: 'always-ask',
+      voiceTranscriptionProvider: 'groq',
+      voiceOpenAiTranscriptionModel: 'gpt-4o-mini-transcribe',
+      voiceGroqTranscriptionModel: 'whisper-large-v3',
+      voiceDeepgramTranscriptionModel: 'nova-3-general',
+      voiceLocalWhisperExecutable: '/opt/whisper-cli',
+      voiceLocalWhisperModel: '/opt/ggml-model.bin',
+      voiceRealtimeModel: 'gpt-realtime-2.1',
+      voiceRealtimeVoice: 'cedar',
     })
     expect(next).toMatchObject({
       theme: 'dark', sidebarOpen: false, inspectorOpen: true, terminalOpen: true,
@@ -44,6 +52,7 @@ describe('SettingsService.update', () => {
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
       telemetry: false, disabledProviders: ['openai', 'google'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask',
+      voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
     })
     expect(service.get()).toEqual(next)
   })
@@ -71,6 +80,8 @@ describe('SettingsService.update', () => {
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)
     await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
     await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
+    await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)
+    await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
     expect(service.get()).toEqual(before)
   })
 

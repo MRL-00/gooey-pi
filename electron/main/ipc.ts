@@ -11,6 +11,7 @@ import type { AutomationService } from './schedules/service'
 import type { HeartbeatService } from './schedules/heartbeats'
 import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
+import type { VoiceService } from './voice'
 import type { AgentBrowserService } from './browser/agent-service'
 import { requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
 
@@ -27,6 +28,7 @@ interface Services {
   heartbeats: HeartbeatService
   schedules: AutomationService
   browser: AgentBrowserService
+  voice: VoiceService
   /** OMP-harness counterparts; always constructed, even when the omp CLI is absent. */
   omp: {
     projects: ProjectService
@@ -214,6 +216,13 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   })
   handle('providers:respond-oauth', (_event, flowId, promptId, value) => services.providers.respondOAuth(flowId, promptId, value))
   handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
+
+  handle('voice:credential-status', () => services.voice.credentialStatus())
+  handle('voice:save-api-key', (_event, provider, apiKey) => services.voice.saveApiKey(provider, apiKey))
+  handle('voice:delete-api-key', (_event, provider) => services.voice.deleteApiKey(provider))
+  handle('voice:create-realtime-call', (_event, request) => services.voice.createRealtimeCall(request))
+  handle('voice:transcribe', (_event, request) => services.voice.transcribe(request))
+  handle('voice:execute-tool', (_event, request) => services.voice.executeTool(request))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
   handle('terminal:bind-session', (event, terminalId, sessionPath) => services.terminals.bindSession(event.sender, terminalId, sessionPath))

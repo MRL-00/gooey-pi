@@ -25,6 +25,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   messageEnterAction: 'queue',
   telemetry: false,
   disabledProviders: [],
+  voiceTranscriptionProvider: 'openai-live',
+  voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',
+  voiceGroqTranscriptionModel: 'whisper-large-v3-turbo',
+  voiceDeepgramTranscriptionModel: 'nova-3',
+  voiceLocalWhisperExecutable: '',
+  voiceLocalWhisperModel: '',
+  voiceRealtimeModel: 'gpt-realtime-2.1',
+  voiceRealtimeVoice: 'marin',
 }
 
 export const SAMPLE_PROJECTS: ProjectRecord[] = [

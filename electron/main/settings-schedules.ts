@@ -44,6 +44,17 @@ export class SettingsService {
         if (value !== 'inherit' && value !== 'always-ask' && value !== 'write' && value !== 'yolo') throw new TypeError('Invalid OMP approval mode')
         return value
       },
+      voiceTranscriptionProvider: (value) => {
+        if (value !== 'openai-live' && value !== 'openai' && value !== 'groq' && value !== 'deepgram' && value !== 'local-whisper') throw new TypeError('Invalid voice transcription provider')
+        return value
+      },
+      voiceOpenAiTranscriptionModel: (value) => this.voiceModel(value, 'voiceOpenAiTranscriptionModel'),
+      voiceGroqTranscriptionModel: (value) => this.voiceModel(value, 'voiceGroqTranscriptionModel'),
+      voiceDeepgramTranscriptionModel: (value) => this.voiceModel(value, 'voiceDeepgramTranscriptionModel'),
+      voiceLocalWhisperExecutable: (value) => requireString(value, 'voiceLocalWhisperExecutable', { max: 4_096, trim: true }),
+      voiceLocalWhisperModel: (value) => requireString(value, 'voiceLocalWhisperModel', { max: 4_096, trim: true }),
+      voiceRealtimeModel: (value) => this.voiceModel(value, 'voiceRealtimeModel'),
+      voiceRealtimeVoice: (value) => this.voiceModel(value, 'voiceRealtimeVoice'),
       disabledProviders: (value) => {
         if (!Array.isArray(value) || value.length > 128) throw new TypeError('disabledProviders must be a bounded array')
         return [...new Set(value.map((entry, index) => {
@@ -61,6 +72,12 @@ export class SettingsService {
     }
     for (const key of keys) applyField(key)
     return this.store.update((state) => Object.assign(state.settings, patch))
+  }
+
+  private voiceModel(value: unknown, label: string): string {
+    const model = requireString(value, label, { min: 1, max: 128, trim: true })
+    if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(model)) throw new TypeError(`${label} is not valid`)
+    return model
   }
 
   async resetBrowserData(): Promise<boolean> {

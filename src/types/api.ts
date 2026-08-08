@@ -337,6 +337,63 @@ export interface AppSettings {
   activeHarness: HarnessId
   /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
   ompApprovalMode: OmpApprovalMode
+  /** Speech-to-text path used by the composer microphone. */
+  voiceTranscriptionProvider: VoiceTranscriptionProvider
+  /** Provider model IDs stay configurable without exposing provider credentials. */
+  voiceOpenAiTranscriptionModel: string
+  voiceGroqTranscriptionModel: string
+  voiceDeepgramTranscriptionModel: string
+  /** User-managed whisper.cpp installation for offline transcription. */
+  voiceLocalWhisperExecutable: string
+  voiceLocalWhisperModel: string
+  /** Realtime orb model and synthesized voice. */
+  voiceRealtimeModel: string
+  voiceRealtimeVoice: string
+}
+
+export const VOICE_TRANSCRIPTION_PROVIDERS = ['openai-live', 'openai', 'groq', 'deepgram', 'local-whisper'] as const
+export type VoiceTranscriptionProvider = typeof VOICE_TRANSCRIPTION_PROVIDERS[number]
+export const VOICE_CREDENTIAL_PROVIDERS = ['openai', 'groq', 'deepgram'] as const
+export type VoiceCredentialProvider = typeof VOICE_CREDENTIAL_PROVIDERS[number]
+
+export interface VoiceCredentialStatus {
+  configured: Record<VoiceCredentialProvider, boolean>
+  source: Partial<Record<VoiceCredentialProvider, 'saved' | 'environment'>>
+}
+
+export interface VoiceRealtimeCallRequest {
+  mode: 'conversation' | 'transcription'
+  sdp: string
+}
+
+export interface VoiceTranscriptionRequest {
+  provider: Exclude<VoiceTranscriptionProvider, 'openai-live'>
+  audio: Uint8Array
+}
+
+export interface VoiceProjectSummary {
+  id: string
+  harness: HarnessId
+  name: string
+  lastOpenedAt: string
+}
+
+export interface VoiceTaskStarted {
+  projectId: string
+  projectName: string
+  harness: HarnessId
+  runtimeId: string
+  sessionFile?: string
+}
+
+export type VoiceToolRequest =
+  | { name: 'list_projects'; arguments: { query?: string; harness?: HarnessId } }
+  | { name: 'start_task'; arguments: { project_id: string; prompt: string; title?: string } }
+  | { name: 'search_web'; arguments: { query: string } }
+
+export interface VoiceToolResult {
+  output: string
+  task?: VoiceTaskStarted
 }
 
 export type ScheduleDefinitionStatus = 'active' | 'paused' | 'completed' | 'blocked'
@@ -500,6 +557,14 @@ export interface PrimeWorkApi {
     respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
     cancelOAuth(flowId: string): Promise<boolean>
     onAuthEvent(callback: (event: ProviderAuthEvent) => void): () => void
+  }
+  voice: {
+    credentialStatus(): Promise<VoiceCredentialStatus>
+    saveApiKey(provider: VoiceCredentialProvider, apiKey: string): Promise<VoiceCredentialStatus>
+    deleteApiKey(provider: VoiceCredentialProvider): Promise<VoiceCredentialStatus>
+    createRealtimeCall(request: VoiceRealtimeCallRequest): Promise<string>
+    transcribe(request: VoiceTranscriptionRequest): Promise<string>
+    executeTool(request: VoiceToolRequest): Promise<VoiceToolResult>
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>

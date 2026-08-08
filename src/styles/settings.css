@@ -26,6 +26,17 @@
 .settings-row select, .settings-row input, .field input, .field textarea, .field select { height: 32px; min-width: 180px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 7px; outline: 0; background: var(--surface-raised); font-size: 11.5px; }
 .settings-row--stack { align-items: flex-start; flex-direction: column; gap: 9px; padding: 13px 0; }
 .settings-row--stack input { width: 100%; }
+.settings-group > h2 { display: flex; align-items: center; gap: 6px; }
+.settings-group__description { margin: -2px 0 10px; color: var(--text-tertiary); font-size: 10.5px; line-height: 1.45; }
+.voice-setting-field > span { width: 100%; }
+.voice-credential-list { border-top: 1px solid var(--border); }
+.voice-credential-row { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border); }
+.voice-credential-row > span:first-child { min-width: 0; display: flex; flex-direction: column; }
+.voice-credential-row strong { font-size: 12px; font-weight: 540; }
+.voice-credential-row small { margin-top: 2px; color: var(--text-tertiary); font-size: 10.5px; }
+.voice-credential-actions { display: flex; align-items: center; gap: 7px; }
+.voice-credential-actions > i { color: var(--text-tertiary); font-size: 10px; font-style: normal; white-space: nowrap; }
+.voice-credential-actions > i.is-configured { color: var(--success); }
 .theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; }
 .theme-options button { min-height: 84px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: 1fr auto; gap: 5px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-secondary); background: var(--surface-subtle); text-align: left; }
 .theme-options button > span { grid-column: 1 / -1; display: grid; place-items: center; border-radius: 6px; color: var(--text-secondary); background: var(--canvas); }

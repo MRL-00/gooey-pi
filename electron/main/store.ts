@@ -42,6 +42,14 @@ export function defaultSettings(): AppSettings {
     disabledProviders: [],
     activeHarness: 'prime',
     ompApprovalMode: 'inherit',
+    voiceTranscriptionProvider: 'openai-live',
+    voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',
+    voiceGroqTranscriptionModel: 'whisper-large-v3-turbo',
+    voiceDeepgramTranscriptionModel: 'nova-3',
+    voiceLocalWhisperExecutable: '',
+    voiceLocalWhisperModel: '',
+    voiceRealtimeModel: 'gpt-realtime-2.1',
+    voiceRealtimeVoice: 'marin',
   }
 }
 
@@ -106,6 +114,14 @@ function parseSettings(value: unknown): AppSettings {
       : defaults.disabledProviders,
     activeHarness: parseHarness(value.activeHarness),
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
+    voiceTranscriptionProvider: value.voiceTranscriptionProvider === 'openai-live' || value.voiceTranscriptionProvider === 'openai' || value.voiceTranscriptionProvider === 'groq' || value.voiceTranscriptionProvider === 'deepgram' || value.voiceTranscriptionProvider === 'local-whisper' ? value.voiceTranscriptionProvider : defaults.voiceTranscriptionProvider,
+    voiceOpenAiTranscriptionModel: boundedString(value.voiceOpenAiTranscriptionModel, 128) ? value.voiceOpenAiTranscriptionModel : defaults.voiceOpenAiTranscriptionModel,
+    voiceGroqTranscriptionModel: boundedString(value.voiceGroqTranscriptionModel, 128) ? value.voiceGroqTranscriptionModel : defaults.voiceGroqTranscriptionModel,
+    voiceDeepgramTranscriptionModel: boundedString(value.voiceDeepgramTranscriptionModel, 128) ? value.voiceDeepgramTranscriptionModel : defaults.voiceDeepgramTranscriptionModel,
+    voiceLocalWhisperExecutable: boundedString(value.voiceLocalWhisperExecutable, 4096, true) ? value.voiceLocalWhisperExecutable : defaults.voiceLocalWhisperExecutable,
+    voiceLocalWhisperModel: boundedString(value.voiceLocalWhisperModel, 4096, true) ? value.voiceLocalWhisperModel : defaults.voiceLocalWhisperModel,
+    voiceRealtimeModel: boundedString(value.voiceRealtimeModel, 128) ? value.voiceRealtimeModel : defaults.voiceRealtimeModel,
+    voiceRealtimeVoice: boundedString(value.voiceRealtimeVoice, 64) ? value.voiceRealtimeVoice : defaults.voiceRealtimeVoice,
   }
 }
 

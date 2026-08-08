@@ -49,6 +49,14 @@ const api: PrimeWorkApi = {
     cancelOAuth: (flowId) => ipcRenderer.invoke('providers:cancel-oauth', flowId),
     onAuthEvent: (callback) => subscribe<ProviderAuthEvent>('providers:auth-event', callback),
   },
+  voice: {
+    credentialStatus: () => ipcRenderer.invoke('voice:credential-status'),
+    saveApiKey: (provider, apiKey) => ipcRenderer.invoke('voice:save-api-key', provider, apiKey),
+    deleteApiKey: (provider) => ipcRenderer.invoke('voice:delete-api-key', provider),
+    createRealtimeCall: (request) => ipcRenderer.invoke('voice:create-realtime-call', request),
+    transcribe: (request) => ipcRenderer.invoke('voice:transcribe', request),
+    executeTool: (request) => ipcRenderer.invoke('voice:execute-tool', request),
+  },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),
     bindSession: (terminalId, sessionPath) => ipcRenderer.invoke('terminal:bind-session', terminalId, sessionPath),

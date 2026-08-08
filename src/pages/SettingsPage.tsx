@@ -1,9 +1,9 @@
-import { Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
+import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
-import type { AppMeta, AppSettings, PrimeModelCatalog } from '@/types/api'
+import type { AppMeta, AppSettings, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
 import { AgentSettings } from './settings/AgentSettings'
 import { AppearanceSettings } from './settings/AppearanceSettings'
@@ -13,12 +13,14 @@ import { GeneralSettings } from './settings/GeneralSettings'
 import { PrivacySettings } from './settings/PrivacySettings'
 import { ProvidersSettings } from './settings/ProviderSettings'
 import { TerminalSettings } from './settings/TerminalSettings'
+import { VoiceSettings } from './settings/VoiceSettings'
 
 const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<{ size?: number }> }> = [
   { id: 'general', label: 'General', icon: Settings2 },
   { id: 'appearance', label: 'Appearance', icon: Sun },
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'providers', label: 'Providers', icon: Boxes },
+  { id: 'voice', label: 'Voice', icon: AudioLines },
   { id: 'browser', label: 'Browser', icon: BrowserGlobe },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'privacy', label: 'Privacy', icon: LockKeyhole },
@@ -29,6 +31,7 @@ interface SettingsPageProps {
   settings: AppSettings
   meta?: AppMeta | null
   providerCatalog: PrimeModelCatalog | null
+  voice: PrimeWorkApi['voice'] | null
   onUpdate: SettingsUpdate
   onResetBrowser(): Promise<void> | void
   onOpenDocs(): void
@@ -41,7 +44,7 @@ interface SettingsPageProps {
   onStartProviderOAuth(providerId: string): Promise<void>
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, voice, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>('general')
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -66,6 +69,7 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
       case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
       case 'providers': return <ProvidersSettings harness={settings.activeHarness} catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
+      case 'voice': return <VoiceSettings settings={settings} onUpdate={onUpdate} voice={voice} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
