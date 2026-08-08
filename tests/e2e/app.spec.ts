@@ -464,6 +464,15 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
   })
 
+  test('closes realtime voice before switching harnesses', async () => {
+    await page.getByRole('button', { name: 'Open realtime voice' }).click()
+    await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toBeVisible()
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'OMP Work — switch harness' })).toBeVisible()
+  })
+
   test('persists a desktop-only OMP provider toggle and removes its models from the picker', async () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()

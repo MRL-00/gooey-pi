@@ -48,6 +48,11 @@ function credentialProvider(value: unknown): VoiceCredentialProvider {
   return value
 }
 
+function harnessId(value: unknown): HarnessId {
+  if (value !== 'prime' && value !== 'omp') throw new TypeError('Invalid voice harness')
+  return value
+}
+
 function boundedAudio(value: unknown): Uint8Array {
   const bytes = value instanceof Uint8Array
     ? value
@@ -143,50 +148,59 @@ class VoiceSecretStore {
   }
 }
 
-function orchestrationInstructions(): string {
+function orchestrationInstructions(harness: HarnessId): string {
+  const harnessName = harness === 'omp' ? 'OMP' : 'Prime Agent'
   return [
     'You are the voice orchestrator inside Prime Work, a desktop client for Prime Agent and OMP.',
+    `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
-    'Use search_web for current information. Use list_projects when a project name is unclear.',
+    'Use get_local_context for the local date, time, time zone, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness.',
     'Call start_task only when the user explicitly asks you to start, create, kick off, delegate, or run a task.',
     'An explicit request to start work is sufficient authorization. Do not ask for a second confirmation.',
     'Only start tasks inside projects returned by list_projects. Never invent project IDs.',
+    'Treat session creation, project selection, and harness selection as orchestration instructions for you, not as part of the delegated prompt.',
+    'Rewrite the start_task prompt as a clean, self-contained task containing only the actual goal, useful constraints, and requested output. Do not include phrases such as start a session, create a thread, ask the agent, you are an agent, or working inside the project. Do not add generic process advice the user did not request.',
+    'Example: "Start a new session in the Prime project workspace. Ask what the next logical feature to add should be" becomes the task prompt "Determine the next logical feature to add to this project and explain why."',
     'When the user asks to start work, you must call start_task. Never say a task started unless start_task returned started true.',
     'After starting a task, say which project and harness received it.',
   ].join(' ')
 }
 
-function realtimeSession(settings: AppSettings): Record<string, unknown> {
+function realtimeSession(settings: AppSettings, harness: HarnessId): Record<string, unknown> {
   return {
     type: 'realtime',
     model: settings.voiceRealtimeModel,
-    instructions: orchestrationInstructions(),
+    instructions: orchestrationInstructions(harness),
     audio: { output: { voice: settings.voiceRealtimeVoice } },
     tool_choice: 'auto',
     tools: [
       {
         type: 'function', name: 'list_projects',
-        description: 'Find explicitly granted Prime Work projects. Use before starting work when the target is unclear.',
+        description: `Find explicitly granted projects in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Projects from the other harness are never returned.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
             query: { type: 'string', description: 'Optional project-name search.' },
-            harness: { type: 'string', enum: ['prime', 'omp'], description: 'Optional harness filter.' },
           },
         },
       },
       {
         type: 'function', name: 'start_task',
-        description: 'Immediately create and start a new agent task after the user explicitly asks for work to begin. Do not request another confirmation.',
+        description: `Immediately create and start a new task in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
             project_id: { type: 'string', description: 'An exact ID returned by list_projects.' },
-            prompt: { type: 'string', description: 'The complete task for the coding agent.' },
-            title: { type: 'string', description: 'Optional concise task title.' },
+            prompt: { type: 'string', description: 'A concise, self-contained task with the actual goal, useful user constraints, and requested output. Exclude session/thread creation, project/harness routing, agent-role preambles, and generic filler.' },
+            title: { type: 'string', description: 'Optional concise title describing only the delegated work.' },
           },
           required: ['project_id', 'prompt'],
         },
+      },
+      {
+        type: 'function', name: 'get_local_context',
+        description: 'Get the local date, time, time zone, locale, UTC offset, and currently selected harness for quick contextual questions.',
+        parameters: { type: 'object', additionalProperties: false, properties: {} },
       },
       {
         type: 'function', name: 'search_web',
@@ -241,7 +255,10 @@ export class VoiceService {
     const form = new FormData()
     form.set('sdp', sdp)
     const settings = this.options.settings()
-    form.set('session', JSON.stringify(request.mode === 'conversation' ? realtimeSession(settings) : transcriptionSession(settings)))
+    const session = request.mode === 'conversation'
+      ? realtimeSession(settings, harnessId(request.harness))
+      : transcriptionSession(settings)
+    form.set('session', JSON.stringify(session))
     const response = await this.withTimeout('https://api.openai.com/v1/realtime/calls', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}` },
@@ -285,38 +302,36 @@ export class VoiceService {
     return cleanText(data.text, `${provider} transcript`)
   }
 
-  async executeTool(raw: unknown): Promise<VoiceToolResult> {
+  async executeTool(raw: unknown, harnessValue: unknown): Promise<VoiceToolResult> {
     const request = requireRecord(raw, 'voice tool request')
     const name = requireString(request.name, 'tool name', { min: 1, max: 64 })
     const args = requireRecord(request.arguments, 'tool arguments')
-    if (name === 'list_projects') return this.listProjects(args)
-    if (name === 'start_task') return this.startTask(args)
+    const harness = harnessId(harnessValue)
+    if (name === 'list_projects') return this.listProjects(args, harness)
+    if (name === 'start_task') return this.startTask(args, harness)
+    if (name === 'get_local_context') return this.getLocalContext(harness)
     if (name === 'search_web') return this.searchWeb(args)
     throw new TypeError('Voice tool is not supported')
   }
 
-  private async listProjects(args: Record<string, unknown>): Promise<VoiceToolResult> {
+  private async listProjects(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {
     const query = args.query === undefined ? '' : requireString(args.query, 'query', { max: 256, trim: true }).toLowerCase()
-    const harness = args.harness === undefined ? undefined : args.harness === 'prime' || args.harness === 'omp' ? args.harness : null
-    if (harness === null) throw new TypeError('Invalid harness filter')
-    const harnesses: HarnessId[] = harness ? [harness] : ['prime', 'omp']
-    const projects = (await Promise.all(harnesses.map(async (id) => (await this.options.projects[id].list()).filter((project) => !project.inferred))))
-      .flat()
+    const projects = (await this.options.projects[harness].list())
+      .filter((project) => !project.inferred)
       .filter((project) => !query || project.name.toLowerCase().includes(query))
       .slice(0, 50)
       .map(({ id, name, harness: projectHarness, lastOpenedAt }) => ({ id, name, harness: projectHarness, lastOpenedAt }))
     return { output: JSON.stringify({ projects }) }
   }
 
-  private async startTask(args: Record<string, unknown>): Promise<VoiceToolResult> {
+  private async startTask(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {
     const projectId = requireId(args.project_id, 'project_id')
     const prompt = cleanText(args.prompt, 'prompt')
     const title = args.title === undefined ? undefined : requireString(args.title, 'title', { min: 1, max: 200, trim: true })
-    const catalogs = await Promise.all((['prime', 'omp'] as const).map(async (harness) => ({ harness, projects: await this.options.projects[harness].list() })))
-    let project: ProjectRecord | undefined
-    for (const catalog of catalogs) project ??= catalog.projects.find((candidate) => candidate.id === projectId && !candidate.inferred)
-    if (!project) throw new Error('The requested project is not an explicitly granted Prime Work project')
-    const manager = this.options.agents[project.harness]
+    const project: ProjectRecord | undefined = (await this.options.projects[harness].list())
+      .find((candidate) => candidate.id === projectId && !candidate.inferred)
+    if (!project) throw new Error(`The requested project is not explicitly granted to the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness`)
+    const manager = this.options.agents[harness]
     const runtime = await manager.start({ cwd: project.primaryFolder })
     try {
       await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
@@ -338,13 +353,37 @@ export class VoiceService {
     return { output: JSON.stringify({ started: true, task }), task }
   }
 
+  private getLocalContext(harness: HarnessId): VoiceToolResult {
+    const now = new Date()
+    const resolved = Intl.DateTimeFormat().resolvedOptions()
+    const offsetMinutes = -now.getTimezoneOffset()
+    const sign = offsetMinutes >= 0 ? '+' : '-'
+    const hours = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')
+    const minutes = String(Math.abs(offsetMinutes) % 60).padStart(2, '0')
+    return {
+      output: JSON.stringify({
+        local_time: new Intl.DateTimeFormat(resolved.locale, { dateStyle: 'full', timeStyle: 'long', timeZone: resolved.timeZone }).format(now),
+        iso_time: now.toISOString(),
+        time_zone: resolved.timeZone,
+        utc_offset: `${sign}${hours}:${minutes}`,
+        locale: resolved.locale,
+        active_harness: harness,
+        location_precision: 'time-zone only',
+      }),
+    }
+  }
+
   private async searchWeb(args: Record<string, unknown>): Promise<VoiceToolResult> {
     const query = requireString(args.query, 'query', { min: 1, max: 4_096, trim: true })
     const key = await this.secrets.get('openai')
     const response = await this.withTimeout('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-5.6-luna', tools: [{ type: 'web_search' }], input: query }),
+      body: JSON.stringify({
+        model: 'gpt-5.6-luna',
+        tools: [{ type: 'web_search', search_context_size: 'low' }],
+        input: query,
+      }),
     })
     const data = await this.jsonResponse(response, 'Web search')
     const text = typeof data.output_text === 'string' ? data.output_text : this.responseText(data.output)

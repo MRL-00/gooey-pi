@@ -59,7 +59,7 @@ const api: PrimeWorkApi = {
     deleteApiKey: (provider) => ipcRenderer.invoke('voice:delete-api-key', provider),
     createRealtimeCall: (request) => ipcRenderer.invoke('voice:create-realtime-call', request),
     transcribe: (request) => ipcRenderer.invoke('voice:transcribe', request),
-    executeTool: (request) => ipcRenderer.invoke('voice:execute-tool', request),
+    executeTool: (request, harness) => ipcRenderer.invoke('voice:execute-tool', request, harness),
   },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

@@ -95,7 +95,10 @@ export default function App() {
   }, [])
   const settingsState = useAppSettings({ bridge, reportError })
   const activeHarness = settingsState.settings.activeHarness
-  const selectHarness = useCallback((harness: HarnessId) => { void settingsState.updateSettings({ activeHarness: harness }) }, [settingsState.updateSettings])
+  const selectHarness = useCallback((harness: HarnessId) => {
+    setVoiceOrbOpen(false)
+    void settingsState.updateSettings({ activeHarness: harness })
+  }, [settingsState.updateSettings])
   const browserAnnotations = useBrowserAnnotations()
   const workspace = useWorkspaceRuntime({
     bridge, harness: activeHarness, initialProject, initialSession, sessions,
@@ -432,7 +435,7 @@ export default function App() {
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
       </div> : <Suspense fallback={<LoadingPanel label={view} />}>{page}</Suspense>}</div>
     </div>
-    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} onClose={() => setVoiceOrbOpen(false)} onTaskStarted={handleVoiceTaskStarted} /></Suspense> : null}
+    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} harness={activeHarness} onClose={() => setVoiceOrbOpen(false)} onTaskStarted={handleVoiceTaskStarted} /></Suspense> : null}
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open harness={activeHarness} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
     {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}

@@ -1,11 +1,12 @@
 import { Mic, MicOff, X } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import type { PrimeWorkApi, VoiceTaskStarted, VoiceToolRequest } from '@/types/api'
+import type { HarnessId, PrimeWorkApi, VoiceTaskStarted, VoiceToolRequest } from '@/types/api'
 
 type OrbState = 'connecting' | 'listening' | 'user-speaking' | 'thinking' | 'agent-speaking' | 'error'
 
 interface VoiceOrbProps {
   voice: PrimeWorkApi['voice']
+  harness: HarnessId
   onClose(): void
   onTaskStarted(task: VoiceTaskStarted): Promise<void>
 }
@@ -29,13 +30,14 @@ function clampPosition(position: OrbPosition): OrbPosition {
 
 function toolRequest(name: unknown, args: unknown): VoiceToolRequest | null {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return null
-  if (name === 'list_projects') return { name, arguments: args as { query?: string; harness?: 'prime' | 'omp' } }
+  if (name === 'list_projects') return { name, arguments: args as { query?: string } }
   if (name === 'start_task') return { name, arguments: args as { project_id: string; prompt: string; title?: string } }
+  if (name === 'get_local_context') return { name, arguments: {} }
   if (name === 'search_web') return { name, arguments: args as { query: string } }
   return null
 }
 
-export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
+export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState('')
@@ -47,6 +49,7 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
   const handledCallsRef = useRef(new Set<string>())
+  const harnessRef = useRef(harness)
 
   useEffect(() => {
     let active = true
@@ -64,7 +67,7 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
       setOrbState('thinking')
       if (request.name === 'start_task') setError('')
       try {
-        const result = await voice.executeTool(request)
+        const result = await voice.executeTool(request, harnessRef.current)
         if (!active || channel.readyState !== 'open') return
         channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: result.output } }))
         channel.send(JSON.stringify({ type: 'response.create' }))
@@ -121,7 +124,7 @@ export function VoiceOrb({ voice, onClose, onTaskStarted }: VoiceOrbProps) {
         for (const track of stream.getTracks()) peer.addTrack(track, stream)
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
-        const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '' })
+        const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '', harness: harnessRef.current })
         if (!active) return
         await peer.setRemoteDescription({ type: 'answer', sdp: answer })
       } catch (failure) {

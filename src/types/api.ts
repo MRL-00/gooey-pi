@@ -375,10 +375,9 @@ export interface VoiceCredentialStatus {
   source: Partial<Record<VoiceCredentialProvider, 'saved' | 'environment'>>
 }
 
-export interface VoiceRealtimeCallRequest {
-  mode: 'conversation' | 'transcription'
-  sdp: string
-}
+export type VoiceRealtimeCallRequest =
+  | { mode: 'conversation'; sdp: string; harness: HarnessId }
+  | { mode: 'transcription'; sdp: string }
 
 export interface VoiceTranscriptionRequest {
   provider: Exclude<VoiceTranscriptionProvider, 'openai-live'>
@@ -401,8 +400,9 @@ export interface VoiceTaskStarted {
 }
 
 export type VoiceToolRequest =
-  | { name: 'list_projects'; arguments: { query?: string; harness?: HarnessId } }
+  | { name: 'list_projects'; arguments: { query?: string } }
   | { name: 'start_task'; arguments: { project_id: string; prompt: string; title?: string } }
+  | { name: 'get_local_context'; arguments: Record<string, never> }
   | { name: 'search_web'; arguments: { query: string } }
 
 export interface VoiceToolResult {
@@ -589,7 +589,7 @@ export interface PrimeWorkApi {
     deleteApiKey(provider: VoiceCredentialProvider): Promise<VoiceCredentialStatus>
     createRealtimeCall(request: VoiceRealtimeCallRequest): Promise<string>
     transcribe(request: VoiceTranscriptionRequest): Promise<string>
-    executeTool(request: VoiceToolRequest): Promise<VoiceToolResult>
+    executeTool(request: VoiceToolRequest, harness: HarnessId): Promise<VoiceToolResult>
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>

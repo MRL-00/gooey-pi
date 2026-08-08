@@ -235,7 +235,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('voice:delete-api-key', (_event, provider) => services.voice.deleteApiKey(provider))
   handle('voice:create-realtime-call', (_event, request) => services.voice.createRealtimeCall(request))
   handle('voice:transcribe', (_event, request) => services.voice.transcribe(request))
-  handle('voice:execute-tool', (_event, request) => services.voice.executeTool(request))
+  handle('voice:execute-tool', (_event, request, harness) => services.voice.executeTool(request, requireHarness(harness)))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
   handle('terminal:bind-session', (event, terminalId, sessionPath) => services.terminals.bindSession(event.sender, terminalId, sessionPath))
