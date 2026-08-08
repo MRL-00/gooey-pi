@@ -160,8 +160,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
 
   const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
-    const { bridge, sessions, workspace, provider, settingsState, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
-    const activeHarness = settingsState.settings.activeHarness
+    const { bridge, sessions, workspace, provider, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
     const currentWorkspace = workspace.workspaceRef.current
     const currentRuntime = workspace.runtime
     const currentOwner = workspace.runtimeOwnerRef.current
@@ -210,6 +209,11 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       }
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a session.'); return }
+        // The harness comes from the workspace's own project, never global
+        // settings: a prompt landing between a harness switch and the
+        // bootstrap effect's workspace reset would otherwise start the new
+        // harness against the old workspace's cwd and session.
+        const activeHarness = admitted.project.harness
         if (images.length > 0 && provider.model !== 'auto' && !provider.selectedModel?.input.includes('image')) {
           reportError('This model does not accept images. Remove the attachment or choose a vision model.')
           return
