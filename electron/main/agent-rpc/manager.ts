@@ -1,6 +1,6 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
 import { canonicalSessionPath } from '../session-paths'
-import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
+import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { PRIME_RPC_ADAPTER, type HarnessRpcAdapter } from './harness-adapter'
 import { RpcRuntime } from './runtime'
@@ -116,6 +116,19 @@ export class AgentRpcManager {
   }
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
+    try {
+      return await this.dispatchCommand(runtimeId, rawCommand)
+    } catch (error) {
+      // Delivery failures for user-visible commands (steer, prompt, follow_up)
+      // are otherwise only surfaced as a transient renderer toast; keep a
+      // durable trace in the main-process log for diagnosis.
+      const type = isRecord(rawCommand) && typeof rawCommand.type === 'string' ? rawCommand.type : 'invalid'
+      console.error(`[agent-rpc] ${new Date().toISOString()} command ${type} failed:`, error instanceof Error ? error.message : error)
+      throw error
+    }
+  }
+
+  private async dispatchCommand(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
     this.requireOpen()
     const runtime = this.requireRuntime(runtimeId)
     const command = await validateRpcCommand(rawCommand, this.validateSessionPath)

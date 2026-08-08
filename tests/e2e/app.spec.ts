@@ -359,11 +359,9 @@ test.describe('Prime Work desktop smoke', () => {
     const queuedSteerMarker = join(fixtureRoot, 'steer-args.json')
     await expect.poll(() => existsSync(queuedSteerMarker)).toBe(true)
     expect(JSON.parse(readFileSync(queuedSteerMarker, 'utf8'))).toMatchObject({ type: 'steer', message: 'send this queued task now' })
-
     await composer.fill('change direction now')
     await composer.press('Control+Enter')
     await expect(page.locator('.message--user').filter({ hasText: 'change direction now' })).toBeVisible()
-
     const marker = join(fixtureRoot, 'steer-args.json')
     await expect.poll(() => {
       if (!existsSync(marker)) return ''

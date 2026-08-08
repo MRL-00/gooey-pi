@@ -190,7 +190,13 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           return
         } catch (error) {
           if (workspace.workspaceRef.current.generation === currentWorkspace.generation) {
-            workspace.setMessages((items) => items.filter((message) => message.id !== userMessageId))
+            // Replace the optimistic message with a durable system row: a toast
+            // alone is easy to miss, and a silently vanishing steer reads as
+            // "sent but ignored".
+            workspace.setMessages((items) => [
+              ...items.filter((message) => message.id !== userMessageId),
+              { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Steer was not delivered: ${requestFailureMessage(error)} Your draft was restored.` }] },
+            ])
           }
           reportError(error)
           throw error
