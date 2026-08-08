@@ -1,4 +1,5 @@
-import type { GitDiff, GitFileChange, GitStatus, ProcessOutcome } from '../../src/types/api'
+import { basename, resolve } from 'node:path'
+import type { GitDiff, GitFileChange, GitStatus, GitWorktree, ProcessOutcome } from '../../src/types/api'
 import { restrictedGitEnvironment, runProcess, type ProcessResult } from './process-utils'
 import { errorMessage, requireGitPath, requireString, stripAnsi } from './validation'
 
@@ -12,6 +13,8 @@ const GIT_CONFIG_OUTPUT_LIMIT = 512 * 1024
 const GIT_DIFF_OUTPUT_LIMIT = 2 * 1024 * 1024
 const GIT_ERROR_LIMIT = 2_000
 const GIT_IDENTITY_VALUE_LIMIT = 320
+const GIT_WORKTREE_OUTPUT_LIMIT = 1024 * 1024
+const GIT_WORKTREE_LIMIT = 1_000
 const EMPTY_CONFIG_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
 const BASE_GIT_CONFIG = [
   'core.fsmonitor=false',
@@ -300,6 +303,69 @@ interface RepositoryContext {
   overrides: string[]
   /** Effective repository configuration from the single per-operation config spawn. */
   config: Map<string, string>
+}
+
+function parseWorktreeList(output: string, repositoryRoot: string): GitWorktree[] {
+  const records = output.split('\0\0').filter(Boolean)
+  if (records.length > GIT_WORKTREE_LIMIT) throw new Error('Git worktree list exceeded the safety limit')
+  return records.map((record, index) => {
+    const fields = record.split('\0').filter(Boolean)
+    const pathField = fields.find((field) => field.startsWith('worktree '))
+    const headField = fields.find((field) => field.startsWith('HEAD '))
+    const branchField = fields.find((field) => field.startsWith('branch '))
+    const pathValue = pathField?.slice('worktree '.length)
+    const head = headField?.slice('HEAD '.length)
+    if (!pathValue || pathValue.length > 4096 || !head || !/^[0-9a-fA-F]{4,64}$/.test(head)) {
+      throw new Error(`Git worktree list returned an invalid record at index ${index}`)
+    }
+    const path = resolve(pathValue)
+    const branchRef = branchField?.slice('branch '.length)
+    if (branchRef && (branchRef.length > 1024 || !branchRef.startsWith('refs/heads/'))) {
+      throw new Error(`Git worktree list returned an invalid branch at index ${index}`)
+    }
+    const branch = branchRef?.slice('refs/heads/'.length)
+    return {
+      path,
+      name: basename(path) || path,
+      branch,
+      head: head.toLowerCase(),
+      current: path === resolve(repositoryRoot),
+      detached: fields.includes('detached') || branch === undefined,
+    }
+  })
+}
+
+async function inspectRepositoryRoot(cwd: string): Promise<string> {
+  const result = await runGit(cwd, ['rev-parse', '--show-toplevel'], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
+  requireProcessSuccess('Git repository root inspection', result)
+  const repositoryRoot = result.stdout.trim()
+  if (!repositoryRoot || repositoryRoot.length > 4096) throw new Error('Git repository root inspection returned no valid path')
+  return resolve(repositoryRoot)
+}
+
+/** Caller must authorize cwd before invoking this privileged fixed-argv helper. */
+export async function listGitWorktrees(cwd: string): Promise<GitWorktree[]> {
+  const repositoryRoot = await inspectRepositoryRoot(cwd)
+  const result = await runGit(repositoryRoot, ['worktree', 'list', '--porcelain', '-z'], { timeoutMs: 10_000, maxBytes: GIT_WORKTREE_OUTPUT_LIMIT })
+  requireProcessSuccess('Git worktree list', result)
+  return parseWorktreeList(result.stdout, repositoryRoot)
+}
+
+/** Caller must authorize cwd before invoking this privileged fixed-argv helper. */
+export async function validateGitBranch(cwd: string, branchValue: unknown): Promise<string> {
+  const repositoryRoot = await inspectRepositoryRoot(cwd)
+  const branch = requireString(branchValue, 'branch', { min: 1, max: 255, trim: true })
+  const check = await runGit(repositoryRoot, ['check-ref-format', '--branch', branch], { timeoutMs: 5_000, maxBytes: 64 * 1024 })
+  requireProcessSuccess('Git branch validation', check)
+  return branch
+}
+
+/** Caller must authorize cwd and obtain targetPath through a trusted native picker. */
+export async function createGitWorktree(cwd: string, targetPath: string, branchValue: unknown): Promise<void> {
+  const repositoryRoot = await inspectRepositoryRoot(cwd)
+  const branch = await validateGitBranch(repositoryRoot, branchValue)
+  const result = await runGit(repositoryRoot, ['worktree', 'add', '-b', branch, '--', resolve(targetPath)], { timeoutMs: 2 * 60_000, maxBytes: GIT_WORKTREE_OUTPUT_LIMIT })
+  requireProcessSuccess('Git worktree creation', result)
 }
 
 export class GitService {

@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { GIT_DIFF_LINE_LIMIT, GIT_STATUS_ENTRY_LIMIT, GitService } from '../../electron/main/git'
+import { createGitWorktree, GIT_DIFF_LINE_LIMIT, GIT_STATUS_ENTRY_LIMIT, GitService, listGitWorktrees } from '../../electron/main/git'
 import { restrictedGitEnvironment } from '../../electron/main/process-utils'
 
 const dirs: string[] = []
@@ -301,6 +301,20 @@ printf 'mutated by filter\n'
     expect(outputLines).toHaveLength(GIT_DIFF_LINE_LIMIT + 1)
     expect(outputLines[outputLines.length - 1]).toContain('[Prime Work: diff truncated')
   }, 30_000)
+
+  it('lists and creates linked worktrees with bounded porcelain parsing', async () => {
+    const cwd = repository('prime-work-git-worktrees-')
+    const target = `${cwd}-feature`; dirs.push(target)
+
+    await createGitWorktree(cwd, target, 'feature/test')
+    const worktrees = await listGitWorktrees(cwd)
+
+    expect(worktrees).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: realpathSync(cwd), current: true, detached: false }),
+      expect.objectContaining({ path: realpathSync(target), name: target.split('/').at(-1), branch: 'feature/test', current: false, detached: false }),
+    ]))
+    await expect(createGitWorktree(cwd, `${cwd}-invalid`, '../unsafe')).rejects.toThrow(/branch validation/i)
+  })
 
   it('reports isRepo false only for a genuine not-a-repository failure', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-git-norepo-')); dirs.push(cwd)

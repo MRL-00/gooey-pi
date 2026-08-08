@@ -1,6 +1,7 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
@@ -213,5 +214,55 @@ describe('ProjectService harness scoping', () => {
     await expect(ompService.remove('omp-project')).resolves.toBe(true)
     expect(store.snapshot().projects.map((project) => project.id)).toEqual(['prime-project'])
     await expect(primeService.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+  })
+})
+
+
+describe('ProjectService worktrees', () => {
+  it('returns no checkout choices for an authorized non-Git project', async () => {
+    const { root, service, store } = setup()
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'plain-project', harness: 'prime', name: 'Plain project', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(root),
+    }) })
+    await service.list()
+
+    await expect(service.listWorktrees(root)).resolves.toEqual([])
+  })
+
+  it('lists linked worktrees and grants only paths registered to the authorized repository', async () => {
+    const { root, service, store } = setup()
+    const runGit = (...args: string[]): void => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    runGit('init', '-q')
+    runGit('config', 'user.name', 'Prime Work Test')
+    runGit('config', 'user.email', 'test@example.com')
+    writeFileSync(join(root, 'file.txt'), 'base\n')
+    runGit('add', 'file.txt')
+    runGit('commit', '-qm', 'base')
+    const linked = join(resolve(root, '..'), 'linked-worktree')
+    const outsider = join(resolve(root, '..'), 'not-a-worktree')
+    dirs.push(linked, outsider)
+    runGit('worktree', 'add', '-qb', 'linked-test', linked)
+    mkdirSync(outsider)
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push({
+      id: 'project', harness: 'prime', name: 'Project', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(root),
+    }) })
+    await service.list()
+
+    expect(await service.listWorktrees(root)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: realpathSync(root), current: true }),
+      expect.objectContaining({ path: realpathSync(linked), branch: 'linked-test', current: false }),
+    ]))
+    const opened = await service.openWorktree(root, realpathSync(linked))
+    expect(opened.path).toBe(realpathSync(linked))
+    await expect(service.authorizeCwd(linked)).resolves.toBe(realpathSync(linked))
+    await expect(service.openWorktree(root, outsider)).rejects.toThrow(/not linked to the authorized Git repository/i)
+    expect(store.snapshot().projects.some((project) => resolve(project.path) === resolve(outsider))).toBe(false)
   })
 })

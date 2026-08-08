@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { basename, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
-import type { HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
+import type { GitWorktree, HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
+import { createGitWorktree, isNotARepositoryFailure, listGitWorktrees, validateGitBranch } from './git'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId, requireString } from './validation'
 
@@ -186,6 +187,78 @@ export class ProjectService {
     // git subprocesses.
     for (const target of branchTargets) target.record.gitBranch = await this.branchProvider(target.cwd)
     return records.sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.lastOpenedAt) - Date.parse(a.lastOpenedAt))
+  }
+
+  async listWorktrees(cwdValue: unknown): Promise<GitWorktree[]> {
+    const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    try { return await listGitWorktrees(cwd) }
+    catch (error) {
+      if (isNotARepositoryFailure(error)) return []
+      throw error
+    }
+  }
+
+  private async persistWorktree(path: string, identity: FolderIdentity): Promise<ProjectRecord> {
+    if (path === resolve('/') || path === resolve(homedir())) throw new TypeError('Broad filesystem roots cannot be added as worktrees')
+    this.removalRoots.delete(path)
+    const now = new Date().toISOString()
+    const project = await this.store.update((state): PersistedProject => {
+      state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
+      const existing = this.ownProjects(state.projects).find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
+      if (existing) {
+        existing.lastOpenedAt = now
+        existing.folderIdentities = { ...existing.folderIdentities, [path]: identity }
+        return existing
+      }
+      const created: PersistedProject = {
+        id: randomUUID(),
+        harness: this.harness,
+        name: basename(path) || path,
+        path,
+        folders: [path],
+        primaryFolder: path,
+        pinned: false,
+        createdAt: now,
+        lastOpenedAt: now,
+        folderIdentities: { [path]: identity },
+      }
+      state.projects.push(created)
+      return created
+    })
+    this.authorizationRevision += 1
+    this.authorizedRoots.set(path, identity)
+    const sessions = await this.sessionProvider()
+    return { ...project, sessionCount: sessions.filter((session) => resolve(session.projectPath) === path).length, gitBranch: await this.branchProvider(path) }
+  }
+
+  async openWorktree(cwdValue: unknown, pathValue: unknown): Promise<ProjectRecord> {
+    const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    const requested = resolve(requireString(pathValue, 'worktree path', { min: 1, max: 4096 }))
+    const worktrees = await listGitWorktrees(cwd)
+    const linked = worktrees.find((worktree) => resolve(worktree.path) === requested)
+    if (!linked) throw new TypeError('worktree path is not linked to the authorized Git repository')
+    // Only inspect the filesystem after exact membership in Git's bounded
+    // worktree catalog is established; arbitrary renderer paths stay opaque.
+    const { path, identity } = await this.captureFolderIdentity(linked.path)
+    return this.persistWorktree(path, identity)
+  }
+
+  async createWorktree(cwdValue: unknown, branchValue: unknown): Promise<ProjectRecord | null> {
+    const cwd = await this.authorizeCwd(requireString(cwdValue, 'cwd', { min: 1, max: 4096 }))
+    const branch = await validateGitBranch(cwd, branchValue)
+    const worktrees = await listGitWorktrees(cwd)
+    const current = worktrees.find((worktree) => worktree.current)
+    if (!current) throw new Error('Git worktree list did not include the current worktree')
+    const safeBranch = branch.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+|\.+$/g, '').slice(0, 120) || 'worktree'
+    const defaultPath = join(dirname(current.path), `${basename(current.path)}-${safeBranch}`)
+    const parent = this.windowProvider()
+    const options = { title: 'Create Git worktree', buttonLabel: 'Create Worktree', defaultPath }
+    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+    const targetPath = resolve(requireString(result.filePath, 'worktree path', { min: 1, max: 4096 }))
+    if (targetPath === resolve('/') || targetPath === resolve(homedir())) throw new TypeError('Broad filesystem roots cannot be added as worktrees')
+    await createGitWorktree(cwd, targetPath, branch)
+    return this.openWorktree(cwd, targetPath)
   }
 
   async add(): Promise<ProjectRecord | null> {

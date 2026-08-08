@@ -1,8 +1,9 @@
-import { ArrowUp, AtSign, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, ShieldCheck, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
   BrowserAnnotation,
+  GitWorktree,
   MessageEnterAction,
   PrimeContextUsage,
   PrimeModelDescriptor,
@@ -63,6 +64,13 @@ interface ComposerProps {
   onModelChange(value: string): void
   onEffortChange(value: PrimeThinkingLevel): void
   onFastChange(value: boolean): void
+  worktrees?: GitWorktree[]
+  activeWorktreePath?: string
+  /** Branch/worktree name shown before or without the linked-worktree catalog. */
+  checkoutLabel?: string
+  worktreesLoading?: boolean
+  onOpenWorktree?(worktree: GitWorktree): Promise<void> | void
+  onCreateWorktree?(branch: string): Promise<void> | void
   onSend(prompt: string, images: PromptImage[], intent: PromptDeliveryIntent): Promise<void> | void
   onStop(): Promise<void> | void
   onRemoveAnnotation?(id: string): void
@@ -139,6 +147,12 @@ export const Composer = memo(function Composer({
   onModelChange,
   onEffortChange,
   onFastChange,
+  worktrees = [],
+  activeWorktreePath,
+  checkoutLabel,
+  worktreesLoading = false,
+  onOpenWorktree,
+  onCreateWorktree,
   onSend,
   onStop,
   onRemoveAnnotation = noop,
@@ -153,8 +167,14 @@ export const Composer = memo(function Composer({
   const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
   const [attachmentError, setAttachmentError] = useState('')
   const [processingImages, setProcessingImages] = useState(false)
+  const [worktreeMenuOpen, setWorktreeMenuOpen] = useState(false)
+  const [creatingWorktree, setCreatingWorktree] = useState(false)
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreeError, setWorktreeError] = useState('')
   const dictation = useDictation(voice, transcriptionProvider, setAttachmentError)
   const menuId = useId()
+  const worktreeMenuId = useId()
+  const worktreeMenuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submittingRef = useRef(false)
   const pendingImagesRef = useRef(0)
@@ -179,6 +199,40 @@ export const Composer = memo(function Composer({
   useEffect(() => {
     if (!terminalSelection?.text) setTerminalSelectionOpen(false)
   }, [terminalSelection?.text])
+
+  useEffect(() => {
+    if (!worktreeMenuOpen) return
+    const close = (event: MouseEvent) => {
+      if (!worktreeMenuRef.current?.contains(event.target as Node)) setWorktreeMenuOpen(false)
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWorktreeMenuOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [worktreeMenuOpen])
+  const activeWorktree = worktrees.find((worktree) => worktree.path === activeWorktreePath)
+    ?? worktrees.find((worktree) => worktree.current)
+  const worktreeLabel = activeWorktree?.branch ?? activeWorktree?.name ?? checkoutLabel ?? 'Checkout'
+  const createWorktree = async () => {
+    const branch = worktreeBranch.trim()
+    if (!branch || !onCreateWorktree || creatingWorktree) return
+    setCreatingWorktree(true)
+    setWorktreeError('')
+    try {
+      await onCreateWorktree(branch)
+      setWorktreeBranch('')
+      setWorktreeMenuOpen(false)
+    } catch (error) {
+      setWorktreeError(error instanceof Error ? error.message : 'Could not create worktree')
+    } finally {
+      setCreatingWorktree(false)
+    }
+  }
 
   // Ctrl/Cmd+Enter in the annotation popover bumps sendSignal to submit the
   // draft (with the just-saved annotation) without switching focus here.
@@ -613,14 +667,62 @@ export const Composer = memo(function Composer({
                 <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast
               </button>
             ) : null}
-            <span className="permissions-chip" title="Local environment">
-              <FolderGit2 size={12} />
-              <span>Local</span>
-            </span>
-            <span className="permissions-chip" title="Workspace write access">
-              <ShieldCheck size={12} />
-              <span>Workspace</span>
-            </span>
+            <div className="worktree-picker" ref={worktreeMenuRef}>
+              <button
+                type="button"
+                className="permissions-chip worktree-picker__trigger"
+                aria-label={`Checkout: ${worktreeLabel}`}
+                aria-expanded={worktreeMenuOpen}
+                aria-controls={worktreeMenuOpen ? worktreeMenuId : undefined}
+                disabled={!onOpenWorktree && !onCreateWorktree}
+                onClick={() => setWorktreeMenuOpen((open) => !open)}
+              >
+                <FolderGit2 size={12} />
+                <span className="worktree-picker__label">{worktreeLabel}</span>
+                <ChevronDown size={11} />
+              </button>
+              {worktreeMenuOpen ? (
+                <div className="worktree-picker__menu" id={worktreeMenuId} role="menu" aria-label="Git worktrees">
+                  <div className="worktree-picker__heading">Checkouts</div>
+                  <div className="worktree-picker__options">
+                    {worktreesLoading ? <span className="worktree-picker__empty">Loading…</span> : worktrees.length === 0 ? <span className="worktree-picker__empty">No worktrees found</span> : worktrees.map((worktree) => {
+                      const selected = worktree.path === activeWorktreePath || (!activeWorktreePath && worktree.current)
+                      const label = worktree.branch ?? worktree.name
+                      return (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          className={`worktree-picker__option ${selected ? 'is-active' : ''}`}
+                          key={worktree.path}
+                          onClick={() => {
+                            if (selected) { setWorktreeMenuOpen(false); return }
+                            setWorktreeMenuOpen(false)
+                            if (onOpenWorktree) void Promise.resolve(onOpenWorktree(worktree)).catch(() => undefined)
+                          }}
+                        >
+                          <span className="worktree-picker__check">{selected ? <Check size={13} /> : null}</span>
+                          <span className="worktree-picker__option-copy">
+                            <strong>{label}</strong>
+                            <span title={worktree.path}>{worktree.path}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {onCreateWorktree ? (
+                    <form className="worktree-picker__create" onSubmit={(event) => { event.preventDefault(); void createWorktree() }}>
+                      <label htmlFor={`${worktreeMenuId}-branch`}>Create worktree</label>
+                      <div>
+                        <input id={`${worktreeMenuId}-branch`} value={worktreeBranch} placeholder="New branch name" onChange={(event) => { setWorktreeBranch(event.target.value); setWorktreeError('') }} />
+                        <button type="submit" disabled={!worktreeBranch.trim() || creatingWorktree}>{creatingWorktree ? 'Creating…' : 'Create'}</button>
+                      </div>
+                      {worktreeError ? <span role="alert">{worktreeError}</span> : null}
+                    </form>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className="composer__actions">
             {dictation.state === 'connecting' || dictation.state === 'recording' ? <button type="button" className="context-usage-dial context-usage-dial--cancel" aria-label="Cancel dictation" title="Cancel dictation" onClick={dictation.cancel}><X size={14} /></button> : <span

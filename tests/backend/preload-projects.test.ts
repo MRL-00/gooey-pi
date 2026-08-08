@@ -1,0 +1,31 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const electronMocks = vi.hoisted(() => ({
+  api: undefined as unknown,
+  contextBridge: { exposeInMainWorld: vi.fn((_name: string, api: unknown) => { electronMocks.api = api }) },
+  ipcRenderer: { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn(), send: vi.fn() },
+}))
+
+vi.mock('electron', () => ({ contextBridge: electronMocks.contextBridge, ipcRenderer: electronMocks.ipcRenderer }))
+
+await import('../../electron/preload/index')
+
+describe('preload project worktree bridge', () => {
+  beforeEach(() => { electronMocks.ipcRenderer.invoke.mockReset() })
+
+  it('exposes fixed worktree IPC calls with the harness in the final argument', async () => {
+    const api = electronMocks.api as { projects: {
+      listWorktrees(cwd: string, harness?: string): Promise<unknown>
+      openWorktree(cwd: string, path: string, harness?: string): Promise<unknown>
+      createWorktree(cwd: string, branch: string, harness?: string): Promise<unknown>
+    } }
+    await api.projects.listWorktrees('/repo', 'omp')
+    await api.projects.openWorktree('/repo', '/linked', 'omp')
+    await api.projects.createWorktree('/repo', 'feature', 'omp')
+    expect(electronMocks.ipcRenderer.invoke.mock.calls).toEqual([
+      ['projects:list-worktrees', '/repo', 'omp'],
+      ['projects:open-worktree', '/repo', '/linked', 'omp'],
+      ['projects:create-worktree', '/repo', 'feature', 'omp'],
+    ])
+  })
+})

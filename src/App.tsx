@@ -25,7 +25,7 @@ import { useSidebarActions } from '@/hooks/useSidebarActions'
 import { useStableCallback } from '@/hooks/useStableCallback'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, VoiceTaskStarted, WorkspaceView } from '@/types/api'
+import type { GitStatus, GitWorktree, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, VoiceTaskStarted, WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -64,6 +64,8 @@ export default function App() {
   const [scheduleFocusId, setScheduleFocusId] = useState<string | null>(null)
   const [scheduleError, setScheduleError] = useState('')
   const [gitSnapshot, setGitSnapshot] = useState(() => ({ cwd: bridge ? undefined : SAMPLE_PROJECTS[0]?.primaryFolder, status: bridge ? { isRepo: false, files: [] } as GitStatus : SAMPLE_GIT }))
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
+  const [worktreesLoading, setWorktreesLoading] = useState(false)
   const [view, setView] = useState<WorkspaceView>('session')
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -73,6 +75,7 @@ export default function App() {
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const queuedFlushRef = useRef(false)
   const gitRequestRef = useRef(0)
+  const worktreeRequestRef = useRef(0)
   const scheduleRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
   const toastTimerRef = useRef<number | null>(null)
@@ -165,6 +168,21 @@ export default function App() {
   })
 
   useEffect(() => { void refreshGit(); return () => { gitRequestRef.current += 1 } }, [refreshGit])
+  const refreshWorktrees = useCallback(async () => {
+    const requestId = ++worktreeRequestRef.current
+    const cwd = activeProject?.primaryFolder
+    if (!bridge || !cwd || activeProject.inferred) { setWorktrees([]); setWorktreesLoading(false); return }
+    setWorktreesLoading(true)
+    try {
+      const next = await bridge.projects.listWorktrees(cwd, activeProject.harness)
+      if (worktreeRequestRef.current === requestId) setWorktrees(next)
+    } catch (error) {
+      if (worktreeRequestRef.current === requestId) { setWorktrees([]); reportError(error) }
+    } finally {
+      if (worktreeRequestRef.current === requestId) setWorktreesLoading(false)
+    }
+  }, [activeProject?.harness, activeProject?.inferred, activeProject?.primaryFolder, bridge, reportError])
+  useEffect(() => { void refreshWorktrees(); return () => { worktreeRequestRef.current += 1 } }, [refreshWorktrees])
   const previousSessionStatusRef = useRef<SessionRecord['status'] | undefined>(undefined)
   const activeSessionStatus = activeSession?.status
   const locallyOwnedActiveSession = Boolean(activeSession && workspace.runtime?.sessionFile === activeSession.filePath)

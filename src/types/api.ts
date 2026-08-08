@@ -263,6 +263,15 @@ export type McpConnectionInput = {
 export interface ProjectFileEntry { path: string; type: 'file' | 'directory' }
 export interface ProjectFileListing { entries: ProjectFileEntry[]; skipped: number }
 
+export interface GitWorktree {
+  path: string
+  name: string
+  branch?: string
+  head: string
+  current: boolean
+  detached: boolean
+}
+
 export interface GitFileChange {
   path: string
   status: string
@@ -533,7 +542,17 @@ export interface AgentBrowserPointerEvent {
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
-  projects: { list(harness?: HarnessId): Promise<ProjectRecord[]>; listFiles(root: string, harness?: HarnessId): Promise<ProjectFileListing>; add(harness?: HarnessId): Promise<ProjectRecord | null>; grantInferred(path: string, harness?: HarnessId): Promise<ProjectRecord>; remove(id: string, harness?: HarnessId): Promise<boolean>; touch(id: string, harness?: HarnessId): Promise<boolean> }
+  projects: {
+    list(harness?: HarnessId): Promise<ProjectRecord[]>
+    listFiles(root: string, harness?: HarnessId): Promise<ProjectFileListing>
+    listWorktrees(cwd: string, harness?: HarnessId): Promise<GitWorktree[]>
+    openWorktree(cwd: string, path: string, harness?: HarnessId): Promise<ProjectRecord>
+    createWorktree(cwd: string, branch: string, harness?: HarnessId): Promise<ProjectRecord | null>
+    add(harness?: HarnessId): Promise<ProjectRecord | null>
+    grantInferred(path: string, harness?: HarnessId): Promise<ProjectRecord>
+    remove(id: string, harness?: HarnessId): Promise<boolean>
+    touch(id: string, harness?: HarnessId): Promise<boolean>
+  }
   sessions: {
     list(projectPath?: string, includeArchived?: boolean, harness?: HarnessId): Promise<SessionRecord[]>
     read(filePath: string): Promise<TranscriptMessage[]>

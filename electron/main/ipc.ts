@@ -154,6 +154,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('projects:list', (_event, harness) => projectsFor(requireHarness(harness)).list())
   handle('projects:list-files', (_event, root, harness) => projectsFor(requireHarness(harness)).listFiles(root))
+  handle('projects:list-worktrees', (_event, cwd, harness) => projectsFor(requireHarness(harness)).listWorktrees(cwd))
+  handle('projects:open-worktree', (_event, cwd, path, harness) => projectsFor(requireHarness(harness)).openWorktree(cwd, path))
+  handle('projects:create-worktree', (_event, cwd, branch, harness) => projectsFor(requireHarness(harness)).createWorktree(cwd, branch))
   handle('projects:add', (_event, harness) => projectsFor(requireHarness(harness)).add())
   handle('projects:grant-inferred', (_event, path, harness) => projectsFor(requireHarness(harness)).grantInferred(path))
   handle('projects:remove', (_event, id, harness) => projectsFor(requireHarness(harness)).remove(id))

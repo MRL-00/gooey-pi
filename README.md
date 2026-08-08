@@ -114,7 +114,7 @@ Prime Agent tools, extensions, skills, packages, and terminals run with your OS 
 
 ## Current scope
 
-Prime Work targets the local Prime Agent workflow. Local worktree/cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
+Prime Work targets the local agent workflow. The composer checkout picker lists linked Git worktrees for the active repository, switches the workspace to a selected checkout, and can create a new branch worktree at a user-chosen location. Cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
 
 ## Design provenance
 

@@ -19,6 +19,9 @@ const api: PrimeWorkApi = {
   projects: {
     list: (harness) => ipcRenderer.invoke('projects:list', harness),
     listFiles: (root, harness) => ipcRenderer.invoke('projects:list-files', root, harness),
+    listWorktrees: (cwd, harness) => ipcRenderer.invoke('projects:list-worktrees', cwd, harness),
+    openWorktree: (cwd, path, harness) => ipcRenderer.invoke('projects:open-worktree', cwd, path, harness),
+    createWorktree: (cwd, branch, harness) => ipcRenderer.invoke('projects:create-worktree', cwd, branch, harness),
     add: (harness) => ipcRenderer.invoke('projects:add', harness),
     grantInferred: (path, harness) => ipcRenderer.invoke('projects:grant-inferred', path, harness),
     remove: (id, harness) => ipcRenderer.invoke('projects:remove', id, harness),
