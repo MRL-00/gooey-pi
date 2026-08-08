@@ -92,9 +92,9 @@ export class ScheduledRunExecutor {
     try {
       runtime = await this.agents.start(this.startOptions(cwd, task.execution))
       this.requireStrictExecution(runtime, task.execution)
-      const completed = await this.agents.runPromptToCompletion(runtime.runtimeId, task.prompt)
       const title = `${task.title} · ${new Date().toLocaleDateString()}`.slice(0, 200)
-      try { await this.agents.command(runtime.runtimeId, { type: 'set_session_name', name: title }) } catch { /* the run result remains usable */ }
+      try { await this.agents.command(runtime.runtimeId, { type: 'set_session_name', name: title }) } catch { /* the run can still proceed with the default title */ }
+      const completed = await this.agents.runPromptToCompletion(runtime.runtimeId, task.prompt)
       return { sessionId: completed.sessionId, sessionFile: completed.sessionFile }
     } catch (error) {
       if (error instanceof ScheduleBlockedError) throw error
