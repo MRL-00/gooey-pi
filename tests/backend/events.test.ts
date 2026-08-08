@@ -24,7 +24,7 @@ describe('agent transport events', () => {
 
   it('explains an unexpected runtime exit without duplicating an existing error', () => {
     const exited = applyPrimeEvent([streamingMessage()], { type: 'runtime_exit', code: 2, expected: false })
-    expect(exited.at(-1)?.parts[0]).toMatchObject({ type: 'text', text: 'Prime Agent stopped unexpectedly (exit code 2). Send the message again to restart it.' })
+    expect(exited.at(-1)?.parts[0]).toMatchObject({ type: 'text', text: 'The agent stopped unexpectedly (exit code 2). Send the message again to restart it.' })
 
     const afterTransportError = applyPrimeEvent(exited, { type: 'runtime_exit', code: 2, expected: false })
     expect(afterTransportError).toHaveLength(exited.length)

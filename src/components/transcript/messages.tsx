@@ -1,11 +1,12 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
-import type { MessagePart, TranscriptMessage } from '@/types/api'
+import type { HarnessId, MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
 import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
+import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { MarkdownText } from '../MarkdownText'
-import { PrimeMark } from '../ui'
+import { OmpMark, PrimeMark } from '../ui'
 import { InlineText } from './syntax'
 import { TranscriptImage } from './TranscriptImage'
 import { ThinkingDots, WorkDisclosure, WorkTimeline } from './timeline'
@@ -115,7 +116,7 @@ function MessageActions({ message, text: suppliedText }: { message: TranscriptMe
 }
 
 export const AssistantMessage = memo(
-  function AssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
+  function AssistantMessage({ message, harness = 'prime', showReasoning, showTools }: { message: TranscriptMessage; harness?: HarnessId; showReasoning: boolean; showTools: boolean }) {
     const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
     const isCoreActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'compaction'
     const firstActivity = message.parts.findIndex(isActivity)
@@ -142,7 +143,7 @@ export const AssistantMessage = memo(
     return (
       <article className="message message--assistant">
         <div className="assistant-mark">
-          <PrimeMark size={24} />
+          {harness === 'omp' ? <OmpMark size={24} /> : <PrimeMark size={24} />}
         </div>
         <div className="message__content">
           {renderNarrative(before, 'before', message.streaming)}
@@ -154,7 +155,7 @@ export const AssistantMessage = memo(
           {renderNarrativeWithActivity(after, 'after', showReasoning, showTools, message.streaming)}
           {message.streaming && !hasVisibleActivity ? (
             <div className="streaming-state" aria-live="polite">
-              <ThinkingDots /> Prime is working
+              <ThinkingDots /> {HARNESS_SHORT_NAMES[harness]} is working
             </div>
           ) : null}
           {!message.streaming ? <MessageActions message={message} text={copyableText} /> : null}
@@ -162,7 +163,7 @@ export const AssistantMessage = memo(
       </article>
     )
   },
-  (previous, next) => previous.message === next.message && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools,
+  (previous, next) => previous.message === next.message && previous.harness === next.harness && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools,
 )
 
 function UserText({ text }: { text: string }) {

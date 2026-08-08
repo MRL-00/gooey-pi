@@ -13,6 +13,10 @@ interface InspectorProps {
   activeTab: InspectorTab
   onTabChange(tab: InspectorTab): void
   onClose(): void
+  /** Active harness agent name ("Prime Agent" / "OMP"). */
+  agentName?: string
+  /** Short harness name for working copy ("Prime" / "OMP"). */
+  shortName?: string
   project?: ProjectRecord
   cwd?: string
   runtime?: RuntimeInfo | null
@@ -42,7 +46,7 @@ interface InspectorProps {
 
 const tabs: Array<{ id: InspectorTab; label: string }> = [{ id: 'summary', label: 'Summary' }, { id: 'changes', label: 'Changes' }, { id: 'browser', label: 'Browser' }, { id: 'files', label: 'Files' }]
 
-export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runtime, messages, git, automations, heartbeats, onOpenAutomation, browserHome, browserAnnotations, agentBrowserTabs, activeAgentTabId, agentPreviewSelected, onSelectAgentTab, onCloseAgentTab, onShowBrowserPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent, onNavigateAgentTab, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
+export function Inspector({ activeTab, onTabChange, onClose, agentName, shortName, project, cwd, runtime, messages, git, automations, heartbeats, onOpenAutomation, browserHome, browserAnnotations, agentBrowserTabs, activeAgentTabId, agentPreviewSelected, onSelectAgentTab, onCloseAgentTab, onShowBrowserPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent, onNavigateAgentTab, onRefreshGit, onOpenExternal, onRevealPath, overlay = false }: InspectorProps) {
   const inspectorRef = useFocusTrap<HTMLElement>(overlay, onClose)
   const moveTab = (current: number, key: string) => {
     let next = current
@@ -62,7 +66,7 @@ export function Inspector({ activeTab, onTabChange, onClose, project, cwd, runti
       <IconButton label="Close inspector" onClick={onClose}><PanelRightClose size={15}/></IconButton>
     </div>
     <div id={`inspector-panel-${activeTab}`} className="inspector__body" role="tabpanel" aria-labelledby={`inspector-tab-${activeTab}`} tabIndex={0}>
-      {activeTab === 'summary' ? <SummaryPanel project={project} runtime={runtime} messages={messages} git={git} automations={automations} heartbeats={heartbeats} onOpenAutomation={onOpenAutomation}/> : null}
+      {activeTab === 'summary' ? <SummaryPanel agentName={agentName} shortName={shortName} project={project} runtime={runtime} messages={messages} git={git} automations={automations} heartbeats={heartbeats} onOpenAutomation={onOpenAutomation}/> : null}
       {activeTab === 'changes' ? <ChangesPanel key={cwd ?? 'no-workspace'} cwd={cwd} git={git} onRefreshGit={onRefreshGit}/> : null}
       {activeTab === 'browser' ? <BrowserPanel home={browserHome} onOpenExternal={onOpenExternal} annotations={browserAnnotations} agentTabs={agentBrowserTabs} activeAgentTabId={activeAgentTabId} previewSelected={agentPreviewSelected} onSelectAgentTab={onSelectAgentTab} onCloseAgentTab={onCloseAgentTab} onShowPreview={onShowBrowserPreview} onAgentSlotRect={onAgentSlotRect} agentSessionKey={agentSessionKey} onPreviewContext={onPreviewContext} previewPointerEvent={previewPointerEvent} onNavigateAgentTab={onNavigateAgentTab}/> : null}
       {activeTab === 'files' ? <FilesPanel project={project} git={git} onReveal={onRevealPath}/> : null}

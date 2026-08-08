@@ -2,6 +2,7 @@ import { Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal }
 import { useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
+import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import type { AppMeta, AppSettings, PrimeModelCatalog } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
 import { AgentSettings } from './settings/AgentSettings'
@@ -16,7 +17,7 @@ import { TerminalSettings } from './settings/TerminalSettings'
 const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<{ size?: number }> }> = [
   { id: 'general', label: 'General', icon: Settings2 },
   { id: 'appearance', label: 'Appearance', icon: Sun },
-  { id: 'agent', label: 'Prime Agent', icon: Bot },
+  { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'providers', label: 'Providers', icon: Boxes },
   { id: 'browser', label: 'Browser', icon: BrowserGlobe },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
@@ -64,7 +65,7 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
       case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
       case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
-      case 'providers': return <ProvidersSettings catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
+      case 'providers': return <ProvidersSettings harness={settings.activeHarness} catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
@@ -77,9 +78,10 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
       <nav className="settings-nav" aria-label="Settings sections">
         {sections.map((item) => {
           const Icon = item.icon
+          const label = item.id === 'agent' ? HARNESS_AGENT_NAMES[settings.activeHarness] : item.label
           return (
             <button type="button" key={item.id} className={section === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
-              <Icon size={14} /><span>{item.label}</span><ChevronRight size={12} />
+              <Icon size={14} /><span>{label}</span><ChevronRight size={12} />
             </button>
           )
         })}

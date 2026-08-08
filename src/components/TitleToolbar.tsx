@@ -7,13 +7,15 @@ import {
 import type { ProjectRecord, WorkspaceView } from '@/types/api'
 import { BrowserGlobe, IconButton } from './ui'
 
-const viewTitles: Record<WorkspaceView, string> = {
-  session: 'Prime Work', projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Plugins & skills', settings: 'Settings',
+const viewTitles: Record<Exclude<WorkspaceView, 'session'>, string> = {
+  projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Plugins & skills', settings: 'Settings',
 }
 
 interface TitleToolbarProps {
   project?: ProjectRecord
   view: WorkspaceView
+  /** Active harness product name; the session view's fallback title. */
+  productName?: string
   sidebarOpen: boolean
   inspectorOpen: boolean
   terminalOpen: boolean
@@ -23,7 +25,7 @@ interface TitleToolbarProps {
   onOpenBrowser(): void
 }
 
-export function TitleToolbar({ project, view, sidebarOpen, inspectorOpen, terminalOpen, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser }: TitleToolbarProps) {
+export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser }: TitleToolbarProps) {
   return (
     <header className="title-toolbar drag-region">
       {!sidebarOpen ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
@@ -31,7 +33,7 @@ export function TitleToolbar({ project, view, sidebarOpen, inspectorOpen, termin
         {!sidebarOpen ? <IconButton label="Show sidebar (⌘B)" onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
       <div className="title-toolbar__identity">
-        <strong>{project?.name ?? viewTitles[view]}</strong>
+        <strong>{project?.name ?? (view === 'session' ? productName : viewTitles[view])}</strong>
         {project?.gitBranch && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{project.gitBranch}</span> : null}
       </div>
       <div className="title-toolbar__actions no-drag">

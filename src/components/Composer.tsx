@@ -34,6 +34,8 @@ interface ComposerProps {
   fast: boolean
   fastSupported: boolean
   fastAvailable: boolean
+  /** Active harness agent name for tooltips ("Prime Agent" / "OMP"). */
+  agentName?: string
   imageInputSupported: boolean
   /** @deprecated Shortcuts are fixed: Enter queues and Ctrl+Enter steers. */
   messageEnterAction?: MessageEnterAction
@@ -113,6 +115,7 @@ export const Composer = memo(function Composer({
   fast,
   fastSupported,
   fastAvailable,
+  agentName = 'Prime Agent',
   imageInputSupported,
   contextUsage,
   skills,
@@ -574,7 +577,7 @@ export const Composer = memo(function Composer({
                 className={`fast-mode-toggle ${fast ? 'is-active' : ''}`}
                 aria-pressed={fast}
                 disabled={!fastAvailable}
-                title={fastAvailable ? 'Use Prime Agent priority service tier' : 'The installed Prime Agent RPC runtime does not expose fast mode'}
+                title={fastAvailable ? `Use ${agentName} priority service tier` : `The installed ${agentName} RPC runtime does not expose fast mode`}
                 onClick={() => onFastChange(!fast)}
               >
                 <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast

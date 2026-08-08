@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
+import type { HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
 
 type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
 
@@ -18,17 +18,25 @@ export function groupModelsByProvider(models: readonly PrimeModelDescriptor[] | 
 
 interface UseProviderCatalogOptions {
   bridge: PrimeWorkApi | null
+  /** Harness whose model catalog is shown; catalogs are cached per harness. */
+  harness?: HarnessId
   runtime: RuntimeInfo | null
   syncRuntime(runtimeId: string): Promise<void>
   syncDisabledProviders(providerIds: string[]): Promise<void> | void
   reportError(error: unknown): void
 }
 
-export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledProviders, reportError }: UseProviderCatalogOptions) {
+export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRuntime, syncDisabledProviders, reportError }: UseProviderCatalogOptions) {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
-  const [catalog, setCatalog] = useState<PrimeModelCatalog | null>(null)
+  // Per-harness cache: switching back to a harness shows its last catalog
+  // immediately while the background refresh updates it.
+  const [catalogs, setCatalogs] = useState<Partial<Record<HarnessId, PrimeModelCatalog>>>({})
+  const catalog = catalogs[harness] ?? null
+  const setCatalogFor = useCallback((target: HarnessId, next: PrimeModelCatalog) => {
+    setCatalogs((current) => ({ ...current, [target]: next }))
+  }, [])
   const [authEvent, setAuthEvent] = useState<ActiveProviderAuthEvent | null>(null)
   const modelRef = useRef(model)
   const effortRef = useRef(effort)
@@ -72,8 +80,9 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
 
   const refresh = useCallback(async (force = false) => {
     if (!bridge) return
-    setCatalog(await bridge.providers.catalog(force))
-  }, [bridge])
+    const target = harness
+    setCatalogFor(target, await bridge.providers.catalog(force, target))
+  }, [bridge, harness, setCatalogFor])
 
   const selectedModel = useMemo<PrimeModelDescriptor | undefined>(() => {
     if (model !== 'auto') return catalog?.models.find((candidate) => candidate.key === model)
@@ -91,9 +100,20 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
   useEffect(() => {
     if (!bridge) return
     let cancelled = false
-    void bridge.providers.catalog().then((next) => { if (!cancelled) setCatalog(next) }).catch(reportError)
+    const target = harness
+    void bridge.providers.catalog(false, target).then((next) => { if (!cancelled) setCatalogFor(target, next) }).catch(reportError)
     return () => { cancelled = true }
-  }, [bridge, reportError])
+  }, [bridge, harness, reportError, setCatalogFor])
+
+  // The composer's selection belongs to one harness's catalog; a switch resets
+  // it to auto until the new harness's runtime or the user picks a model.
+  const previousHarnessRef = useRef(harness)
+  useEffect(() => {
+    if (previousHarnessRef.current === harness) return
+    previousHarnessRef.current = harness
+    updateModel('auto')
+    updateFast(false)
+  }, [harness, updateFast, updateModel])
 
   useEffect(() => {
     if (!bridge) return
@@ -168,43 +188,47 @@ export function useProviderCatalog({ bridge, runtime, syncRuntime, syncDisabledP
     )
   }, [bridge, queueRuntimeMutation, runtime, updateFast])
 
+  // Provider auth and enablement always operate on the prime catalog: the
+  // bridge methods validate against prime, and the OMP settings surface is
+  // read-only, so these writes land in the prime cache slot regardless of the
+  // harness currently shown.
   const saveApiKey = useCallback(async (providerId: string, apiKey: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
-    setCatalog(await bridge.providers.saveApiKey(providerId, apiKey))
-  }, [bridge])
+    setCatalogFor('prime', await bridge.providers.saveApiKey(providerId, apiKey))
+  }, [bridge, setCatalogFor])
 
   const logout = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
-    setCatalog(await bridge.providers.logout(providerId))
-  }, [bridge])
+    setCatalogFor('prime', await bridge.providers.logout(providerId))
+  }, [bridge, setCatalogFor])
 
   const setEnabled = useCallback(async (providerId: string, enabled: boolean) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     const next = await bridge.providers.setEnabled(providerId, enabled)
-    setCatalog(next)
+    setCatalogFor('prime', next)
     const disabledProviders = next.providers.filter((provider) => !provider.enabled).map((provider) => provider.id)
     const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
     if (selectedProvider && disabledProviders.includes(selectedProvider)) { updateModel('auto'); updateFast(false) }
-  }, [bridge, catalog?.models, updateFast, updateModel])
+  }, [bridge, catalog?.models, setCatalogFor, updateFast, updateModel])
 
   const setAllEnabled = useCallback(async () => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     await syncDisabledProviders([])
-    setCatalog(await bridge.providers.catalog(true))
-  }, [bridge, syncDisabledProviders])
+    setCatalogFor('prime', await bridge.providers.catalog(true, 'prime'))
+  }, [bridge, setCatalogFor, syncDisabledProviders])
 
   const setAllDisabled = useCallback(async () => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     const providerIds = catalog?.providers.map((provider) => provider.id).sort() ?? []
     if (!providerIds.length) throw new Error('Provider catalogue is not loaded.')
     await syncDisabledProviders(providerIds)
-    setCatalog(await bridge.providers.catalog(true))
+    setCatalogFor('prime', await bridge.providers.catalog(true, 'prime'))
     const selectedProvider = catalog?.models.find((candidate) => candidate.key === modelRef.current)?.provider
     if (selectedProvider && providerIds.includes(selectedProvider)) {
       updateModel('auto')
       updateFast(false)
     }
-  }, [bridge, catalog?.models, catalog?.providers, syncDisabledProviders, updateFast, updateModel])
+  }, [bridge, catalog?.models, catalog?.providers, setCatalogFor, syncDisabledProviders, updateFast, updateModel])
 
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')

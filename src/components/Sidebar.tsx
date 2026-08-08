@@ -19,10 +19,11 @@ import {
   SquarePen,
 } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
+import { HARNESS_IDS, type AppMeta, type HarnessId, type ProjectRecord, type SessionRecord, type WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
+import { HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { sessionAttentionSignature } from '@/app/session-attention'
-import { IconButton, Modal, PrimeMark, useFocusTrap } from './ui'
+import { IconButton, Modal, OmpMark, PrimeMark, useFocusTrap } from './ui'
 
 export interface SidebarProps {
   projects: ProjectRecord[]
@@ -30,6 +31,9 @@ export interface SidebarProps {
   activeProjectId?: string
   activeSessionId?: string
   activeView: WorkspaceView
+  activeHarness?: HarnessId
+  harnesses?: AppMeta['harnesses'] | null
+  onSelectHarness?(harness: HarnessId): void
   onSelectProject(project: ProjectRecord): void
   onSelectSession(session: SessionRecord): void
   onNavigate(view: WorkspaceView): void
@@ -117,8 +121,13 @@ function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
   return <span className={`session-status-mark session-status-mark--${status}`} title={statusLabel[status]}><span /></span>
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
+  return harness === 'omp' ? <OmpMark size={size} /> : <PrimeMark size={size} />
+}
+
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'prime', harnesses, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
+  const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [searchOpen, setSearchOpen] = useState(false)
   const sidebarRef = useFocusTrap<HTMLElement>(overlay, onClose)
@@ -148,6 +157,13 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   }, [sessions])
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   useEffect(() => {
+    if (!harnessMenuOpen) return
+    const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.brand-switcher')) setHarnessMenuOpen(false) }
+    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setHarnessMenuOpen(false) } }
+    document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', dismissOnEscape, true)
+    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', dismissOnEscape, true) }
+  }, [harnessMenuOpen])
+  useEffect(() => {
     if (!sessionMenu) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.session-row-wrap')) setSessionMenu(null) }
     const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setSessionMenu(null) } }
@@ -170,9 +186,40 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
     <aside ref={sidebarRef} className="sidebar" aria-label="Project and session navigation" tabIndex={overlay ? -1 : undefined}>
       <div className="sidebar__titlebar drag-region">
         <div className="traffic-light-clearance" aria-hidden="true" />
-        <div className="sidebar__brand" aria-label="Prime Work by Prime Intellect">
-          <PrimeMark size={24} />
-          <span><strong>Prime</strong><small>Work</small></span>
+        <div className="sidebar__brand brand-switcher no-drag">
+          <button
+            type="button"
+            className="brand-switcher__trigger"
+            aria-haspopup="menu"
+            aria-expanded={harnessMenuOpen}
+            aria-label={`${HARNESS_PRODUCT_NAMES[activeHarness]} — switch harness`}
+            onClick={() => setHarnessMenuOpen((open) => !open)}
+          >
+            <HarnessMark harness={activeHarness} size={24} />
+            <span className="brand-switcher__name"><strong>{HARNESS_SHORT_NAMES[activeHarness]}</strong><small>Work</small></span>
+            <ChevronDown size={12} aria-hidden="true" />
+          </button>
+          {harnessMenuOpen ? (
+            <div className="brand-switcher__menu" role="menu" aria-label="Agent harness">
+              {HARNESS_IDS.map((harness) => {
+                const detected = Boolean(harnesses?.[harness]?.path)
+                return (
+                  <button
+                    type="button"
+                    key={harness}
+                    role="menuitemradio"
+                    aria-checked={harness === activeHarness}
+                    className={harness === activeHarness ? 'is-active' : ''}
+                    onClick={() => { setHarnessMenuOpen(false); if (harness !== activeHarness) onSelectHarness?.(harness) }}
+                  >
+                    <HarnessMark harness={harness} size={20} />
+                    <span className="brand-switcher__option"><strong>{HARNESS_PRODUCT_NAMES[harness]}</strong>{detected ? null : <small>Not detected</small>}</span>
+                    {harness === activeHarness ? <Check size={13} aria-hidden="true" /> : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
         </div>
         <div className="sidebar__title-actions no-drag">
           <IconButton label="New session (⌘N)" onClick={() => onNewSession()}><SquarePen size={16} /></IconButton>
@@ -192,8 +239,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         ) : null}
         <button type="button" className={activeView === 'projects' ? 'is-active' : ''} onClick={() => onNavigate('projects')}><Folder size={15} /><span>Projects</span></button>
         <button type="button" className={activeView === 'activity' ? 'is-active' : ''} onClick={() => onNavigate('activity')}><Bell size={15} /><span>Activity</span>{unreadCount ? <span className="nav-count">{unreadCount}</span> : null}</button>
-        <button type="button" className={activeView === 'scheduled' ? 'is-active' : ''} onClick={() => onNavigate('scheduled')}><CalendarClock size={15} /><span>Scheduled</span></button>
-        <button type="button" className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>Plugins & skills</span></button>
+        {activeHarness === 'prime' ? <button type="button" className={activeView === 'scheduled' ? 'is-active' : ''} onClick={() => onNavigate('scheduled')}><CalendarClock size={15} /><span>Scheduled</span></button> : null}
+        {activeHarness === 'prime' ? <button type="button" className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>Plugins & skills</span></button> : null}
       </nav>
 
       <div className="sidebar__scroll scroll-area">
@@ -263,6 +310,9 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.activeProjectId === next.activeProjectId
     && previous.activeSessionId === next.activeSessionId
     && previous.activeView === next.activeView
+    && previous.activeHarness === next.activeHarness
+    && previous.harnesses === next.harnesses
+    && previous.onSelectHarness === next.onSelectHarness
     && previous.onSelectProject === next.onSelectProject
     && previous.onSelectSession === next.onSelectSession
     && previous.onNavigate === next.onNavigate

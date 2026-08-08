@@ -17,7 +17,7 @@ import type { WorkspaceSnapshot } from '@/app/workspace'
 import { createPrimeEventBuffer, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
 import { findRuntimeForWorkspace, workspaceCwd } from '@/lib/workspace'
-import type { PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
+import type { HarnessId, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
 
 let queuedPromptSequence = 0
 
@@ -39,6 +39,8 @@ interface TranscriptLoad {
 
 interface UseWorkspaceRuntimeOptions {
   bridge: PrimeWorkApi | null
+  /** Active harness; runtime discovery only attaches runtimes it owns. */
+  harness?: HarnessId
   initialProject?: ProjectRecord
   initialSession?: SessionRecord
   sessions: SessionRecord[]
@@ -48,6 +50,7 @@ interface UseWorkspaceRuntimeOptions {
 
 export function useWorkspaceRuntime({
   bridge,
+  harness = 'prime',
   initialProject,
   initialSession,
   sessions,
@@ -61,6 +64,8 @@ export function useWorkspaceRuntime({
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0)
   const [loadingSession, setLoadingSession] = useState(false)
+  const harnessRef = useRef(harness)
+  harnessRef.current = harness
   const runtimeIdRef = useRef<string | null>(null)
   const runtimeSessionsRef = useRef<Map<string, string>>(new Map())
   const runtimeOwnerRef = useRef<{ runtimeId: string; generation: number } | null>(null)
@@ -173,7 +178,7 @@ export function useWorkspaceRuntime({
     const selected = workspaceRef.current
     if (selected.generation !== generation || !selected.sessionFile) return
     try {
-      const runtimes = await bridge.agent.list()
+      const runtimes = (await bridge.agent.list()).filter((candidate) => candidate.harness === harnessRef.current)
       if (workspaceRef.current.generation !== generation) return
       attachRuntime(findRuntimeForWorkspace(runtimes, selected.cwd, selected.sessionFile), generation)
     } catch (error) {

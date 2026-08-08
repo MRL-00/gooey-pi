@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { findRuntimeForWorkspace, selectStartupWorkspace } from '@/lib/workspace'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import type {
   AppMeta,
+  HarnessId,
   PrimeWorkApi,
   ProjectRecord,
   RuntimeInfo,
@@ -13,6 +14,8 @@ import type {
 
 interface UseBootstrapOptions {
   bridge: PrimeWorkApi | null
+  /** Harness whose projects, sessions, and runtimes populate the workspace. */
+  harness?: HarnessId
   setProjects: React.Dispatch<React.SetStateAction<ProjectRecord[]>>
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
   setSchedules: React.Dispatch<React.SetStateAction<AutomationScheduleRecord[]>>
@@ -22,6 +25,8 @@ interface UseBootstrapOptions {
   activateWorkspace(project?: ProjectRecord, session?: SessionRecord, runtime?: RuntimeInfo): number
   attachRuntime(runtime: RuntimeInfo | undefined, generation: number): void
   sessionHasOpenExtensionUi?(filePath: string): boolean
+  /** Runs when the effect notices a harness change, before refetching (view reset). Must be identity-stable. */
+  onHarnessSwitch?(): void
   reportError(error: unknown): void
 }
 
@@ -89,6 +94,7 @@ export function mergeSessionCatalog(
 
 export function useBootstrap({
   bridge,
+  harness = 'prime',
   setProjects,
   setSessions,
   setSchedules,
@@ -98,17 +104,31 @@ export function useBootstrap({
   activateWorkspace,
   attachRuntime,
   sessionHasOpenExtensionUi = NO_OPEN_EXTENSION_UI,
+  onHarnessSwitch,
   reportError,
 }: UseBootstrapOptions) {
   const [meta, setMeta] = useState<AppMeta | null>(null)
   const [initialized, setInitialized] = useState(!bridge)
+  const previousHarnessRef = useRef(harness)
 
   useEffect(() => {
     if (!bridge) return
+    // Switching harness rides the exact workspace-switch path: clear the
+    // visible catalog, bump the workspace generation (which resets runtime,
+    // transcript, and queued prompts), then bootstrap the new harness. The
+    // generation captured below guards the async startup activation the same
+    // way it does on first launch.
+    if (previousHarnessRef.current !== harness) {
+      previousHarnessRef.current = harness
+      setProjects([])
+      setSessions([])
+      onHarnessSwitch?.()
+      activateWorkspace()
+    }
     let cancelled = false
     const startupGeneration = workspaceRef.current.generation
-    const projectsRequest = bridge.projects.list()
-    const sessionsRequest = bridge.sessions.list(undefined, true)
+    const projectsRequest = bridge.projects.list(harness)
+    const sessionsRequest = bridge.sessions.list(undefined, true, harness)
     const runtimesRequest = bridge.agent.list().then((value) => {
       if (!cancelled) {
         // Merge instead of replacing: entries learned from live events while the
@@ -117,7 +137,7 @@ export function useBootstrap({
           if (runtime.sessionFile) runtimeSessionsRef.current.set(runtime.runtimeId, runtime.sessionFile)
         }
       }
-      return value
+      return value.filter((runtime) => runtime.harness === harness)
     }).catch((error) => {
       if (!cancelled) reportError(error)
       return [] as RuntimeInfo[]
@@ -173,6 +193,8 @@ export function useBootstrap({
     activateWorkspace,
     attachRuntime,
     bridge,
+    harness,
+    onHarnessSwitch,
     reportError,
     runtimeSessionsRef,
     setProjects,
@@ -191,6 +213,8 @@ export function useBootstrap({
     let pendingCatalogRevision = 0
     let nextRevision = 0
     const unsubscribe = bridge.sessions.onChanged((change) => {
+      // Events that predate harness scoping carry no harness and mean prime.
+      if ((change.harness ?? 'prime') !== harness) return
       const revision = ++nextRevision
       if (change.filePath) pendingChangedFiles.set(change.filePath, revision)
       else pendingCatalogRevision = revision
@@ -200,7 +224,7 @@ export function useBootstrap({
         const currentRequest = ++requestId
         const changedFiles = new Map(pendingChangedFiles)
         const catalogRevision = pendingCatalogRevision
-        void bridge.sessions.list(undefined, true).then((nextSessions) => {
+        void bridge.sessions.list(undefined, true, harness).then((nextSessions) => {
           if (disposed || currentRequest !== requestId) return
           setSessions((current) => mergeSessionCatalog(
             current,
@@ -225,7 +249,7 @@ export function useBootstrap({
       unsubscribe()
       if (refreshTimer !== null) window.clearTimeout(refreshTimer)
     }
-  }, [bridge, initialized, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
+  }, [bridge, harness, initialized, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
 
   return { meta, initialized }
 }

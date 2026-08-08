@@ -239,7 +239,7 @@ describe('provider runtime mutations', () => {
     await act(async () => { await hook.value.setAllEnabled() })
     expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
     expect(hook.syncDisabledProviders).toHaveBeenCalledWith([])
-    expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
+    expect(hook.catalogMock).toHaveBeenLastCalledWith(true, 'prime')
   })
 
   it('keeps an optimistic fast-mode toggle across a catalog refresh', async () => {
@@ -263,7 +263,7 @@ describe('provider runtime mutations', () => {
     await act(async () => { await hook.value.setAllDisabled() })
     expect(hook.syncDisabledProviders).toHaveBeenCalledTimes(1)
     expect(hook.syncDisabledProviders).toHaveBeenCalledWith(['anthropic', 'openai-codex'])
-    expect(hook.catalogMock).toHaveBeenLastCalledWith(true)
+    expect(hook.catalogMock).toHaveBeenLastCalledWith(true, 'prime')
     expect(hook.value.model).toBe('auto')
     expect(hook.value.fast).toBe(false)
   })

@@ -1,10 +1,13 @@
 import { ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
-import type { PrimeModelCatalog, PrimeProviderDescriptor } from '@/types/api'
+import type { HarnessId, PrimeModelCatalog, PrimeProviderDescriptor } from '@/types/api'
+import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { Modal } from '@/components/ui'
 
 interface ProviderSettingsProps {
+  /** Active harness. OMP renders the catalog read-only: auth and enablement live in the omp CLI. */
+  harness?: HarnessId
   catalog: PrimeModelCatalog | null
   onRefresh(): Promise<void>
   onSaveApiKey(providerId: string, apiKey: string): Promise<void>
@@ -26,7 +29,9 @@ function authDescription(provider: PrimeProviderDescriptor): string {
   return `${source} · ${provider.availableModelCount.toLocaleString()} available models`
 }
 
-export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
+export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
+  const readOnly = harness !== 'prime'
+  const agentName = HARNESS_AGENT_NAMES[harness]
   const [view, setView] = useState<'providers' | 'models'>('providers')
   const [query, setQuery] = useState('')
   const [apiKeyProvider, setApiKeyProvider] = useState<PrimeProviderDescriptor | null>(null)
@@ -79,8 +84,8 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
 
   return (
     <section className="settings-group provider-settings">
-      <div className="settings-group__heading"><h2>Prime Agent catalogue</h2><div className="provider-heading-actions">{catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>Disable all</button> : null}{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>Enable all</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
-      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{availableModelCount.toLocaleString()} models are available with your current Prime Agent credentials</small> : null}</div>
+      <div className="settings-group__heading"><h2>{agentName} catalogue</h2><div className="provider-heading-actions">{!readOnly && catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>Disable all</button> : null}{!readOnly && disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>Enable all</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
+      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{availableModelCount.toLocaleString()} models are available with your current {agentName} credentials</small> : null}</div>
       {catalog?.warning ? <p className="provider-catalog-warning" role="status">{catalog.warning}</p> : null}
       <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view">
         <button type="button" role="tab" aria-selected={view === 'providers'} className={view === 'providers' ? 'is-active' : ''} onClick={() => { setView('providers'); setQuery('') }}>Providers <span>{providerCount.toLocaleString()}</span></button>
@@ -91,6 +96,13 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
       {view === 'providers' ? <div className="provider-list">
         {providers.map((provider) => {
           const busy = busyProvider === provider.id
+          // The OMP catalog is read-only: authentication and enablement are
+          // managed by the omp CLI, so rows only describe the auth source.
+          if (readOnly) {
+            return <div className="provider-row" key={provider.id}>
+              <div className="provider-row__identity"><strong>{provider.name}</strong><small>{provider.authLabel ?? 'Managed by the omp CLI'}</small></div>
+            </div>
+          }
           return <div className="provider-row" key={provider.id}>
             <label className="provider-row__toggle" title={provider.enabled ? 'Disable provider in Prime Work' : 'Enable provider in Prime Work'}><input type="checkbox" aria-label={`Enable ${provider.name} provider`} checked={provider.enabled} disabled={busy} onChange={(event) => void run(provider.id, () => onSetEnabled(provider.id, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
             <div className="provider-row__identity"><strong>{provider.name}</strong><small>{authDescription(provider)}</small></div>
@@ -123,7 +135,9 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
 export function ProvidersSettings(props: ProviderSettingsProps) {
   return (
     <>
-      <header><h1>Providers</h1><p>Connect accounts, choose which providers and their models appear in Prime Work, and browse every model Prime Agent supports.</p></header>
+      <header><h1>Providers</h1><p>{props.harness === 'omp'
+        ? 'Browse every model the omp CLI exposes. Provider authentication is managed by omp itself.'
+        : 'Connect accounts, choose which providers and their models appear in Prime Work, and browse every model Prime Agent supports.'}</p></header>
       <ProviderSettings {...props} />
     </>
   )

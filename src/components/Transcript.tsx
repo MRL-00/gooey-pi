@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import type { GitStatus, TranscriptMessage } from '@/types/api'
+import type { GitStatus, HarnessId, TranscriptMessage } from '@/types/api'
 import { ChangesCard } from './ChangesCard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { MarkdownText } from './MarkdownText'
-import { PrimeMark } from './ui'
+import { HARNESS_SHORT_NAMES } from '@/lib/harness'
+import { OmpMark, PrimeMark } from './ui'
 import { ActivityMessage, AgentMessage, AssistantMessage, GoalMessage, UserMessage } from './transcript/messages'
 import { useTranscriptScroll } from './transcript/scroll'
 import { ThinkingDots, WorkDisclosure } from './transcript/timeline'
@@ -36,6 +37,8 @@ export function coalesceAssistantTurns(messages: TranscriptMessage[]): Transcrip
 interface TranscriptProps {
   messages: TranscriptMessage[]
   git: GitStatus
+  /** Active harness; brands the assistant marks and working copy. */
+  harness?: HarnessId
   loading?: boolean
   active?: boolean
   showReasoning?: boolean
@@ -51,17 +54,21 @@ interface TranscriptProps {
 }
 
 
-function ActiveAssistantMessage({ message, showReasoning, showTools }: { message: TranscriptMessage; showReasoning: boolean; showTools: boolean }) {
+function AssistantMark({ harness, size = 24 }: { harness: HarnessId; size?: number }) {
+  return harness === 'omp' ? <OmpMark size={size} /> : <PrimeMark size={size} />
+}
+
+function ActiveAssistantMessage({ message, harness, showReasoning, showTools }: { message: TranscriptMessage; harness: HarnessId; showReasoning: boolean; showTools: boolean }) {
   const visibleActivity = message.parts.some((part) => part.type === 'thinking' && showReasoning || (part.type === 'toolCall' || part.type === 'toolResult') && showTools || part.type === 'agentMessage')
   return (
     <article className="message message--assistant">
-      <div className="assistant-mark"><PrimeMark size={24} /></div>
+      <div className="assistant-mark"><AssistantMark harness={harness} /></div>
       <div className="message__content">
         {visibleActivity
           ? <WorkDisclosure message={message} parts={message.parts} showReasoning={showReasoning} showTools={showTools} running />
           : <>
             {message.parts.map((part, index) => part.type === 'text' ? <MarkdownText key={index} text={part.text} /> : null)}
-            <div className="streaming-state" aria-live="polite"><ThinkingDots /> Prime is working</div>
+            <div className="streaming-state" aria-live="polite"><ThinkingDots /> {HARNESS_SHORT_NAMES[harness]} is working</div>
           </>}
       </div>
     </article>
@@ -70,7 +77,7 @@ function ActiveAssistantMessage({ message, showReasoning, showTools }: { message
 
 
 
-export function Transcript({ messages, git, loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled, showPinnedChanges = true, bottomDockHasChanges = false, queuedMessageCount = 0 }: TranscriptProps) {
+export function Transcript({ messages, git, harness = 'prime', loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled, showPinnedChanges = true, bottomDockHasChanges = false, queuedMessageCount = 0 }: TranscriptProps) {
   const groupedMessages = useMemo(() => coalesceAssistantTurns(messages), [messages])
   const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(groupedMessages)
   const activeAssistantId = useMemo(() => active && groupedMessages.at(-1)?.role === 'assistant' ? groupedMessages.at(-1)?.id : undefined, [active, groupedMessages])
@@ -88,9 +95,9 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
       <div className="transcript__inner">
         {loading ? <div className="transcript-loading"><LoaderCircle className="spin" size={16} /> Loading session…</div> : null}
         {!loading && messages.length === 0 ? <div className="session-welcome">
-          <PrimeMark size={34} />
+          <AssistantMark harness={harness} size={34} />
           <h1>What should we work on?</h1>
-          <p>Prime can inspect this project, edit files, run tools, and keep working across sessions.</p>
+          <p>{HARNESS_SHORT_NAMES[harness]} can inspect this project, edit files, run tools, and keep working across sessions.</p>
           <div className="prompt-suggestions">
             <button type="button" disabled={suggestionsDisabled} onClick={() => onSuggestion('Summarize this project')}>Summarize this project</button>
             <button type="button" disabled={suggestionsDisabled} onClick={() => onSuggestion('Find a useful next task')}>Find a useful next task</button>
@@ -101,15 +108,15 @@ export function Transcript({ messages, git, loading, active = false, showReasoni
         {visibleMessages.map((message) => <ErrorBoundary key={message.id} fallback={<div className="message message--render-failure" role="note">This message could not be displayed.</div>}>
           {message.role === 'user' ? <UserMessage message={message} />
             : message.role === 'assistant' ? message.streaming || message.id === activeAssistantId
-              ? <ActiveAssistantMessage message={message} showReasoning={showReasoning} showTools={showTools} />
-              : <AssistantMessage message={message} showReasoning={showReasoning} showTools={showTools} />
+              ? <ActiveAssistantMessage message={message} harness={harness} showReasoning={showReasoning} showTools={showTools} />
+              : <AssistantMessage message={message} harness={harness} showReasoning={showReasoning} showTools={showTools} />
             : message.role === 'agent' ? <AgentMessage message={message} />
             : message.role === 'goal' ? <GoalMessage message={message} />
             : message.role === 'tool' || message.role === 'system' ? <ActivityMessage message={message} />
             : <div className={`message message--${message.role}`}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>}
         </ErrorBoundary>)}
         {active && !activeAssistantId ? <article className="message message--assistant transcript-active-placeholder" aria-live="polite">
-          <div className="assistant-mark"><PrimeMark size={24} /></div><div className="streaming-state"><ThinkingDots /> Prime is working</div>
+          <div className="assistant-mark"><AssistantMark harness={harness} /></div><div className="streaming-state"><ThinkingDots /> {HARNESS_SHORT_NAMES[harness]} is working</div>
         </article> : null}
         <div />
       </div>

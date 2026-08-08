@@ -5,6 +5,10 @@ import { formatRelative } from '@/lib/data'
 import { MarkdownText } from '../MarkdownText'
 
 interface SummaryPanelProps {
+  /** Active harness agent name ("Prime Agent" / "OMP"). */
+  agentName?: string
+  /** Short harness name for working copy ("Prime" / "OMP"). */
+  shortName?: string
   project?: ProjectRecord
   runtime?: RuntimeInfo | null
   messages: TranscriptMessage[]
@@ -39,13 +43,13 @@ export function summarizeTranscript(messages: TranscriptMessage[]): TranscriptSu
   return { toolCount, lastText }
 }
 
-export const SummaryPanel = memo(function SummaryPanel({ project, runtime, messages, git, automations, heartbeats, onOpenAutomation }: SummaryPanelProps) {
+export const SummaryPanel = memo(function SummaryPanel({ agentName = 'Prime Agent', shortName = 'Prime', project, runtime, messages, git, automations, heartbeats, onOpenAutomation }: SummaryPanelProps) {
   const { toolCount, lastText } = useMemo(() => summarizeTranscript(messages), [messages])
   const active = Boolean(runtime?.isStreaming || runtime?.isCompacting)
   return (
     <div className="inspector-scroll scroll-area summary-panel">
       <section className="summary-hero">
-        <span className={`run-state ${active ? 'is-running' : ''}`}>{active ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}{runtime?.isCompacting ? 'Compacting context' : active ? 'Prime is working' : 'Ready'}</span>
+        <span className={`run-state ${active ? 'is-running' : ''}`}>{active ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}{runtime?.isCompacting ? 'Compacting context' : active ? `${shortName} is working` : 'Ready'}</span>
         <h2>{runtime?.isCompacting ? 'Compacting the session context' : active ? 'Working through the request' : 'Session overview'}</h2>
         <MarkdownText text={lastText !== undefined ? lastText.slice(0, 220) : 'Start a conversation to see a compact summary of the work here.'} />
       </section>
@@ -60,7 +64,7 @@ export const SummaryPanel = memo(function SummaryPanel({ project, runtime, messa
         </button>)}
         {automations.length + heartbeats.length > 2 ? <button type="button" className="summary-automation-more" onClick={() => onOpenAutomation(automations[0]?.id ?? heartbeats[0]!.id)}>View all {automations.length + heartbeats.length} automations</button> : null}
       </div></section> : null}
-      <section className="summary-section"><h3>Context</h3><div className="context-meter"><div><span>Session context</span><span>Managed</span></div><small>Prime Agent monitors and compacts context when needed.</small></div></section>
+      <section className="summary-section"><h3>Context</h3><div className="context-meter"><div><span>Session context</span><span>Managed</span></div><small>{agentName} monitors and compacts context when needed.</small></div></section>
     </div>
   )
 })

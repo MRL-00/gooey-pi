@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { requestFailureMessage } from '@/app/workspace'
 import { errorMessage } from '@/lib/errors'
+import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import type { GitStatus, McpConnectionInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
@@ -119,10 +120,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     setView(nextView); setPaletteOpen(false)
   }
   const renameSession = async (session: SessionRecord, title: string) => {
-    const { bridge, setSessions, setToast, reportError } = getDeps()
+    const { bridge, settingsState, setSessions, setToast, reportError } = getDeps()
     if (!bridge) return
     try {
-      if (!await bridge.sessions.rename(session.filePath, title)) throw new Error('Prime Agent could not rename this session.')
+      if (!await bridge.sessions.rename(session.filePath, title)) throw new Error(`${HARNESS_AGENT_NAMES[settingsState.settings.activeHarness]} could not rename this session.`)
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, title } : item)); setToast('Session renamed.')
     } catch (error) { reportError(error) }
   }
@@ -159,7 +160,8 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
 
   const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
-    const { bridge, sessions, workspace, provider, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
+    const { bridge, sessions, workspace, provider, settingsState, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
+    const activeHarness = settingsState.settings.activeHarness
     const currentWorkspace = workspace.workspaceRef.current
     const currentRuntime = workspace.runtime
     const currentOwner = workspace.runtimeOwnerRef.current
@@ -207,7 +209,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         return bridge.sessions.followUp(sessionFile, prompt, intent)
       }
       try {
-        if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
+        if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a session.'); return }
         if (images.length > 0 && provider.model !== 'auto' && !provider.selectedModel?.input.includes('image')) {
           reportError('This model does not accept images. Remove the attachment or choose a vision model.')
           return
@@ -238,7 +240,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         if (workspace.workspaceRef.current.generation !== generation) return
         const selected = workspace.workspaceRef.current
         if (!selected.cwd) throw new Error('The selected workspace has no working directory.')
-        const liveRuntimes = await bridge.agent.list()
+        const liveRuntimes = (await bridge.agent.list()).filter((candidate) => candidate.harness === activeHarness)
         if (workspace.workspaceRef.current.generation !== generation) return
         const owner = workspace.runtimeOwnerRef.current
         const tracked = workspace.runtimeIdRef.current ? liveRuntimes.find((item) => item.runtimeId === workspace.runtimeIdRef.current) : undefined
@@ -261,7 +263,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             return
           }
           try {
-            activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast })
+            activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast, harness: activeHarness })
           } catch (startError) {
             if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) {
               if (intent === 'steer') appendUserMessage()
@@ -274,7 +276,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         if (activeRuntime.cwd !== selected.cwd || (selected.sessionFile && activeRuntime.sessionFile !== selected.sessionFile)) {
           if (startedRuntime) await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
-          throw new Error('Prime returned a runtime for a different workspace or session.')
+          throw new Error(`${HARNESS_AGENT_NAMES[activeHarness]} returned a runtime for a different workspace or session.`)
         }
         workspace.attachRuntime(activeRuntime, generation)
         if (activeRuntime.isStreaming) {
@@ -360,11 +362,11 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     try { await bridge.heartbeats.manage(id, action); await refreshHeartbeats() } catch (error) { reportError(error); throw error }
   }
   const openScheduledSession = (sessionFile: string) => {
-    const { bridge, sessions, setSessions, reportError } = getDeps()
+    const { bridge, sessions, settingsState, setSessions, reportError } = getDeps()
     const known = sessions.find((session) => session.filePath === sessionFile)
     if (known) { void selectSession(known); return }
     if (!bridge) return
-    void bridge.sessions.list(undefined, true).then((catalog) => {
+    void bridge.sessions.list(undefined, true, settingsState.settings.activeHarness).then((catalog) => {
       setSessions(catalog)
       const found = catalog.find((session) => session.filePath === sessionFile)
       if (found) void selectSession(found)
