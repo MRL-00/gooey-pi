@@ -47,7 +47,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   const grantProject = async (project: ProjectRecord): Promise<ProjectRecord> => {
     const { bridge, workspace, setProjects, gitRequestRef, setGitSnapshot } = getDeps()
     if (!bridge || !project.inferred) return project
-    const granted = await bridge.projects.grantInferred(project.primaryFolder)
+    const granted = await bridge.projects.grantInferred(project.primaryFolder, project.harness)
     setProjects((items) => items.map((item) => item.id === project.id ? granted : item))
     const selected = workspace.workspaceRef.current
     if (selected.project?.id !== project.id) return granted
@@ -89,7 +89,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     setView('session')
     try {
       const granted = await grantProject(project)
-      if (bridge && !granted.inferred) await bridge.projects.touch(granted.id)
+      if (bridge && !granted.inferred) await bridge.projects.touch(granted.id, granted.harness)
       await workspace.reconcileRuntime(generation)
     } catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
@@ -138,17 +138,17 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error) }
   }
   const addProject = async () => {
-    const { bridge, workspace, setProjects, setView, setToast, reportError } = getDeps()
+    const { bridge, workspace, setProjects, setView, setToast, settingsState, reportError } = getDeps()
     if (!bridge) { setToast('Project picker is available in the desktop app.'); return }
     try {
-      const project = await bridge.projects.add()
+      const project = await bridge.projects.add(settingsState.settings.activeHarness)
       if (project) { setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]); workspace.activateWorkspace(project); setView('session') }
     } catch (error) { reportError(error) }
   }
   const removeProject = async (project: ProjectRecord) => {
     const { bridge, projects, sessions, workspace, setProjects, setToast, reportError } = getDeps()
     try {
-      if (bridge && !await bridge.projects.remove(project.id)) throw new Error('This project could not be removed.')
+      if (bridge && !await bridge.projects.remove(project.id, project.harness)) throw new Error('This project could not be removed.')
       setProjects((items) => items.filter((item) => item.id !== project.id))
       if (workspace.workspaceRef.current.project?.id === project.id) {
         const fallback = projects.find((item) => item.id !== project.id)

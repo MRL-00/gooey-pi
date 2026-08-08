@@ -36,6 +36,8 @@ interface ComposerProps {
   fastAvailable: boolean
   /** Active harness agent name for tooltips ("Prime Agent" / "OMP"). */
   agentName?: string
+  /** Active harness short name for inline copy ("Prime" / "OMP"). */
+  shortName?: string
   imageInputSupported: boolean
   /** @deprecated Shortcuts are fixed: Enter queues and Ctrl+Enter steers. */
   messageEnterAction?: MessageEnterAction
@@ -116,6 +118,7 @@ export const Composer = memo(function Composer({
   fastSupported,
   fastAvailable,
   agentName = 'Prime Agent',
+  shortName = 'Prime',
   imageInputSupported,
   contextUsage,
   skills,
@@ -241,7 +244,7 @@ export const Composer = memo(function Composer({
       }
       const supported = files.filter((file) => supportedImageTypes.has(file.type.toLowerCase()))
       if (supported.length !== files.length) {
-        setAttachmentError('Prime supports pasted PNG, JPEG, GIF, and WebP images.')
+        setAttachmentError(`${shortName} supports pasted PNG, JPEG, GIF, and WebP images.`)
         return
       }
       const added = await Promise.all(
@@ -272,7 +275,7 @@ export const Composer = memo(function Composer({
       setImages(next)
       setAttachmentError('')
     } catch {
-      if (mountedRef.current) setAttachmentError('Prime could not read the pasted image.')
+      if (mountedRef.current) setAttachmentError(`${shortName} could not read the pasted image.`)
     } finally {
       pendingImagesRef.current -= 1
       if (mountedRef.current && pendingImagesRef.current === 0) setProcessingImages(false)
@@ -370,8 +373,8 @@ export const Composer = memo(function Composer({
           value={value}
           disabled={disabled || loading}
           rows={2}
-          placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? 'Starting Prime…' : 'Ask Prime anything, @ for skills, / for commands'}
-          aria-label="Message Prime"
+          placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? `Starting ${shortName}…` : `Ask ${shortName} anything, @ for skills, / for commands`}
+          aria-label={`Message ${shortName}`}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={Boolean(menu && suggestions.length)}
@@ -626,7 +629,7 @@ export const Composer = memo(function Composer({
           </div>
         </div>
       </div>
-      <p className="composer-note">Prime can make mistakes. Review commands and changes before committing.</p>
+      <p className="composer-note">{shortName} can make mistakes. Review commands and changes before committing.</p>
     </div>
   )
 })

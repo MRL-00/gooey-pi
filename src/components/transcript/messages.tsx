@@ -202,12 +202,13 @@ export const UserMessage = memo(function UserMessage({ message }: { message: Tra
   )
 })
 
-export const ActivityMessage = memo(function ActivityMessage({ message }: { message: TranscriptMessage }) {
+export const ActivityMessage = memo(function ActivityMessage({ message, harness = 'prime' }: { message: TranscriptMessage; harness?: HarnessId }) {
+  const activityLabel = `${HARNESS_SHORT_NAMES[harness]} message`
   const sourceParts: MessagePart[] =
     message.role === 'system' && !message.parts.some((part) => part.type === 'compaction')
       ? [
-          { type: 'toolCall', id: message.id, name: 'Prime message' },
-          { type: 'toolResult', name: 'Prime message', text: messageText(message), isError: true },
+          { type: 'toolCall', id: message.id, name: activityLabel },
+          { type: 'toolResult', name: activityLabel, text: messageText(message), isError: true },
         ]
       : message.parts
   const parts = sourceParts.flatMap((part, index) =>

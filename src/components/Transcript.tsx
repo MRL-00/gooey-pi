@@ -112,7 +112,7 @@ export function Transcript({ messages, git, harness = 'prime', loading, active =
               : <AssistantMessage message={message} harness={harness} showReasoning={showReasoning} showTools={showTools} />
             : message.role === 'agent' ? <AgentMessage message={message} />
             : message.role === 'goal' ? <GoalMessage message={message} />
-            : message.role === 'tool' || message.role === 'system' ? <ActivityMessage message={message} />
+            : message.role === 'tool' || message.role === 'system' ? <ActivityMessage message={message} harness={harness} />
             : <div className={`message message--${message.role}`}>{message.parts.map((part, partIndex) => part.type === 'text' ? <span key={partIndex}>{part.text}</span> : null)}</div>}
         </ErrorBoundary>)}
         {active && !activeAssistantId ? <article className="message message--assistant transcript-active-placeholder" aria-live="polite">

@@ -22,7 +22,7 @@ export function FilesPanel({ project, git, onReveal }: { project?: ProjectRecord
     setLoading(true)
     try {
       const roots = project.folders.length ? project.folders : [project.primaryFolder]
-      const groups = await Promise.all(roots.map(async (root) => ({ root, listing: await window.prime.projects.listFiles(root) })))
+      const groups = await Promise.all(roots.map(async (root) => ({ root, listing: await window.prime.projects.listFiles(root, project.harness) })))
       if (loadToken.current !== token) return
       const multipleRoots = roots.length > 1
       setSkipped(groups.reduce((sum, group) => sum + group.listing.skipped, 0))
