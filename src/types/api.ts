@@ -481,6 +481,7 @@ export interface PrimeWorkApi {
     input(terminalId: string, data: string): void
     resize(terminalId: string, cols: number, rows: number): void
     setActiveContext(terminalId: string, context: TerminalActiveContext): void
+    clearActiveContext(terminalId: string): void
     kill(terminalId: string): Promise<boolean>
     onData(callback: (event: TerminalDataEvent) => void): () => void
     onExit(callback: (event: TerminalExitEvent) => void): () => void

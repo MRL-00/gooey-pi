@@ -9,6 +9,7 @@ import { IconButton } from './ui'
 import { ResizeHandle } from './ResizeHandle'
 
 interface TerminalDrawerProps {
+  visible?: boolean
   cwd?: string
   sessionPath?: string
   shell?: string
@@ -144,7 +145,11 @@ const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function 
   }
 
   useEffect(() => {
-    if (!visible) return
+    if (!visible) {
+      const terminalId = terminalIdRef.current
+      if (terminalId && window.prime) window.prime.terminal.clearActiveContext(terminalId)
+      return
+    }
     requestAnimationFrame(() => {
       try { fitRef.current?.fit() } catch { /* tab is transitioning */ }
       terminalRef.current?.focus()
@@ -284,7 +289,7 @@ function createTab(number: number, shell?: string): TerminalTab {
   }
 }
 
-export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerProps>(function TerminalDrawer({ cwd, sessionPath, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError, onSelectionChange }, ref) {
+export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerProps>(function TerminalDrawer({ visible = true, cwd, sessionPath, shell, height, minHeight, maxHeight, defaultHeight, onHeightChange, onClose, onError, onSelectionChange }, ref) {
   const nextNumberRef = useRef(2)
   const viewRefs = useRef(new Map<string, TerminalViewHandle>())
   const [tabs, setTabs] = useState<TerminalTab[]>(() => [createTab(1, shell)])
@@ -316,8 +321,8 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
   }), [cwd])
 
   useEffect(() => {
-    onSelectionChangeRef.current?.(currentSelection(activeTabId))
-  }, [activeTabId])
+    onSelectionChangeRef.current?.(visible ? currentSelection(activeTabId) : undefined)
+  }, [activeTabId, visible])
 
   useEffect(() => () => onSelectionChangeRef.current?.(undefined), [])
 
@@ -349,7 +354,7 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
   }
 
   return (
-    <section className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal">
+    <section className={`terminal-drawer ${maximized ? 'is-maximized' : ''}`} aria-label="Integrated terminal" hidden={!visible}>
       {!maximized ? <ResizeHandle orientation="horizontal" label="Resize terminal" value={height} min={minHeight} max={maxHeight} defaultValue={defaultHeight} onChange={onHeightChange} /> : null}
       <div className="terminal-toolbar">
         <div className="terminal-tabs" role="tablist" aria-label="Terminal tabs">
@@ -381,7 +386,7 @@ export const TerminalDrawer = forwardRef<TerminalDrawerHandle, TerminalDrawerPro
             sessionPath={sessionPath}
             shell={shell}
             label={`${tab.shellName} ${tab.number}`}
-            visible={tab.id === activeTabId}
+            visible={visible && tab.id === activeTabId}
             onStateChange={(state) => updateTab(tab.id, state)}
             onSelectionChange={(text, truncated) => {
               if (activeTabIdRef.current !== tab.id) return

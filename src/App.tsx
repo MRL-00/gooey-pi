@@ -44,6 +44,13 @@ const EMPTY_MODELS: PrimeModelDescriptor[] = []
 const EMPTY_PROVIDERS: PrimeProviderDescriptor[] = []
 const LoadingPanel = ({ label }: { label: string }) => <div className="empty-state" role="status">Loading {label}…</div>
 
+interface TerminalSessionMount {
+  id: string
+  workspaceKey: string
+  cwd?: string
+  sessionPath?: string
+}
+
 export default function App() {
   const bridge = hasBridge() ? window.prime : null
   const initialProject = bridge ? undefined : SAMPLE_PROJECTS[0]
@@ -101,11 +108,16 @@ export default function App() {
   const terminalSessionKey = workspace.activeSessionId
     ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}`
     : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`
+  const activeTerminalSessionPath = workspace.runtime?.sessionFile ?? activeSession?.filePath
+  const [terminalSessions, setTerminalSessions] = useState<TerminalSessionMount[]>([])
+  const activeTerminalSession = useMemo(() => terminalSessions.find((terminal) => terminal.workspaceKey === terminalSessionKey
+    || Boolean(activeTerminalSessionPath && terminal.sessionPath === activeTerminalSessionPath)), [activeTerminalSessionPath, terminalSessionKey, terminalSessions])
+  const terminalOpen = Boolean(activeTerminalSession)
   const git = gitStatusForWorkspace(gitSnapshot, activeCwd)
   const layout = usePanelLayout({
     sidebarOpen: settingsState.sidebarOpen,
     inspectorOpen: settingsState.inspectorOpen, setInspectorOpen: settingsState.setInspectorOpen,
-    terminalOpen: settingsState.terminalOpen, view,
+    terminalOpen, view,
   })
   const extension = useExtensionUi({
     bridge, activeRuntimeId: workspace.runtime?.runtimeId, runtimeSessionsRef: workspace.runtimeSessionsRef,
@@ -149,7 +161,7 @@ export default function App() {
     if (shouldRefreshGitOnSessionTransition(previousStatus, activeSessionStatus, locallyOwnedActiveSession)) void refreshGit()
   }, [activeSessionStatus, locallyOwnedActiveSession, refreshGit])
   const agentBrowser = useAgentBrowserTabs({ bridge, reportError })
-  const terminalDrawerRef = useRef<TerminalDrawerHandle>(null)
+  const terminalDrawerRefs = useRef(new Map<string, TerminalDrawerHandle>())
   const [terminalSelection, setTerminalSelection] = useState<TerminalSelectionContext>()
   const [agentPreviewSelected, setAgentPreviewSelected] = useState(true)
   const [agentSlotRect, setAgentSlotRect] = useState<AgentSlotRect | null>(null)
@@ -205,7 +217,7 @@ export default function App() {
     return () => window.clearInterval(interval)
   }, [bridge, refreshHeartbeats])
   const {
-    toggleSidebar, toggleInspector, toggleTerminal,
+    toggleSidebar, toggleInspector, grantProject,
     selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived,
     addProject, removeProject, sendPrompt, stopRuntime, installSkill, connectMcp,
     createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
@@ -217,6 +229,40 @@ export default function App() {
     setProjects, setSessions, setGitSnapshot, setView, setPaletteOpen, setToast, setSubmitting,
     refreshSchedules, refreshHeartbeats, reportError,
   })
+  const closeTerminal = useCallback((id: string) => {
+    terminalDrawerRefs.current.delete(id)
+    setTerminalSessions((current) => current.filter((terminal) => terminal.id !== id))
+    if (activeTerminalSession?.id === id) setTerminalSelection(undefined)
+  }, [activeTerminalSession?.id])
+  const toggleTerminal = useCallback(async () => {
+    if (activeTerminalSession) {
+      closeTerminal(activeTerminalSession.id)
+      return
+    }
+    if (!activeProject || !activeCwd) return
+    if (activeProject.inferred) {
+      try { await grantProject(activeProject) } catch (error) { reportError(error); return }
+    }
+    setTerminalSessions((current) => {
+      const existing = current.find((terminal) => terminal.workspaceKey === terminalSessionKey
+        || Boolean(activeTerminalSessionPath && terminal.sessionPath === activeTerminalSessionPath))
+      if (existing) return current
+      return [...current, { id: crypto.randomUUID(), workspaceKey: terminalSessionKey, cwd: activeCwd, sessionPath: activeTerminalSessionPath }]
+    })
+  }, [activeCwd, activeProject, activeTerminalSession, activeTerminalSessionPath, closeTerminal, grantProject, reportError, terminalSessionKey])
+  useEffect(() => {
+    settingsState.setTerminalOpen(terminalOpen)
+  }, [settingsState.setTerminalOpen, terminalOpen])
+  useEffect(() => {
+    if (!activeTerminalSession) { setTerminalSelection(undefined); return }
+    setTerminalSessions((current) => current.map((terminal) => {
+      if (terminal.id !== activeTerminalSession.id) return terminal
+      const sessionPath = activeTerminalSessionPath ?? terminal.sessionPath
+      if (terminal.cwd === activeCwd && terminal.sessionPath === sessionPath) return terminal
+      return { ...terminal, cwd: activeCwd, sessionPath }
+    }))
+    setTerminalSelection(terminalDrawerRefs.current.get(activeTerminalSession.id)?.readSelectionContext())
+  }, [activeCwd, activeTerminalSession?.id, activeTerminalSessionPath])
   const sidebarActions = useSidebarActions({
     onSelectProject: selectProject,
     onSelectSession: selectSession,
@@ -274,17 +320,17 @@ export default function App() {
     {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
-      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={settingsState.terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
+      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} />
       <div className="workbench__content">{view === 'session' ? <div ref={layout.workspaceRowRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.sessionWorkspaceRef} className="conversation-column">
           <main className="conversation-pane">
             <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} showPinnedChanges={false} bottomDockHasChanges={git.files.length > 0} queuedMessageCount={queuedMessages.length} /></Suspense>
             <div className="conversation-bottom-dock">
               {git.files.length ? <ChangesCard git={git} onOpenChanges={openChanges} /> : null}
-              <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={workspace.runtime?.fastModeAvailable !== false} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} annotations={browserAnnotations.annotations} terminalSelection={terminalSelection} getTerminalContext={() => terminalDrawerRef.current?.readSelectionContext()} queuedMessages={queuedMessages} onDeleteQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} onEditQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} sendSignal={browserAnnotations.sendSignal} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} onRemoveAnnotation={browserAnnotations.remove} onClearAnnotations={browserAnnotations.clear} onClearTerminalSelection={() => terminalDrawerRef.current?.clearSelection()} />
+              <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={workspace.runtime?.fastModeAvailable !== false} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} annotations={browserAnnotations.annotations} terminalSelection={terminalSelection} getTerminalContext={() => activeTerminalSession ? terminalDrawerRefs.current.get(activeTerminalSession.id)?.readSelectionContext() : undefined} queuedMessages={queuedMessages} onDeleteQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} onEditQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} sendSignal={browserAnnotations.sendSignal} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} onRemoveAnnotation={browserAnnotations.remove} onClearAnnotations={browserAnnotations.clear} onClearTerminalSelection={() => { if (activeTerminalSession) terminalDrawerRefs.current.get(activeTerminalSession.id)?.clearSelection() }} />
             </div>
           </main>
-          {settingsState.terminalOpen ? <Suspense fallback={<LoadingPanel label="terminal" />}><TerminalDrawer key={terminalSessionKey} ref={terminalDrawerRef} cwd={activeCwd} sessionPath={activeRuntimeSessionFile ?? activeSessionFilePath} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={toggleTerminal} onError={reportError} onSelectionChange={setTerminalSelection} /></Suspense> : null}
+          {terminalSessions.map((terminal) => <Suspense key={terminal.id} fallback={terminal.id === activeTerminalSession?.id ? <LoadingPanel label="terminal" /> : null}><TerminalDrawer ref={(handle) => { if (handle) terminalDrawerRefs.current.set(terminal.id, handle); else terminalDrawerRefs.current.delete(terminal.id) }} visible={terminal.id === activeTerminalSession?.id} cwd={terminal.cwd} sessionPath={terminal.sessionPath} shell={settingsState.settings.terminalShell} height={layout.terminalHeight} minHeight={TERMINAL_MIN} maxHeight={layout.terminalMax} defaultHeight={TERMINAL_DEFAULT} onHeightChange={layout.setTerminalHeight} onClose={() => closeTerminal(terminal.id)} onError={reportError} onSelectionChange={(selection) => { if (terminal.id === activeTerminalSession?.id) setTerminalSelection(selection) }} /></Suspense>)}
         </div>
           {settingsState.inspectorOpen ? <ResizeHandle orientation="vertical" label="Resize inspector" value={layout.inspectorWidth} min={INSPECTOR_MIN} max={layout.inspectorMax} defaultValue={INSPECTOR_DEFAULT} onChange={layout.setInspectorWidth} /> : null}
           {settingsState.inspectorOpen ? <Suspense fallback={<LoadingPanel label="inspector" />}><Inspector key={`inspector-${browserGeneration}`} activeTab={settingsState.inspectorTab} onTabChange={settingsState.selectInspectorTab} onClose={toggleInspector} project={activeProject} cwd={activeCwd} runtime={workspace.runtime} messages={workspace.messages} git={git} automations={activeSession ? schedules.filter((task) => task.target.kind === 'session' && task.target.sessionId === activeSession.id) : []} heartbeats={activeSession ? heartbeats.filter((heartbeat) => heartbeat.sessionId === activeSession.id || heartbeat.sessionFile === activeSession.filePath) : []} onOpenAutomation={(id) => { setScheduleFocusId(id); setView('scheduled') }} browserHome={settingsState.settings.browserHome} browserAnnotations={browserAnnotations} agentBrowserTabs={activeAgentTabs} activeAgentTabId={activeAgentTabId} agentPreviewSelected={agentPreviewSelected} onSelectAgentTab={(tabId) => { setAgentPreviewSelected(false); agentBrowser.select(tabId) }} onCloseAgentTab={agentBrowser.close} onShowBrowserPreview={() => setAgentPreviewSelected(true)} onAgentSlotRect={setAgentSlotRect} agentSessionKey={activeRuntimeSessionFile ?? activeSessionFilePath} onPreviewContext={(webContentsId, sessionFile) => { if (bridge) void bridge.browser.setPreviewContext(webContentsId, sessionFile).catch(() => undefined) }} previewPointerEvent={agentBrowser.pointerEvent?.tabId === 'preview' ? agentBrowser.pointerEvent : null} onNavigateAgentTab={(tabId, action) => { if (bridge) void bridge.browser.navigateTab(tabId, action).catch(() => undefined) }} onRefreshGit={refreshGit} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRevealPath={(path) => { if (bridge) void bridge.app.revealPath(path) }} overlay={layout.compactLayout} /></Suspense> : null}

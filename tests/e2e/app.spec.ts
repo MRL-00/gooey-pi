@@ -932,23 +932,35 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByLabel('Close terminal', { exact: true }).click()
   })
 
-  test('recreates the terminal in the active secondary-folder cwd', async () => {
+  test('restores each session terminal without leaking it into another session', async () => {
     await page.getByLabel(/Toggle terminal/).click()
-    const input = page.locator('.terminal-drawer .xterm-helper-textarea')
+    const visibleDrawer = page.locator('.terminal-drawer:not([hidden])')
+    const input = visibleDrawer.locator('.xterm-helper-textarea')
     await expect(input).toBeVisible()
     await input.click()
-    await page.keyboard.type('pwd')
+    await page.keyboard.type('echo secondary-session-state')
     await page.keyboard.press('Enter')
-    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/secondary-project/, { timeout: 8_000 })
+    await expect(visibleDrawer.locator('.xterm-rows')).toContainText('secondary-session-state', { timeout: 8_000 })
 
     await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
-    const restartedInput = page.locator('.terminal-drawer .xterm-helper-textarea')
-    await expect(restartedInput).toBeVisible()
-    await restartedInput.click()
+    await expect(page.locator('.terminal-drawer:not([hidden])')).toHaveCount(0)
+    await page.getByLabel(/Toggle terminal/).click()
+    const primaryDrawer = page.locator('.terminal-drawer:not([hidden])')
+    const primaryInput = primaryDrawer.locator('.xterm-helper-textarea')
+    await expect(primaryInput).toBeVisible()
+    await primaryInput.click()
     await page.keyboard.type('pwd')
     await page.keyboard.press('Enter')
-    await expect(page.locator('.terminal-drawer .xterm-rows')).toContainText(/prime-work-e2e-[^/]+\/project/, { timeout: 8_000 })
-    await expect(page.locator('.terminal-drawer .xterm-rows')).not.toContainText('secondary-project')
+    await expect(primaryDrawer.locator('.xterm-rows')).toContainText(/prime-work-e2e-[^/]+\/project/, { timeout: 8_000 })
+    await expect(primaryDrawer.locator('.xterm-rows')).not.toContainText('secondary-session-state')
+
+    await page.locator('.session-row').filter({ hasText: 'Hermetic desktop fixture' }).click()
+    await expect(page.locator('.terminal-drawer:not([hidden]) .xterm-rows')).toContainText('secondary-session-state')
+    await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await expect(page.locator('.terminal-drawer:not([hidden]) .xterm-rows')).toContainText(/prime-work-e2e-[^/]+\/project/)
+    await page.locator('.terminal-drawer:not([hidden])').getByLabel('Close terminal', { exact: true }).click()
+    await page.locator('.session-row').filter({ hasText: 'Hermetic desktop fixture' }).click()
+    await page.locator('.terminal-drawer:not([hidden])').getByLabel('Close terminal', { exact: true }).click()
   })
 
   test('opens independent terminal tabs inside the conversation column', async () => {
@@ -987,9 +999,16 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).not.toContainText('second-terminal')
 
     await page.locator('.session-row').filter({ hasText: 'Primary workspace fixture' }).click()
+    await expect(page.locator('.terminal-drawer:not([hidden])')).toHaveCount(0)
+    await page.getByLabel(/Toggle terminal/).click()
     await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(1)
     await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).not.toContainText(/first-terminal|second-terminal/)
     await expect(page.getByLabel(/Split terminal/)).toHaveCount(0)
+
+    await page.locator('.session-row').filter({ hasText: 'Hermetic desktop fixture' }).click()
+    await expect(page.getByRole('tablist', { name: 'Terminal tabs' }).getByRole('tab')).toHaveCount(2)
+    await page.getByRole('tab', { name: /zsh 1/ }).click()
+    await expect(page.locator('.terminal-surface:not([hidden]) .xterm-rows')).toContainText('first-terminal')
 
     const geometry = await page.evaluate(() => {
       const session = document.querySelector('.session-workspace')!.getBoundingClientRect()
@@ -1009,13 +1028,13 @@ test.describe('Prime Work desktop smoke', () => {
     expect(Math.abs(geometry.inspectorTop - geometry.sessionTop)).toBeLessThanOrEqual(1)
     expect(Math.abs(geometry.inspectorBottom - geometry.sessionBottom)).toBeLessThanOrEqual(1)
 
-    const drawer = page.locator('.terminal-drawer')
+    const drawer = page.locator('.terminal-drawer:not([hidden])')
     const before = await drawer.evaluate((node) => node.getBoundingClientRect().height)
-    await page.getByLabel('Maximize terminal').click()
+    await drawer.getByLabel('Maximize terminal').click()
     await expect(drawer).toHaveClass(/is-maximized/)
     expect(await drawer.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThan(before)
-    await page.getByLabel('Restore terminal').click()
-    await page.getByLabel('Close terminal', { exact: true }).click()
+    await drawer.getByLabel('Restore terminal').click()
+    await drawer.getByLabel('Close terminal', { exact: true }).click()
   })
 
   test('attaches and removes active terminal selection context', async () => {

@@ -154,6 +154,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   on('terminal:input', (event, terminalId, data) => services.terminals.input(event.sender, terminalId, data))
   on('terminal:resize', (event, terminalId, cols, rows) => services.terminals.resize(event.sender, terminalId, cols, rows))
   on('terminal:set-active-context', (event, terminalId, context) => services.terminals.setActiveContext(event.sender, terminalId, context))
+  on('terminal:clear-active-context', (event, terminalId) => services.terminals.clearActiveContext(event.sender, terminalId))
   handle('terminal:kill', (event, terminalId) => services.terminals.kill(event.sender, terminalId))
 
   handle('git:status', (_event, cwd) => services.git.status(cwd))

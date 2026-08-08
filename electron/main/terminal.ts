@@ -177,6 +177,13 @@ export class TerminalService {
     this.activeBySession.set(terminal.sessionPath, requireString(idValue, 'terminalId', { min: 1, max: 128 }))
   }
 
+  clearActiveContext(owner: WebContents, idValue: unknown): void {
+    const id = requireString(idValue, 'terminalId', { min: 1, max: 128 })
+    const terminal = this.owned(owner, id)
+    terminal.activeContext = undefined
+    this.removeActive(id, terminal)
+  }
+
   readActive(sessionPathValue: string): (TerminalActiveContext & { cwd: string }) | undefined {
     const sessionPath = canonicalSessionPath(sessionPathValue)
     const id = this.activeBySession.get(sessionPath)
