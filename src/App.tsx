@@ -363,6 +363,7 @@ export default function App() {
     onNavigate: navigate,
     onNewSession: newSession,
     onAddProject: () => { void addProject() },
+    onRemoveProject: (project) => { void removeProject(project) },
     onClose: toggleSidebar,
     onOpenPalette: () => setPaletteOpen(true),
     onRenameSession: renameSession,

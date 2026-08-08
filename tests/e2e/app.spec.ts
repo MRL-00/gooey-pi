@@ -620,6 +620,28 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.session-row-wrap.is-selected')).toHaveCount(0)
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
+  test('removes a project from the sidebar through its context menu', async () => {
+    const projectRow = page.locator('.project-row').first()
+    await expect(projectRow).toBeVisible()
+    await expect(page.locator('.sidebar__primary .lucide-notebook-pen')).toHaveCount(1)
+    await expect(page.locator('.project-row__new-session .lucide-notebook-pen')).toHaveCount(1)
+    await expect(page.locator('.sidebar__section-heading .lucide-folder-plus')).toHaveCount(1)
+    await expect(page.getByTitle('New session (⌘N)')).toHaveCount(2)
+    await expect(page.getByTitle('Add project')).toHaveCount(1)
+    await expect(projectRow.getByTitle('New session in Multi-folder fixture')).toHaveCount(1)
+    await expect(page.getByTitle('Archive Hermetic desktop fixture')).toHaveCount(1)
+
+    await projectRow.click({ button: 'right' })
+    const menu = page.getByRole('menu', { name: 'Project options for Multi-folder fixture' })
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Remove project' }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Remove project' })
+    await expect(dialog).toContainText('The folder and saved sessions will not be deleted.')
+    await dialog.getByRole('button', { name: 'Remove', exact: true }).click()
+    await expect(page.locator('.project-row')).toHaveCount(0)
+    expect(existsSync(join(fixtureRoot, 'project'))).toBe(true)
+  })
 
   test('shows agent messages as collapsed, expandable Prime handoffs instead of errors', async () => {
     const disclosure = page.getByRole('button', { name: 'Message from agent: fixture-reviewer' })

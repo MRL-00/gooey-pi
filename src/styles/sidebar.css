@@ -32,7 +32,7 @@
 .sidebar__section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 8px; color: var(--text-tertiary); font-size: 11px; font-weight: 540; }
 .sidebar__empty { margin: 12px 8px; color: var(--text-tertiary); font-size: 12px; }
 .project-group { margin-bottom: 5px; }
-.project-row { height: 34px; display: flex; align-items: center; padding: 0 3px; border-radius: 7px; color: var(--text-secondary); }
+.project-row { position: relative; height: 34px; display: flex; align-items: center; padding: 0 3px; border-radius: 7px; color: var(--text-secondary); }
 .project-row:hover { background: var(--surface-hover); }
 .project-row.is-selected { color: var(--text); background: var(--surface-selected); }
 .project-row__collapse { width: 21px; height: 28px; display: grid; place-items: center; padding: 0; color: var(--text-tertiary); background: transparent; }
@@ -41,6 +41,9 @@
 .row-action { opacity: 0; transition: opacity 130ms ease-out; }
 .project-row:hover .row-action, .project-row:focus-within .row-action { opacity: 1; }
 .project-row__new-session { flex: 0 0 auto; color: var(--text-tertiary); }
+.project-row__menu { position: absolute; z-index: 120; top: 33px; right: 2px; width: 154px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
+.project-row__menu button { width: 100%; min-height: 29px; display: flex; align-items: center; gap: 7px; padding: 0 7px; border-radius: 5px; color: var(--text-secondary); background: transparent; text-align: left; }
+.project-row__menu button:hover, .project-row__menu button:focus-visible { color: var(--danger); background: var(--danger-soft); }
 .session-list { padding-left: 20px; margin-top: 1px; }
 .session-row-wrap { position: relative; border-radius: 7px; }
 .session-row-wrap:hover, .session-row-wrap:focus-within { background: var(--surface-hover); }

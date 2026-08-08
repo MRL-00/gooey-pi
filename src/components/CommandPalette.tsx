@@ -1,4 +1,4 @@
-import { Bell, CalendarClock, Folder, LayoutPanelLeft, PackageOpen, Plus, Search, Settings, Terminal, } from 'lucide-react'
+import { Bell, CalendarClock, Folder, LayoutPanelLeft, NotebookPen, PackageOpen, Search, Settings, Terminal, } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { HarnessId, WorkspaceView } from '@/types/api'
@@ -14,7 +14,7 @@ export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, o
   // Schedules and plugins are prime-only surfaces; hide their commands for OMP.
   const primeOnly=new Set(harness==='prime'?[]:['scheduled','plugins'])
   const commands:Command[]=[
-    {id:'new',label:'New session',detail:'Start fresh in the current project',shortcut:'⌘N',icon:<Plus size={14}/>,run:onNewSession},
+    {id:'new',label:'New session',detail:'Start fresh in the current project',shortcut:'⌘N',icon:<NotebookPen size={14}/>,run:onNewSession},
     {id:'projects',label:'Open Projects',detail:'Browse local workspaces',icon:<Folder size={14}/>,run:()=>onNavigate('projects')},
     {id:'activity',label:'Open Activity',detail:'See work that needs attention',icon:<Bell size={14}/>,run:()=>onNavigate('activity')},
     {id:'scheduled',label:'Open Scheduled',detail:'Manage recurring work',icon:<CalendarClock size={14}/>,run:()=>onNavigate('scheduled')},
