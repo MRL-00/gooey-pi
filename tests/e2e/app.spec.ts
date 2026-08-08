@@ -68,7 +68,10 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
   const sessionFile = join(sessions, 'fixture.jsonl')
   writeFileSync(sessionFile, [
     JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalSecondary, timestamp: '2026-01-01T00:00:00.000Z' }),
-    JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: 'Hermetic desktop fixture', timestamp: '2026-01-01T00:00:00.000Z' } }),
+    JSON.stringify({ type: 'message', id: 'fixture-message', parentId: null, message: { role: 'user', content: [
+      { type: 'text', text: 'Hermetic desktop fixture' },
+      { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+    ], timestamp: '2026-01-01T00:00:00.000Z' } }),
     JSON.stringify({
       type: 'custom_message', id: 'fixture-agent-message', parentId: 'fixture-message', customType: 'agent_message', display: true,
       content: '[from child:fixture-reviewer]\nAgent-to-agent message received.\n\nEnvelope metadata that should stay hidden.',
@@ -693,6 +696,15 @@ test.describe('Prime Work desktop smoke', () => {
       images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }],
     })
     await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
+
+    const imagePreview = page.getByRole('button', { name: 'Expand pasted image' }).first()
+    await imagePreview.click()
+    const lightbox = page.getByRole('dialog', { name: 'Expanded pasted image' })
+    await expect(lightbox).toBeVisible()
+    await expect(lightbox.locator('.image-lightbox__image')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+    await page.keyboard.press('Escape')
+    await expect(lightbox).toHaveCount(0)
+    await expect(imagePreview).toBeFocused()
   })
 
   test('round-trips an agent multiple-choice question through the desktop modal', async () => {

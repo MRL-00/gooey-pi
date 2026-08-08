@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 
 interface MarkdownTextProps {
   text: string
-  /** Actively streaming text throttles Markdown re-parses and renders the raw tail as plain text between parses. */
+  /** Actively streaming text throttles Markdown re-parses to a coherent committed snapshot. */
   streaming?: boolean
 }
 
@@ -43,8 +43,8 @@ export interface StreamingParseState {
 /**
  * Decides how much of a streaming message to hand to the Markdown parser: the
  * boundary advances at most every STREAMING_PARSE_INTERVAL_MS, or immediately
- * when the unparsed tail crossed a newline; otherwise the caller renders the
- * tail as plain text and retries after `delayMs`.
+ * when the unparsed tail crossed a newline; otherwise the caller keeps the
+ * previous coherent snapshot visible and retries after `delayMs`.
  */
 export function advanceStreamingParse(
   state: StreamingParseState,
@@ -93,12 +93,12 @@ export const MarkdownText = memo(function MarkdownText({ text, streaming = false
 
   const boundary = streaming ? Math.min(parseStateRef.current.boundary, text.length) : text.length
   const parsedText = boundary === text.length ? text : text.slice(0, boundary)
-  const tail = text.slice(boundary)
-  // Equal parsed text keeps the element identity, so React skips re-parsing
-  // the Markdown subtree while only the plain-text tail grows.
+  // Keep the committed Markdown subtree intact between parses. Rendering the
+  // unparsed suffix as a sibling block makes punctuation and partial words
+  // jump onto separate lines while tokens are still arriving.
   const markdown = useMemo(
     () => <ReactMarkdown remarkPlugins={markdownPlugins} skipHtml components={markdownComponents}>{parsedText}</ReactMarkdown>,
     [parsedText],
   )
-  return <div className="prose">{markdown}{tail ? <p className="prose-stream-tail">{tail}</p> : null}</div>
+  return <div className="prose">{markdown}</div>
 })

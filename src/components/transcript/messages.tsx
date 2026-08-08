@@ -6,6 +6,7 @@ import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { PrimeMark } from '../ui'
 import { InlineText } from './syntax'
+import { TranscriptImage } from './TranscriptImage'
 import { ThinkingDots, WorkDisclosure, WorkTimeline } from './timeline'
 
 function imageSource(part: Extract<MessagePart, { type: 'image' }>): string | undefined {
@@ -16,7 +17,7 @@ function imageSource(part: Extract<MessagePart, { type: 'image' }>): string | un
 function renderImage(part: Extract<MessagePart, { type: 'image' }>, key: string) {
   const source = imageSource(part)
   return source ? (
-    <img key={key} className="image-part" src={source} alt="User attachment" />
+    <TranscriptImage key={key} source={source} alt="User attachment" />
   ) : (
     <div key={key} className="image-part image-part--unavailable">
       Image attachment unavailable

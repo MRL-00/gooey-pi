@@ -5,8 +5,9 @@ import { Transcript } from '../../src/components/Transcript'
 import type { TranscriptMessage } from '../../src/types/api'
 
 vi.mock('../../src/components/ui', async () => {
+  const actual = await vi.importActual<typeof import('../../src/components/ui')>('../../src/components/ui')
   const { createElement: element } = await import('react')
-  return { PrimeMark: ({ size = 24 }: { size?: number }) => element('span', { className: 'prime-mark', style: { width: size, height: size } }) }
+  return { ...actual, PrimeMark: ({ size = 24 }: { size?: number }) => element('span', { className: 'prime-mark', style: { width: size, height: size } }) }
 })
 
 const git = { isRepo: false, files: [] }
@@ -151,6 +152,7 @@ describe('transcript rendering', () => {
     }])
 
     expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(html).toContain('aria-label="Expand pasted image"')
     expect(html).toContain('Image attachment unavailable')
     expect(html).not.toContain('src="data:image/png;base64,truncated"')
   })
