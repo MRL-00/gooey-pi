@@ -123,7 +123,12 @@ export class RpcRuntime {
     // other request; unsolicited frames (ready, available_commands_update) may
     // arrive before or after this and are simply forwarded.
     if (this.adapter.negotiateProtocolVersion !== undefined) {
-      await this.request({ type: 'negotiate_protocol', protocolVersion: this.adapter.negotiateProtocolVersion }, 60_000)
+      try {
+        await this.request({ type: 'negotiate_protocol', protocolVersion: this.adapter.negotiateProtocolVersion }, 60_000)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        throw new Error(`${this.adapter.agentName} does not support RPC protocol v${this.adapter.negotiateProtocolVersion} (${reason}). Update the ${this.adapter.agentName} CLI and try again.`)
+      }
     }
     const response = await this.request({ type: 'get_state' }, 60_000)
     this.updateFromState(response.data)
