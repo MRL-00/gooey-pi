@@ -245,11 +245,15 @@ export const readOmpTranscript: TranscriptFileReader = createTranscriptReader({
  */
 export function ompSessionServiceOptions(sessionRoot = ompSessionRoot()): SessionServiceOptions {
   return {
+    harness: 'omp',
     sessionRoot,
     catalogIo: createOmpCatalogIo(),
     catalogNameTimestamp: ompTimestampFromSessionName,
     metadataReader: createOmpSessionMetadataReader(),
     transcriptReader: readOmpTranscript,
     isSessionPathAuthorized: isOmpSessionPath,
+    // Session files sit one bucket directory below the root; recursion is
+    // honored on platforms with native support and degrades gracefully elsewhere.
+    recursiveWatch: true,
   }
 }

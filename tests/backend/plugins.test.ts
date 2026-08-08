@@ -74,7 +74,7 @@ describe('PluginService discovery', () => {
     const store = new JsonStateStore(join(root, 'state.json'))
     const info = lstatSync(project, { bigint: true })
     await store.update((state) => { state.projects.push({
-      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
+      id: 'project', harness: 'prime', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
       createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
       folderIdentities: { [realpathSync(project)]: { dev: info.dev.toString(), ino: info.ino.toString() } },
     }) })
@@ -249,7 +249,7 @@ describe('PluginService discovery', () => {
     const store = new JsonStateStore(join(root, 'state.json'))
     const info = lstatSync(project, { bigint: true })
     await store.update((state) => { state.projects.push({
-      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
+      id: 'project', harness: 'prime', name: 'Project', path: project, folders: [project], primaryFolder: project, pinned: false,
       createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(),
       folderIdentities: { [realpathSync(project)]: { dev: info.dev.toString(), ino: info.ino.toString() } },
     }) })

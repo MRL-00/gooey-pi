@@ -178,6 +178,9 @@ export class AgentRpcManager {
 
   list(): RuntimeInfo[] { return [...this.runtimes.values()].map((runtime) => runtime.snapshot()) }
 
+  /** Cheap ownership probe for IPC routing; requireRuntime keeps the authoritative not-found error. */
+  has(runtimeId: string): boolean { return this.runtimes.has(runtimeId) }
+
   getForSession(filePath: string): RuntimeInfo | undefined {
     const wanted = canonicalSessionPath(filePath)
     return this.list().find((runtime) => runtime.sessionFile && canonicalSessionPath(runtime.sessionFile) === wanted)

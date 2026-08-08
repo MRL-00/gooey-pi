@@ -29,11 +29,11 @@ function deferred<T>(): Deferred<T> {
 }
 
 const project: ProjectRecord = {
-  id: 'project', name: 'Project', path: '/project', folders: ['/project'], primaryFolder: '/project', pinned: false,
+  id: 'project', harness: 'prime', name: 'Project', path: '/project', folders: ['/project'], primaryFolder: '/project', pinned: false,
   createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z', sessionCount: 1,
 }
 const session: SessionRecord = {
-  id: 'session', projectPath: '/project', filePath: '/sessions/current.jsonl', title: 'Current',
+  id: 'session', harness: 'prime', projectPath: '/project', filePath: '/sessions/current.jsonl', title: 'Current',
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'idle', depth: 0,
 }
 const message = (text: string): TranscriptMessage => ({

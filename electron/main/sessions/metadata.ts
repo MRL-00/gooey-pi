@@ -9,7 +9,8 @@ import { compactText, textFromContent, validTimestamp } from './transcript'
 
 export type JsonRecord = Record<string, unknown>
 
-export interface SessionMetadata extends SessionRecord { sessionName?: string }
+/** Per-file metadata snapshot; the owning SessionService stamps the harness when it builds SessionRecords. */
+export interface SessionMetadata extends Omit<SessionRecord, 'harness'> { sessionName?: string }
 
 const MAX_SESSION_FILE_BYTES = 256 * 1024 * 1024
 export const MAX_METADATA_RECORDS = 200_000

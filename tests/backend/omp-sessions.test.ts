@@ -263,3 +263,35 @@ describe('OMP transcript access through the service', () => {
     ])
   })
 })
+
+describe('OMP session service harness identity', () => {
+  it('stamps every record and change event with the omp harness', async () => {
+    const { root, project, service } = setup()
+    expect(service.harness).toBe('omp')
+    mkdirSync(join(root, '-bucket'))
+    const file = join(root, '-bucket', NAME_A)
+    writeOmpSession(file, { cwd: project, entries: [ompEntry('message', 'aa11bb22', null, { message: { role: 'user', content: 'question' } })] })
+
+    const records = await service.list()
+    expect(records.map((record) => record.harness)).toEqual(['omp'])
+
+    const events: Array<{ filePath?: string; harness?: string }> = []
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+    try {
+      const watcherHarness = service as unknown as { queueSessionChange(filename: string): void }
+      // Recursive watchers report bucket-relative names one directory deep.
+      watcherHarness.queueSessionChange(`-bucket/${NAME_A}`)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 400))
+      expect(events).toContainEqual({ filePath: realpathSync(file), harness: 'omp' })
+
+      // Deeper or hidden names cannot resolve to one session file and coalesce
+      // into a catalog-wide refresh instead.
+      events.splice(0)
+      watcherHarness.queueSessionChange(`-bucket/nested/${NAME_A}`)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 400))
+      expect(events).toEqual([{ harness: 'omp' }])
+    } finally {
+      unsubscribe()
+    }
+  })
+})

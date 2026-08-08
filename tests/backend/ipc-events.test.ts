@@ -23,6 +23,15 @@ function serviceStub(): Record<string, unknown> {
   return new Proxy({}, { get: () => vi.fn(async () => undefined) })
 }
 
+function ompStub(): Record<string, unknown> {
+  return {
+    projects: { ...serviceStub(), authorizePath: vi.fn(async () => { throw new Error('denied') }) },
+    sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath: vi.fn(async () => { throw new Error('denied') }) },
+    agents: { ...serviceStub(), has: vi.fn(() => false) },
+    catalog: serviceStub(),
+  }
+}
+
 describe('app:reveal-path authorization', () => {
   const expectedUrl = 'prime-work://app/'
 
@@ -39,6 +48,7 @@ describe('app:reveal-path authorization', () => {
       heartbeats: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+      omp: ompStub(),
     }
     electronMocks.ipcMain.handle.mockClear()
     electronMocks.shell.showItemInFolder.mockClear()
@@ -126,6 +136,7 @@ describe('session change IPC', () => {
       settings: serviceStub(),
       schedules: serviceStub(),
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+      omp: ompStub(),
     }
     const expectedUrl = 'prime-work://app/'
     const trusted = {
@@ -195,6 +206,7 @@ describe('shell-facing app handlers', () => {
       settings: serviceStub(),
       schedules: serviceStub(),
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+      omp: ompStub(),
       ...overrides,
     }
     const registration = registerIpc(services as never, expectedUrl)
@@ -310,6 +322,7 @@ describe('IPC registration lifecycle', () => {
       settings: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+      omp: ompStub(),
     }
   }
 

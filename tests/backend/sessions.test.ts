@@ -114,7 +114,7 @@ describe('SessionService catalog scaling', () => {
     const info = lstatSync(project, { bigint: true })
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project', name: 'Project', path: project, folders: [project], primaryFolder: project,
+      id: 'project', harness: 'prime', name: 'Project', path: project, folders: [project], primaryFolder: project,
       pinned: false, createdAt: now, lastOpenedAt: now,
       folderIdentities: { [project]: { dev: info.dev.toString(), ino: info.ino.toString() } },
     }) })

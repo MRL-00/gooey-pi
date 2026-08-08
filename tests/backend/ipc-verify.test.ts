@@ -21,6 +21,15 @@ function serviceStub(): Record<string, unknown> {
   return new Proxy({}, { get: () => vi.fn(async () => undefined) })
 }
 
+function ompStub(): Record<string, unknown> {
+  return {
+    projects: { ...serviceStub(), authorizePath: vi.fn(async () => { throw new Error('denied') }) },
+    sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath: vi.fn(async () => { throw new Error('denied') }) },
+    agents: { ...serviceStub(), has: vi.fn(() => false) },
+    catalog: serviceStub(),
+  }
+}
+
 function services(): Record<string, unknown> {
   return {
     meta: { version: '0.0.0-test' },
@@ -35,6 +44,7 @@ function services(): Record<string, unknown> {
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+    omp: ompStub(),
   }
 }
 

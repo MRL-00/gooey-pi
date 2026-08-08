@@ -28,4 +28,6 @@ export const SETTINGS_FIELD_SECTIONS = {
   messageEnterAction: 'agent',
   telemetry: 'privacy',
   disabledProviders: 'providers',
+  activeHarness: 'agent',
+  ompApprovalMode: 'agent',
 } as const satisfies Record<keyof AppSettings, SettingsSection>

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
-import { PRIME_THINKING_LEVELS, type AppSettings, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
+import { PRIME_THINKING_LEVELS, type AppSettings, type HarnessId, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
 import { isRecord } from './validation'
 
 export interface FolderIdentity { dev: string; ino: string }
@@ -13,7 +13,7 @@ export interface PersistedProject extends Omit<ProjectRecord, 'sessionCount' | '
 }
 
 export interface DesktopState {
-  version: 2
+  version: 3
   projects: PersistedProject[]
   settings: AppSettings
   archivedSessions: string[]
@@ -40,11 +40,18 @@ export function defaultSettings(): AppSettings {
     messageEnterAction: 'queue',
     telemetry: false,
     disabledProviders: [],
+    activeHarness: 'prime',
+    ompApprovalMode: 'inherit',
   }
 }
 
 function defaultState(): DesktopState {
-  return { version: 2, projects: [], settings: defaultSettings(), archivedSessions: [], dismissedProjectPaths: [], schedules: [] }
+  return { version: 3, projects: [], settings: defaultSettings(), archivedSessions: [], dismissedProjectPaths: [], schedules: [] }
+}
+
+/** Version <= 2 states predate harness scoping; every hostile or absent value falls back to 'prime'. */
+function parseHarness(value: unknown): HarnessId {
+  return value === 'omp' ? 'omp' : 'prime'
 }
 
 function validDate(value: unknown): value is string {
@@ -65,6 +72,7 @@ function parseProject(value: unknown): PersistedProject | null {
   }
   return {
     id: value.id || randomUUID(),
+    harness: parseHarness(value.harness),
     name: value.name,
     path: value.path,
     folders,
@@ -96,6 +104,8 @@ function parseSettings(value: unknown): AppSettings {
     disabledProviders: Array.isArray(value.disabledProviders)
       ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
       : defaults.disabledProviders,
+    activeHarness: parseHarness(value.activeHarness),
+    ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
   }
 }
 
@@ -193,8 +203,11 @@ function capUnboundedCollections(state: DesktopState): void {
 
 function parseState(value: unknown): DesktopState {
   if (!isRecord(value)) return defaultState()
+  // Version 2 -> 3: projects gain a harness (defaulting to 'prime') and
+  // settings gain activeHarness/ompApprovalMode; both are filled by the field
+  // parsers above, so older states migrate on load without a separate pass.
   const state: DesktopState = {
-    version: 2,
+    version: 3,
     projects: Array.isArray(value.projects) ? value.projects.map(parseProject).filter((item): item is PersistedProject => item !== null) : [],
     settings: parseSettings(value.settings),
     archivedSessions: Array.isArray(value.archivedSessions) ? value.archivedSessions.filter((item): item is string => typeof item === 'string') : [],

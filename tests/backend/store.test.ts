@@ -299,6 +299,57 @@ describe('JsonStateStore', () => {
     expect(store.getArchivedSessions()).toEqual(['/sessions/kept.jsonl'])
   })
 
+  it('migrates version 2 state: projects gain the prime harness and settings gain harness defaults', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    const { activeHarness: _activeHarness, ompApprovalMode: _ompApprovalMode, ...legacySettings } = defaultSettings()
+    writeFileSync(path, JSON.stringify({
+      version: 2,
+      projects: [{ id: 'legacy', name: 'Legacy', path: '/legacy', folders: ['/legacy'], primaryFolder: '/legacy' }],
+      settings: legacySettings,
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const state = new JsonStateStore(path).snapshot()
+    expect(state.version).toBe(3)
+    expect(state.projects.map((project) => project.harness)).toEqual(['prime'])
+    expect(state.settings.activeHarness).toBe('prime')
+    expect(state.settings.ompApprovalMode).toBe('inherit')
+  })
+
+  it('keeps valid harness fields and resets hostile ones to defaults', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [
+        { id: 'omp-project', harness: 'omp', name: 'OMP', path: '/omp', folders: ['/omp'], primaryFolder: '/omp' },
+        { id: 'hostile', harness: { toString: 'omp' }, name: 'Hostile', path: '/hostile', folders: ['/hostile'], primaryFolder: '/hostile' },
+      ],
+      settings: { ...defaultSettings(), activeHarness: 'omp', ompApprovalMode: 'yolo' },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const kept = new JsonStateStore(path).snapshot()
+    expect(kept.projects.map((project) => project.harness)).toEqual(['omp', 'prime'])
+    expect(kept.settings.activeHarness).toBe('omp')
+    expect(kept.settings.ompApprovalMode).toBe('yolo')
+
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
+      settings: { ...defaultSettings(), activeHarness: 'codex', ompApprovalMode: 'sudo' },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const reset = new JsonStateStore(path).snapshot()
+    expect(reset.settings.activeHarness).toBe('prime')
+    expect(reset.settings.ompApprovalMode).toBe('inherit')
+  })
+
   it('refuses to parse an oversized state file and backs it up instead', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')
@@ -319,7 +370,7 @@ describe('JsonStateStore', () => {
     const path = join(dir, 'state.json')
     writeFileSync(path, '{broken')
     const store = new JsonStateStore(path)
-    expect(store.snapshot().version).toBe(2)
+    expect(store.snapshot().version).toBe(3)
     expect(store.snapshot().projects).toEqual([])
 
     await store.update((state) => { state.archivedSessions.push('after-recovery') })

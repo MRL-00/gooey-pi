@@ -36,6 +36,14 @@ export class SettingsService {
       },
       browserHome: (value) => requireWebUrl(value),
       terminalShell: (value) => this.validateShell(value),
+      activeHarness: (value) => {
+        if (value !== 'prime' && value !== 'omp') throw new TypeError('Invalid harness')
+        return value
+      },
+      ompApprovalMode: (value) => {
+        if (value !== 'inherit' && value !== 'always-ask' && value !== 'write' && value !== 'yolo') throw new TypeError('Invalid OMP approval mode')
+        return value
+      },
       disabledProviders: (value) => {
         if (!Array.isArray(value) || value.length > 128) throw new TypeError('disabledProviders must be a bounded array')
         return [...new Set(value.map((entry, index) => {

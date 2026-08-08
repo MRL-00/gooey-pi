@@ -3,8 +3,8 @@ import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { BROWSER_PARTITION, type AppMeta, type ProviderAuthEvent } from '../../src/types/api'
-import { AgentRpcManager } from './agent-rpc'
+import { BROWSER_PARTITION, type AppMeta, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
+import { AgentRpcManager, OMP_RPC_ADAPTER } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
@@ -13,6 +13,7 @@ import { HARNESSES } from './harness'
 import { beginProcessShutdown, findHarnessExecutable, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
+import { OmpModelCatalogService } from './providers-omp'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
 import { ScheduledRunExecutor } from './schedules/executor'
@@ -22,6 +23,7 @@ import { AgentScheduleBridge } from './schedules/agent-bridge'
 import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
 import { SessionService } from './sessions'
+import { ompSessionServiceOptions } from './sessions/omp'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
 
@@ -30,6 +32,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { stan
 let mainWindow: BrowserWindow | null = null
 let ipc: IpcRegistration | null = null
 let agents: AgentRpcManager | null = null
+let ompAgents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
@@ -48,8 +51,9 @@ installCrashGuards({
   },
   cleanup: async () => {
     agents?.beginShutdown()
+    ompAgents?.beginShutdown()
     beginProcessShutdown()
-    await Promise.allSettled([agents?.stopAll() ?? Promise.resolve(), stopChildProcesses()])
+    await Promise.allSettled([agents?.stopAll() ?? Promise.resolve(), ompAgents?.stopAll() ?? Promise.resolve(), stopChildProcesses()])
   },
 })
 
@@ -302,30 +306,70 @@ async function bootstrap(): Promise<void> {
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
   store = stateStore
   const sessions = new SessionService(stateStore, executable)
+  // OMP has no live-CLI overlay (`omp list --json` does not exist), so the OMP
+  // catalog is constructed with a null executable and JSONL-only metadata.
+  const ompSessions = new SessionService(stateStore, null, undefined, ompSessionServiceOptions())
   const projects = new ProjectService(stateStore, () => mainWindow)
-  const git = new GitService((cwd) => projects.authorizeCwd(cwd))
+  const ompProjects = new ProjectService(stateStore, () => mainWindow, 'omp')
+  // Git and terminals are harness-agnostic: a cwd (or bound session) is valid
+  // when either harness's own grants authorize it. Prime is consulted first so
+  // Prime-only setups keep their exact behavior and error text.
+  const authorizeEitherCwd = async (cwd: string): Promise<string> => {
+    try { return await projects.authorizeCwd(cwd) } catch (error) {
+      try { return await ompProjects.authorizeCwd(cwd) } catch { throw error }
+    }
+  }
+  const requireEitherSessionPath = async (path: string): Promise<string> => {
+    try { return await sessions.requireSessionPath(path) } catch (error) {
+      try { return await ompSessions.requireSessionPath(path) } catch { throw error }
+    }
+  }
+  const git = new GitService(authorizeEitherCwd)
   // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
 
   const providers = new PrimeProviderService({ openExternal: async (url) => { await shell.openExternal(url, { activate: true }) } })
   providerService = providers
+  const disabledProviders = () => new Set(stateStore.getSettings().disabledProviders)
+  const ompCatalog = new OmpModelCatalogService(ompExecutable)
   agents = new AgentRpcManager(
     executable,
     (cwd) => projects.authorizeCwd(cwd),
     (path) => sessions.requireSessionPath(path),
     providers,
-    () => new Set(stateStore.getSettings().disabledProviders),
+    disabledProviders,
   )
+  // The OMP manager exists whether or not the omp CLI is installed; starting a
+  // runtime without it fails with the adapter's per-harness not-found error.
+  const ompManager = new AgentRpcManager(
+    ompExecutable,
+    (cwd) => ompProjects.authorizeCwd(cwd),
+    (path) => ompSessions.requireSessionPath(path),
+    ompCatalog,
+    disabledProviders,
+    OMP_RPC_ADAPTER,
+    () => {
+      const mode = stateStore.getSettings().ompApprovalMode
+      return mode === 'inherit' ? undefined : mode
+    },
+  )
+  ompAgents = ompManager
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     all: () => agents?.list() ?? [],
     stop: async (path) => { await agents?.stopForSession(path) },
     rename: async (path, title) => agents?.renameForSession(path, title) ?? false,
   })
+  ompSessions.bindRuntimeHooks({
+    get: (path) => ompAgents?.getForSession(path),
+    all: () => ompAgents?.list() ?? [],
+    stop: async (path) => { await ompAgents?.stopForSession(path) },
+    rename: async (path, title) => ompAgents?.renameForSession(path, title) ?? false,
+  })
   terminals = new TerminalService(
-    (cwd) => projects.authorizeCwd(cwd),
+    authorizeEitherCwd,
     () => stateStore.getSettings().terminalShell,
-    (path) => sessions.requireSessionPath(path),
+    requireEitherSessionPath,
   )
   projects.bindProviders({
     sessions: listCatalogSessions,
@@ -333,6 +377,13 @@ async function bootstrap(): Promise<void> {
     stopProjectProcesses: async (roots) => {
       plugins.evictProjects(roots)
       await Promise.all([agents!.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
+    },
+  })
+  ompProjects.bindProviders({
+    sessions: () => ompSessions.list(undefined, true),
+    branch: (cwd) => git.branch(cwd),
+    stopProjectProcesses: async (roots) => {
+      await Promise.all([ompManager.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
     },
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
@@ -404,6 +455,15 @@ async function bootstrap(): Promise<void> {
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
+  // OMP runtimes get the browser broker credentials but no extension or skill
+  // paths yet: the OMP-flavored browser extension ships in Phase 8, and until
+  // then OMP runtimes simply have no browser tools. The schedules bridge stays
+  // Prime-only.
+  ompManager.setRuntimeEnvironmentProvider((scope) => {
+    const { PRIME_WORK_BROWSER_EXTENSION_PATH: _extension, PRIME_WORK_BROWSER_SKILL_PATH: _skill, ...environment } = browserBridge.environmentFor(scope)
+    return environment
+  })
+  ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   const [detectedPrimeVersion, detectedOmpVersion] = await Promise.all([
     harnessVersion(executable),
     harnessVersion(ompExecutable),
@@ -419,15 +479,22 @@ async function bootstrap(): Promise<void> {
     },
   }
   trustedRendererUrl = resolveRendererUrl()
-  ipc = registerIpc({ meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService }, trustedRendererUrl)
-  agents.setEventSink((envelope) => {
+  ipc = registerIpc({
+    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService,
+    omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog },
+  }, trustedRendererUrl)
+  // Both managers share the one renderer forwarding path: envelopes carry the
+  // runtimeId and RuntimeInfo carries the harness, so the renderer can route.
+  const forwardAgentEvent = (envelope: PrimeEventEnvelope): void => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
       && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
       && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
       renderer.send('agent:event', envelope)
     }
-  })
+  }
+  agents.setEventSink(forwardAgentEvent)
+  ompManager.setEventSink(forwardAgentEvent)
   providers.setEventSink((event: ProviderAuthEvent) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
@@ -486,6 +553,7 @@ app.on('before-quit', (event) => {
   ipc = null
   registration?.dispose()
   agents?.beginShutdown()
+  ompAgents?.beginShutdown()
   beginProcessShutdown()
   beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
@@ -497,6 +565,7 @@ app.on('before-quit', (event) => {
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),
+    ompAgents?.stopAll() ?? Promise.resolve(),
     stopChildProcesses(),
   ]).then(async () => {
     // Await the drain so the final persist lands before the process exits.

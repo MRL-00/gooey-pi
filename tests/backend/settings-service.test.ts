@@ -34,6 +34,8 @@ describe('SettingsService.update', () => {
       messageEnterAction: 'steer',
       telemetry: false,
       disabledProviders: ['openai', 'openai', 'google'],
+      activeHarness: 'omp',
+      ompApprovalMode: 'always-ask',
     })
     expect(next).toMatchObject({
       theme: 'dark', sidebarOpen: false, inspectorOpen: true, terminalOpen: true,
@@ -41,6 +43,7 @@ describe('SettingsService.update', () => {
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
       telemetry: false, disabledProviders: ['openai', 'google'],
+      activeHarness: 'omp', ompApprovalMode: 'always-ask',
     })
     expect(service.get()).toEqual(next)
   })
@@ -66,6 +69,8 @@ describe('SettingsService.update', () => {
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
+    await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
     expect(service.get()).toEqual(before)
   })
 

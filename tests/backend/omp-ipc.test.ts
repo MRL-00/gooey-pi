@@ -1,0 +1,218 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const electronMocks = vi.hoisted(() => ({
+  app: {},
+  ipcMain: {
+    removeHandler: vi.fn(),
+    handle: vi.fn(),
+    on: vi.fn(),
+    removeAllListeners: vi.fn(),
+  },
+  shell: { openExternal: vi.fn(), showItemInFolder: vi.fn() },
+}))
+
+vi.mock('electron', () => electronMocks)
+
+import { registerIpc, type IpcRegistration } from '../../electron/main/ipc'
+
+const EXPECTED_URL = 'prime-work://app/'
+const PRIME_SESSION = '/home/user/.prime/agent/sessions/session.jsonl'
+const OMP_SESSION = '/home/user/.omp/agent/sessions/bucket/session.jsonl'
+
+function serviceStub(): Record<string, unknown> {
+  return new Proxy({}, { get: () => vi.fn(async () => undefined) })
+}
+
+interface Harness {
+  invoke(channel: string, ...args: unknown[]): unknown
+  services: ReturnType<typeof buildServices>
+  registration: IpcRegistration
+}
+
+function buildServices() {
+  const primeSessionGate = vi.fn(async (path: unknown) => {
+    if (path === PRIME_SESSION) return path
+    throw new TypeError('Session path is outside the Prime session directory')
+  })
+  const ompSessionGate = vi.fn(async (path: unknown) => {
+    if (path === OMP_SESSION) return path
+    throw new TypeError('Session path is outside the Prime session directory')
+  })
+  return {
+    meta: { version: '0.0.0-test' },
+    projects: { ...serviceStub(), list: vi.fn(async () => ['prime-projects']), grantInferred: vi.fn(async () => 'prime-grant') },
+    sessions: {
+      ...serviceStub(),
+      onDidChange: vi.fn(() => () => undefined),
+      requireSessionPath: primeSessionGate,
+      list: vi.fn(async () => ['prime-sessions']),
+      read: vi.fn(async () => ['prime-transcript']),
+      followUp: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
+      archive: vi.fn(async () => true),
+    },
+    agents: {
+      ...serviceStub(),
+      has: vi.fn((id: string) => id === 'prime-runtime'),
+      start: vi.fn(async (options: unknown) => ({ started: 'prime', options })),
+      command: vi.fn(async () => ({ ok: 'prime' })),
+      stop: vi.fn(async () => true),
+      list: vi.fn(() => [{ runtimeId: 'prime-runtime', harness: 'prime' }]),
+    },
+    terminals: serviceStub(),
+    git: serviceStub(),
+    plugins: serviceStub(),
+    providers: { ...serviceStub(), catalog: vi.fn(async () => ({ providers: [], models: [], from: 'prime' })), saveApiKey: vi.fn(async () => undefined) },
+    settings: { ...serviceStub(), get: vi.fn(() => ({ disabledProviders: ['blocked'] })) },
+    heartbeats: serviceStub(),
+    schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
+    browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+    omp: {
+      projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), grantInferred: vi.fn(async () => 'omp-grant') },
+      sessions: {
+        ...serviceStub(),
+        onDidChange: vi.fn(() => () => undefined),
+        requireSessionPath: ompSessionGate,
+        list: vi.fn(async () => ['omp-sessions']),
+        read: vi.fn(async () => ['omp-transcript']),
+        followUp: vi.fn(async () => true),
+        rename: vi.fn(async () => false),
+        archive: vi.fn(async () => true),
+      },
+      agents: {
+        ...serviceStub(),
+        has: vi.fn((id: string) => id === 'omp-runtime'),
+        start: vi.fn(async (options: unknown) => ({ started: 'omp', options })),
+        command: vi.fn(async () => ({ ok: 'omp' })),
+        stop: vi.fn(async () => true),
+        list: vi.fn(() => [{ runtimeId: 'omp-runtime', harness: 'omp' }]),
+      },
+      catalog: { catalog: vi.fn(async () => ({ providers: [], models: [], from: 'omp' })) },
+    },
+  }
+}
+
+describe('harness-aware IPC routing', () => {
+  let harness: Harness
+
+  beforeEach(() => {
+    const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+    electronMocks.ipcMain.handle.mockReset()
+    electronMocks.ipcMain.on.mockReset()
+    electronMocks.ipcMain.handle.mockImplementation((channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
+      handlers.set(channel, listener)
+    })
+    const services = buildServices()
+    const registration = registerIpc(services as never, EXPECTED_URL)
+    const mainFrame = { url: EXPECTED_URL }
+    const sender = { id: 1, isDestroyed: () => false, getURL: () => EXPECTED_URL, mainFrame }
+    registration.authorize(sender as never)
+    const event = { sender, senderFrame: mainFrame }
+    harness = {
+      invoke: (channel, ...args) => handlers.get(channel)!(event, ...args),
+      services,
+      registration,
+    }
+  })
+
+  afterEach(() => { harness.registration.dispose() })
+
+  it('rejects harness values outside the strict enum on every routed channel', async () => {
+    for (const channel of ['projects:list', 'projects:add']) {
+      await expect(async () => harness.invoke(channel, 'codex')).rejects.toThrow('Invalid harness')
+    }
+    await expect(async () => harness.invoke('sessions:list', undefined, false, 'OMP')).rejects.toThrow('Invalid harness')
+    await expect(async () => harness.invoke('providers:catalog', false, { harness: 'omp' })).rejects.toThrow('Invalid harness')
+    await expect(async () => harness.invoke('agent:start', { cwd: '/tmp', harness: 1 })).rejects.toThrow('Invalid harness')
+    expect(harness.services.agents.start).not.toHaveBeenCalled()
+    expect(harness.services.omp.agents.start).not.toHaveBeenCalled()
+  })
+
+  it('routes agent:start by harness and strips the routing field before the manager sees it', async () => {
+    await expect(harness.invoke('agent:start', { cwd: '/work', harness: 'omp' })).resolves.toEqual({ started: 'omp', options: { cwd: '/work' } })
+    expect(harness.services.omp.agents.start).toHaveBeenCalledWith({ cwd: '/work' })
+    expect(harness.services.agents.start).not.toHaveBeenCalled()
+
+    await expect(harness.invoke('agent:start', { cwd: '/work' })).resolves.toEqual({ started: 'prime', options: { cwd: '/work' } })
+    expect(harness.services.agents.start).toHaveBeenCalledWith({ cwd: '/work' })
+  })
+
+  it('routes agent:command and agent:stop by runtime ownership, defaulting unknown ids to prime', async () => {
+    await expect(harness.invoke('agent:command', 'omp-runtime', { type: 'abort' })).resolves.toEqual({ ok: 'omp' })
+    expect(harness.services.omp.agents.command).toHaveBeenCalledWith('omp-runtime', { type: 'abort' })
+
+    await expect(harness.invoke('agent:command', 'prime-runtime', { type: 'abort' })).resolves.toEqual({ ok: 'prime' })
+    expect(harness.services.agents.command).toHaveBeenCalledWith('prime-runtime', { type: 'abort' })
+
+    // An id neither manager owns lands on the Prime manager, preserving its
+    // exact requireRuntime error semantics.
+    await harness.invoke('agent:command', 'missing-runtime', { type: 'abort' })
+    expect(harness.services.agents.command).toHaveBeenCalledWith('missing-runtime', { type: 'abort' })
+
+    await expect(harness.invoke('agent:stop', 'omp-runtime')).resolves.toBe(true)
+    expect(harness.services.omp.agents.stop).toHaveBeenCalledWith('omp-runtime')
+  })
+
+  it('concatenates both managers for agent:list', () => {
+    expect(harness.invoke('agent:list')).toEqual([
+      { runtimeId: 'prime-runtime', harness: 'prime' },
+      { runtimeId: 'omp-runtime', harness: 'omp' },
+    ])
+  })
+
+  it('routes sessions:list and projects channels by the harness argument, defaulting to prime', async () => {
+    await expect(harness.invoke('sessions:list', undefined, false)).resolves.toEqual(['prime-sessions'])
+    await expect(harness.invoke('sessions:list', undefined, false, 'omp')).resolves.toEqual(['omp-sessions'])
+    await expect(harness.invoke('projects:list')).resolves.toEqual(['prime-projects'])
+    await expect(harness.invoke('projects:list', 'omp')).resolves.toEqual(['omp-projects'])
+    await expect(harness.invoke('projects:grant-inferred', '/somewhere', 'omp')).resolves.toBe('omp-grant')
+    expect(harness.services.omp.projects.grantInferred).toHaveBeenCalledWith('/somewhere')
+    expect(harness.services.projects.grantInferred).not.toHaveBeenCalled()
+  })
+
+  it('routes session file operations by which harness root authorizes the path', async () => {
+    await expect(harness.invoke('sessions:read', OMP_SESSION)).resolves.toEqual(['omp-transcript'])
+    expect(harness.services.omp.sessions.read).toHaveBeenCalledWith(OMP_SESSION)
+    expect(harness.services.sessions.read).not.toHaveBeenCalled()
+
+    await expect(harness.invoke('sessions:read', PRIME_SESSION)).resolves.toEqual(['prime-transcript'])
+    expect(harness.services.sessions.read).toHaveBeenCalledWith(PRIME_SESSION)
+
+    // A path neither root contains fails with the Prime service's own error.
+    await expect(async () => harness.invoke('sessions:read', '/etc/passwd')).rejects.toThrow('outside the Prime session directory')
+
+    await expect(harness.invoke('sessions:rename', OMP_SESSION, 'Title')).resolves.toBe(false)
+    expect(harness.services.omp.sessions.rename).toHaveBeenCalledWith(OMP_SESSION, 'Title')
+    await expect(harness.invoke('sessions:archive', OMP_SESSION, true)).resolves.toBe(true)
+    expect(harness.services.omp.sessions.archive).toHaveBeenCalledWith(OMP_SESSION, true)
+  })
+
+  it('answers follow-up for an OMP session with the not-running result instead of the daemon path', async () => {
+    await expect(harness.invoke('sessions:follow-up', OMP_SESSION, 'hello', 'queue')).resolves.toBe(false)
+    expect(harness.services.omp.sessions.followUp).not.toHaveBeenCalled()
+    expect(harness.services.sessions.followUp).not.toHaveBeenCalled()
+
+    await expect(harness.invoke('sessions:follow-up', PRIME_SESSION, 'hello', 'queue')).resolves.toBe(true)
+    expect(harness.services.sessions.followUp).toHaveBeenCalledWith(PRIME_SESSION, 'hello', 'queue')
+  })
+
+  it('routes providers:catalog by harness with the shared disabled-provider set', async () => {
+    await expect(harness.invoke('providers:catalog', true)).resolves.toMatchObject({ from: 'prime' })
+    expect(harness.services.providers.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
+
+    await expect(harness.invoke('providers:catalog', true, 'omp')).resolves.toMatchObject({ from: 'omp' })
+    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
+  })
+
+  it('rejects provider auth mutations aimed at the omp harness', async () => {
+    for (const [channel, args] of [
+      ['providers:save-api-key', ['openai', 'key']],
+      ['providers:logout', ['openai']],
+      ['providers:set-enabled', ['openai', true]],
+      ['providers:start-oauth', ['openai']],
+    ] as const) {
+      await expect(async () => harness.invoke(channel, ...args, 'omp'), channel).rejects.toThrow('managed by the omp CLI')
+    }
+    expect(harness.services.providers.saveApiKey).not.toHaveBeenCalled()
+  })
+})

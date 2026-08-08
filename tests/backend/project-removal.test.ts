@@ -19,7 +19,7 @@ function fixture() {
   writeFileSync(marker, 'keep')
   const store = new JsonStateStore(join(dir, 'state.json'))
   const session: SessionRecord = {
-    id: 'session', filePath: join(dir, 'session.jsonl'), projectPath: folder, title: 'Session',
+    id: 'session', harness: 'prime', filePath: join(dir, 'session.jsonl'), projectPath: folder, title: 'Session',
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'idle', depth: 0,
   }
   const service = new ProjectService(store, () => null)
@@ -32,7 +32,7 @@ describe('project removal', () => {
     const { folder, marker, store, service } = fixture()
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      id: 'project-1', harness: 'prime', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
       pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
 
@@ -62,8 +62,8 @@ describe('project removal', () => {
     mkdirSync(second)
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push(
-      { id: 'project-1', name: 'First', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
-      { id: 'project-2', name: 'Second', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(second) },
+      { id: 'project-1', harness: 'prime', name: 'First', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
+      { id: 'project-2', harness: 'prime', name: 'Second', path: second, folders: [second], primaryFolder: second, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(second) },
     ) })
     let releaseBranch!: () => void
     let markEntered!: () => void
@@ -91,8 +91,8 @@ describe('project removal', () => {
     mkdirSync(nested)
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push(
-      { id: 'parent', name: 'Parent', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
-      { id: 'nested', name: 'Nested', path: nested, folders: [nested], primaryFolder: nested, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(nested) },
+      { id: 'parent', harness: 'prime', name: 'Parent', path: folder, folders: [folder], primaryFolder: folder, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder) },
+      { id: 'nested', harness: 'prime', name: 'Nested', path: nested, folders: [nested], primaryFolder: nested, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(nested) },
     ) })
     await service.list()
     let releaseStop!: () => void
@@ -120,7 +120,7 @@ describe('project removal', () => {
     const { folder, store, service } = fixture()
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      id: 'project-1', harness: 'prime', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
       pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
     await service.list()
@@ -144,7 +144,7 @@ describe('project removal', () => {
     session.projectPath = secondary
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project-1', name: 'Project', path: primary, folders: [primary, secondary], primaryFolder: primary,
+      id: 'project-1', harness: 'prime', name: 'Project', path: primary, folders: [primary, secondary], primaryFolder: primary,
       pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
 
@@ -157,7 +157,7 @@ describe('project removal', () => {
     const { folder, store, service } = fixture()
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      id: 'project-1', harness: 'prime', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
       pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
     await service.list()
@@ -182,7 +182,7 @@ describe('project removal', () => {
     const { folder, store, service } = fixture()
     const now = new Date().toISOString()
     await store.update((state) => { state.projects.push({
-      id: 'project-1', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
+      id: 'project-1', harness: 'prime', name: 'Project', path: folder, folders: [folder], primaryFolder: folder,
       pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: identities(folder),
     }) })
     await service.list()

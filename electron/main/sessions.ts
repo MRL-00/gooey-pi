@@ -1,8 +1,8 @@
 import { watch, type FSWatcher, type Stats } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
-import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
+import { join, resolve, sep } from 'node:path'
+import type { HarnessId, SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
 import { queueDaemonFollowUp } from './agent-daemon'
 import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
 import { runProcess } from './process-utils'
@@ -27,6 +27,8 @@ type SessionPathAuthorizer = (sessionRootRealPath: string, sessionRealPath: stri
 const authorizePrimeSessionPath: SessionPathAuthorizer = (root, path) => isPathWithin(root, path) && path.endsWith('.jsonl')
 
 export interface SessionServiceOptions {
+  /** Harness stamped on every record and change event this service emits; defaults to 'prime'. */
+  harness?: HarnessId
   /** Canonical-or-lexical session root; defaults to the Prime Agent session directory. */
   sessionRoot?: string
   catalogIo?: SessionCatalogIo
@@ -36,12 +38,21 @@ export interface SessionServiceOptions {
   transcriptReader?: TranscriptReader
   /** Containment rule applied to realpathed candidates; defaults to root containment plus a `.jsonl` suffix. */
   isSessionPathAuthorized?: SessionPathAuthorizer
+  /**
+   * Watch the session root recursively (for harnesses that bucket sessions one
+   * directory deep). Honored only where fs.watch supports recursion natively
+   * (darwin/win32); elsewhere the watcher falls back to non-recursive root
+   * watching, whose events trigger catalog-wide refreshes.
+   */
+  recursiveWatch?: boolean
   maxConcurrentTranscriptReads?: number
   maxPendingTranscriptReads?: number
 }
 
 export class SessionService {
+  readonly harness: HarnessId
   readonly sessionRoot: string
+  private readonly recursiveWatch: boolean
   private runtimeForSession: (filePath: string) => RuntimeSessionState | undefined = () => undefined
   private listRuntimeSessions: (() => readonly RuntimeSessionSnapshot[]) | null = null
   private stopRuntimeForSession: (filePath: string) => Promise<void> = async () => undefined
@@ -76,7 +87,9 @@ export class SessionService {
       pendingLimitError: () => new Error('Too many transcript reads are pending'),
       closedError: () => new Error('Too many transcript reads are pending'),
     })
+    this.harness = options.harness ?? 'prime'
     this.sessionRoot = options.sessionRoot ?? join(homedir(), '.prime', 'agent', 'sessions')
+    this.recursiveWatch = options.recursiveWatch === true
     this.metadataReader = options.metadataReader ?? createSessionMetadataReader()
     this.transcriptReader = options.transcriptReader ?? readTranscript
     this.isSessionPathAuthorized = options.isSessionPathAuthorized ?? authorizePrimeSessionPath
@@ -132,7 +145,7 @@ export class SessionService {
         : this.runtimeForSession(metadata.filePath)
       if (runtime) metadata.status = runtime.isStreaming || runtime.isCompacting ? 'running' : 'idle'
       const { sessionName: _sessionName, ...record } = metadata
-      records.push({ ...record, archived: isArchived })
+      records.push({ ...record, harness: this.harness, archived: isArchived })
     }
     return records.sort((a, b) => Date.parse(b.lastUserMessageAt ?? b.createdAt) - Date.parse(a.lastUserMessageAt ?? a.createdAt) || comparePaths(a.filePath, b.filePath))
   }
@@ -229,7 +242,10 @@ export class SessionService {
   private startWatcher(): void {
     if (this.sessionWatcher || this.watcherRetry || !this.changeListeners.size) return
     try {
-      const watcher = watch(this.sessionRoot, { persistent: false }, (_eventType, filename) => {
+      // A missing session root (harness never used on this machine) throws
+      // here and lands in the retry below, which watches once the root appears.
+      const recursive = this.recursiveWatch && (process.platform === 'darwin' || process.platform === 'win32')
+      const watcher = watch(this.sessionRoot, { persistent: false, recursive }, (_eventType, filename) => {
         this.queueSessionChange(filename)
       })
       this.sessionWatcher = watcher
@@ -265,9 +281,21 @@ export class SessionService {
     this.catalogOnlyChange = false
   }
 
+  /**
+   * Root-relative watch names this watcher can resolve to one session file:
+   * a bare file name, plus exactly one bucket-directory level when watching
+   * recursively. Everything else coalesces into a catalog-wide refresh.
+   */
+  private isWatchedSessionName(name: string): boolean {
+    if (!name.endsWith('.jsonl')) return false
+    const segments = name.split(sep)
+    if (segments.length > (this.recursiveWatch ? 2 : 1)) return false
+    return segments.every((segment) => segment.length > 0 && !segment.startsWith('.'))
+  }
+
   private queueSessionChange(filename: string | Buffer | null): void {
     const name = typeof filename === 'string' ? filename : Buffer.isBuffer(filename) ? filename.toString('utf8') : ''
-    if (!name || basename(name) !== name || name.startsWith('.') || !name.endsWith('.jsonl')) {
+    if (!name || !this.isWatchedSessionName(name)) {
       this.catalogOnlyChange = true
     } else if (this.changedNames.size < 256) {
       this.changedNames.add(name)
@@ -294,8 +322,8 @@ export class SessionService {
     }))).filter((path): path is string => path !== null)
     if (paths.length !== names.length) catalogOnly = true
     if (!this.changeListeners.size) return
-    for (const filePath of paths) this.emitChange({ filePath })
-    if (catalogOnly) this.emitChange({})
+    for (const filePath of paths) this.emitChange({ filePath, harness: this.harness })
+    if (catalogOnly) this.emitChange({ harness: this.harness })
   }
 
   private emitChange(event: SessionChangeEvent): void {

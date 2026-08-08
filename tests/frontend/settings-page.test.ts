@@ -157,6 +157,8 @@ describe('settings field ownership', () => {
       messageEnterAction: 'agent',
       telemetry: 'privacy',
       disabledProviders: 'providers',
+      activeHarness: 'agent',
+      ompApprovalMode: 'agent',
     })
   })
 })

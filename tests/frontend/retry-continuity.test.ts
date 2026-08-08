@@ -5,6 +5,7 @@ import type { SessionRecord, TranscriptMessage } from '../../src/types/api'
 
 const session = (): SessionRecord => ({
   id: 'session',
+  harness: 'prime',
   filePath: '/sessions/session.jsonl',
   projectPath: '/project',
   title: 'Session',

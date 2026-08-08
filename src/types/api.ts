@@ -13,6 +13,14 @@ export type SessionStatus = 'idle' | 'running' | 'waiting' | 'complete' | 'faile
 export const HARNESS_IDS = ['prime', 'omp'] as const
 export type HarnessId = (typeof HARNESS_IDS)[number]
 
+/**
+ * OMP tool-approval preference. 'inherit' defers to OMP's own
+ * `~/.omp/agent/config.yml`; the other values are passed to the omp CLI as
+ * `--approval-mode` when starting an OMP runtime.
+ */
+export const OMP_APPROVAL_MODES = ['inherit', 'always-ask', 'write', 'yolo'] as const
+export type OmpApprovalMode = (typeof OMP_APPROVAL_MODES)[number]
+
 export interface HarnessStatus {
   path: string | null
   version: string | null
@@ -27,6 +35,8 @@ export interface AppMeta {
 
 export interface ProjectRecord {
   id: string
+  /** Agent harness this project grant belongs to; grants never cross harnesses. */
+  harness: HarnessId
   name: string
   path: string
   folders: string[]
@@ -41,6 +51,8 @@ export interface ProjectRecord {
 
 export interface SessionRecord {
   id: string
+  /** Agent harness that owns this session; populated by the owning session service. */
+  harness: HarnessId
   filePath: string
   projectPath: string
   title: string
@@ -212,6 +224,8 @@ export interface PrimeEventEnvelope {
 
 export interface SessionChangeEvent {
   filePath?: string
+  /** Harness whose session catalog changed; absent events predate harness scoping. */
+  harness?: HarnessId
 }
 
 export interface SkillRecord {
@@ -319,6 +333,10 @@ export interface AppSettings {
   messageEnterAction: MessageEnterAction
   telemetry: boolean
   disabledProviders: string[]
+  /** Harness whose workspace the renderer shows; defaults to 'prime'. */
+  activeHarness: HarnessId
+  /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
+  ompApprovalMode: OmpApprovalMode
 }
 
 export type ScheduleDefinitionStatus = 'active' | 'paused' | 'completed' | 'blocked'
@@ -457,9 +475,9 @@ export interface AgentBrowserPointerEvent {
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
-  projects: { list(): Promise<ProjectRecord[]>; listFiles(root: string): Promise<ProjectFileListing>; add(): Promise<ProjectRecord | null>; grantInferred(path: string): Promise<ProjectRecord>; remove(id: string): Promise<boolean>; touch(id: string): Promise<boolean> }
+  projects: { list(harness?: HarnessId): Promise<ProjectRecord[]>; listFiles(root: string, harness?: HarnessId): Promise<ProjectFileListing>; add(harness?: HarnessId): Promise<ProjectRecord | null>; grantInferred(path: string, harness?: HarnessId): Promise<ProjectRecord>; remove(id: string, harness?: HarnessId): Promise<boolean>; touch(id: string, harness?: HarnessId): Promise<boolean> }
   sessions: {
-    list(projectPath?: string, includeArchived?: boolean): Promise<SessionRecord[]>
+    list(projectPath?: string, includeArchived?: boolean, harness?: HarnessId): Promise<SessionRecord[]>
     read(filePath: string): Promise<TranscriptMessage[]>
     followUp(filePath: string, message: string, intent?: PromptDeliveryIntent): Promise<boolean>
     rename(filePath: string, title: string): Promise<boolean>
@@ -467,14 +485,14 @@ export interface PrimeWorkApi {
     onChanged(callback: (event: SessionChangeEvent) => void): () => void
   }
   agent: {
-    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string; fast?: boolean }): Promise<RuntimeInfo>
+    start(options: { cwd: string; sessionPath?: string; model?: string; thinking?: string; fast?: boolean; harness?: HarnessId }): Promise<RuntimeInfo>
     command(runtimeId: string, command: Record<string, unknown>): Promise<Record<string, unknown>>
     stop(runtimeId: string): Promise<boolean>
     list(): Promise<RuntimeInfo[]>
     onEvent(callback: (envelope: PrimeEventEnvelope) => void): () => void
   }
   providers: {
-    catalog(force?: boolean): Promise<PrimeModelCatalog>
+    catalog(force?: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
     saveApiKey(providerId: string, apiKey: string): Promise<PrimeModelCatalog>
     logout(providerId: string): Promise<PrimeModelCatalog>
     setEnabled(providerId: string, enabled: boolean): Promise<PrimeModelCatalog>

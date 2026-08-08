@@ -10,6 +10,8 @@ import type {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
+  activeHarness: 'prime',
+  ompApprovalMode: 'inherit',
   sidebarOpen: true,
   inspectorOpen: true,
   terminalOpen: false,
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export const SAMPLE_PROJECTS: ProjectRecord[] = [
   {
     id: 'prime-work',
+    harness: 'prime',
     name: 'prime-work',
     path: '/Users/you/Projects/prime-work',
     folders: ['/Users/you/Projects/prime-work'],
@@ -40,6 +43,7 @@ export const SAMPLE_PROJECTS: ProjectRecord[] = [
   },
   {
     id: 'storefront',
+    harness: 'prime',
     name: 'storefront-redesign',
     path: '/Users/you/Projects/storefront-redesign',
     folders: ['/Users/you/Projects/storefront-redesign'],
@@ -55,6 +59,7 @@ export const SAMPLE_PROJECTS: ProjectRecord[] = [
 export const SAMPLE_SESSIONS: SessionRecord[] = [
   {
     id: 'demo-session',
+    harness: 'prime',
     filePath: '/Users/you/.prime/agent/sessions/demo.jsonl',
     projectPath: SAMPLE_PROJECTS[0].path,
     title: 'Build the workspace shell',
@@ -69,6 +74,7 @@ export const SAMPLE_SESSIONS: SessionRecord[] = [
   },
   {
     id: 'running-session',
+    harness: 'prime',
     filePath: '/Users/you/.prime/agent/sessions/running.jsonl',
     projectPath: SAMPLE_PROJECTS[0].path,
     title: 'Polish browser annotations',
@@ -83,6 +89,7 @@ export const SAMPLE_SESSIONS: SessionRecord[] = [
   },
   {
     id: 'old-session',
+    harness: 'prime',
     filePath: '/Users/you/.prime/agent/sessions/old.jsonl',
     projectPath: SAMPLE_PROJECTS[1].path,
     title: 'Debug hydration error',

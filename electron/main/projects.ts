@@ -4,7 +4,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
-import type { ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
+import type { HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId, requireString } from './validation'
 
@@ -12,6 +12,13 @@ function inferredId(path: string): string {
   return `inferred-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`
 }
 
+/**
+ * One ProjectService instance exists per harness. Instances share the one
+ * desktop state store but each sees, creates, and authorizes only records of
+ * its own harness: a grant made for Prime never authorizes an OMP runtime's
+ * cwd and vice versa. Dismissed inferred-project paths remain shared, matching
+ * the single dismissedProjectPaths list in persisted state.
+ */
 export class ProjectService {
   // Reassigned wholesale (build-new-map-then-swap) so authorization reads are
   // never served from a partially repopulated map.
@@ -22,7 +29,16 @@ export class ProjectService {
   private branchProvider: (cwd: string) => Promise<string | undefined> = async () => undefined
   private stopProjectProcesses: (roots: string[]) => Promise<void> = async () => undefined
 
-  constructor(private readonly store: JsonStateStore, private readonly windowProvider: () => BrowserWindow | null) {}
+  constructor(
+    private readonly store: JsonStateStore,
+    private readonly windowProvider: () => BrowserWindow | null,
+    private readonly harness: HarnessId = 'prime',
+  ) {}
+
+  /** Persisted projects visible to this instance: exactly its own harness's records. */
+  private ownProjects(projects: readonly PersistedProject[]): PersistedProject[] {
+    return projects.filter((project) => project.harness === this.harness)
+  }
 
   private async captureFolderIdentity(pathValue: string): Promise<{ path: string; identity: FolderIdentity }> {
     const configured = resolve(requireString(pathValue, 'project folder', { min: 1, max: 4096 }))
@@ -71,7 +87,7 @@ export class ProjectService {
   }
 
   private async migrateLegacyFolderIdentities(): Promise<void> {
-    const legacyProjects = this.store.snapshot().projects.filter((project) => project.folderIdentities === undefined)
+    const legacyProjects = this.ownProjects(this.store.snapshot().projects).filter((project) => project.folderIdentities === undefined)
     if (!legacyProjects.length) return
 
     const captured = new Map<string, Record<string, FolderIdentity>>()
@@ -106,7 +122,7 @@ export class ProjectService {
     }))
     const sessionProjectPaths = new Map(sessions.map((session) => [session, canonicalSessionPaths.get(session.projectPath)!]))
     const snapshot = this.store.snapshot()
-    const persisted = snapshot.projects
+    const persisted = this.ownProjects(snapshot.projects)
     const dismissed = new Set(await Promise.all(snapshot.dismissedProjectPaths.map(async (path) => {
       try { return await requireExistingDirectory(path, 'dismissed project path') } catch { return resolve(path) }
     })))
@@ -129,7 +145,7 @@ export class ProjectService {
         }
       }
       const record: ProjectRecord = {
-        id: project.id, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
+        id: project.id, harness: project.harness, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
         pinned: project.pinned, createdAt: project.createdAt, lastOpenedAt: project.lastOpenedAt,
         sessionCount: sessions.filter((session) => folderSet.has(sessionProjectPaths.get(session)!)).length,
         gitBranch: undefined,
@@ -153,6 +169,7 @@ export class ProjectService {
       const created = projectSessions.map((session) => session.createdAt).sort()
       records.push({
         id: inferredId(canonical),
+        harness: this.harness,
         name: basename(canonical) || canonical,
         path: canonical,
         folders: [canonical],
@@ -182,7 +199,7 @@ export class ProjectService {
     const now = new Date().toISOString()
     const project = await this.store.update((state): PersistedProject => {
       state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
-      const existing = state.projects.find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
+      const existing = this.ownProjects(state.projects).find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
       if (existing) {
         existing.lastOpenedAt = now
         existing.folderIdentities = { ...existing.folderIdentities, [path]: identity }
@@ -190,6 +207,7 @@ export class ProjectService {
       }
       const created: PersistedProject = {
         id: randomUUID(),
+        harness: this.harness,
         name: basename(path) || path,
         path,
         folders: [path],
@@ -223,13 +241,13 @@ export class ProjectService {
     const now = new Date().toISOString()
     const project = await this.store.update((state): PersistedProject => {
       state.dismissedProjectPaths = state.dismissedProjectPaths.filter((item) => resolve(item) !== path)
-      const existing = state.projects.find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
+      const existing = this.ownProjects(state.projects).find((item) => resolve(item.path) === path || item.folders.some((folder) => resolve(folder) === path))
       if (existing) {
         existing.lastOpenedAt = now
         existing.folderIdentities = { ...existing.folderIdentities, [path]: identity }
         return existing
       }
-      const created: PersistedProject = { id: randomUUID(), name: basename(path) || path, path, folders: [path], primaryFolder: path, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: { [path]: identity } }
+      const created: PersistedProject = { id: randomUUID(), harness: this.harness, name: basename(path) || path, path, folders: [path], primaryFolder: path, pinned: false, createdAt: now, lastOpenedAt: now, folderIdentities: { [path]: identity } }
       state.projects.push(created)
       return created
     })
@@ -241,7 +259,7 @@ export class ProjectService {
   async remove(idValue: unknown): Promise<boolean> {
     const authorizationRevision = ++this.authorizationRevision
     const id = requireId(idValue, 'project id')
-    const persisted = this.store.snapshot().projects.find((project) => project.id === id)
+    const persisted = this.ownProjects(this.store.snapshot().projects).find((project) => project.id === id)
     const persistedPaths: string[] = []
     if (persisted) for (const folder of persisted.folders) {
       const configured = resolve(folder)
@@ -269,7 +287,7 @@ export class ProjectService {
         await this.stopProjectProcesses([...new Set(roots)])
       }
       return await this.store.update((state) => {
-        const index = state.projects.findIndex((project) => project.id === id)
+        const index = state.projects.findIndex((project) => project.id === id && project.harness === this.harness)
         const paths = index >= 0 ? persistedPaths : inferredPath ? [inferredPath] : []
         if (!paths.length) return false
         if (index >= 0) state.projects.splice(index, 1)
@@ -291,7 +309,7 @@ export class ProjectService {
   /** Rebuilds authorization into a fresh map and swaps it in one step. */
   private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
     const nextAuthorized = new Map<string, FolderIdentity>()
-    for (const project of this.store.snapshot().projects) {
+    for (const project of this.ownProjects(this.store.snapshot().projects)) {
       for (const folder of project.folders) {
         if (authorizationRevision !== this.authorizationRevision) return
         const { configured, expected, verified } = await this.resolveFolderAuthorization(project, folder)
@@ -304,7 +322,7 @@ export class ProjectService {
   async touch(idValue: unknown): Promise<boolean> {
     const id = requireId(idValue, 'project id')
     return this.store.update((state) => {
-      const project = state.projects.find((item) => item.id === id)
+      const project = state.projects.find((item) => item.id === id && item.harness === this.harness)
       if (!project) return false
       project.lastOpenedAt = new Date().toISOString()
       return true

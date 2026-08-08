@@ -7,11 +7,11 @@ import { useWorkspaceRuntime } from '../../src/hooks/useWorkspaceRuntime'
 import type { PrimeWorkApi, ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
 const project: ProjectRecord = {
-  id: 'project', name: 'Project', path: '/project', folders: ['/project'], primaryFolder: '/project',
+  id: 'project', harness: 'prime', name: 'Project', path: '/project', folders: ['/project'], primaryFolder: '/project',
   pinned: false, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z', sessionCount: 1,
 }
 const session: SessionRecord = {
-  id: 'session', filePath: '/sessions/session.jsonl', projectPath: '/project', title: 'Session',
+  id: 'session', harness: 'prime', filePath: '/sessions/session.jsonl', projectPath: '/project', title: 'Session',
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'idle', depth: 0,
 }
 
