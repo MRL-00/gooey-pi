@@ -455,13 +455,16 @@ async function bootstrap(): Promise<void> {
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
-  // OMP runtimes get the browser broker credentials but no extension or skill
-  // paths yet: the OMP-flavored browser extension ships in Phase 8, and until
-  // then OMP runtimes simply have no browser tools. The schedules bridge stays
-  // Prime-only.
+  // OMP runtimes get the same browser broker credentials but load the
+  // OMP-flavored extension; OMP has no --skill flag, so the skill path is
+  // stripped and the extension carries the usage guidance. The schedules
+  // bridge stays Prime-only.
+  const ompBrowserExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
   ompManager.setRuntimeEnvironmentProvider((scope) => {
-    const { PRIME_WORK_BROWSER_EXTENSION_PATH: _extension, PRIME_WORK_BROWSER_SKILL_PATH: _skill, ...environment } = browserBridge.environmentFor(scope)
-    return environment
+    const { PRIME_WORK_BROWSER_SKILL_PATH: _skill, ...environment } = browserBridge.environmentFor(scope)
+    return { ...environment, PRIME_WORK_BROWSER_EXTENSION_PATH: ompBrowserExtensionPath }
   })
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   const [detectedPrimeVersion, detectedOmpVersion] = await Promise.all([
