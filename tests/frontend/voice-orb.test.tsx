@@ -76,14 +76,25 @@ describe('realtime voice surface', () => {
     const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool } as unknown as PrimeWorkApi['voice']
     await act(async () => root.render(<VoiceOrb voice={voice} harness="prime" onClose={vi.fn()} onTaskStarted={onTaskStarted} />))
     await act(async () => {
-      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-1', name: 'start_task', arguments: JSON.stringify({ project_id: 'p1', prompt: 'Build it' }) }) }))
+      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-1', name: 'start_task', arguments: JSON.stringify({ project_id: 'p1', prompt: 'Build it', model: 'openai-codex/gpt-5.6-sol', reasoning: 'high' }) }) }))
       await Promise.resolve()
     })
-    expect(executeTool).toHaveBeenCalledWith({ name: 'start_task', arguments: { project_id: 'p1', prompt: 'Build it' } }, 'prime')
+    expect(executeTool).toHaveBeenCalledWith({ name: 'start_task', arguments: { project_id: 'p1', prompt: 'Build it', model: 'openai-codex/gpt-5.6-sol', reasoning: 'high' } }, 'prime')
     expect(onTaskStarted).toHaveBeenCalledWith(task)
     expect(container.textContent).toContain('Task started')
     expect(container.textContent).toContain('Prime · Prime')
     expect(container.textContent).toContain('Opened in the sidebar')
+  })
+
+  it('forwards model discovery calls through the pinned harness', async () => {
+    const executeTool = vi.fn(async () => ({ output: '{"models":[]}' }))
+    const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" onClose={vi.fn()} onTaskStarted={vi.fn()} />))
+    await act(async () => {
+      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-models', name: 'list_models', arguments: JSON.stringify({ query: 'sonnet' }) }) }))
+      await Promise.resolve()
+    })
+    expect(executeTool).toHaveBeenCalledWith({ name: 'list_models', arguments: { query: 'sonnet' } }, 'omp')
   })
 
   it('keeps tool calls bound to the harness selected when the orb opened', async () => {

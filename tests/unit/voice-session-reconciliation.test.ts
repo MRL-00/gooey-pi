@@ -15,8 +15,9 @@ describe('voice task session reconciliation', () => {
       .mockResolvedValueOnce([session])
     const wait = vi.fn(async () => undefined)
 
-    await expect(waitForVoiceSession(session.filePath, load, wait)).resolves.toEqual({ session, sessions: [session] })
+    await expect(waitForVoiceSession(session.filePath, undefined, load, wait)).resolves.toEqual({ session, sessions: [session] })
     expect(load).toHaveBeenCalledTimes(3)
+    expect(load.mock.calls).toEqual([[false], [true], [true]])
     expect(wait.mock.calls).toEqual([[100], [200]])
   })
 
@@ -24,8 +25,16 @@ describe('voice task session reconciliation', () => {
     const load = vi.fn(async () => [])
     const wait = vi.fn(async () => undefined)
 
-    await expect(waitForVoiceSession(session.filePath, load, wait)).resolves.toBeNull()
-    expect(load).toHaveBeenCalledTimes(6)
-    expect(wait).toHaveBeenCalledTimes(5)
+    await expect(waitForVoiceSession(session.filePath, undefined, load, wait)).resolves.toBeNull()
+    expect(load).toHaveBeenCalledTimes(8)
+    expect(load.mock.calls).toEqual([[false], [true], [true], [true], [true], [true], [true], [true]])
+    expect(wait).toHaveBeenCalledTimes(7)
+  })
+
+  it('resolves by the harness session id when its reported path differs from the catalog path', async () => {
+    const load = vi.fn(async () => [session])
+
+    await expect(waitForVoiceSession('/tmp/omp/reported-session.jsonl', session.id, load)).resolves.toEqual({ session, sessions: [session] })
+    expect(load).toHaveBeenCalledWith(false)
   })
 })

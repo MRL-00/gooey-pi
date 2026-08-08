@@ -403,6 +403,7 @@ async function bootstrap(): Promise<void> {
     settings: () => stateStore.getSettings(),
     projects: { prime: projects, omp: ompProjects },
     agents: { prime: agents, omp: ompManager },
+    catalogs: { prime: providers, omp: ompCatalog },
     runProcess,
   })
   const browserProfile = session.fromPartition(BROWSER_PARTITION)

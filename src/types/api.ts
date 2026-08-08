@@ -396,12 +396,16 @@ export interface VoiceTaskStarted {
   projectName: string
   harness: HarnessId
   runtimeId: string
+  sessionId?: string
   sessionFile: string
+  model?: Pick<PrimeModelDescriptor, 'key' | 'provider' | 'id' | 'name'>
+  reasoning?: PrimeThinkingLevel
 }
 
 export type VoiceToolRequest =
   | { name: 'list_projects'; arguments: { query?: string } }
-  | { name: 'start_task'; arguments: { project_id: string; prompt: string; title?: string } }
+  | { name: 'list_models'; arguments: { query?: string } }
+  | { name: 'start_task'; arguments: { project_id: string; prompt: string; title?: string; model?: string; reasoning?: string } }
   | { name: 'get_local_context'; arguments: Record<string, never> }
   | { name: 'search_web'; arguments: { query: string } }
 
@@ -558,7 +562,7 @@ export interface PrimeWorkApi {
     touch(id: string, harness?: HarnessId): Promise<boolean>
   }
   sessions: {
-    list(projectPath?: string, includeArchived?: boolean, harness?: HarnessId): Promise<SessionRecord[]>
+    list(projectPath?: string, includeArchived?: boolean, harness?: HarnessId, force?: boolean): Promise<SessionRecord[]>
     read(filePath: string): Promise<TranscriptMessage[]>
     followUp(filePath: string, message: string, intent?: PromptDeliveryIntent): Promise<boolean>
     rename(filePath: string, title: string): Promise<boolean>

@@ -124,13 +124,18 @@ export class SessionService {
     }
   }
 
-  async list(projectPath?: unknown, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
+  async list(projectPath?: unknown, includeArchivedValue: unknown = false, forceValue: unknown = false): Promise<SessionRecord[]> {
     const includeArchived = requireBoolean(includeArchivedValue, 'includeArchived')
+    const force = requireBoolean(forceValue, 'force')
     const requestedProject = projectPath ? requireString(projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
     let project = requestedProject ? resolve(requestedProject) : undefined
     if (requestedProject) {
       try { project = await requireExistingDirectory(requestedProject, 'projectPath') } catch { /* Preserve stale lexical filtering. */ }
     }
+    // A caller reconciling a just-created session cannot rely on fs.watch:
+    // recursive delivery varies by platform and an event may still be queued.
+    // Force advances the scan revision while retaining metadata-level caches.
+    if (force) this.catalog.invalidateLiveCatalog()
     const sessions = await this.catalog.all()
     const archived = new Set(this.store.getArchivedSessions().map((path) => resolve(path)))
     // One runtime snapshot per list call; each session then resolves in O(1).

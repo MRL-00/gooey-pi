@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { PRIME_THINKING_LEVELS } from '../../src/types/api'
 import type {
   AppSettings,
   HarnessId,
+  PrimeModelDescriptor,
+  PrimeThinkingLevel,
   ProjectRecord,
   VoiceCredentialProvider,
   VoiceCredentialStatus,
@@ -12,6 +15,7 @@ import type {
   VoiceToolResult,
 } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
+import type { ModelCatalogProvider } from './model-catalog'
 import type { ProcessResult } from './process-utils'
 import type { ProjectService } from './projects'
 import { isRecord, requireExistingPath, requireId, requireRecord, requireString } from './validation'
@@ -38,6 +42,7 @@ interface VoiceServiceOptions {
   settings(): AppSettings
   projects: Record<HarnessId, ProjectService>
   agents: Record<HarnessId, AgentRpcManager>
+  catalogs: Record<HarnessId, ModelCatalogProvider>
   fetch?: typeof fetch
   runProcess(file: string, args: readonly string[], options?: { timeoutMs?: number; maxBytes?: number }): Promise<ProcessResult>
   environment?: NodeJS.ProcessEnv
@@ -63,6 +68,82 @@ function boundedAudio(value: unknown): Uint8Array {
 
 function cleanText(value: unknown, label: string, max = 1_000_000): string {
   return requireString(value, label, { min: 1, max, trim: true })
+}
+
+const SPOKEN_NUMBER_TOKENS: Record<string, string> = {
+  zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+}
+
+function normalizedModelText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((token) => SPOKEN_NUMBER_TOKENS[token] ?? token)
+    .join(' ')
+}
+
+function modelMatchScore(query: string, model: PrimeModelDescriptor): number {
+  const wanted = normalizedModelText(query)
+  if (!wanted) return 0
+  const fields = [model.key, model.id, model.name, `${model.provider} ${model.name}`, `${model.provider} ${model.id}`]
+    .map(normalizedModelText)
+  if (fields.includes(wanted)) return 10_000
+  const wantedTokens = new Set(wanted.split(' '))
+  let best = 0
+  for (const field of fields) {
+    if (field.includes(wanted) || wanted.includes(field)) best = Math.max(best, 7_000 - Math.abs(field.length - wanted.length))
+    const fieldTokens = new Set(field.split(' '))
+    const overlap = [...wantedTokens].filter((token) => fieldTokens.has(token)).length
+    if (overlap) {
+      const coverage = overlap / wantedTokens.size
+      const precision = overlap / fieldTokens.size
+      best = Math.max(best, Math.round(4_000 * coverage + 1_000 * precision))
+    }
+  }
+  return best
+}
+
+function rankedModelMatches(query: string, models: readonly PrimeModelDescriptor[]): PrimeModelDescriptor[] {
+  return models
+    .map((model) => ({ model, score: modelMatchScore(query, model) }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.model.name.localeCompare(right.model.name) || left.model.key.localeCompare(right.model.key))
+    .map(({ model }) => model)
+}
+
+function resolveModel(query: string, models: readonly PrimeModelDescriptor[]): PrimeModelDescriptor {
+  const match = rankedModelMatches(query, models)[0]
+  if (!match) throw new Error(`No available model from a visible provider matched “${query}”`)
+  return match
+}
+
+const REASONING_RANK = new Map(PRIME_THINKING_LEVELS.map((level, index) => [level, index]))
+
+function requestedReasoningRank(value: string): number {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const exact = PRIME_THINKING_LEVELS.find((level) => normalized === level)
+  if (exact) return REASONING_RANK.get(exact)!
+  if (/\b(max|maximum|highest|ultra)\b/.test(normalized)) return REASONING_RANK.get('max')!
+  if (/\b(xhigh|extra high|very high)\b/.test(normalized)) return REASONING_RANK.get('xhigh')!
+  if (/\b(high|deep|strong)\b/.test(normalized)) return REASONING_RANK.get('high')!
+  if (/\b(medium|mid|middle|normal|balanced|default)\b/.test(normalized)) return REASONING_RANK.get('medium')!
+  if (/\b(low|light|quick)\b/.test(normalized)) return REASONING_RANK.get('low')!
+  if (/\b(minimal|minimum|tiny|little)\b/.test(normalized)) return REASONING_RANK.get('minimal')!
+  if (/\b(off|none|no reasoning|disable)\b/.test(normalized)) return REASONING_RANK.get('off')!
+  return REASONING_RANK.get('medium')!
+}
+
+function resolveReasoning(value: string, available: readonly PrimeThinkingLevel[]): PrimeThinkingLevel {
+  if (!available.length) throw new Error('The selected model does not expose any reasoning levels')
+  const wanted = requestedReasoningRank(value)
+  return [...available].sort((left, right) => {
+    const leftRank = REASONING_RANK.get(left)!
+    const rightRank = REASONING_RANK.get(right)!
+    const distance = Math.abs(leftRank - wanted) - Math.abs(rightRank - wanted)
+    return distance || (wanted >= REASONING_RANK.get('medium')! ? rightRank - leftRank : leftRank - rightRank)
+  })[0]
 }
 
 function localContext(harness: HarnessId): Record<string, string> {
@@ -179,11 +260,13 @@ function orchestrationInstructions(harness: HarnessId): string {
     'You are the voice orchestrator inside Prime Work, a desktop client for Prime Agent and OMP.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
-    'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness.',
+    'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels.',
     'For local weather or another location-sensitive lookup when the user did not name a place: first call get_local_context, then call search_web with its location_hint included in the query. Do not ask the user for a location unless get_local_context returns no usable location_hint. Treat the hint as approximate.',
     'Call start_task only when the user explicitly asks you to start, create, kick off, delegate, or run a task.',
     'An explicit request to start work is sufficient authorization. Do not ask for a second confirmation.',
     'Only start tasks inside projects returned by list_projects. Never invent project IDs.',
+    'When the user names or describes a model, call list_models with the user’s model wording before start_task. Choose the closest available model and the closest reasoning level that model supports. Model names and reasoning wording may be approximate; do not require exact phrasing. Pass the exact model key returned by list_models to start_task. If the user requests only a reasoning level, omit model and pass the approximate reasoning wording so it can be applied to the harness default model.',
+    'If the user does not request a model or reasoning level, omit those fields so the selected harness uses its defaults.',
     'Treat session creation, project selection, and harness selection as orchestration instructions for you, not as part of the delegated prompt.',
     'Rewrite the start_task prompt as a clean, self-contained task containing only the actual goal, useful constraints, and requested output. Do not include phrases such as start a session, create a thread, ask the agent, you are an agent, or working inside the project. Do not add generic process advice the user did not request.',
     'Example: "Start a new session in the Prime project workspace. Ask what the next logical feature to add should be" becomes the task prompt "Determine the next logical feature to add to this project and explain why."',
@@ -211,14 +294,26 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
         },
       },
       {
+        type: 'function', name: 'list_models',
+        description: `Find task models available from providers currently shown as active in Prime Work for the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
+        parameters: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            query: { type: 'string', description: 'Optional approximate model name, provider, family, or spoken model wording. Use this whenever the user mentions a model.' },
+          },
+        },
+      },
+      {
         type: 'function', name: 'start_task',
-        description: `Immediately create and start a new task in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions.`,
+        description: `Immediately create and start a new task in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions. Optional model and reasoning preferences are resolved against active GUI providers and applied before the prompt.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
             project_id: { type: 'string', description: 'An exact ID returned by list_projects.' },
             prompt: { type: 'string', description: 'A concise, self-contained task with the actual goal, useful user constraints, and requested output. Exclude session/thread creation, project/harness routing, agent-role preambles, and generic filler.' },
             title: { type: 'string', description: 'Optional concise title describing only the delegated work.' },
+            model: { type: 'string', description: 'Optional exact model key returned by list_models. Approximate wording is also accepted as a fallback.' },
+            reasoning: { type: 'string', description: 'Optional requested reasoning intensity in natural language or as a named level. The closest level supported by the selected model is used.' },
           },
           required: ['project_id', 'prompt'],
         },
@@ -334,6 +429,7 @@ export class VoiceService {
     const args = requireRecord(request.arguments, 'tool arguments')
     const harness = harnessId(harnessValue)
     if (name === 'list_projects') return this.listProjects(args, harness)
+    if (name === 'list_models') return this.listModels(args, harness)
     if (name === 'start_task') return this.startTask(args, harness)
     if (name === 'get_local_context') return this.getLocalContext(harness)
     if (name === 'search_web') return this.searchWeb(args)
@@ -350,16 +446,55 @@ export class VoiceService {
     return { output: JSON.stringify({ projects }) }
   }
 
+  private disabledProviders(harness: HarnessId): ReadonlySet<string> {
+    const settings = this.options.settings()
+    return new Set(harness === 'omp' ? settings.ompDisabledProviders : settings.disabledProviders)
+  }
+
+  private async availableModels(harness: HarnessId): Promise<PrimeModelDescriptor[]> {
+    const catalog = await this.options.catalogs[harness].catalog(false, this.disabledProviders(harness))
+    const enabledProviders = new Set(catalog.providers.filter((provider) => provider.enabled).map((provider) => provider.id))
+    return catalog.models.filter((model) => model.available && enabledProviders.has(model.provider))
+  }
+
+  private async listModels(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {
+    const query = args.query === undefined ? '' : requireString(args.query, 'query', { max: 256, trim: true })
+    const available = await this.availableModels(harness)
+    const matches = query ? rankedModelMatches(query, available) : available
+    const models = matches.slice(0, 100).map((model) => ({
+      key: model.key,
+      name: model.name,
+      provider: model.provider,
+      reasoning_levels: model.availableThinkingLevels,
+    }))
+    return { output: JSON.stringify({ models, matched: matches.length, returned: models.length, truncated: matches.length > models.length }) }
+  }
+
   private async startTask(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {
     const projectId = requireId(args.project_id, 'project_id')
     const prompt = cleanText(args.prompt, 'prompt')
     const title = args.title === undefined ? undefined : requireString(args.title, 'title', { min: 1, max: 200, trim: true })
+    const modelQuery = args.model === undefined ? undefined : requireString(args.model, 'model', { min: 1, max: 512, trim: true })
+    const reasoningQuery = args.reasoning === undefined ? undefined : requireString(args.reasoning, 'reasoning', { min: 1, max: 64, trim: true })
     const project: ProjectRecord | undefined = (await this.options.projects[harness].list())
       .find((candidate) => candidate.id === projectId && !candidate.inferred)
     if (!project) throw new Error(`The requested project is not explicitly granted to the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness`)
+    const selectedModel = modelQuery ? resolveModel(modelQuery, await this.availableModels(harness)) : undefined
+    const selectedReasoning = selectedModel && reasoningQuery
+      ? resolveReasoning(reasoningQuery, selectedModel.availableThinkingLevels)
+      : undefined
     const manager = this.options.agents[harness]
-    const runtime = await manager.start({ cwd: project.primaryFolder })
+    const runtime = await manager.start({
+      cwd: project.primaryFolder,
+      ...(selectedModel ? { model: selectedModel.key } : {}),
+      ...(selectedReasoning ? { thinking: selectedReasoning } : {}),
+    })
+    let appliedReasoning = selectedReasoning
     try {
+      if (!selectedModel && reasoningQuery) {
+        appliedReasoning = resolveReasoning(reasoningQuery, runtime.availableThinkingLevels ?? [])
+        await manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: appliedReasoning })
+      }
       await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
       if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
       await manager.command(runtime.runtimeId, { type: 'get_state' })
@@ -375,6 +510,9 @@ export class VoiceService {
     const task: VoiceTaskStarted = {
       projectId: project.id, projectName: project.name, harness: project.harness,
       runtimeId: current.runtimeId, sessionFile: current.sessionFile,
+      ...(current.sessionId ? { sessionId: current.sessionId } : {}),
+      ...(selectedModel ? { model: { key: selectedModel.key, provider: selectedModel.provider, id: selectedModel.id, name: selectedModel.name } } : {}),
+      ...(appliedReasoning ? { reasoning: appliedReasoning } : {}),
     }
     return { output: JSON.stringify({ started: true, task }), task }
   }

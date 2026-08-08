@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultSettings } from '../../electron/main/store'
 import { VoiceService, type VoiceServiceOptions } from '../../electron/main/voice'
+import type { RuntimeInfo } from '../../src/types/api'
 
 const directories: string[] = []
 
@@ -16,14 +17,39 @@ function project(harness: 'prime' | 'omp' = 'prime', inferred = false) {
   }
 }
 
+function model(key: string, name: string, levels: Array<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>, available = true) {
+  const separator = key.indexOf('/')
+  return {
+    key, provider: key.slice(0, separator), id: key.slice(separator + 1), name,
+    reasoning: levels.length > 0, input: ['text'] as const, contextWindow: 128_000, maxTokens: 16_000,
+    availableThinkingLevels: levels, fastModeSupported: false, available,
+  }
+}
+
 function makeService(overrides: Partial<VoiceServiceOptions> = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'prime-work-voice-test-'))
   directories.push(directory)
   const command = vi.fn(async () => ({}))
   const stop = vi.fn(async () => true)
-  const start = vi.fn(async () => ({ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: false }))
-  const list = vi.fn(() => [{ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: true, sessionFile: '/tmp/session.jsonl' }])
+  const start = vi.fn(async (): Promise<RuntimeInfo> => ({ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: false }))
+  const list = vi.fn(() => [{ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: true, sessionId: 'session-1', sessionFile: '/tmp/session.jsonl' }])
   const agent = { start, command, stop, list }
+  const catalog = async (_force = false, disabledProviders: ReadonlySet<string> = new Set()) => ({
+    primeVersion: 'test', refreshedAt: '2026-01-01T00:00:00.000Z',
+    providers: [
+      { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'oauth' as const, configured: true, modelCount: 3, availableModelCount: 2, enabled: !disabledProviders.has('openai-codex') },
+      { id: 'anthropic', name: 'Anthropic', authMethod: 'api_key' as const, configured: true, modelCount: 2, availableModelCount: 1, enabled: !disabledProviders.has('anthropic') },
+    ],
+    models: [
+      model('openai-codex/gpt-5.6-sol', 'GPT-5.6 Sol', ['low', 'medium', 'high', 'max']),
+      model('openai-codex/gpt-5.6-luna', 'GPT-5.6 Luna', ['low', 'high']),
+      model('openai-codex/gpt-hidden', 'GPT Hidden', ['high'], false),
+      model('anthropic/claude-sonnet-4-6', 'Claude Sonnet 4.6', ['off', 'max']),
+      model('anthropic/claude-opus-hidden', 'Claude Opus Hidden', ['high'], false),
+    ],
+  })
+  const primeCatalog = vi.fn(catalog)
+  const ompCatalog = vi.fn(catalog)
   const options: VoiceServiceOptions = {
     secretPath: join(directory, 'voice-secrets.json'),
     secretCodec: {
@@ -37,6 +63,10 @@ function makeService(overrides: Partial<VoiceServiceOptions> = {}) {
       omp: { list: vi.fn(async () => [project('omp')]) },
     } as unknown as VoiceServiceOptions['projects'],
     agents: { prime: agent, omp: agent } as unknown as VoiceServiceOptions['agents'],
+    catalogs: {
+      prime: { catalog: primeCatalog },
+      omp: { catalog: ompCatalog },
+    } as unknown as VoiceServiceOptions['catalogs'],
     runProcess: vi.fn(),
     environment: {},
     ...overrides,
@@ -62,14 +92,17 @@ describe('VoiceService', () => {
   it('creates a realtime session with orchestration tools and no confirmation gate', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const form = init?.body as FormData
-      const session = JSON.parse(String(form.get('session'))) as { instructions: string; tools: Array<{ name: string }> }
+      const session = JSON.parse(String(form.get('session'))) as { instructions: string; tools: Array<{ name: string; parameters: { properties: Record<string, unknown> } }> }
       expect(session.instructions).toContain('Do not ask for a second confirmation')
       expect(session.instructions).toContain('locked to the currently selected OMP harness')
       expect(session.instructions).toContain('Do not include phrases such as start a session')
       expect(session.instructions).toContain('"Determine the next logical feature to add to this project and explain why."')
       expect(session.instructions).toContain('first call get_local_context, then call search_web')
       expect(session.instructions).toContain('Do not ask the user for a location unless get_local_context returns no usable location_hint')
-      expect(session.tools.map((tool) => tool.name)).toEqual(['list_projects', 'start_task', 'get_local_context', 'search_web'])
+      expect(session.instructions).toContain('Choose the closest available model and the closest reasoning level')
+      expect(session.tools.map((tool) => tool.name)).toEqual(['list_projects', 'list_models', 'start_task', 'get_local_context', 'search_web'])
+      expect(session.tools.find((tool) => tool.name === 'start_task')?.parameters.properties).toHaveProperty('model')
+      expect(session.tools.find((tool) => tool.name === 'start_task')?.parameters.properties).toHaveProperty('reasoning')
       return new Response('v=0\r\no=answer')
     })
     const { service } = makeService({ fetch: fetchMock as typeof fetch })
@@ -99,8 +132,83 @@ describe('VoiceService', () => {
     expect(agent.command).toHaveBeenCalledWith('runtime-1', { type: 'get_state' })
     expect(result.task).toEqual({
       projectId: 'prime-project', projectName: 'prime project', harness: 'prime',
-      runtimeId: 'runtime-1', sessionFile: '/tmp/session.jsonl',
+      runtimeId: 'runtime-1', sessionId: 'session-1', sessionFile: '/tmp/session.jsonl',
     })
+  })
+
+  it('lists only available models from GUI-visible providers and searches approximate names', async () => {
+    const settings = { ...defaultSettings(), disabledProviders: ['anthropic'] }
+    const { service } = makeService({ settings: () => settings })
+    const result = await service.executeTool({ name: 'list_models', arguments: { query: 'GPT five six sol' } }, 'prime')
+    expect(JSON.parse(result.output)).toEqual({
+      models: [{
+        key: 'openai-codex/gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'openai-codex',
+        reasoning_levels: ['low', 'medium', 'high', 'max'],
+      }, {
+        key: 'openai-codex/gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'openai-codex',
+        reasoning_levels: ['low', 'high'],
+      }],
+      matched: 2,
+      returned: 2,
+      truncated: false,
+    })
+  })
+
+  it('keeps Prime and OMP provider visibility independent during model discovery', async () => {
+    const settings = { ...defaultSettings(), disabledProviders: ['openai-codex'], ompDisabledProviders: ['anthropic'] }
+    const { service, options } = makeService({ settings: () => settings })
+    const primeResult = await service.executeTool({ name: 'list_models', arguments: { query: 'GPT' } }, 'prime')
+    const ompResult = await service.executeTool({ name: 'list_models', arguments: { query: 'GPT' } }, 'omp')
+    expect(JSON.parse(primeResult.output).models).toEqual([])
+    expect(JSON.parse(ompResult.output).models).toHaveLength(2)
+    expect(options.catalogs.prime.catalog).toHaveBeenCalledWith(false, new Set(['openai-codex']))
+    expect(options.catalogs.omp.catalog).toHaveBeenCalledWith(false, new Set(['anthropic']))
+  })
+
+  it('starts with the closest active model and supported reasoning level', async () => {
+    const { service, agent } = makeService()
+    const result = await service.executeTool({
+      name: 'start_task',
+      arguments: {
+        project_id: 'prime-project', prompt: 'Implement it', model: 'GPT five six sol', reasoning: 'very high',
+      },
+    }, 'prime')
+    expect(agent.start).toHaveBeenCalledWith({
+      cwd: '/tmp/prime', model: 'openai-codex/gpt-5.6-sol', thinking: 'max',
+    })
+    expect(result.task).toMatchObject({
+      model: { key: 'openai-codex/gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+      reasoning: 'max',
+    })
+  })
+
+  it('maps a high reasoning request to max when max is the only supported high tier', async () => {
+    const { service, agent } = makeService()
+    await service.executeTool({
+      name: 'start_task',
+      arguments: {
+        project_id: 'prime-project', prompt: 'Implement it', model: 'Claude Sonnet 4.6', reasoning: 'high',
+      },
+    }, 'prime')
+    expect(agent.start).toHaveBeenCalledWith({
+      cwd: '/tmp/prime', model: 'anthropic/claude-sonnet-4-6', thinking: 'max',
+    })
+  })
+
+  it('applies approximate reasoning to the harness default model before prompting', async () => {
+    const { service, agent } = makeService()
+    agent.start.mockResolvedValue({
+      runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: false,
+      availableThinkingLevels: ['minimal', 'high'],
+    })
+    const result = await service.executeTool({
+      name: 'start_task',
+      arguments: { project_id: 'prime-project', prompt: 'Implement it', reasoning: 'somewhere in the middle' },
+    }, 'prime')
+    expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
+    expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'set_thinking_level', level: 'high' })
+    expect(agent.command).toHaveBeenNthCalledWith(2, 'runtime-1', { type: 'prompt', message: 'Implement it' })
+    expect(result.task?.reasoning).toBe('high')
   })
 
   it('does not report success when the harness fails to expose a saved session', async () => {

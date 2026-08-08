@@ -31,7 +31,8 @@ function clampPosition(position: OrbPosition): OrbPosition {
 function toolRequest(name: unknown, args: unknown): VoiceToolRequest | null {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return null
   if (name === 'list_projects') return { name, arguments: args as { query?: string } }
-  if (name === 'start_task') return { name, arguments: args as { project_id: string; prompt: string; title?: string } }
+  if (name === 'list_models') return { name, arguments: args as { query?: string } }
+  if (name === 'start_task') return { name, arguments: args as { project_id: string; prompt: string; title?: string; model?: string; reasoning?: string } }
   if (name === 'get_local_context') return { name, arguments: {} }
   if (name === 'search_web') return { name, arguments: args as { query: string } }
   return null

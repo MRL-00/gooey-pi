@@ -178,6 +178,8 @@ describe('harness-aware IPC routing', () => {
   it('routes sessions:list and projects channels by the harness argument, defaulting to prime', async () => {
     await expect(harness.invoke('sessions:list', undefined, false)).resolves.toEqual(['prime-sessions'])
     await expect(harness.invoke('sessions:list', undefined, false, 'omp')).resolves.toEqual(['omp-sessions'])
+    await expect(harness.invoke('sessions:list', '/repo', true, 'omp', true)).resolves.toEqual(['omp-sessions'])
+    expect(harness.services.omp.sessions.list).toHaveBeenLastCalledWith('/repo', true, true)
     await expect(harness.invoke('projects:list')).resolves.toEqual(['prime-projects'])
     await expect(harness.invoke('projects:list', 'omp')).resolves.toEqual(['omp-projects'])
     await expect(harness.invoke('projects:grant-inferred', '/somewhere', 'omp')).resolves.toBe('omp-grant')

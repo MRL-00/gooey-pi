@@ -98,6 +98,16 @@ describe('session discovery work bounds', () => {
 })
 
 describe('SessionService catalog scaling', () => {
+  it('forces a fresh scan when a just-created session has not emitted a watch event', async () => {
+    const { root, project, service } = setup()
+    const file = join(root, 'new-session.jsonl')
+    writeSession(file, project, 'new-session')
+    const catalog = (service as unknown as { catalog: SessionMetadataCatalog }).catalog
+    const invalidate = vi.spyOn(catalog, 'invalidateLiveCatalog')
+    expect(await service.list(project, false, true)).toMatchObject([{ id: 'new-session' }])
+    expect(invalidate).toHaveBeenCalledOnce()
+  })
+
   it('coalesces concurrent lists and reuses metadata by canonical path, mtime, and size', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'one.jsonl')

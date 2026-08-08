@@ -28,7 +28,7 @@ const api: PrimeWorkApi = {
     touch: (id, harness) => ipcRenderer.invoke('projects:touch', id, harness),
   },
   sessions: {
-    list: (projectPath, includeArchived, harness) => ipcRenderer.invoke('sessions:list', projectPath, includeArchived, harness),
+    list: (projectPath, includeArchived, harness, force) => ipcRenderer.invoke('sessions:list', projectPath, includeArchived, harness, force),
     read: (filePath) => ipcRenderer.invoke('sessions:read', filePath),
     followUp: (filePath, message, intent) => ipcRenderer.invoke('sessions:follow-up', filePath, message, intent),
     rename: (filePath, title) => ipcRenderer.invoke('sessions:rename', filePath, title),

@@ -289,9 +289,8 @@ export default function App() {
     try {
       const [runtime, sessionResolution] = await Promise.all([
         bridge.agent.list().then((items) => items.find((candidate) => candidate.runtimeId === task.runtimeId)),
-        waitForVoiceSession(task.sessionFile, () => bridge.sessions.list(project.primaryFolder, true, task.harness)),
+        waitForVoiceSession(task.sessionFile, task.sessionId, (force) => bridge.sessions.list(project.primaryFolder, true, task.harness, force)),
       ])
-      if (!runtime) throw new Error('The voice task started, but its runtime could not be attached.')
       if (!sessionResolution) throw new Error('The voice task started, but its saved session did not appear in the project catalog.')
       const { session, sessions: sessionCatalog } = sessionResolution
       if (task.harness !== activeHarness) await settingsState.updateSettings({ activeHarness: task.harness })

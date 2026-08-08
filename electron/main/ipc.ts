@@ -162,7 +162,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('projects:remove', (_event, id, harness) => projectsFor(requireHarness(harness)).remove(id))
   handle('projects:touch', (_event, id, harness) => projectsFor(requireHarness(harness)).touch(id))
 
-  handle('sessions:list', (_event, projectPath, includeArchived, harness) => sessionsFor(requireHarness(harness)).list(projectPath, includeArchived))
+  handle('sessions:list', (_event, projectPath, includeArchived, harness, force) => sessionsFor(requireHarness(harness)).list(projectPath, includeArchived, force))
   handle('sessions:read', async (_event, filePath) => (await sessionsForPath(filePath)).service.read(filePath))
   handle('sessions:follow-up', async (_event, filePath, message, intent) => {
     const routed = await sessionsForPath(filePath)
