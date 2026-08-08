@@ -106,11 +106,21 @@ describe('Voice settings setup flow', () => {
     expect(saveApiKey).toHaveBeenCalledWith('openai', 'sk-test-key')
   })
 
-  it('explains how to recover an older preload instead of showing disabled key buttons', async () => {
+  it('explains how to recover an older desktop process instead of showing disabled key buttons', async () => {
     await render(<Harness voice={null} />)
 
-    expect(container.textContent).toContain('Reload to enable voice services')
-    expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('Reload Voice'))).toBe(true)
+    expect(container.textContent).toContain('Restart Prime Work to finish enabling Voice')
+    expect(container.textContent).toContain('⌘Q')
     expect([...container.querySelectorAll('button')].some((button) => button.disabled && button.textContent?.includes('Add key'))).toBe(false)
+  })
+
+  it('turns a missing Voice IPC handler into a restart state instead of checking forever', async () => {
+    const credentialStatus = vi.fn().mockRejectedValue(new Error("No handler registered for 'voice:credential-status'"))
+    await render(<Harness voice={voiceBridge({ credentialStatus })} />)
+
+    expect(container.textContent).toContain('Restart Prime Work to finish enabling Voice')
+    expect(container.textContent).toContain('Restart required')
+    expect(container.textContent).not.toContain('Checking…')
+    expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('Add key'))).toBe(false)
   })
 })
