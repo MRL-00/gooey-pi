@@ -128,7 +128,12 @@ export default function App() {
   })
   // Stable identity: the harness-switch reset lives inside the bootstrap
   // effect, and an unstable callback would re-run the whole bootstrap.
-  const onHarnessSwitch = useCallback(() => { setView('session'); setScheduleFocusId(null) }, [])
+  // Only Prime-only views are vacated on switch; switching from Settings
+  // (or another shared view) keeps the user where they are.
+  const onHarnessSwitch = useCallback(() => {
+    setView((current) => current === 'scheduled' || current === 'plugins' ? 'session' : current)
+    setScheduleFocusId(null)
+  }, [])
   const { meta, initialized } = useBootstrap({
     bridge, harness: activeHarness, setProjects, setSessions, setSchedules, setScheduleError,
     runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
