@@ -532,6 +532,10 @@ test.describe('Prime Work desktop smoke', () => {
     expect(existsSync(join(fixtureRoot, 'follow-up-ack.json'))).toBe(false)
     await expect(page.locator('.transcript').getByText('The external Prime Agent received the queued reply.')).toHaveCount(0)
     await expect(page.getByText(/Prime Agent RPC exited|Request failed/)).toHaveCount(0)
+
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    await expect(page.getByRole('region', { name: 'Queued messages' })).toContainText('Queue this follow-up from Prime Work')
   })
 
   test('reflects an external JSONL append without reselecting the live session', async () => {

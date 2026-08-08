@@ -18,12 +18,22 @@ const session: SessionRecord = {
 type Workspace = ReturnType<typeof useWorkspaceRuntime>
 let latest: Workspace
 
-function Probe({ bridge }: { bridge: PrimeWorkApi }) {
+function Probe({
+  bridge,
+  initialProject = project,
+  initialSession = session,
+  sessions = [session],
+}: {
+  bridge: PrimeWorkApi | null
+  initialProject?: ProjectRecord
+  initialSession?: SessionRecord
+  sessions?: SessionRecord[]
+}) {
   latest = useWorkspaceRuntime({
     bridge,
-    initialProject: project,
-    initialSession: session,
-    sessions: [session],
+    initialProject,
+    initialSession,
+    sessions,
     initialMessages: [],
     reportError: () => undefined,
   })
@@ -49,6 +59,44 @@ afterEach(() => {
 const flush = async () => { await act(async () => { await Promise.resolve() }) }
 
 describe('prompt admission versus background transcript reads', () => {
+  it('keeps queued prompts with their thread when navigating away and back', () => {
+    const ompProject: ProjectRecord = {
+      ...project,
+      id: 'omp-project',
+      harness: 'omp',
+      path: '/omp-project',
+      folders: ['/omp-project'],
+      primaryFolder: '/omp-project',
+    }
+    const ompSession: SessionRecord = {
+      ...session,
+      id: 'omp-session',
+      harness: 'omp',
+      filePath: '/omp-sessions/session.jsonl',
+      projectPath: '/omp-project',
+    }
+    const otherSession: SessionRecord = {
+      ...ompSession,
+      id: 'other-session',
+      filePath: '/omp-sessions/other-session.jsonl',
+      title: 'Other session',
+    }
+    act(() => { root.render(createElement(Probe, { bridge: null, initialProject: ompProject, initialSession: ompSession, sessions: [ompSession, otherSession] })) })
+
+    act(() => { latest.queuePrompt('keep this OMP follow-up', 'queue') })
+    expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['keep this OMP follow-up'])
+
+    act(() => { latest.activateWorkspace(ompProject, otherSession) })
+    expect(latest.pendingQueuedPrompts).toEqual([])
+    act(() => { latest.queuePrompt('other thread follow-up', 'queue') })
+
+    act(() => { latest.activateWorkspace(ompProject, ompSession) })
+    expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['keep this OMP follow-up'])
+
+    act(() => { latest.activateWorkspace(ompProject, otherSession) })
+    expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['other thread follow-up'])
+  })
+
   it('keeps the optimistic user message when a pending background read resolves after the prompt', async () => {
     let resolveRead!: (value: TranscriptMessage[]) => void
     const read = vi.fn(() => new Promise<TranscriptMessage[]>((resolve) => { resolveRead = resolve }))

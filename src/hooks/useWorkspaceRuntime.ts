@@ -26,7 +26,18 @@ function nextQueuedPromptId(): string {
   return `queued-${Date.now()}-${queuedPromptSequence}`
 }
 
-
+function queuedPromptOwner(
+  project: ProjectRecord | undefined,
+  session: SessionRecord | undefined,
+  runtime: RuntimeInfo | undefined,
+  generation: number,
+): string | undefined {
+  if (session?.filePath) return `${session.harness}:session:${session.filePath}`
+  if (runtime?.sessionFile) return `${runtime.harness}:session:${runtime.sessionFile}`
+  if (runtime) return `${runtime.harness}:runtime:${runtime.runtimeId}`
+  if (project) return `${project.harness}:new:${project.id}:${generation}`
+  return undefined
+}
 
 interface TranscriptLoad {
   generation: number
@@ -59,6 +70,9 @@ export function useWorkspaceRuntime({
 }: UseWorkspaceRuntimeOptions) {
   const [messages, setMessages] = useState(initialMessages)
   const [pendingQueuedPrompts, setPendingQueuedPrompts] = useState<QueuedPrompt[]>([])
+  const pendingQueuedPromptsRef = useRef<QueuedPrompt[]>([])
+  const queuedPromptsByOwnerRef = useRef<Map<string, QueuedPrompt[]>>(new Map())
+  const activeQueuedPromptOwnerRef = useRef<string | undefined>(queuedPromptOwner(initialProject, initialSession, undefined, 0))
   const [activeProjectId, setActiveProjectId] = useState(initialProject?.id)
   const [activeSessionId, setActiveSessionId] = useState(initialSession?.id)
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null)
@@ -129,6 +143,20 @@ export function useWorkspaceRuntime({
   const attachRuntime = useCallback((nextRuntime: RuntimeInfo | undefined, generation: number) => {
     if (workspaceRef.current.generation !== generation) return
     const next = nextRuntime ?? null
+    const previousQueueOwner = activeQueuedPromptOwnerRef.current
+    const nextQueueOwner = queuedPromptOwner(workspaceRef.current.project, workspaceRef.current.session, nextRuntime, generation)
+    if (nextQueueOwner !== previousQueueOwner) {
+      const currentQueue = pendingQueuedPromptsRef.current
+      const restoredQueue = nextQueueOwner ? queuedPromptsByOwnerRef.current.get(nextQueueOwner) : undefined
+      const nextQueue = currentQueue.length ? currentQueue : restoredQueue ?? []
+      if (previousQueueOwner?.includes(':new:') || previousQueueOwner?.includes(':runtime:')) {
+        queuedPromptsByOwnerRef.current.delete(previousQueueOwner)
+      }
+      if (nextQueueOwner && nextQueue.length) queuedPromptsByOwnerRef.current.set(nextQueueOwner, nextQueue)
+      activeQueuedPromptOwnerRef.current = nextQueueOwner
+      pendingQueuedPromptsRef.current = nextQueue
+      setPendingQueuedPrompts(nextQueue)
+    }
     if (next?.sessionFile) runtimeSessionsRef.current.set(next.runtimeId, next.sessionFile)
     runtimeIdRef.current = next?.runtimeId ?? null
     runtimeOwnerRef.current = next ? { runtimeId: next.runtimeId, generation } : null
@@ -161,8 +189,12 @@ export function useWorkspaceRuntime({
     transcriptLoadRef.current = bridge && session?.filePath
       ? { generation, sessionFile: session.filePath, eventBuffer: createPrimeEventBuffer(), reconciliation: false, admissionRevision: 0 }
       : null
+    const queueOwner = queuedPromptOwner(project, session, nextRuntime, generation)
+    const queuedPrompts = queueOwner ? queuedPromptsByOwnerRef.current.get(queueOwner) ?? [] : []
+    activeQueuedPromptOwnerRef.current = queueOwner
+    pendingQueuedPromptsRef.current = queuedPrompts
     setWorkspaceGeneration(generation)
-    setPendingQueuedPrompts([])
+    setPendingQueuedPrompts(queuedPrompts)
     setActiveProjectId(project?.id)
     setActiveSessionId(session?.id)
     attachRuntime(nextRuntime, generation)
@@ -361,13 +393,42 @@ export function useWorkspaceRuntime({
 
   const queuePrompt = useCallback((text: string, intent: PromptDeliveryIntent): string => {
     const queued: QueuedPrompt = { id: nextQueuedPromptId(), text, intent }
-    setPendingQueuedPrompts((current) => [...current, queued])
+    const next = [...pendingQueuedPromptsRef.current, queued]
+    pendingQueuedPromptsRef.current = next
+    const owner = activeQueuedPromptOwnerRef.current
+    if (owner) queuedPromptsByOwnerRef.current.set(owner, next)
+    setPendingQueuedPrompts(next)
     return queued.id
   }, [])
   const removeQueuedPrompt = useCallback((id: string) => {
-    setPendingQueuedPrompts((current) => current.filter((prompt) => prompt.id !== id))
+    const current = pendingQueuedPromptsRef.current
+    const next = current.filter((prompt) => prompt.id !== id)
+    if (next.length !== current.length) {
+      pendingQueuedPromptsRef.current = next
+      const owner = activeQueuedPromptOwnerRef.current
+      if (owner) {
+        if (next.length) queuedPromptsByOwnerRef.current.set(owner, next)
+        else queuedPromptsByOwnerRef.current.delete(owner)
+      }
+      setPendingQueuedPrompts(next)
+      return
+    }
+    for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
+      const remaining = prompts.filter((prompt) => prompt.id !== id)
+      if (remaining.length === prompts.length) continue
+      if (remaining.length) queuedPromptsByOwnerRef.current.set(owner, remaining)
+      else queuedPromptsByOwnerRef.current.delete(owner)
+      // Wake the idle-flush effect for the visible thread after a background
+      // delivery settles; its previous pass may have observed the global
+      // single-flight guard while this prompt was being sent.
+      setPendingQueuedPrompts([...pendingQueuedPromptsRef.current])
+      return
+    }
   }, [])
   const clearQueuedPrompts = useCallback(() => {
+    const owner = activeQueuedPromptOwnerRef.current
+    if (owner) queuedPromptsByOwnerRef.current.delete(owner)
+    pendingQueuedPromptsRef.current = []
     setPendingQueuedPrompts([])
   }, [])
   const reconcileQueuedPrompts = useCallback((_snapshot: SessionActionSnapshot) => undefined, [])
