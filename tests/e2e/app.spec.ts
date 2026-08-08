@@ -65,6 +65,17 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
   initializeRepository(secondary, 'secondary-change.txt')
   writeFileSync(join(secondary, 'secondary-change.txt'), 'base\nsecondary workspace change\n')
   writeFileSync(join(project, 'README.md'), '# Hermetic Prime Work fixture\n')
+  const ompSessions = join(home, '.omp', 'agent', 'sessions', '-omp-project')
+  mkdirSync(ompSessions, { recursive: true })
+  const ompTitleUnpadded = JSON.stringify({ type: 'title', v: 1, title: 'OMP hermetic fixture', updatedAt: '2026-02-01T00:00:00.000Z', pad: '' })
+  const ompTitleSlot = JSON.stringify({ type: 'title', v: 1, title: 'OMP hermetic fixture', updatedAt: '2026-02-01T00:00:00.000Z', pad: ' '.repeat(256 - 1 - Buffer.byteLength(ompTitleUnpadded, 'utf8')) })
+  writeFileSync(join(ompSessions, '2026-02-01T00-00-00-000Z_019fdf24-aaaa-7000-8000-000000000001.jsonl'), [
+    ompTitleSlot,
+    JSON.stringify({ type: 'session', version: 3, id: '019fdf24-aaaa-7000-8000-000000000001', timestamp: '2026-02-01T00:00:00.000Z', cwd: canonicalProject }),
+    JSON.stringify({ type: 'message', id: 'omp-user', parentId: null, timestamp: '2026-02-01T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'OMP hermetic fixture' }], timestamp: 1774915201000 } }),
+    JSON.stringify({ type: 'message', id: 'omp-assistant', parentId: 'omp-user', timestamp: '2026-02-01T00:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'OMP fixture reply.' }] } }),
+    '',
+  ].join('\n'))
   const sessionFile = join(sessions, 'fixture.jsonl')
   writeFileSync(sessionFile, [
     JSON.stringify({ type: 'session', id: 'fixture-session', cwd: canonicalSecondary, timestamp: '2026-01-01T00:00:00.000Z' }),
@@ -365,10 +376,38 @@ test.describe('Prime Work desktop smoke', () => {
     })
     expect(bridge.type).toBe('object')
     expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal'])
-    await expect(page.getByLabel('Prime Work by Prime Intellect')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+  })
+
+  test('opens the harness switcher with both harnesses and dismisses on Escape', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    const menu = page.getByRole('menu')
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('menuitemradio', { name: /Prime Work/ })).toBeVisible()
+    await expect(menu.getByRole('menuitemradio', { name: /OMP Work/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+  })
+
+  test('switches to OMP Work and lists the OMP session catalog, then returns to Prime', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    const ompBrand = page.getByRole('button', { name: 'OMP Work — switch harness' })
+    await expect(ompBrand).toBeVisible()
+    await expect(page.locator('.sidebar__brand .omp-mark')).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' })).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Scheduled' })).toHaveCount(0)
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+    await expect(page.getByRole('main').getByText('OMP fixture reply.')).toBeVisible()
+    await ompBrand.click()
+    await page.getByRole('menuitemradio', { name: /Prime Work/ }).click()
+    await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
   })
 
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
