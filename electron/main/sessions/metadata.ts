@@ -12,7 +12,7 @@ export type JsonRecord = Record<string, unknown>
 export interface SessionMetadata extends SessionRecord { sessionName?: string }
 
 const MAX_SESSION_FILE_BYTES = 256 * 1024 * 1024
-const MAX_METADATA_RECORDS = 200_000
+export const MAX_METADATA_RECORDS = 200_000
 // The transcript reader of the same file MUST share this per-record tolerance.
 const MAX_METADATA_RECORD_BYTES = SESSION_FILE_RECORD_LIMIT_BYTES
 const MAX_TRACKED_METADATA_STATES = 5_000
@@ -20,7 +20,7 @@ export const METADATA_VERIFY_TAIL_BYTES = 4_096
 const LINE_FEED = 0x0a
 const CARRIAGE_RETURN = 0x0d
 
-function statusFrom(
+export function statusFrom(
   taskState: string | undefined,
   lifecycle: string | undefined,
   lastRole: string | undefined,
@@ -94,6 +94,29 @@ function createAccumulator(filePath: string, fileStat: Stats): MetadataAccumulat
   }
 }
 
+/** The subset of accumulator state that `message` records update, shared by every session dialect. */
+export interface MessageActivityAccumulator {
+  createdAt: string
+  lastUserMessageAt?: string
+  firstUser: string
+  preview: string
+  lastRole?: string
+  stopReason?: string
+}
+
+export function ingestMessageActivity(state: MessageActivityAccumulator, record: JsonRecord): void {
+  if (!isRecord(record.message)) return
+  const message = record.message
+  if (typeof message.role === 'string') state.lastRole = message.role
+  if (typeof message.stopReason === 'string') state.stopReason = message.stopReason
+  const text = textFromContent(message.content, 4_096)
+  if (message.role === 'user') {
+    if (!state.firstUser && text) state.firstUser = text
+    state.lastUserMessageAt = validTimestamp(message.timestamp, validTimestamp(record.timestamp, state.lastUserMessageAt ?? state.createdAt))
+  }
+  if ((message.role === 'assistant' || message.role === 'user') && text) state.preview = text
+}
+
 function ingestMetadataLine(state: MetadataAccumulator, line: string): void {
   if (!line) return
   if (++state.records > MAX_METADATA_RECORDS) throw new Error('Session file has too many records')
@@ -118,17 +141,7 @@ function ingestMetadataLine(state: MetadataAccumulator, line: string): void {
   else if (value.type === 'session_info' && typeof value.name === 'string') state.sessionName = value.name
   else if (value.type === 'session_state' && isRecord(value.state) && typeof value.state.status === 'string') state.lifecycle = value.state.status
   else if (value.type === 'agent_status' && isRecord(value.status) && typeof value.status.taskState === 'string') state.taskState = value.status.taskState
-  else if (value.type === 'message' && isRecord(value.message)) {
-    const message = value.message
-    if (typeof message.role === 'string') state.lastRole = message.role
-    if (typeof message.stopReason === 'string') state.stopReason = message.stopReason
-    const text = textFromContent(message.content, 4_096)
-    if (message.role === 'user') {
-      if (!state.firstUser && text) state.firstUser = text
-      state.lastUserMessageAt = validTimestamp(message.timestamp, validTimestamp(value.timestamp, state.lastUserMessageAt ?? state.createdAt))
-    }
-    if ((message.role === 'assistant' || message.role === 'user') && text) state.preview = text
-  }
+  else if (value.type === 'message') ingestMessageActivity(state, value)
 }
 
 function metadataFromAccumulator(state: MetadataAccumulator, filePath: string, fallbackUpdated: string): SessionMetadata {
@@ -153,14 +166,14 @@ function metadataFromAccumulator(state: MetadataAccumulator, filePath: string, f
   }
 }
 
-interface IncrementalMetadataState {
+interface IncrementalMetadataState<Accumulator> {
   size: number
   mtimeMs: number
   /** Raw bytes of the current unterminated final line, resumed on the next append. */
   pending: Buffer
   /** Last raw bytes of the parsed range, re-read and compared before resuming. */
   tail: Buffer
-  accumulator: MetadataAccumulator
+  accumulator: Accumulator
 }
 
 export interface SessionMetadataReaderIo {
@@ -169,9 +182,20 @@ export interface SessionMetadataReaderIo {
   openStream(path: string, start: number, end: number): Readable
 }
 
-const nodeMetadataReaderIo: SessionMetadataReaderIo = {
+export const nodeMetadataReaderIo: SessionMetadataReaderIo = {
   inspect: stat,
   openStream: (path, start, end) => createReadStream(path, { start, end }),
+}
+
+/**
+ * Harness-specific JSONL metadata parsing over the shared incremental
+ * machinery: the accumulator must be a flat object so a shallow spread yields
+ * an independent copy for speculative and resumed parses.
+ */
+export interface MetadataLineParser<Accumulator> {
+  createAccumulator(filePath: string, fileStat: Stats): Accumulator
+  ingestLine(accumulator: Accumulator, line: string): void
+  snapshot(accumulator: Accumulator, filePath: string, fallbackUpdated: string): SessionMetadata
 }
 
 function trimTrailingCarriageReturn(line: string): string {
@@ -182,7 +206,7 @@ function lastBytes(data: Buffer, max: number): Buffer {
   return data.length <= max ? data : Buffer.from(data.subarray(data.length - max))
 }
 
-function ingestBytes(state: IncrementalMetadataState, bytes: Buffer): void {
+function ingestBytes<Accumulator extends object>(parser: MetadataLineParser<Accumulator>, state: IncrementalMetadataState<Accumulator>, bytes: Buffer): void {
   state.tail = state.tail.length + bytes.length <= METADATA_VERIFY_TAIL_BYTES
     ? Buffer.concat([state.tail, bytes])
     : lastBytes(bytes.length >= METADATA_VERIFY_TAIL_BYTES ? bytes : Buffer.concat([state.tail, bytes]), METADATA_VERIFY_TAIL_BYTES)
@@ -193,7 +217,7 @@ function ingestBytes(state: IncrementalMetadataState, bytes: Buffer): void {
     if (newline < 0) break
     if (newline - start > MAX_METADATA_RECORD_BYTES) throw new Error('JSONL record exceeded the maximum frame size')
     const end = newline > start && data[newline - 1] === CARRIAGE_RETURN ? newline - 1 : newline
-    ingestMetadataLine(state.accumulator, data.toString('utf8', start, end))
+    parser.ingestLine(state.accumulator, data.toString('utf8', start, end))
     start = newline + 1
   }
   const rest = data.subarray(start)
@@ -201,17 +225,17 @@ function ingestBytes(state: IncrementalMetadataState, bytes: Buffer): void {
   state.pending = Buffer.from(rest)
 }
 
-function snapshotState(state: IncrementalMetadataState, filePath: string, fallbackUpdated: string): SessionMetadata {
-  if (!state.pending.length) return metadataFromAccumulator(state.accumulator, filePath, fallbackUpdated)
+function snapshotState<Accumulator extends object>(parser: MetadataLineParser<Accumulator>, state: IncrementalMetadataState<Accumulator>, filePath: string, fallbackUpdated: string): SessionMetadata {
+  if (!state.pending.length) return parser.snapshot(state.accumulator, filePath, fallbackUpdated)
   // A full stream read parses the final unterminated line; fold it into a
   // speculative copy so incremental snapshots stay identical without
   // committing a partial record to the retained parse state.
   const speculative = { ...state.accumulator }
-  ingestMetadataLine(speculative, trimTrailingCarriageReturn(state.pending.toString('utf8')))
-  return metadataFromAccumulator(speculative, filePath, fallbackUpdated)
+  parser.ingestLine(speculative, trimTrailingCarriageReturn(state.pending.toString('utf8')))
+  return parser.snapshot(speculative, filePath, fallbackUpdated)
 }
 
-async function ingestRange(io: SessionMetadataReaderIo, state: IncrementalMetadataState, filePath: string, start: number, end: number): Promise<void> {
+async function ingestRange<Accumulator extends object>(io: SessionMetadataReaderIo, parser: MetadataLineParser<Accumulator>, state: IncrementalMetadataState<Accumulator>, filePath: string, start: number, end: number): Promise<void> {
   if (end <= start) {
     state.size = end
     return
@@ -219,7 +243,7 @@ async function ingestRange(io: SessionMetadataReaderIo, state: IncrementalMetada
   const stream = io.openStream(filePath, start, end - 1)
   try {
     for await (const chunk of stream) {
-      ingestBytes(state, typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk as Buffer)
+      ingestBytes(parser, state, typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk as Buffer)
     }
   } finally {
     stream.destroy()
@@ -233,13 +257,19 @@ export type SessionMetadataReader = (filePath: string, knownStat?: Stats) => Pro
  * Creates a metadata reader that caches per-file parse state: appends read only
  * the new byte range plus the retained tail, which is verified byte-for-byte
  * before the parse resumes. Truncation, tail mismatch, or a same-size rewrite
- * fall back to a full re-read.
+ * fall back to a full re-read. `reservedHeaderBytes` excludes a fixed-width
+ * mutable prefix (for example the OMP title slot) from the incremental parse:
+ * the caller re-reads that prefix itself on every snapshot.
  */
-export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMetadataReaderIo): SessionMetadataReader {
-  const states = new Map<string, IncrementalMetadataState>()
+export function createIncrementalMetadataReader<Accumulator extends object>(
+  parser: MetadataLineParser<Accumulator>,
+  io: SessionMetadataReaderIo = nodeMetadataReaderIo,
+  reservedHeaderBytes = 0,
+): SessionMetadataReader {
+  const states = new Map<string, IncrementalMetadataState<Accumulator>>()
   const locks = new Map<string, Promise<unknown>>()
 
-  const remember = (filePath: string, state: IncrementalMetadataState): void => {
+  const remember = (filePath: string, state: IncrementalMetadataState<Accumulator>): void => {
     states.delete(filePath)
     states.set(filePath, state)
     while (states.size > MAX_TRACKED_METADATA_STATES) {
@@ -250,16 +280,16 @@ export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMe
   }
 
   const fullRead = async (filePath: string, fileStat: Stats): Promise<SessionMetadata> => {
-    const state: IncrementalMetadataState = {
+    const state: IncrementalMetadataState<Accumulator> = {
       size: 0,
       mtimeMs: fileStat.mtimeMs,
       pending: Buffer.alloc(0),
       tail: Buffer.alloc(0),
-      accumulator: createAccumulator(filePath, fileStat),
+      accumulator: parser.createAccumulator(filePath, fileStat),
     }
-    await ingestRange(io, state, filePath, 0, fileStat.size)
+    await ingestRange(io, parser, state, filePath, Math.min(reservedHeaderBytes, fileStat.size), fileStat.size)
     remember(filePath, state)
-    return snapshotState(state, filePath, fileStat.mtime.toISOString())
+    return snapshotState(parser, state, filePath, fileStat.mtime.toISOString())
   }
 
   const perform = async (filePath: string, knownStat?: Stats): Promise<SessionMetadata> => {
@@ -277,13 +307,13 @@ export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMe
     const state = states.get(filePath)
     if (state && fileStat.size === state.size && fileStat.mtimeMs === state.mtimeMs) {
       remember(filePath, state)
-      return snapshotState(state, filePath, fileStat.mtime.toISOString())
+      return snapshotState(parser, state, filePath, fileStat.mtime.toISOString())
     }
     if (state && fileStat.size > state.size) {
       try {
         const verified = state.tail
         const verifyStart = state.size - verified.length
-        const resumed: IncrementalMetadataState = {
+        const resumed: IncrementalMetadataState<Accumulator> = {
           size: state.size,
           mtimeMs: fileStat.mtimeMs,
           pending: state.pending,
@@ -305,7 +335,7 @@ export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMe
               verifiedBytes += compare
               chunk = chunk.subarray(compare)
             }
-            if (chunk.length) ingestBytes(resumed, chunk)
+            if (chunk.length) ingestBytes(parser, resumed, chunk)
           }
         } finally {
           stream.destroy()
@@ -313,7 +343,7 @@ export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMe
         if (!mismatch && verifiedBytes === verified.length) {
           resumed.size = fileStat.size
           remember(filePath, resumed)
-          return snapshotState(resumed, filePath, fileStat.mtime.toISOString())
+          return snapshotState(parser, resumed, filePath, fileStat.mtime.toISOString())
         }
       } catch (error) {
         if (error instanceof Error && (error.message === 'Session file has too many records' || error.message === 'JSONL record exceeded the maximum frame size')) {
@@ -339,6 +369,16 @@ export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMe
     void settled.then(() => { if (locks.get(filePath) === settled) locks.delete(filePath) })
     return run
   }
+}
+
+const primeMetadataParser: MetadataLineParser<MetadataAccumulator> = {
+  createAccumulator,
+  ingestLine: ingestMetadataLine,
+  snapshot: metadataFromAccumulator,
+}
+
+export function createSessionMetadataReader(io: SessionMetadataReaderIo = nodeMetadataReaderIo): SessionMetadataReader {
+  return createIncrementalMetadataReader(primeMetadataParser, io)
 }
 
 export async function readSessionMetadata(filePath: string, knownStat?: Stats): Promise<SessionMetadata> {

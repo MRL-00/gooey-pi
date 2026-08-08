@@ -14,7 +14,7 @@ const MAX_TRANSCRIPT_TEXT_CHARS = 1024 * 1024
 const MAX_TRANSCRIPT_TOOL_CHARS = 512 * 1024
 const MAX_TRANSCRIPT_ARGS_CHARS = 256 * 1024
 const MAX_TRANSCRIPT_IMAGE_CHARS = 2 * 1024 * 1024
-const MAX_PART_TEXT_CHARS = 256 * 1024
+export const MAX_PART_TEXT_CHARS = 256 * 1024
 const MAX_PART_TOOL_CHARS = 128 * 1024
 const MAX_PART_ARGS_CHARS = 128 * 1024
 const MAX_PART_IMAGE_CHARS = 2 * 1024 * 1024
@@ -196,7 +196,30 @@ function boundedTranscript(transcript: TranscriptMessage[]): TranscriptMessage[]
   return bounded.reverse()
 }
 
-export async function readTranscript(filePath: string, isStreaming: boolean): Promise<TranscriptMessage[]> {
+/**
+ * Harness-specific transcript rendering over the shared branch machinery.
+ * `isRenderable` selects which records enter the retained graph (and can be
+ * selected as the active leaf); `renderEntry` renders retained record types the
+ * shared walk does not handle itself (anything other than `message`,
+ * `compaction`, and `custom_message`).
+ */
+export interface TranscriptDialect {
+  isRenderable(entry: JsonRecord): boolean
+  renderEntry?(entry: JsonRecord, safeId: string): TranscriptMessage | undefined
+}
+
+const primeTranscriptDialect: TranscriptDialect = {
+  isRenderable: (entry) => entry.type === 'message' || entry.type === 'compaction'
+    || (entry.type === 'custom_message' && entry.display === true),
+}
+
+export type TranscriptFileReader = (filePath: string, isStreaming: boolean) => Promise<TranscriptMessage[]>
+
+export function createTranscriptReader(dialect: TranscriptDialect = primeTranscriptDialect): TranscriptFileReader {
+  return (filePath, isStreaming) => readTranscriptWithDialect(dialect, filePath, isStreaming)
+}
+
+async function readTranscriptWithDialect(dialect: TranscriptDialect, filePath: string, isStreaming: boolean): Promise<TranscriptMessage[]> {
   if ((await stat(filePath)).size > 256 * 1024 * 1024) throw new Error('Session transcript is too large to display')
   const entries = new Map<string, { id: string; parentId: string | null; entry: JsonRecord; bytes: number }>()
   // A light id→parentId edge map covers every record, so the parent-chain walk
@@ -221,7 +244,7 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       if (oldestEdge === undefined) break
       parentEdges.delete(oldestEdge)
     }
-    if (entry.type !== 'message' && entry.type !== 'compaction' && !(entry.type === 'custom_message' && entry.display === true)) continue
+    if (!dialect.isRenderable(entry)) continue
     const existing = entries.get(entry.id)
     if (existing) {
       graphBytes -= existing.bytes
@@ -352,6 +375,13 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
       }
       continue
     }
+    if (entry.type !== 'message') {
+      // A dialect-specific record type reached the walk; render it standalone.
+      const rendered = dialect.renderEntry?.(entry, safeId)
+      if (rendered) transcript.push(rendered)
+      activeAssistant = undefined
+      continue
+    }
     const message = isRecord(entry.message) ? entry.message : {}
     const role = roleOf(message)
     const rawTimestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp
@@ -390,3 +420,5 @@ export async function readTranscript(filePath: string, isStreaming: boolean): Pr
   if (isStreaming && activeAssistant) { activeAssistant.streaming = true; activeAssistant.completedAt = undefined }
   return boundedTranscript(transcript)
 }
+
+export const readTranscript: TranscriptFileReader = createTranscriptReader()

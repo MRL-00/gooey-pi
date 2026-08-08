@@ -6,8 +6,8 @@ import type { SessionChangeEvent, SessionRecord, TranscriptMessage } from '../..
 import { queueDaemonFollowUp } from './agent-daemon'
 import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
 import { runProcess } from './process-utils'
-import { SessionMetadataCatalog, type SessionCatalogIo } from './sessions/catalog'
-import { createSessionMetadataReader, type SessionMetadata } from './sessions/metadata'
+import { SessionMetadataCatalog, type SessionCatalogIo, type SessionNameTimestamp } from './sessions/catalog'
+import { createSessionMetadataReader, type SessionMetadata, type SessionMetadataReader } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
 import type { JsonStateStore } from './store'
 import { isPathWithin, isRecord, requireBoolean, requireExistingDirectory, requireId, requireString } from './validation'
@@ -22,24 +22,36 @@ const MAX_PENDING_TRANSCRIPT_READS = 32
 
 type TranscriptReader = (filePath: string, isStreaming: boolean) => Promise<TranscriptMessage[]>
 
+type SessionPathAuthorizer = (sessionRootRealPath: string, sessionRealPath: string) => boolean
+
+const authorizePrimeSessionPath: SessionPathAuthorizer = (root, path) => isPathWithin(root, path) && path.endsWith('.jsonl')
+
 export interface SessionServiceOptions {
+  /** Canonical-or-lexical session root; defaults to the Prime Agent session directory. */
+  sessionRoot?: string
   catalogIo?: SessionCatalogIo
+  /** Pre-I/O discovery ordering for a harness's file-name scheme; defaults to Prime UUIDv7 names. */
+  catalogNameTimestamp?: SessionNameTimestamp
+  metadataReader?: SessionMetadataReader
   transcriptReader?: TranscriptReader
+  /** Containment rule applied to realpathed candidates; defaults to root containment plus a `.jsonl` suffix. */
+  isSessionPathAuthorized?: SessionPathAuthorizer
   maxConcurrentTranscriptReads?: number
   maxPendingTranscriptReads?: number
 }
 
 export class SessionService {
-  readonly sessionRoot = join(homedir(), '.prime', 'agent', 'sessions')
+  readonly sessionRoot: string
   private runtimeForSession: (filePath: string) => RuntimeSessionState | undefined = () => undefined
   private listRuntimeSessions: (() => readonly RuntimeSessionSnapshot[]) | null = null
   private stopRuntimeForSession: (filePath: string) => Promise<void> = async () => undefined
   private renameRuntimeSession: (filePath: string, title: string) => Promise<boolean> = async () => false
   private readonly catalog: SessionMetadataCatalog
-  private readonly metadataReader = createSessionMetadataReader()
+  private readonly metadataReader: SessionMetadataReader
   private readonly transcriptReads = createSingleFlight<string, TranscriptMessage[]>()
   private readonly transcriptAdmission: AdmissionQueue
   private readonly transcriptReader: TranscriptReader
+  private readonly isSessionPathAuthorized: SessionPathAuthorizer
   private readonly changeListeners = new Set<(event: SessionChangeEvent) => void>()
   private sessionWatcher: FSWatcher | null = null
   private watcherRetry: NodeJS.Timeout | null = null
@@ -64,13 +76,17 @@ export class SessionService {
       pendingLimitError: () => new Error('Too many transcript reads are pending'),
       closedError: () => new Error('Too many transcript reads are pending'),
     })
+    this.sessionRoot = options.sessionRoot ?? join(homedir(), '.prime', 'agent', 'sessions')
+    this.metadataReader = options.metadataReader ?? createSessionMetadataReader()
     this.transcriptReader = options.transcriptReader ?? readTranscript
+    this.isSessionPathAuthorized = options.isSessionPathAuthorized ?? authorizePrimeSessionPath
     this.catalog = new SessionMetadataCatalog(
       () => this.sessionRoot,
       primeAgentPath,
       maxSessionFiles,
       (filePath, knownStat) => this.readMetadata(filePath, knownStat),
       options.catalogIo,
+      options.catalogNameTimestamp,
     )
   }
 
@@ -206,7 +222,7 @@ export class SessionService {
     const requested = requireString(value, 'filePath', { min: 1, max: 4096 })
     const root = await realpath(this.sessionRoot)
     const path = await realpath(requested)
-    if (!isPathWithin(root, path) || !path.endsWith('.jsonl')) throw new TypeError('Session path is outside the Prime session directory')
+    if (!this.isSessionPathAuthorized(root, path)) throw new TypeError('Session path is outside the Prime session directory')
     return path
   }
 

@@ -29,15 +29,18 @@ const nodeSessionCatalogIo: SessionCatalogIo = {
   inspect: stat,
 }
 
+/** Derives a creation timestamp from a session file name for pre-I/O ordering; `undefined` means no encoded timestamp. */
+export type SessionNameTimestamp = (name: string) => number | undefined
+
 function timestampFromSessionName(name: string): number | undefined {
   const match = /^([0-9a-f]{8})-([0-9a-f]{4})-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jsonl$/i.exec(name)
   if (!match) return undefined
   return Number.parseInt(`${match[1]}${match[2]}`, 16)
 }
 
-function compareCandidateNames(left: string, right: string): number {
-  const leftTimestamp = timestampFromSessionName(left)
-  const rightTimestamp = timestampFromSessionName(right)
+function compareCandidateNames(left: string, right: string, nameTimestamp: SessionNameTimestamp): number {
+  const leftTimestamp = nameTimestamp(left)
+  const rightTimestamp = nameTimestamp(right)
   if (leftTimestamp !== undefined && rightTimestamp !== undefined && leftTimestamp !== rightTimestamp) {
     return rightTimestamp - leftTimestamp
   }
@@ -46,9 +49,9 @@ function compareCandidateNames(left: string, right: string): number {
   return comparePaths(right, left)
 }
 
-export function boundedSessionDiscoveryNames(names: readonly string[], maxSessionFiles: number): string[] {
+export function boundedSessionDiscoveryNames(names: readonly string[], maxSessionFiles: number, nameTimestamp: SessionNameTimestamp = timestampFromSessionName): string[] {
   const budget = Math.max(0, Math.ceil(maxSessionFiles))
-  return [...names].sort(compareCandidateNames).slice(0, budget)
+  return [...names].sort((left, right) => compareCandidateNames(left, right, nameTimestamp)).slice(0, budget)
 }
 
 export class SessionMetadataCatalog {
@@ -69,6 +72,7 @@ export class SessionMetadataCatalog {
     private readonly maxSessionFiles: number,
     private readonly readMetadata: (filePath: string, knownStat?: Stats) => Promise<SessionMetadata>,
     private readonly io: SessionCatalogIo = nodeSessionCatalogIo,
+    private readonly nameTimestamp: SessionNameTimestamp = timestampFromSessionName,
   ) {}
 
   /**
@@ -100,15 +104,16 @@ export class SessionMetadataCatalog {
       ])
     } catch { return [] }
 
-    // UUIDv7 names expose creation order without per-entry I/O. Admit a bounded
-    // deterministic set before canonicalization and stat; legacy names fall back
-    // to reverse lexical order.
+    // Timestamp-encoding names (Prime UUIDv7, OMP ISO prefixes) expose creation
+    // order without per-entry I/O. Admit a bounded deterministic set before
+    // canonicalization and stat; legacy names fall back to reverse lexical order.
     const names = boundedSessionDiscoveryNames(
       entries
         .filter((entry) => (entry.isFile?.() ?? true) || (entry.isSymbolicLink?.() ?? false))
         .map((entry) => entry.name)
         .filter((name) => name.endsWith('.jsonl') && !name.startsWith('.')),
       this.maxSessionFiles,
+      this.nameTimestamp,
     )
     const discovered = await mapLimit(names, 32, async (name): Promise<SessionFileCandidate | null> => {
       try {
