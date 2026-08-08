@@ -1,6 +1,6 @@
 import { createElement, memo, useEffect, useRef } from 'react'
 import type { StampedPointerEvent } from '@/hooks/useAgentBrowserTabs'
-import type { AgentBrowserTabRecord } from '@/types/api'
+import { BROWSER_PARTITION, type AgentBrowserTabRecord } from '@/types/api'
 
 export interface AgentSlotRect {
   left: number
@@ -175,7 +175,7 @@ const AgentTabView = memo(function AgentTabView({ tabId, visible, pointerEvent, 
         ref: (node: AgentWebviewElement | null) => { viewRef.current = node },
         src: 'about:blank',
         className: 'browser-webview',
-        partition: 'persist:prime-work-browser',
+        partition: BROWSER_PARTITION,
         webpreferences: 'contextIsolation=yes,sandbox=yes,nodeIntegration=no',
       })}
       <AgentCursorOverlay pointerEvent={pointerEvent} />

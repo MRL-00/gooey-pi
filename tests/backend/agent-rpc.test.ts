@@ -12,6 +12,7 @@ import { RpcRuntime } from '../../electron/main/agent-rpc/runtime'
 import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
 import type { RpcObject } from '../../electron/main/agent-rpc/types'
 import { PrimeProviderService } from '../../electron/main/providers'
+import type { RuntimeInfo } from '../../src/types/api'
 
 const dirs: string[] = []
 const managers: AgentRpcManager[] = []
@@ -254,6 +255,29 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       handshake.mockRestore()
       stop.mockRestore()
     }
+  })
+
+  it('retires the previous idle runtime when a new session starts', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    const first = await manager.start({ cwd: fake.cwd })
+
+    const second = await manager.start({ cwd: fake.cwd })
+
+    expect(manager.list()).toHaveLength(1)
+    expect(manager.list().some((runtime) => runtime.runtimeId === first.runtimeId)).toBe(false)
+    expect(manager.list().some((runtime) => runtime.runtimeId === second.runtimeId)).toBe(true)
+  })
+
+  it('admits more than four runtimes when every existing session is active', async () => {
+    const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'busy', isStreaming: true, isCompacting: false } }"
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)
+    const manager = managerFor(fake.executable)
+    const runtimes: RuntimeInfo[] = []
+    for (let index = 0; index < 5; index += 1) runtimes.push(await manager.start({ cwd: fake.cwd }))
+
+    expect(new Set(runtimes.map((runtime) => runtime.runtimeId)).size).toBe(5)
+    expect(manager.list()).toHaveLength(5)
   })
 
   it('decorates runtime reasoning and fast-mode capabilities from the Prime catalog', async () => {

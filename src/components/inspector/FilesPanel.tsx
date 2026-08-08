@@ -1,5 +1,6 @@
 import { Code2, FileJson2, FileText, Folder, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { errorMessage } from '@/lib/errors'
 import type { GitStatus, ProjectFileEntry, ProjectRecord } from '@/types/api'
 import { basename } from '@/lib/data'
 import { EmptyState, IconButton } from '../ui'
@@ -32,7 +33,7 @@ export function FilesPanel({ project, git, onReveal }: { project?: ProjectRecord
         key: `${root}\0${entry.path}`,
       }))))
     } catch (reason) {
-      if (loadToken.current === token) setError(reason instanceof Error ? reason.message : String(reason))
+      if (loadToken.current === token) setError(errorMessage(reason))
     } finally {
       if (loadToken.current === token) setLoading(false)
     }

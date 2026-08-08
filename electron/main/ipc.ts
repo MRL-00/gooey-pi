@@ -113,11 +113,11 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('projects:remove', (_event, id) => services.projects.remove(id))
   handle('projects:touch', (_event, id) => services.projects.touch(id))
 
-  handle('sessions:list', (_event, projectPath, includeArchived) => services.sessions.list(projectPath as string | undefined, includeArchived))
-  handle('sessions:read', (_event, filePath) => services.sessions.read(filePath as string))
+  handle('sessions:list', (_event, projectPath, includeArchived) => services.sessions.list(projectPath, includeArchived))
+  handle('sessions:read', (_event, filePath) => services.sessions.read(filePath))
   handle('sessions:follow-up', (_event, filePath, message, intent) => services.sessions.followUp(filePath, message, intent))
-  handle('sessions:rename', (_event, filePath, title) => services.sessions.rename(filePath as string, title as string))
-  handle('sessions:archive', (_event, filePath, archived) => services.sessions.archive(filePath as string, archived))
+  handle('sessions:rename', (_event, filePath, title) => services.sessions.rename(filePath, title))
+  handle('sessions:archive', (_event, filePath, archived) => services.sessions.archive(filePath, archived))
 
   handle('agent:start', (_event, options) => services.agents.start(options))
   handle('agent:command', (_event, runtimeId, command) => services.agents.command(runtimeId, command))
@@ -161,7 +161,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('git:restore', (_event, cwd, paths) => services.git.restore(cwd, paths))
   handle('git:commit', (_event, cwd, message) => services.git.commit(cwd, message))
 
-  handle('plugins:list', (_event, projectPath) => services.plugins.list(projectPath as string | undefined))
+  handle('plugins:list', (_event, projectPath) => services.plugins.list(projectPath))
   handle('plugins:install', (_event, source) => services.plugins.install(source))
   handle('plugins:connect-mcp', (_event, input) => services.plugins.connectMcp(input))
   handle('plugins:refresh', () => services.plugins.refresh())

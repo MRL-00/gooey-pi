@@ -9,6 +9,7 @@ const electron = vi.hoisted(() => ({
     requestSingleInstanceLock: vi.fn(() => false),
   },
   BrowserWindow: class {},
+  Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
 }))
@@ -27,14 +28,17 @@ function hardenedWindow(currentUrl = 'prime-work://app/index.html') {
     once: (name: string, listener: Handler) => { handlers.set(name, listener) },
     setWindowOpenHandler: vi.fn(),
     getURL: () => currentUrl,
+    isDestroyed: vi.fn(() => false),
+    copyImageAt: vi.fn(),
   }
-  hardenRenderer({ webContents } as unknown as BrowserWindow, () => 'prime-work://app/index.html')
+  const window = { webContents, isDestroyed: vi.fn(() => false) }
+  hardenRenderer(window as unknown as BrowserWindow, () => 'prime-work://app/index.html')
   const handler = (name: string): Handler => {
     const listener = handlers.get(name)
     if (!listener) throw new Error(`No ${name} handler was registered`)
     return listener
   }
-  return { handler }
+  return { handler, webContents, window }
 }
 
 describe('renderer hardening', () => {
@@ -67,6 +71,21 @@ describe('renderer hardening', () => {
       handler('will-attach-webview')(...[event, {}, params] as never[])
       expect(event.preventDefault).toHaveBeenCalledOnce()
     }
+  })
+
+  it('offers native image copying only for decoded images in the trusted renderer', () => {
+    electron.Menu.buildFromTemplate.mockClear()
+    const { handler, webContents } = hardenedWindow()
+
+    handler('context-menu')(...[{}, { mediaType: 'none', hasImageContents: false, x: 1, y: 2 }] as never[])
+    expect(electron.Menu.buildFromTemplate).not.toHaveBeenCalled()
+
+    handler('context-menu')(...[{}, { mediaType: 'image', hasImageContents: true, x: 14, y: 27 }] as never[])
+    expect(electron.Menu.buildFromTemplate).toHaveBeenCalledOnce()
+    const template = electron.Menu.buildFromTemplate.mock.calls[0]?.[0]
+    expect(template?.[0]?.label).toBe('Copy Image')
+    template?.[0]?.click()
+    expect(webContents.copyImageAt).toHaveBeenCalledWith(14, 27)
   })
 
   it('blocks main-window redirects and frame navigations away from the trusted renderer', () => {

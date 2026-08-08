@@ -1,4 +1,4 @@
-import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeThinkingLevel, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
@@ -8,9 +8,11 @@ import type { PrimeProviderService } from '../providers'
 
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
+  private readonly startingRuntimes = new Set<string>()
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
   private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv = () => ({})
   private runtimeStartListener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void = () => undefined
+  private runtimeAdmission: Promise<void> = Promise.resolve()
   private closed = false
 
   constructor(
@@ -59,30 +61,40 @@ export class AgentRpcManager {
     if (options.thinking !== undefined) {
       const thinking = requireString(options.thinking, 'thinking', { min: 1, max: 16, trim: true })
       if (!isThinkingLevel(thinking)) throw new TypeError('Invalid thinking level')
-      if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking as PrimeThinkingLevel)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
+      if (selectedModel && !selectedModel.availableThinkingLevels.includes(thinking)) throw new TypeError(`${selectedModel.name} does not support ${thinking} reasoning`)
       args.push('--thinking', thinking)
     }
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
-    if (this.runtimes.size >= 4) throw new Error('Prime Work supports at most four concurrent agent runtimes')
     const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath })
     for (const skillPath of [runtimeEnvironment.PRIME_WORK_SCHEDULE_SKILL_PATH, runtimeEnvironment.PRIME_WORK_BROWSER_SKILL_PATH]) {
       if (skillPath && !skillPath.startsWith('-') && !/[\r\n]/.test(skillPath)) args.push('--skill', skillPath)
     }
     const extensionPath = runtimeEnvironment.PRIME_WORK_BROWSER_EXTENSION_PATH
     if (extensionPath && !extensionPath.startsWith('-') && !/[\r\n]/.test(extensionPath)) args.push('--extension', extensionPath)
-    const runtime = new RpcRuntime(this.executable, args, cwd, (event) => this.eventSink(event), (closed) => this.runtimes.delete(closed.runtimeId), runtimeEnvironment)
-    this.runtimes.set(runtime.runtimeId, runtime)
+    const runtime = await this.admitRuntime(() => new RpcRuntime(
+      this.executable!,
+      args,
+      cwd,
+      (event) => this.eventSink(event),
+      (closed) => {
+        this.startingRuntimes.delete(closed.runtimeId)
+        this.runtimes.delete(closed.runtimeId)
+      },
+      runtimeEnvironment,
+    ))
     try {
       await runtime.handshake()
       await this.decorate(runtime)
       if (runtime.snapshot().fastModeSupported && options.fast === true) await runtime.setServiceTier('priority', true)
       try { this.runtimeStartListener(runtimeEnvironment, runtime.snapshot()) } catch { /* capability binding must never fail a start */ }
+      this.startingRuntimes.delete(runtime.runtimeId)
       return runtime.snapshot()
     } catch (error) {
       // Release the runtime slot explicitly: the close-event cleanup may never
-      // fire if the child cannot be reaped, and a failed start must not count
-      // against the concurrent-runtime cap.
+      // fire if the child cannot be reaped, and a failed start must not remain
+      // in the resident-process catalog.
+      this.startingRuntimes.delete(runtime.runtimeId)
       this.runtimes.delete(runtime.runtimeId)
       await runtime.stop()
       throw error
@@ -187,6 +199,37 @@ export class AgentRpcManager {
 
   private requireOpen(): void {
     if (this.closed) throw new Error('Prime Agent manager is shutting down')
+  }
+
+  private async admitRuntime(createRuntime: () => RpcRuntime): Promise<RpcRuntime> {
+    let releaseAdmission!: () => void
+    const previousAdmission = this.runtimeAdmission
+    this.runtimeAdmission = new Promise<void>((resolveAdmission) => { releaseAdmission = resolveAdmission })
+    await previousAdmission
+    try {
+      this.requireOpen()
+      // A new session replaces the oldest safely idle child instead of
+      // accumulating resident processes. Busy, queued, compacting, and
+      // still-starting runtimes remain alive, with no numeric concurrency cap.
+      const idle = [...this.runtimes.values()].find((runtime) => {
+        if (this.startingRuntimes.has(runtime.runtimeId)) return false
+        const snapshot = runtime.snapshot()
+        const actions = snapshot.sessionActions
+        return !snapshot.isStreaming && !snapshot.isCompacting && !actions?.active
+          && (actions?.queuedCount ?? 0) === 0
+      })
+      if (idle) {
+        const stopped = await idle.stop()
+        if (stopped && this.runtimes.get(idle.runtimeId) === idle) this.runtimes.delete(idle.runtimeId)
+      }
+      this.requireOpen()
+      const runtime = createRuntime()
+      this.runtimes.set(runtime.runtimeId, runtime)
+      this.startingRuntimes.add(runtime.runtimeId)
+      return runtime
+    } finally {
+      releaseAdmission()
+    }
   }
 
   private async decorate(runtime: RpcRuntime): Promise<void> {

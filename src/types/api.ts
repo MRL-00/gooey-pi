@@ -1,3 +1,10 @@
+/**
+ * Session partition shared by the in-app browser webviews. The renderer's
+ * webview attribute must match the main process's will-attach-webview gate
+ * exactly, or webview attach is silently blocked.
+ */
+export const BROWSER_PARTITION = 'persist:prime-work-browser'
+
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type WorkspaceView = 'session' | 'projects' | 'activity' | 'scheduled' | 'plugins' | 'settings'
 export type InspectorTab = 'summary' | 'changes' | 'browser' | 'files'
@@ -142,7 +149,8 @@ export interface RuntimeInfo {
   contextUsage?: PrimeContextUsage
 }
 
-export type PrimeThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export const PRIME_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+export type PrimeThinkingLevel = (typeof PRIME_THINKING_LEVELS)[number]
 export type PrimeServiceTier = 'auto' | 'default' | 'flex' | 'scale' | 'priority' | null
 export type ProviderAuthMethod = 'oauth' | 'api_key' | 'external'
 export type ProviderAuthSource = 'stored' | 'runtime' | 'environment' | 'prime_cli' | 'fallback' | 'models_json_key' | 'models_json_command' | 'stale'
@@ -335,17 +343,6 @@ export interface ScheduleRunRecord {
   sessionFile?: string
   error?: string
   skippedCount?: number
-}
-
-export interface ScheduleRecord {
-  id: string
-  title: string
-  schedule: string
-  prompt: string
-  status: 'active' | 'paused' | 'completed' | 'failed' | 'unknown'
-  nextRun?: string
-  lastRun?: string
-  runtimeId?: string
 }
 
 export interface AutomationScheduleRecord {

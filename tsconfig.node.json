@@ -18,5 +18,8 @@
     "electron.vite.config.ts",
     "electron/**/*.ts",
     "src/types/**/*.ts"
+  ],
+  "exclude": [
+    "src/types/nodejs.d.ts"
   ]
 }

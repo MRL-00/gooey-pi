@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors'
 import type { ProjectRecord, SessionRecord } from '@/types/api'
 
 export interface WorkspaceSnapshot {
@@ -9,7 +10,7 @@ export interface WorkspaceSnapshot {
 }
 
 export const requestFailureMessage = (error: unknown) => {
-  const raw = error instanceof Error ? error.message : String(error)
+  const raw = errorMessage(error)
   const detail = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '').trim()
   return detail ? `Request failed: ${detail.slice(0, 1_000)}` : 'Prime could not process the request.'
 }

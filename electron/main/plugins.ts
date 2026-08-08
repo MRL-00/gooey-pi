@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
+import { createAdmissionQueue, createSingleFlight } from './lib/async'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
@@ -20,46 +21,27 @@ const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
 const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
 const MAX_KNOWN_PATH_OWNERS = 64
 const MAX_KNOWN_PATHS_PER_OWNER = 4_096
-let activePluginDiscoveries = 0
-const discoveryWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
 
-async function acquirePluginDiscoverySlot(): Promise<void> {
-  if (activePluginDiscoveries < MAX_CONCURRENT_PLUGIN_DISCOVERIES) {
-    activePluginDiscoveries += 1
-    return
-  }
-  if (discoveryWaiters.length >= MAX_QUEUED_PLUGIN_DISCOVERIES) {
-    throw new TypeError('Too many plugin discoveries are pending')
-  }
-  await new Promise<void>((resolve, reject) => discoveryWaiters.push({ resolve, reject }))
-}
-
-function releasePluginDiscoverySlot(): void {
-  const next = discoveryWaiters.shift()
-  if (next) next.resolve()
-  else activePluginDiscoveries -= 1
-}
+const createDiscoveryQueue = () => createAdmissionQueue({
+  maxConcurrent: MAX_CONCURRENT_PLUGIN_DISCOVERIES,
+  maxPending: MAX_QUEUED_PLUGIN_DISCOVERIES,
+  pendingLimitError: () => new TypeError('Too many plugin discoveries are pending'),
+  closedError: () => new TypeError('Prime Work is shutting down'),
+})
+let discoveryQueue = createDiscoveryQueue()
 
 export function beginPluginDiscoveryShutdown(): void {
-  for (const waiter of discoveryWaiters.splice(0)) {
-    waiter.reject(new TypeError('Prime Work is shutting down'))
-  }
-}
-
-async function schedulePluginDiscovery<Value>(operation: () => Promise<Value>): Promise<Value> {
-  await acquirePluginDiscoverySlot()
-  try {
-    return await operation()
-  } finally {
-    releasePluginDiscoverySlot()
-  }
+  // Reject queued waiters; running discoveries finish normally. A fresh queue
+  // keeps later callers working (only the quit path calls this in the app).
+  discoveryQueue.close()
+  discoveryQueue = createDiscoveryQueue()
 }
 
 export class PluginService {
   private lastProjectPath: string | undefined
   private readonly knownPathsByOwner = new Map<string, Set<string>>()
   private settingsMutation = Promise.resolve()
-  private readonly discoveryInFlight = new Map<string, Promise<PluginCatalog>>()
+  private readonly discoveryInFlight = createSingleFlight<string, PluginCatalog>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
   private readonly builtInSkills: SkillRecord[]
@@ -74,7 +56,7 @@ export class PluginService {
     this.builtInSkills = options.builtInSkills ?? []
   }
 
-  list(projectPath?: string): Promise<PluginCatalog> {
+  list(projectPath?: unknown): Promise<PluginCatalog> {
     if (!projectPath) return this.listCanonical()
     const requested = requireString(projectPath, 'projectPath', { min: 1, max: 4096 })
     return this.authorizeProject(requested).then((safeProjectPath) => this.listCanonical(safeProjectPath))
@@ -82,16 +64,7 @@ export class PluginService {
 
   private listCanonical(safeProjectPath?: string): Promise<PluginCatalog> {
     const key = safeProjectPath ? `project:${safeProjectPath}` : 'user'
-    const active = this.discoveryInFlight.get(key)
-    if (active) return active
-
-    const discovery = schedulePluginDiscovery(() => this.discover(safeProjectPath, key))
-    this.discoveryInFlight.set(key, discovery)
-    const clear = () => {
-      if (this.discoveryInFlight.get(key) === discovery) this.discoveryInFlight.delete(key)
-    }
-    void discovery.then(clear, clear)
-    return discovery
+    return this.discoveryInFlight.run(key, () => discoveryQueue.run(() => this.discover(safeProjectPath, key)))
   }
 
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {

@@ -1,9 +1,9 @@
-import { app, BrowserWindow, protocol, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, Menu, protocol, session, shell, webContents } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import type { AppMeta, ProviderAuthEvent } from '../../src/types/api'
+import { BROWSER_PARTITION, type AppMeta, type ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
@@ -112,6 +112,14 @@ function isAllowedBrowserUrl(raw: string): boolean {
 
 export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string = () => trustedRendererUrl): void {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('context-menu', (_event, params) => {
+    if (params.mediaType !== 'image' || !params.hasImageContents) return
+    const contents = window.webContents
+    Menu.buildFromTemplate([{
+      label: 'Copy Image',
+      click: () => { if (!window.isDestroyed() && !contents.isDestroyed()) contents.copyImageAt(params.x, params.y) },
+    }]).popup({ window })
+  })
   window.webContents.on('will-attach-webview', (event, preferences, params) => {
     delete preferences.preload
     preferences.nodeIntegration = false
@@ -123,7 +131,7 @@ export function hardenRenderer(window: BrowserWindow, trustedUrl: () => string =
     // A guest page must never be able to attach a nested guest of its own.
     preferences.webviewTag = false
     const partition = typeof params.partition === 'string' ? params.partition : ''
-    if (partition !== 'persist:prime-work-browser' || !isAllowedBrowserUrl(params.src)) event.preventDefault()
+    if (partition !== BROWSER_PARTITION || !isAllowedBrowserUrl(params.src)) event.preventDefault()
   })
   window.webContents.on('did-attach-webview', (_event, contents) => {
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -321,7 +329,7 @@ async function bootstrap(): Promise<void> {
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
-  const browserProfile = session.fromPartition('persist:prime-work-browser')
+  const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const scheduleSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'prime-work-schedules')
@@ -426,7 +434,7 @@ else void app.whenReady().then(async () => {
   const browserSession = session.defaultSession
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserSession.setPermissionCheckHandler(() => false)
-  const browserProfile = session.fromPartition('persist:prime-work-browser')
+  const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   browserProfile.setPermissionCheckHandler(() => false)
   if (app.isPackaged) {
@@ -477,7 +485,8 @@ app.on('before-quit', (event) => {
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),
     stopChildProcesses(),
-  ]).then(() => {
-    try { store?.beginShutdown() } catch (error) { console.error(`Prime Work store shutdown failed: ${boundedErrorMessage(error)}`) }
+  ]).then(async () => {
+    // Await the drain so the final persist lands before the process exits.
+    try { await store?.beginShutdown() } catch (error) { console.error(`Prime Work store shutdown failed: ${boundedErrorMessage(error)}`) }
   }).finally(() => app.quit())
 })

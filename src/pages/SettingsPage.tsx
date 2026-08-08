@@ -1,5 +1,6 @@
 import { Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
+import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
 import type { AppMeta, AppSettings, PrimeModelCatalog } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
@@ -52,7 +53,7 @@ export function SettingsPage({ settings, meta, providerCatalog, onUpdate, onRese
       await onResetBrowser()
       setConfirmReset(false)
     } catch (error) {
-      setResetError(error instanceof Error ? error.message : String(error))
+      setResetError(errorMessage(error))
     } finally {
       setResetting(false)
     }

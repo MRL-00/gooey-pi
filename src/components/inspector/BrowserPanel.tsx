@@ -5,7 +5,7 @@ import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
 import type { StampedPointerEvent } from '@/hooks/useAgentBrowserTabs'
 import { AgentCursorOverlay, type AgentSlotRect } from '../AgentBrowserLayer'
-import type { AgentBrowserTabRecord, BrowserAnnotationElement } from '@/types/api'
+import { BROWSER_PARTITION, type AgentBrowserTabRecord, type BrowserAnnotationElement } from '@/types/api'
 import { IconButton } from '../ui'
 
 type WebviewElement = HTMLElement & {
@@ -323,7 +323,7 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
     },
     src: home,
     className: 'browser-webview',
-    partition: 'persist:prime-work-browser',
+    partition: BROWSER_PARTITION,
     webpreferences: 'contextIsolation=yes,sandbox=yes,nodeIntegration=no',
   })
 

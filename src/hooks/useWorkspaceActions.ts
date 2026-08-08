@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { requestFailureMessage } from '@/app/workspace'
+import { errorMessage } from '@/lib/errors'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import type { GitStatus, McpConnectionInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
@@ -201,10 +202,9 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       let queuedPromptId: string | undefined
       const followUpExternalSession = async (sessionFile: string): Promise<boolean> => {
         if (!bridge) return false
-        const accepted = await bridge.sessions.followUp(sessionFile, prompt, intent)
-        if (!accepted) return false
-        if (intent === 'queue') queuedPromptId = workspace.queuePrompt(prompt, intent)
-        return true
+        // The daemon owns the message once accepted; queuing it locally as
+        // well would deliver it a second time via the idle flush.
+        return bridge.sessions.followUp(sessionFile, prompt, intent)
       }
       try {
         if (!admitted.project || !admitted.cwd) { reportError('Add a project before starting a Prime session.'); return }
@@ -219,6 +219,9 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         let userMessageAppended = false
         const appendUserMessage = () => {
           if (userMessageAppended) return
+          // The workspace may have switched while a command was in flight;
+          // an optimistic append would land in the wrong transcript.
+          if (workspace.workspaceRef.current.generation !== generation) return
           userMessageAppended = true
           workspace.setMessages((items) => [...items, userMessage])
           if (admitted.sessionFile) setSessions((items) => items.map((session) => session.filePath === admitted.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
@@ -275,7 +278,8 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         workspace.attachRuntime(activeRuntime, generation)
         if (activeRuntime.isStreaming) {
-          if (intent === 'queue') queuedPromptId = workspace.queuePrompt(prompt, intent)
+          // The runtime queues the follow_up itself; adding it to the local
+          // queue as well would deliver it a second time via the idle flush.
           await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
           if (intent === 'steer') appendUserMessage()
         } else {
@@ -319,7 +323,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   const installSkill = async (source: string) => {
     const { bridge, reportError } = getDeps()
     if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Package installation is available in the desktop app.' }
-    try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
+    try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
   const connectMcp = async (input: McpConnectionInput) => {
     const { bridge, activeProject, pluginSkills, reportError } = getDeps()
@@ -333,7 +337,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       const response = await bridge.plugins.connectMcp(connection)
       if (response.ok) await pluginSkills.refresh()
       return response
-    } catch (error) { reportError(error); return { ok: false, output: error instanceof Error ? error.message : String(error) } }
+    } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
   const createSchedule = async (input: ScheduleInput) => {
     const { bridge, refreshSchedules, reportError } = getDeps()

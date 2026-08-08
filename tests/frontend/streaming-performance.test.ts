@@ -281,6 +281,19 @@ describe('linear event batches', () => {
     expect(call && 'id' in call ? call.id : undefined).toBeTruthy()
   })
 
+  it('keeps the args captured at tool start when an execution update omits them', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(7)
+    resetTranscriptIdsForTests()
+    const events: Record<string, unknown>[] = [
+      { type: 'turn_start' },
+      { type: 'tool_execution_start', toolCallId: 'one', toolName: 'One', args: { command: 'ls -la' } },
+      { type: 'tool_execution_update', toolCallId: 'one', toolName: 'One', partialResult: 'partial' },
+    ]
+    const messages = replayPrimeEvents(transcript(), events)
+    const call = messages.flatMap((message) => message.parts).find((part) => part.type === 'toolCall')
+    expect(call && 'args' in call ? call.args : undefined).toEqual({ command: 'ls -la' })
+  })
+
   it('matches single-event semantics for deterministic mixed-event permutations', () => {
     vi.spyOn(Date, 'now').mockReturnValue(7)
     const pool: Record<string, unknown>[] = [
@@ -437,13 +450,13 @@ describe('catalog tick session identity', () => {
 })
 
 describe('streaming markdown parse throttling', () => {
-  it('parses at most once per interval and renders the tail as plain text between parses', async () => {
+  it('parses at most once per interval while holding the previous committed snapshot', async () => {
     const { advanceStreamingParse, STREAMING_PARSE_INTERVAL_MS } = await import('../../src/components/MarkdownText')
     const first = advanceStreamingParse({ boundary: 0, lastParseAt: 0 }, 10, false, 1_000)
     expect(first.state).toEqual({ boundary: 10, lastParseAt: 1_000 })
     expect(first.delayMs).toBeUndefined()
 
-    // More deltas inside the interval: keep the old boundary, retry later.
+    // More deltas inside the interval: keep the coherent old snapshot and retry later.
     const throttled = advanceStreamingParse(first.state, 25, false, 1_040)
     expect(throttled.state).toBe(first.state)
     expect(throttled.delayMs).toBe(STREAMING_PARSE_INTERVAL_MS - 40)

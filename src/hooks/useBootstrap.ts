@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { errorMessage } from '@/lib/errors'
 import { findRuntimeForWorkspace, selectStartupWorkspace } from '@/lib/workspace'
 import type { WorkspaceSnapshot } from '@/app/workspace'
 import type {
@@ -133,7 +134,7 @@ export function useBootstrap({
       }
     }).catch((error) => {
       if (!cancelled) {
-        setScheduleError(error instanceof Error ? error.message : String(error))
+        setScheduleError(errorMessage(error))
         reportError(error)
       }
     })

@@ -1,5 +1,6 @@
 import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, RotateCcw, Sparkles, Undo2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { errorMessage } from '@/lib/errors'
 import type { GitStatus } from '@/types/api'
 import { boundLines } from '@/lib/render-bounds'
 import { EmptyState, IconButton, Modal, Segmented } from '../ui'
@@ -71,7 +72,7 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
       await onRefreshGit()
       return true
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
+      setActionError(errorMessage(error))
       return false
     }
   }
@@ -88,7 +89,7 @@ export function ChangesPanel({ cwd, git, onRefreshGit }: { cwd?: string; git: Gi
       const result = await window.prime.git.commit(cwd, commitMessage.trim())
       if (!result.ok) throw new Error(result.output || 'Git could not create the commit.')
       setCommitOpen(false); setCommitMessage(''); await onRefreshGit()
-    } catch (error) { setActionError(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { setActionError(errorMessage(error)) }
   }
 
   if (!git.isRepo) return <EmptyState icon={<GitBranch size={24} />} title="No Git repository">Open a project backed by Git to review, stage, and commit changes.</EmptyState>

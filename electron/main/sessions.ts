@@ -95,7 +95,7 @@ export class SessionService {
     }
   }
 
-  async list(projectPath?: string, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
+  async list(projectPath?: unknown, includeArchivedValue: unknown = false): Promise<SessionRecord[]> {
     const includeArchived = requireBoolean(includeArchivedValue, 'includeArchived')
     const requestedProject = projectPath ? requireString(projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
     let project = requestedProject ? resolve(requestedProject) : undefined
@@ -137,7 +137,7 @@ export class SessionService {
     return [...new Set(sessions.map((session) => session.projectPath).filter((path) => path.startsWith('/')))]
   }
 
-  async read(filePath: string): Promise<TranscriptMessage[]> {
+  async read(filePath: unknown): Promise<TranscriptMessage[]> {
     const requested = requireString(filePath, 'filePath', { min: 1, max: 4096 })
     const safePath = await this.requireSessionPath(requested)
     // Coalesced callers share one immutable result; the IPC boundary clones it
@@ -180,7 +180,7 @@ export class SessionService {
     return true
   }
 
-  async rename(filePath: string, title: string): Promise<boolean> {
+  async rename(filePath: unknown, title: unknown): Promise<boolean> {
     const safePath = await this.requireSessionPath(filePath)
     const safeTitle = requireString(title, 'title', { min: 1, max: 200, trim: true })
     if (safeTitle.startsWith('-') || /[\r\n]/.test(safeTitle)) throw new TypeError('title contains invalid characters')
@@ -191,7 +191,7 @@ export class SessionService {
     return result.code === 0
   }
 
-  async archive(filePath: string, archivedValue: unknown = true): Promise<boolean> {
+  async archive(filePath: unknown, archivedValue: unknown = true): Promise<boolean> {
     const safePath = await this.requireSessionPath(filePath)
     const archived = requireBoolean(archivedValue, 'archived')
     if (archived) await this.stopRuntimeForSession(safePath)

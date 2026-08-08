@@ -1,3 +1,4 @@
+import { PRIME_THINKING_LEVELS, type PrimeThinkingLevel } from '../../../src/types/api'
 import { rejectUnknownKeys, requireBoolean, requireId, requireRecord, requireString } from '../validation'
 import { MAX_RPC_WRITE_FRAME_BYTES, rpcRequestFrameBytes } from './limits'
 import type { RpcObject } from './types'
@@ -8,7 +9,7 @@ const SIMPLE_COMMANDS = new Set([
   'get_messages', 'agent_messages_status', 'agent_messages_pause', 'agent_messages_resume',
   'agent_messages_clear', 'list_heartbeats', 'get_heartbeat', 'get_commands',
 ])
-const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const THINKING_LEVELS: ReadonlySet<string> = new Set(PRIME_THINKING_LEVELS)
 
 function validateImageData(data: string, mimeType: string): void {
   if (data.length % 4 !== 0 || !/^[a-z\d+/]*={0,2}$/i.test(data)) throw new TypeError('Image data must be canonical base64')
@@ -24,7 +25,7 @@ function validateImageData(data: string, mimeType: string): void {
   if (!matches) throw new TypeError('Image data does not match its MIME type')
 }
 
-export function isThinkingLevel(value: string): boolean { return THINKING_LEVELS.has(value) }
+export function isThinkingLevel(value: string): value is PrimeThinkingLevel { return THINKING_LEVELS.has(value) }
 
 function validateImages(value: unknown): Array<{ type: 'image'; data: string; mimeType: string }> | undefined {
   if (value === undefined) return undefined
@@ -106,18 +107,6 @@ export async function validateRpcCommand(raw: unknown, validateSessionPath: (pat
   if (type === 'send_message') {
     rejectUnknownKeys(command, ['type', 'targetActiveSessionId', 'message'], 'command')
     return { type, targetActiveSessionId: requireId(command.targetActiveSessionId, 'targetActiveSessionId'), message: requireString(command.message, 'message', { min: 1, max: 1024 * 1024 }) }
-  }
-  if (type === 'list_schedules') {
-    rejectUnknownKeys(command, ['type', 'includeInactive'], 'command')
-    return command.includeInactive === undefined ? { type } : { type, includeInactive: requireBoolean(command.includeInactive, 'includeInactive') }
-  }
-  if (type === 'add_schedule') {
-    rejectUnknownKeys(command, ['type', 'schedule', 'prompt'], 'command')
-    return { type, schedule: requireString(command.schedule, 'schedule', { min: 1, max: 500, trim: true }), prompt: requireString(command.prompt, 'prompt', { min: 1, max: 1024 * 1024 }) }
-  }
-  if (type === 'cancel_schedule') {
-    rejectUnknownKeys(command, ['type', 'jobId'], 'command')
-    return { type, jobId: requireId(command.jobId, 'jobId') }
   }
   if (type === 'set_heartbeat') {
     rejectUnknownKeys(command, ['type', 'schedule', 'prompt', 'deliveryMode'], 'command')

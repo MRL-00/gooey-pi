@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
-import type { AppSettings, ProjectRecord, ScheduleExecution, AutomationScheduleRecord, ScheduleRunRecord, ScheduleTarget, ScheduleTiming } from '../../src/types/api'
+import { PRIME_THINKING_LEVELS, type AppSettings, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
 import { isRecord } from './validation'
 
 export interface FolderIdentity { dev: string; ino: string }
@@ -99,7 +99,7 @@ function parseSettings(value: unknown): AppSettings {
   }
 }
 
-const THINKING_LEVELS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const THINKING_LEVELS: ReadonlySet<string> = new Set(['auto', ...PRIME_THINKING_LEVELS])
 const RUN_STATUSES = new Set(['queued', 'running', 'succeeded', 'failed', 'skipped', 'interrupted'])
 const SCHEDULE_STATUSES = new Set(['active', 'paused', 'completed', 'blocked'])
 

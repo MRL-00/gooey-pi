@@ -35,7 +35,9 @@ import type {
   ScheduleTiming,
   SessionRecord,
 } from '@/types/api'
+import { PRIME_THINKING_LEVELS } from '@/types/api'
 import { formatRelative } from '@/lib/data'
+import { errorMessage } from '@/lib/errors'
 import { EmptyState, Modal, Segmented } from '@/components/ui'
 
 type ScheduleFilter = 'active' | 'paused' | 'attention' | 'all'
@@ -93,7 +95,7 @@ const WEEKDAYS = [
   { value: 'SU', label: 'S', long: 'Sunday' },
 ] as const
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const
-const THINKING_LEVELS: PrimeThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const THINKING_LEVELS: readonly PrimeThinkingLevel[] = PRIME_THINKING_LEVELS
 const FREQUENCIES: Array<{ value: Frequency; label: string }> = [
   { value: 'hourly', label: 'Hourly' },
   { value: 'daily', label: 'Daily' },
@@ -102,7 +104,6 @@ const FREQUENCIES: Array<{ value: Frequency; label: string }> = [
   { value: 'advanced', label: 'Advanced' },
 ]
 
-const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error)
 const pad = (value: number) => String(value).padStart(2, '0')
 
 function localParts(value: Date) {
@@ -348,10 +349,15 @@ export function ScheduledPage({
       void onPreview(currentTiming).then((result) => {
         if (previewRequest.current === request) { setPreview(result); setPreviewing(false) }
       }).catch((reason) => {
-        if (previewRequest.current === request) { setPreview(null); setPreviewError(messageOf(reason)); setPreviewing(false) }
+        if (previewRequest.current === request) { setPreview(null); setPreviewError(errorMessage(reason)); setPreviewing(false) }
       })
     }, 350)
-    return () => window.clearTimeout(timer)
+    return () => {
+      // Invalidate any in-flight preview so it cannot repopulate state after
+      // the editor resets, the timing changes, or the page unmounts.
+      previewRequest.current += 1
+      window.clearTimeout(timer)
+    }
   }, [currentTiming, editor, onPreview])
 
   const openCreate = () => {
@@ -407,14 +413,14 @@ export function ScheduledPage({
       if (editor?.mode === 'edit' && editingSchedule) await onUpdate(editingSchedule.id, { revision: editingSchedule.revision, ...values })
       else await onCreate(values)
       setEditor(null)
-    } catch (reason) { setFormError(messageOf(reason)) }
+    } catch (reason) { setFormError(errorMessage(reason)) }
     finally { setSaving(false) }
   }
   const perform = async (key: string, work: () => Promise<void>, success: string, after?: () => void) => {
     if (action) return
     setAction(key); setActionError(''); setActionNotice('')
     try { await work(); setActionNotice(success); after?.() }
-    catch (reason) { setActionError(messageOf(reason)) }
+    catch (reason) { setActionError(errorMessage(reason)) }
     finally { setAction(null) }
   }
   const deleteSchedule = (item: AutomationScheduleRecord) => {

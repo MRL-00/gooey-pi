@@ -1,11 +1,11 @@
 import rrule from 'rrule'
 import type { RRule as RRuleType } from 'rrule'
+import type { ScheduleTiming } from '../../../src/types/api'
+import { rejectUnknownKeys, requireRecord, requireString as requireValidatedString } from '../validation'
 
 const { RRule } = rrule as typeof import('rrule')
 
-export type ScheduleTiming =
-  | { kind: 'once'; at: string }
-  | { kind: 'rrule'; dtstartLocal: string; timeZone: string; rrule: string }
+export type { ScheduleTiming }
 
 export const MAX_RRULE_LENGTH = 1024
 export const MAX_PREVIEW_OCCURRENCES = 1_000
@@ -32,24 +32,8 @@ interface LocalDateTime {
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError(`${label} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
 function requireString(value: unknown, label: string, max: number): string {
-  if (typeof value !== 'string') throw new TypeError(`${label} must be a string`)
-  if (value.length === 0) throw new TypeError(`${label} must not be empty`)
-  if (value.length > max) throw new TypeError(`${label} is too long`)
-  if (value.includes('\0')) throw new TypeError(`${label} contains a NUL byte`)
-  return value
-}
-
-function rejectUnknownKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
-  const unknown = Object.keys(value).find((key) => !allowed.includes(key))
-  if (unknown) throw new TypeError(`${label}.${unknown} is not supported`)
+  return requireValidatedString(value, label, { min: 1, max })
 }
 
 function validCalendarDate(value: LocalDateTime): boolean {

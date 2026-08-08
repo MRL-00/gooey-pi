@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { PRIME_THINKING_LEVELS } from '../../../src/types/api'
 import type {
   PrimeThinkingLevel,
   ScheduleChangeEvent,
@@ -25,7 +26,7 @@ const MAX_RUNS_PER_TASK = 50
 const MAX_GLOBAL_RUNS = 2_000
 const MAX_CONCURRENT_RUNS = 2
 const DUE_GRACE_MS = 60_000
-const THINKING_LEVELS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const THINKING_LEVELS: ReadonlySet<string> = new Set(['auto', ...PRIME_THINKING_LEVELS])
 
 export class ScheduleBlockedError extends Error {}
 
@@ -126,8 +127,27 @@ export class AutomationService {
 
   async start(): Promise<void> {
     this.closed = false
+    await this.reconcileInterruptedRuns()
     await this.recoverMissed()
     this.armTimer()
+  }
+
+  /**
+   * Runs persisted as queued/running belong to a previous process; they will
+   * never resume, so surface them as interrupted instead of forever-pending.
+   */
+  private async reconcileInterruptedRuns(): Promise<void> {
+    const finishedAt = this.now().toISOString()
+    await this.store.update((state) => {
+      for (const task of state.schedules) {
+        for (const run of task.runs) {
+          if (run.status !== 'queued' && run.status !== 'running') continue
+          run.status = 'interrupted'
+          run.finishedAt = finishedAt
+          run.error = 'Prime Work quit before this run could finish.'
+        }
+      }
+    })
   }
 
   async stop(): Promise<void> {
@@ -312,7 +332,12 @@ export class AutomationService {
       .reduce<number | undefined>((earliest, value) => earliest === undefined || value < earliest ? value : earliest, undefined)
     if (next === undefined) return
     const delay = Math.max(0, Math.min(2_147_483_647, next - this.now().getTime()))
-    this.timer = setTimeout(() => { this.timer = null; void this.processDue().finally(() => this.armTimer()) }, delay)
+    this.timer = setTimeout(() => {
+      this.timer = null
+      void this.processDue()
+        .catch((error) => console.error('Scheduled task processing failed:', error))
+        .finally(() => this.armTimer())
+    }, delay)
     this.timer.unref()
   }
 
@@ -397,7 +422,7 @@ export class AutomationService {
       const item = this.pending.shift()
       if (!item) return
       this.activeRuns += 1
-      void this.dispatch(item.task, item.runId).finally(() => {
+      void this.dispatch(item.task, item.runId).catch((error) => console.error('Scheduled run bookkeeping failed:', error)).finally(() => {
         this.activeRuns -= 1
         if (this.closed && this.activeRuns === 0) {
           for (const resolveStop of this.stopWaiters) resolveStop()

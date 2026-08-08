@@ -95,4 +95,62 @@ describe('AutomationService', () => {
     expect(run).not.toHaveBeenCalled()
     await service.stop()
   })
+
+  it('marks runs stranded as queued/running by a previous process as interrupted on start', async () => {
+    const stateStore = store()
+    let resolveRun: () => void = () => undefined
+    const service = new AutomationService(stateStore, {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run: () => new Promise((resolveDispatch) => { resolveRun = () => resolveDispatch({}) }),
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    await service.start()
+    const task = await service.create({ prompt: 'Long job', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    await service.runNow(task.id)
+    await eventually(() => expect(service.get(task.id).runs[0].status).toBe('running'))
+
+    // A second service over the same store models an app relaunch: the old
+    // process never finished, so its run must surface as interrupted.
+    const relaunched = new AutomationService(stateStore, {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run: async () => ({}),
+      now: () => new Date('2030-01-01T01:00:00Z'),
+    })
+    await relaunched.start()
+    expect(relaunched.get(task.id).runs[0]).toMatchObject({ status: 'interrupted', finishedAt: '2030-01-01T01:00:00.000Z' })
+    await relaunched.stop()
+    resolveRun()
+    await service.stop()
+  })
+
+  it('survives a task deleted between its due claim and run bookkeeping without an unhandled rejection', async () => {
+    const stateStore = store()
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown) => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const service = new AutomationService(stateStore, {
+        validateTarget: async () => undefined,
+        validateExecution: async () => undefined,
+        // Deleting the task while its run is starting makes updateRun a no-op
+        // and the failure path exercise the guarded dispatch chain.
+        run: async () => { throw new Error('runtime unavailable') },
+        now: () => new Date('2030-01-01T00:00:00Z'),
+      })
+      await service.start()
+      const task = await service.create({ prompt: 'Doomed job', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+      await service.runNow(task.id)
+      await eventually(() => expect(service.get(task.id).runs[0].status).toBe('failed'))
+      await service.stop()
+      // Give any stray rejection a macrotask to surface before asserting.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+      consoleError.mockRestore()
+    }
+  })
 })

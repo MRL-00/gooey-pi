@@ -131,6 +131,9 @@ export function replayPrimeEvents(
     const existing = id ? draft.firstToolById.get(id) : undefined
     const tool: MessagePart = { type: 'toolCall', id, name, args }
     if (existing) {
+      // Execution updates may omit args; keep the args captured at start
+      // rather than blanking the tool preview mid-execution.
+      if (args === undefined && existing.part.type === 'toolCall') tool.args = existing.part.args
       existing.part = { ...tool, partId: existing.part.partId }
       return existing
     }

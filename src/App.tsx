@@ -6,6 +6,7 @@ import { ChangesCard } from '@/components/ChangesCard'
 import { Composer } from '@/components/Composer'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
+import { errorMessage } from '@/lib/errors'
 import { createSingleFlightAdmission, findProjectForSession, gitStatusForWorkspace, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
 import { SAMPLE_GIT, SAMPLE_PROJECTS, SAMPLE_SCHEDULES, SAMPLE_SESSIONS, SAMPLE_SKILLS, SAMPLE_TRANSCRIPT } from '@/lib/data'
 import { AgentBrowserLayer, type AgentSlotRect } from '@/components/AgentBrowserLayer'
@@ -66,7 +67,7 @@ export default function App() {
   const toastTimerRef = useRef<number | null>(null)
 
   const reportError = useCallback((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     setToast(message)
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => {
@@ -179,7 +180,7 @@ export default function App() {
       const next = await bridge.schedules.list()
       if (scheduleRequestRef.current === requestId) { setSchedules(next); setScheduleError('') }
     } catch (error) {
-      if (scheduleRequestRef.current === requestId) setScheduleError(error instanceof Error ? error.message : String(error))
+      if (scheduleRequestRef.current === requestId) setScheduleError(errorMessage(error))
       reportError(error)
     }
   }, [bridge, reportError])
@@ -248,9 +249,9 @@ export default function App() {
     const next = workspace.pendingQueuedPrompts[0]
     queuedFlushRef.current = true
     void sendPrompt(next.text, [], 'queue')
-      .then(() => workspace.removeQueuedPrompt(next.id))
-      .catch(() => undefined)
-      .finally(() => { queuedFlushRef.current = false })
+      // Remove on failure too: sendPrompt already surfaced the error, and
+      // leaving the prompt queued would retry in a hot loop.
+      .finally(() => { workspace.removeQueuedPrompt(next.id); queuedFlushRef.current = false })
   }, [bridge, busy, externalSessionRunning, sendPrompt, submitting, workspace.pendingQueuedPrompts, workspace.removeQueuedPrompt])
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />

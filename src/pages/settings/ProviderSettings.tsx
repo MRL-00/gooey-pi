@@ -1,5 +1,6 @@
 import { ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { errorMessage } from '@/lib/errors'
 import type { PrimeModelCatalog, PrimeProviderDescriptor } from '@/types/api'
 import { Modal } from '@/components/ui'
 
@@ -48,7 +49,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
 
   const run = async (providerId: string, action: () => Promise<void>) => {
     setBusyProvider(providerId); setError('')
-    try { await action() } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)) } finally { setBusyProvider(null) }
+    try { await action() } catch (failure) { setError(errorMessage(failure)) } finally { setBusyProvider(null) }
   }
 
   const saveApiKey = async () => {
@@ -61,7 +62,7 @@ export function ProviderSettings({ catalog, onRefresh, onSaveApiKey, onLogout, o
       setApiKey('')
       setApiKeyProvider(null)
     } catch (failure) {
-      setApiKeyError(failure instanceof Error ? failure.message : String(failure))
+      setApiKeyError(errorMessage(failure))
     } finally {
       setBusyProvider(null)
     }
