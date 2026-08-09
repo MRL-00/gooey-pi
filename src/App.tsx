@@ -410,7 +410,7 @@ export default function App() {
     : view === 'plugins' ? <PluginsPage skills={pluginSkills.skills} warnings={pluginSkills.warnings} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
     : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} voice={bridge?.voice ?? null} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
-        if (!await bridge.settings.resetBrowserData()) { const error = new Error('Prime Work could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
+        if (!await bridge.settings.resetBrowserData()) { const error = new Error('GUI Pie could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(activeHarness === 'omp' ? 'https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md' : 'https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
 

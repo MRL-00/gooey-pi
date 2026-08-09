@@ -257,7 +257,7 @@ class VoiceSecretStore {
 function orchestrationInstructions(harness: HarnessId): string {
   const harnessName = harness === 'omp' ? 'OMP' : 'Prime Agent'
   return [
-    'You are the voice orchestrator inside Prime Work, a desktop client for Prime Agent and OMP.',
+    'You are the voice orchestrator inside GUI Pie, a desktop client for OMP and Prime Agent.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
     'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels.',
@@ -295,7 +295,7 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
       },
       {
         type: 'function', name: 'list_models',
-        description: `Find task models available from providers currently shown as active in Prime Work for the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
+        description: `Find task models available from providers currently shown as active in GUI Pie for the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {

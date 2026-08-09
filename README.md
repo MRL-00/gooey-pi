@@ -1,8 +1,8 @@
-# Prime Work
+# GUI Pie
 
-Prime Work is a macOS, Linux, and Windows desktop workspace for [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with Prime Agent's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
+GUI Pie is a macOS, Linux, and Windows desktop workspace for [OMP](https://github.com/can1357/oh-my-pi) and [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with each harness's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
 
-![Prime Work session workspace](research/prime-work-final-light.png)
+![GUI Pie session workspace](research/prime-work-final-light.png)
 
 ## Features
 
@@ -22,7 +22,7 @@ Prime Work is a macOS, Linux, and Windows desktop workspace for [Prime Agent](ht
 
 - macOS (Apple Silicon or Intel), a supported Linux distribution, or Windows 10/11 x64
 - Node.js 22.12.0 or newer and npm 10.9.0 or newer
-- Prime Agent installed on `PATH` (`prime-agent.exe` on Windows). If it lives elsewhere, set the absolute `PRIME_AGENT_BINARY` path before launching Prime Work.
+- OMP and/or Prime Agent installed on `PATH` (`omp.exe` or `prime-agent.exe` on Windows). If Prime Agent lives elsewhere, set the absolute `PRIME_AGENT_BINARY` path before launching GUI Pie.
 - A configured Prime Agent provider/login
 
 Verify the harness before launching:
@@ -34,11 +34,11 @@ prime-agent
 # Use /login in the Prime Agent CLI when authentication is required.
 ```
 
-Prime Work never stores provider API keys. Authentication remains owned by Prime Agent.
+GUI Pie never stores provider API keys. Authentication remains owned by the active harness.
 
 ### Ask the user from an agent turn
 
-The `ask_user` tool is distributed separately in [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins), so it can be installed for Prime Agent with or without Prime Work. Install the collection (or configure an individual package entry) once:
+The `ask_user` tool is distributed separately in [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins), so it can be installed for Prime Agent with or without GUI Pie. Install the collection (or configure an individual package entry) once:
 
 ```bash
 prime-agent package install https://github.com/am-will/prime-agent-plugins
@@ -108,13 +108,13 @@ The Enter and Ctrl+Enter message actions can be swapped in **Settings → Prime 
 
 ## Data and security
 
-Prime session/auth/config files remain authoritative. Prime Work stores only UI settings, project bookmarks, and local archive metadata in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer is served from a secure custom `prime-work://` scheme rather than privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
+Prime and OMP session/auth/config files remain authoritative. GUI Pie stores only UI settings, project bookmarks, and local archive metadata in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer retains the secure internal `prime-work://` scheme for compatibility rather than using privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
 
 Prime Agent tools, extensions, skills, packages, and terminals run with your OS user permissions. Review projects, commands, and third-party packages before running them. See [`docs/security.md`](docs/security.md) for the complete trust boundary.
 
 ## Current scope
 
-Prime Work targets the local agent workflow. The composer checkout picker lists linked Git worktrees for the active repository, switches the workspace to a selected checkout, and can create a new branch worktree at a user-chosen location. Cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
+GUI Pie targets the local agent workflow. The composer checkout picker lists linked Git worktrees for the active repository, switches the workspace to a selected checkout, and can create a new branch worktree at a user-chosen location. Cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
 
 ## Design provenance
 

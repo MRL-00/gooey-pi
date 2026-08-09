@@ -1,10 +1,10 @@
 {
-  "name": "prime-work",
+  "name": "gui-pie",
   "version": "0.1.0",
   "private": true,
-  "description": "A native-feeling desktop workspace for Prime Agent",
+  "description": "A desktop workspace for OMP and Prime Agent",
   "main": "out/main/index.js",
-  "author": "Prime Work contributors",
+  "author": "GUI Pie contributors",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -71,8 +71,8 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "ai.prime.work",
-    "productName": "Prime Work",
+    "appId": "app.gui.pie",
+    "productName": "GUI Pie",
     "asar": {
       "smartUnpack": false
     },
@@ -87,11 +87,11 @@
         "zip"
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "icon": "assets/icon.icns",
+      "icon": "assets/icon.png",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Prime Work uses the microphone for dictation and realtime voice sessions you start."
+        "NSMicrophoneUsageDescription": "GUI Pie uses the microphone for dictation and realtime voice sessions you start."
       },
       "notarize": true,
       "asarUnpack": [

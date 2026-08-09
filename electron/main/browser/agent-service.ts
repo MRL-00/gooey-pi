@@ -200,7 +200,7 @@ export class AgentBrowserService {
     else if (action === 'reload') guest.reload()
     else if (action === 'url') {
       const url = requireString(urlValue, 'url', { min: 1, max: 2048, trim: true })
-      if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the Prime Work browser')
+      if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the GUI Pie browser')
       guest.loadURL(url).catch(() => undefined)
     } else throw new TypeError('action must be back, forward, reload, or url')
     return true
@@ -284,10 +284,10 @@ export class AgentBrowserService {
   async openTab(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     this.requireOpen()
     const url = params.url === undefined ? 'about:blank' : requireString(params.url, 'url', { min: 1, max: 2048, trim: true })
-    if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the Prime Work browser')
+    if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the GUI Pie browser')
     const sessionTabs = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey)
     if (sessionTabs.length >= MAX_TABS_PER_SESSION) throw new Error(`This thread already has ${MAX_TABS_PER_SESSION} browser tabs. Close one with browser_tabs before opening another.`)
-    if (this.tabs.size >= MAX_TABS_TOTAL) throw new Error('Prime Work has too many open agent browser tabs. Close unused tabs first.')
+    if (this.tabs.size >= MAX_TABS_TOTAL) throw new Error('GUI Pie has too many open agent browser tabs. Close unused tabs first.')
     const tab: TabState = {
       tabId: `bt-${randomBytes(6).toString('hex')}`,
       sessionKey,
@@ -361,7 +361,7 @@ export class AgentBrowserService {
     return this.withTab(sessionKey, params, async (tab, guest) => {
       if (params.url !== undefined) {
         const url = requireString(params.url, 'url', { min: 1, max: 2048, trim: true })
-        if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the Prime Work browser')
+        if (!isAllowedTabUrl(url)) throw new Error('Only credential-free http(s) URLs can be opened in the GUI Pie browser')
         await this.loadAndSettle(guest, url)
       } else {
         const action = requireString(params.action, 'action', { min: 1, max: 16, trim: true })
@@ -529,7 +529,7 @@ export class AgentBrowserService {
   // ---- internals -----------------------------------------------------------
 
   private requireOpen(): void {
-    if (this.closed) throw new Error('Prime Work is shutting down')
+    if (this.closed) throw new Error('GUI Pie is shutting down')
   }
 
   private requireTab(tabIdValue: unknown): TabState {
@@ -608,7 +608,7 @@ export class AgentBrowserService {
         reject,
         timer: setTimeout(() => {
           tab.attachWaiters = tab.attachWaiters.filter((candidate) => candidate !== waiter)
-          reject(new Error('The Prime Work browser pane did not attach this tab. Make sure the Prime Work window is open.'))
+          reject(new Error('The GUI Pie browser pane did not attach this tab. Make sure the GUI Pie window is open.'))
         }, this.attachTimeoutMs),
       }
       waiter.timer.unref?.()

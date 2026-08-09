@@ -11,7 +11,7 @@ interface BrowserSettingsProps extends SettingsSectionProps {
 export function BrowserSettings({ settings, onUpdate, onRequestReset }: BrowserSettingsProps) {
   return (
     <>
-      <header><h1>Browser</h1><p>Manage the isolated profile used inside Prime Work.</p></header>
+      <header><h1>Browser</h1><p>Manage the isolated profile used inside GUI Pie.</p></header>
       <section className="settings-group">
         <h2>Startup</h2>
         <DraftSettingField

@@ -102,7 +102,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, onUpdate,
             </>
           )}
         >
-          <p>This signs you out of websites opened in Prime Work and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>
+          <p>This signs you out of websites opened in GUI Pie and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>
           {resetError ? <p className="settings-error" role="alert">{resetError}</p> : null}
         </Modal>
       ) : null}

@@ -194,3 +194,11 @@ export function PrimeMark({ size = 24 }: { size?: number }) {
     </span>
   )
 }
+
+export function GuiPieMark({ size = 24 }: { size?: number }) {
+  return (
+    <span className="gui-pie-mark" style={{ width: size, height: size }} role="img" aria-label="GUI Pie">
+      <img src="/gui-pie-mascot.png" alt="" aria-hidden="true" />
+    </span>
+  )
+}

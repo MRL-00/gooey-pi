@@ -10,6 +10,7 @@ const electron = vi.hoisted(() => ({
   },
   BrowserWindow: class {},
   Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
+  Tray: class {},
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
 }))

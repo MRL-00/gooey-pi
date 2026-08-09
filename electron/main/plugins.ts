@@ -26,7 +26,7 @@ const createDiscoveryQueue = () => createAdmissionQueue({
   maxConcurrent: MAX_CONCURRENT_PLUGIN_DISCOVERIES,
   maxPending: MAX_QUEUED_PLUGIN_DISCOVERIES,
   pendingLimitError: () => new TypeError('Too many plugin discoveries are pending'),
-  closedError: () => new TypeError('Prime Work is shutting down'),
+  closedError: () => new TypeError('GUI Pie is shutting down'),
 })
 let discoveryQueue = createDiscoveryQueue()
 

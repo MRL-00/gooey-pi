@@ -1,4 +1,4 @@
-"""Prime Work's capability-scoped scheduling client."""
+"""GUI Pie's capability-scoped scheduling client."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def _request(method: str, params: dict[str, Any] | None = None) -> Any:
     url = os.environ.get("PRIME_WORK_SCHEDULE_URL")
     token = os.environ.get("PRIME_WORK_SCHEDULE_TOKEN")
     if not url or not token:
-        raise RuntimeError("Prime Work scheduling is unavailable. Open this session in Prime Work and keep its broker running.")
+        raise RuntimeError("GUI Pie scheduling is unavailable. Open this session in GUI Pie and keep its broker running.")
     payload = json.dumps({"method": method, "params": params or {}}, separators=(",", ":")).encode()
     request = Request(url, data=payload, method="POST", headers={
         "Authorization": f"Bearer {token}",
@@ -28,11 +28,11 @@ def _request(method: str, params: dict[str, Any] | None = None) -> Any:
             detail = json.loads(error.read().decode()).get("error")
         except Exception:
             detail = None
-        raise RuntimeError(detail or f"Prime Work scheduling failed ({error.code})") from error
+        raise RuntimeError(detail or f"GUI Pie scheduling failed ({error.code})") from error
     except (URLError, TimeoutError) as error:
-        raise RuntimeError("Prime Work's scheduling broker is not reachable") from error
+        raise RuntimeError("GUI Pie's scheduling broker is not reachable") from error
     if not body.get("ok"):
-        raise RuntimeError(body.get("error") or "Prime Work scheduling failed")
+        raise RuntimeError(body.get("error") or "GUI Pie scheduling failed")
     return body.get("result")
 
 

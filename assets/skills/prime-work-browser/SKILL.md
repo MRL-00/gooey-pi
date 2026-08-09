@@ -1,11 +1,11 @@
 ---
 name: prime-work-browser
-description: Drive the Prime Work in-app browser for this thread with the browser_* tools - open tabs, navigate, read pages, click, type, scroll, screenshot, and extract data. Use when the user asks to open, test, inspect, or interact with a website or a local dev server inside Prime Work.
+description: Drive the GUI Pie in-app browser for this thread with the browser_* tools - open tabs, navigate, read pages, click, type, scroll, screenshot, and extract data. Use when the user asks to open, test, inspect, or interact with a website or a local dev server inside GUI Pie.
 ---
 
-# Prime Work in-app browser
+# GUI Pie in-app browser
 
-This thread has its own tabs in the Prime Work Browser panel. The user sees every tab live and can interact alongside you. Tabs belong to this thread only; other threads cannot see or control them, and you cannot reach theirs.
+This thread has its own tabs in the GUI Pie Browser panel. The user sees every tab live and can interact alongside you. Tabs belong to this thread only; other threads cannot see or control them, and you cannot reach theirs.
 
 ## Tools
 
