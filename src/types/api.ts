@@ -10,7 +10,7 @@ export type WorkspaceView = 'session' | 'projects' | 'activity' | 'scheduled' | 
 export type InspectorTab = 'summary' | 'changes' | 'browser' | 'files'
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'complete' | 'failed' | 'unknown'
 
-export const HARNESS_IDS = ['prime', 'omp'] as const
+export const HARNESS_IDS = ['omp', 'prime'] as const
 export type HarnessId = (typeof HARNESS_IDS)[number]
 
 /**
@@ -346,7 +346,7 @@ export interface AppSettings {
   disabledProviders: string[]
   /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */
   ompDisabledProviders: string[]
-  /** Harness whose workspace the renderer shows; defaults to 'prime'. */
+  /** Harness whose workspace the renderer shows; new installs default to 'omp'. */
   activeHarness: HarnessId
   /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
   ompApprovalMode: OmpApprovalMode

@@ -340,13 +340,23 @@ describe('JsonStateStore', () => {
     writeFileSync(path, JSON.stringify({
       version: 3,
       projects: [],
+      settings: { ...defaultSettings(), activeHarness: 'prime' },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    expect(new JsonStateStore(path).snapshot().settings.activeHarness).toBe('prime')
+
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
       settings: { ...defaultSettings(), activeHarness: 'codex', ompApprovalMode: 'sudo' },
       archivedSessions: [],
       dismissedProjectPaths: [],
       schedules: [],
     }))
     const reset = new JsonStateStore(path).snapshot()
-    expect(reset.settings.activeHarness).toBe('prime')
+    expect(reset.settings.activeHarness).toBe('omp')
     expect(reset.settings.ompApprovalMode).toBe('inherit')
   })
 

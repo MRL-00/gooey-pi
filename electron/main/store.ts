@@ -42,7 +42,7 @@ export function defaultSettings(): AppSettings {
     telemetry: false,
     disabledProviders: [],
     ompDisabledProviders: [],
-    activeHarness: 'prime',
+    activeHarness: 'omp',
     ompApprovalMode: 'inherit',
     voiceTranscriptionProvider: 'openai-live',
     voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
@@ -95,7 +95,7 @@ function parseProject(value: unknown): PersistedProject | null {
   }
 }
 
-function parseSettings(value: unknown): AppSettings {
+function parseSettings(value: unknown, legacyState = false): AppSettings {
   const defaults = defaultSettings()
   if (!isRecord(value)) return defaults
   return {
@@ -119,7 +119,9 @@ function parseSettings(value: unknown): AppSettings {
     ompDisabledProviders: Array.isArray(value.ompDisabledProviders)
       ? [...new Set(value.ompDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.ompDisabledProviders,
-    activeHarness: parseHarness(value.activeHarness),
+    activeHarness: value.activeHarness === 'prime' || value.activeHarness === 'omp'
+      ? value.activeHarness
+      : legacyState ? 'prime' : defaults.activeHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
     voiceTranscriptionProvider: value.voiceTranscriptionProvider === 'openai-live' || value.voiceTranscriptionProvider === 'openai' || value.voiceTranscriptionProvider === 'groq' || value.voiceTranscriptionProvider === 'deepgram' || value.voiceTranscriptionProvider === 'local-whisper' ? value.voiceTranscriptionProvider : defaults.voiceTranscriptionProvider,
     voiceOpenAiLiveTranscriptionModel: boundedString(value.voiceOpenAiLiveTranscriptionModel, 128) ? value.voiceOpenAiLiveTranscriptionModel : defaults.voiceOpenAiLiveTranscriptionModel,
@@ -227,13 +229,12 @@ function capUnboundedCollections(state: DesktopState): void {
 
 function parseState(value: unknown): DesktopState {
   if (!isRecord(value)) return defaultState()
-  // Version 2 -> 3: projects gain a harness (defaulting to 'prime') and
-  // settings gain activeHarness/ompApprovalMode; both are filled by the field
-  // parsers above, so older states migrate on load without a separate pass.
+  // Version 2 -> 3: projects and the previously single-harness workspace keep
+  // Prime. New or invalid version-3 settings use the current OMP-first default.
   const state: DesktopState = {
     version: 3,
     projects: Array.isArray(value.projects) ? value.projects.map(parseProject).filter((item): item is PersistedProject => item !== null) : [],
-    settings: parseSettings(value.settings),
+    settings: parseSettings(value.settings, value.version === 2),
     archivedSessions: Array.isArray(value.archivedSessions) ? value.archivedSessions.filter((item): item is string => typeof item === 'string') : [],
     dismissedProjectPaths: Array.isArray(value.dismissedProjectPaths) ? value.dismissedProjectPaths.filter((item): item is string => typeof item === 'string') : [],
     schedules: Array.isArray(value.schedules) ? value.schedules.map(parseSchedule).filter((item): item is AutomationScheduleRecord => item !== null).slice(0, 500) : [],

@@ -10,7 +10,7 @@ import type {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
-  activeHarness: 'prime',
+  activeHarness: 'omp',
   ompApprovalMode: 'inherit',
   sidebarOpen: true,
   inspectorOpen: true,

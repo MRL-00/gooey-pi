@@ -332,11 +332,11 @@ describe('sidebar brand switcher', () => {
     const menu = container.querySelector('[role="menu"]')
     expect(menu).not.toBeNull()
     const options = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
-    expect(options.map((option) => option.textContent)).toEqual(['Prime Work', 'OMP WorkNot detected'])
-    expect(options[0].getAttribute('aria-checked')).toBe('true')
-    expect(options[1].getAttribute('aria-checked')).toBe('false')
+    expect(options.map((option) => option.textContent)).toEqual(['OMP WorkNot detected', 'Prime Work'])
+    expect(options[0].getAttribute('aria-checked')).toBe('false')
+    expect(options[1].getAttribute('aria-checked')).toBe('true')
 
-    await click(options[1])
+    await click(options[0])
     expect(onSelectHarness).toHaveBeenCalledWith('omp')
     expect(container.querySelector('[role="menu"]')).toBeNull()
   })
