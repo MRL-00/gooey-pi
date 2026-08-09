@@ -465,6 +465,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(showPet).toBeChecked()
     await expect(showPet).toBeFocused()
     await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toBeVisible()
+    await expect(page.locator('.desktop-pet').getByRole('button', { name: 'Unmute realtime voice' })).toBeVisible()
     await page.locator('.desktop-pet').getByRole('button', { name: 'Close realtime voice' }).click()
   })
 

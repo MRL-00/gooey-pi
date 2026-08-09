@@ -102,6 +102,10 @@ describe('realtime voice surface', () => {
     expect(container.querySelector('audio')).toBe(audio)
     expect(audio.srcObject).toBe(remoteStream)
     expect(container.querySelector('[aria-label="Realtime voice session"]')).not.toBeNull()
+
+    await act(async () => root.render(<VoiceOrb {...props} pet={{ pets, petId: 'orb', agentBusy: false, reduceMotion: false }} />))
+    expect(track.enabled).toBe(false)
+    expect(container.querySelector('[aria-label="Unmute realtime voice"]')).not.toBeNull()
   })
 
   it('executes a start_task call and reports the started task to the workspace', async () => {

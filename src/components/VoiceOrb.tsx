@@ -70,6 +70,17 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
   const audioRef = useRef<HTMLAudioElement>(null)
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
   const harnessRef = useRef(harness)
+  const petVisibleRef = useRef(Boolean(pet))
+
+  useEffect(() => {
+    const wasVisible = petVisibleRef.current
+    const isVisible = Boolean(pet)
+    petVisibleRef.current = isVisible
+    if (wasVisible || !isVisible) return
+    setMuted(true)
+    for (const track of streamRef.current?.getAudioTracks() ?? []) track.enabled = false
+    setOrbState((current) => current === 'error' ? current : 'listening')
+  }, [pet])
 
   useEffect(() => {
     let active = true
