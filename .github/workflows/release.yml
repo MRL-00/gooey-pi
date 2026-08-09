@@ -58,7 +58,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: prime-work-public-macos-${{ matrix.arch }}
+          name: gooeypi-public-macos-${{ matrix.arch }}
           path: |
             release/mac/${{ matrix.arch }}/*.dmg
             release/mac/${{ matrix.arch }}/*.zip
@@ -83,7 +83,7 @@ jobs:
       - run: npm run package:linux -- --skip-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: prime-work-public-linux
+          name: gooeypi-public-linux
           path: |
             release/linux/**/*.AppImage
             release/linux/**/*.deb
@@ -109,7 +109,7 @@ jobs:
       - run: npm run package:win -- --skip-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: prime-work-public-windows
+          name: gooeypi-public-windows
           path: |
             release/win/**/*.exe
             release/win/**/*.zip

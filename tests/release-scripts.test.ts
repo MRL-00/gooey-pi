@@ -276,7 +276,7 @@ describe('release preflight', () => {
     // The explicit target arch drives packaging, and each leg uploads only its
     // own arch directory under a per-arch artifact name and cache key.
     expect(releaseWorkflow).toContain('npm run package:mac -- --skip-verify --arch ${{ matrix.arch }}')
-    expect(releaseWorkflow).toContain('name: prime-work-public-macos-${{ matrix.arch }}')
+    expect(releaseWorkflow).toContain('name: gooeypi-public-macos-${{ matrix.arch }}')
     expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/*.dmg')
     expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/*.zip')
     expect(releaseWorkflow).toContain('electron-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles(')

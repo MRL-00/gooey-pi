@@ -154,7 +154,7 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
 
   const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
   console.log(
-    `Verified ${mode} DMG and ZIP for Prime Work ${packageJson.version}: archive integrity, contained application, exact native unpack allowlist and architectures, Electron fuses, and package size budgets (DMG payload: ${describeSizeMetrics(dmgMetrics)}; ZIP payload: ${describeSizeMetrics(zipMetrics)})${mode === 'public' ? ', signatures, notarization staples, and Gatekeeper' : ''}.`,
+    `Verified ${mode} DMG and ZIP for GooeyPi ${packageJson.version}: archive integrity, contained application, exact native unpack allowlist and architectures, Electron fuses, and package size budgets (DMG payload: ${describeSizeMetrics(dmgMetrics)}; ZIP payload: ${describeSizeMetrics(zipMetrics)})${mode === 'public' ? ', signatures, notarization staples, and Gatekeeper' : ''}.`,
   )
 }
 
