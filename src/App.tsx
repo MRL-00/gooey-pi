@@ -72,6 +72,8 @@ export default function App() {
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [voiceOrbOpen, setVoiceOrbOpen] = useState(false)
+  const [focusPetVoiceControl, setFocusPetVoiceControl] = useState(false)
+  const [restorePetVoiceFocus, setRestorePetVoiceFocus] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [changesCardDismissed, setChangesCardDismissed] = useState(false)
@@ -99,6 +101,8 @@ export default function App() {
   const activeHarness = settingsState.settings.activeHarness
   const selectHarness = useCallback((harness: HarnessId) => {
     setVoiceOrbOpen(false)
+    setFocusPetVoiceControl(false)
+    setRestorePetVoiceFocus(false)
     void settingsState.updateSettings({ activeHarness: harness })
   }, [settingsState.updateSettings])
   const browserAnnotations = useBrowserAnnotations()
@@ -395,6 +399,12 @@ export default function App() {
     () => workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'queue'),
     [workspace.pendingQueuedPrompts],
   )
+  const toggleVoice = useCallback(() => {
+    const nextOpen = !voiceOrbOpen
+    setFocusPetVoiceControl(nextOpen && settingsState.settings.petEnabled)
+    setRestorePetVoiceFocus(false)
+    setVoiceOrbOpen(nextOpen)
+  }, [settingsState.settings.petEnabled, voiceOrbOpen])
   useEffect(() => {
     if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || workspace.pendingQueuedPrompts.length === 0) return
     const next = workspace.pendingQueuedPrompts[0]
@@ -419,7 +429,7 @@ export default function App() {
     {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
-      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={() => setVoiceOrbOpen((open) => !open)} onOpenBrowser={openBrowser} />
+      <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={toggleVoice} onOpenBrowser={openBrowser} />
       <div className="workbench__content">{view === 'session' ? <div ref={layout.workspaceRowRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.sessionWorkspaceRef} className="conversation-column">
           <main className="conversation-pane">
@@ -436,8 +446,8 @@ export default function App() {
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
       </div> : <Suspense fallback={<LoadingPanel label={view} />}>{page}</Suspense>}</div>
     </div>
-    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} harness={activeHarness} onClose={() => setVoiceOrbOpen(false)} onTaskStarted={handleVoiceTaskStarted} /></Suspense> : null}
-    {settingsState.settings.petEnabled && bridge ? <Suspense fallback={null}><DesktopPet pets={bridge.pets} petId={settingsState.settings.petId} agentBusy={busy} voiceActive={voiceOrbOpen} reduceMotion={settingsState.settings.reduceMotion} /></Suspense> : null}
+    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} harness={activeHarness} onClose={() => { setFocusPetVoiceControl(false); setVoiceOrbOpen(false); setRestorePetVoiceFocus(settingsState.settings.petEnabled) }} onTaskStarted={handleVoiceTaskStarted} pet={settingsState.settings.petEnabled ? { pets: bridge.pets, petId: settingsState.settings.petId, agentBusy: busy, reduceMotion: settingsState.settings.reduceMotion } : undefined} focusPetControl={focusPetVoiceControl} onPetControlFocused={() => setFocusPetVoiceControl(false)} /></Suspense> : null}
+    {settingsState.settings.petEnabled && bridge && !voiceOrbOpen ? <Suspense fallback={null}><DesktopPet pets={bridge.pets} petId={settingsState.settings.petId} agentBusy={busy} voiceActive={false} reduceMotion={settingsState.settings.reduceMotion} focusVoiceControl={restorePetVoiceFocus} onVoiceControlFocused={() => setRestorePetVoiceFocus(false)} onOpenVoice={() => { setRestorePetVoiceFocus(false); setFocusPetVoiceControl(true); setVoiceOrbOpen(true) }} /></Suspense> : null}
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open harness={activeHarness} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
     {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}

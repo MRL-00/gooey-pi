@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { AudioWaveform, Mic, MicOff, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 import { PetAvatar, type PetActivity } from './PetAvatar'
 
@@ -18,27 +19,44 @@ function initialPosition(): Position {
   } catch { return fallback }
 }
 
-function constrained(position: Position): Position {
+function constrained(position: Position, surfaceHeight: number): Position {
   return {
-    x: Math.max(8, Math.min(window.innerWidth - 116, position.x)),
-    y: Math.max(54, Math.min(window.innerHeight - 128, position.y)),
+    x: Math.max(8, Math.min(window.innerWidth - 124, position.x)),
+    y: Math.max(54, Math.min(window.innerHeight - surfaceHeight - 8, position.y)),
   }
 }
 
-export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }: {
+export interface DesktopPetProps {
   pets: PrimeWorkApi['pets']
   petId: string
   agentBusy: boolean
   voiceActive: boolean
   reduceMotion: boolean
-}) {
+  voiceActivity?: PetActivity
+  voiceMuted?: boolean
+  voiceStatus?: string
+  voiceError?: string
+  onOpenVoice?(): void
+  onToggleVoiceMute?(): void
+  onCloseVoice?(): void
+  focusVoiceControl?: boolean
+  onVoiceControlFocused?(): void
+  children?: ReactNode
+}
+
+export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, children }: DesktopPetProps) {
+  const initialSurfaceHeight = 154
   const [available, setAvailable] = useState<PetDefinition[]>(BUILT_INS)
-  const [position, setPosition] = useState(() => constrained(initialPosition()))
+  const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight))
+  const [surfaceHeight, setSurfaceHeight] = useState(initialSurfaceHeight)
   const [dragging, setDragging] = useState(false)
   const [direction, setDirection] = useState<'left' | 'right'>('right')
   const [jumping, setJumping] = useState(false)
   const dragRef = useRef<DragState | null>(null)
   const positionRef = useRef(position)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const voiceControlRef = useRef<HTMLButtonElement>(null)
+  const hasVoiceDetails = Boolean(voiceError || children)
 
   useEffect(() => {
     let active = true
@@ -47,10 +65,33 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }
   }, [pets])
   useEffect(() => { positionRef.current = position }, [position])
   useEffect(() => {
-    const onResize = () => setPosition((current) => constrained(current))
+    const onResize = () => setPosition((current) => constrained(current, surfaceHeight))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [surfaceHeight])
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const updateBounds = () => {
+      const measured = Math.ceil(surface.getBoundingClientRect().height)
+      const nextHeight = Math.max(154, measured || (voiceActive ? 320 : 154))
+      setSurfaceHeight((current) => current === nextHeight ? current : nextHeight)
+      setPosition((current) => {
+        const next = constrained(current, nextHeight)
+        return next.x === current.x && next.y === current.y ? current : next
+      })
+    }
+    updateBounds()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateBounds)
+    observer.observe(surface)
+    return () => observer.disconnect()
+  }, [voiceActive, hasVoiceDetails])
+  useEffect(() => {
+    if (!focusVoiceControl || !voiceControlRef.current) return
+    voiceControlRef.current.focus()
+    onVoiceControlFocused?.()
+  }, [focusVoiceControl, onVoiceControlFocused, voiceActive])
   useEffect(() => {
     if (!jumping) return
     const timer = window.setTimeout(() => setJumping(false), reduceMotion ? 80 : 700)
@@ -61,7 +102,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }
   const activity: PetActivity = dragging
     ? direction === 'left' ? 'running-left' : 'running-right'
     : jumping ? 'jumping'
-      : voiceActive ? 'speaking'
+      : voiceActive ? voiceActivity ?? 'speaking'
         : agentBusy ? 'working' : 'idle'
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -79,7 +120,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }
     drag.lastX = event.clientX
     drag.lastY = event.clientY
     drag.moved ||= Math.abs(deltaX) + Math.abs(deltaY) > 2
-    const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy })
+    const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, surfaceHeight)
     positionRef.current = next
     setPosition(next)
   }
@@ -101,7 +142,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }
       event.preventDefault()
       setDirection(delta.x < 0 ? 'left' : delta.x > 0 ? 'right' : direction)
       setPosition((current) => {
-        const next = constrained({ x: current.x + delta.x, y: current.y + delta.y })
+        const next = constrained({ x: current.x + delta.x, y: current.y + delta.y }, surfaceHeight)
         positionRef.current = next
         window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(next))
         return next
@@ -114,20 +155,36 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion }
 
   return (
     <div
+      ref={surfaceRef}
       className={`desktop-pet desktop-pet--${activity}`}
       style={{ left: position.x, top: position.y }}
-      role="button"
-      tabIndex={0}
-      aria-label={`${pet.displayName}, draggable GooeyPi pet`}
-      title={`${pet.displayName} · drag to move`}
-      onPointerDown={startDrag}
-      onPointerMove={moveDrag}
-      onPointerUp={finishDrag}
-      onPointerCancel={finishDrag}
-      onKeyDown={moveByKeyboard}
+      role={voiceActive ? 'complementary' : undefined}
+      aria-label={voiceActive ? 'Realtime voice session' : undefined}
+      data-horizontal-edge={position.x > window.innerWidth / 2 ? 'right' : 'left'}
     >
-      <PetAvatar pet={pet} pets={pets} activity={activity} size={96} reduceMotion={reduceMotion} />
-      <span className="desktop-pet__name">{pet.displayName}</span>
+      <div
+        className="desktop-pet__drag-target"
+        role="button"
+        tabIndex={0}
+        aria-label={`${pet.displayName}, draggable GooeyPi pet`}
+        title={`${pet.displayName} · drag to move`}
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={finishDrag}
+        onPointerCancel={finishDrag}
+        onKeyDown={moveByKeyboard}
+      >
+        <PetAvatar pet={pet} pets={pets} activity={activity} size={96} reduceMotion={reduceMotion} />
+        <span className="desktop-pet__name">{pet.displayName}</span>
+      </div>
+      {voiceActive && voiceStatus ? <span className="desktop-pet__voice-status" role="status">{voiceStatus}</span> : null}
+      <div className="desktop-pet__voice-controls" aria-label="Realtime voice controls">
+        {!voiceActive && onOpenVoice ? <button ref={voiceControlRef} type="button" aria-label="Open realtime voice" title="Open realtime voice" onClick={onOpenVoice}><AudioWaveform size={15} /></button> : null}
+        {voiceActive && onToggleVoiceMute ? <button ref={voiceControlRef} type="button" aria-label={voiceMuted ? 'Unmute realtime voice' : 'Mute realtime voice'} title={voiceMuted ? 'Unmute realtime voice' : 'Mute realtime voice'} onClick={onToggleVoiceMute}>{voiceMuted ? <MicOff size={15} /> : <Mic size={15} />}</button> : null}
+        {voiceActive && onCloseVoice ? <button type="button" aria-label="Close realtime voice" title="Close realtime voice" onClick={onCloseVoice}><X size={16} /></button> : null}
+      </div>
+      {voiceError ? <p className="desktop-pet__voice-error" role="alert">{voiceError}</p> : null}
+      {children}
     </div>
   )
 }

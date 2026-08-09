@@ -1,4 +1,5 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { isAbsolute, join, relative } from 'node:path'
 import type { PetDefinition } from '../../src/types/api'
 import { isRecord } from './validation'
@@ -78,7 +79,7 @@ export class PetService {
 
     const codexRoot = await stableDirectory(this.options.codexRoot)
     if (!codexRoot) return packages
-    let entries
+    let entries: Dirent[]
     try { entries = await readdir(codexRoot, { withFileTypes: true }) } catch { return packages }
     const builtInIds = new Set(packages.map((item) => item.definition.petId))
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {

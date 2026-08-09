@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TitleToolbar } from '../../src/components/TitleToolbar'
 import { VoiceOrb } from '../../src/components/VoiceOrb'
-import type { PrimeWorkApi } from '../../src/types/api'
+import type { PetDefinition, PrimeWorkApi } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -67,6 +67,41 @@ describe('realtime voice surface', () => {
     await act(async () => mute.click())
     expect(track.enabled).toBe(false)
     expect(container.querySelector('[aria-label="Unmute realtime voice"]')).not.toBeNull()
+  })
+
+  it('places realtime status and controls on the selected desktop pet', async () => {
+    const definitions: PetDefinition[] = [{ id: 'orb', petId: 'orb', displayName: 'Orb', description: 'Orb.', source: 'built-in', kind: 'orb' }]
+    const pets = { list: vi.fn(async () => definitions), sprite: vi.fn() } as unknown as PrimeWorkApi['pets']
+    const onClose = vi.fn()
+    const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" onClose={onClose} onTaskStarted={vi.fn()} pet={{ pets, petId: 'orb', agentBusy: false, reduceMotion: false }} />))
+    expect(container.querySelector('.desktop-pet')).not.toBeNull()
+    expect(container.querySelector('.voice-orb')).toBeNull()
+    expect(container.textContent).toContain('Connecting')
+    const mute = container.querySelector<HTMLButtonElement>('[aria-label="Mute realtime voice"]')!
+    const close = container.querySelector<HTMLButtonElement>('[aria-label="Close realtime voice"]')!
+    await act(async () => mute.click())
+    expect(track.enabled).toBe(false)
+    expect(container.textContent).toContain('Muted')
+    act(() => close.click())
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the remote audio element and stream when the pet surface is toggled', async () => {
+    const definitions: PetDefinition[] = [{ id: 'orb', petId: 'orb', displayName: 'Orb', description: 'Orb.', source: 'built-in', kind: 'orb' }]
+    const pets = { list: vi.fn(async () => definitions), sprite: vi.fn() } as unknown as PrimeWorkApi['pets']
+    const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted: vi.fn() }
+    await act(async () => root.render(<VoiceOrb {...props} pet={{ pets, petId: 'orb', agentBusy: false, reduceMotion: false }} />))
+    const audio = container.querySelector<HTMLAudioElement>('audio')!
+    const remoteStream = { id: 'remote-stream' } as unknown as MediaStream
+    act(() => FakePeer.latest.dispatchEvent(Object.assign(new Event('track'), { streams: [remoteStream], track: {} })))
+    expect(audio.srcObject).toBe(remoteStream)
+
+    await act(async () => root.render(<VoiceOrb {...props} />))
+    expect(container.querySelector('audio')).toBe(audio)
+    expect(audio.srcObject).toBe(remoteStream)
+    expect(container.querySelector('[aria-label="Realtime voice session"]')).not.toBeNull()
   })
 
   it('executes a start_task call and reports the started task to the workspace', async () => {

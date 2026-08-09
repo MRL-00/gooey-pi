@@ -1,6 +1,8 @@
 import { Mic, MicOff, X } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { HarnessId, PrimeWorkApi, VoiceTaskStarted, VoiceToolRequest } from '@/types/api'
+import { DesktopPet, type DesktopPetProps } from './DesktopPet'
+import type { PetActivity } from './PetAvatar'
 
 type OrbState = 'connecting' | 'listening' | 'user-speaking' | 'thinking' | 'agent-speaking' | 'error'
 
@@ -9,6 +11,9 @@ interface VoiceOrbProps {
   harness: HarnessId
   onClose(): void
   onTaskStarted(task: VoiceTaskStarted): Promise<void>
+  pet?: Pick<DesktopPetProps, 'pets' | 'petId' | 'agentBusy' | 'reduceMotion'>
+  focusPetControl?: boolean
+  onPetControlFocused?(): void
 }
 
 interface OrbPosition { x: number; y: number }
@@ -53,7 +58,7 @@ function realtimeErrorMessage(message: Record<string, unknown>): string {
   return `Realtime error${code ? ` (${code})` : ''}: ${detail}${param ? ` [${param}]` : ''}${eventId ? ` [event ${eventId}]` : ''}`
 }
 
-export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbProps) {
+export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPetControl = false, onPetControlFocused }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState('')
@@ -237,24 +242,44 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbPro
   }
 
   const status = muted ? 'Muted' : orbState === 'connecting' ? 'Connecting' : orbState === 'user-speaking' ? 'Listening to you' : orbState === 'thinking' ? 'Thinking' : orbState === 'agent-speaking' ? 'Speaking' : orbState === 'error' ? 'Voice unavailable' : 'Listening'
+  const petActivity: PetActivity = muted || orbState === 'listening' || orbState === 'user-speaking' ? 'idle'
+    : orbState === 'agent-speaking' ? 'speaking'
+      : orbState === 'error' ? 'failed' : 'working'
+  const receipt = taskReceipt ? <div className="voice-orb__receipt" role="status">
+    <strong>Task started</strong>
+    <span>{taskReceipt.projectName} · {taskReceipt.harness === 'omp' ? 'OMP' : 'Prime'}</span>
+    <small>{taskOpened ? 'Opened in the sidebar' : 'Opening task…'}</small>
+  </div> : null
   return (
-    <aside className={`voice-orb voice-orb--${orbState} ${muted ? 'is-muted' : ''}`} style={{ '--orb-x': `${position.x}px`, '--orb-y': `${position.y}px` } as CSSProperties} aria-label="Realtime voice session">
-      <audio ref={audioRef} autoPlay />
-      <div className="voice-orb__drag" onPointerDown={beginDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-        <div className="voice-orb__halo" aria-hidden="true" />
-        <div className="voice-orb__core" aria-hidden="true"><i /><i /><i /></div>
-        <span className="voice-orb__status">{status}</span>
-        <div className="voice-orb__controls">
-          <button type="button" aria-label={muted ? 'Unmute realtime voice' : 'Mute realtime voice'} onClick={toggleMute}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
-          <button type="button" aria-label="Close realtime voice" onClick={onClose}><X size={16} /></button>
+    <>
+      {/* biome-ignore lint/a11y/useMediaCaption: Live assistant audio has no static caption track; status remains available as text. */}
+      <audio ref={audioRef} autoPlay className="voice-session__audio" />
+      {pet ? <DesktopPet
+        {...pet}
+        voiceActive
+        voiceActivity={petActivity}
+        voiceMuted={muted}
+        voiceStatus={status}
+        voiceError={error}
+        onToggleVoiceMute={toggleMute}
+        onCloseVoice={onClose}
+        focusVoiceControl={focusPetControl}
+        onVoiceControlFocused={onPetControlFocused}
+      >
+        {receipt}
+      </DesktopPet> : <aside className={`voice-orb voice-orb--${orbState} ${muted ? 'is-muted' : ''}`} style={{ '--orb-x': `${position.x}px`, '--orb-y': `${position.y}px` } as CSSProperties} aria-label="Realtime voice session">
+        <div className="voice-orb__drag" onPointerDown={beginDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+          <div className="voice-orb__halo" aria-hidden="true" />
+          <div className="voice-orb__core" aria-hidden="true"><i /><i /><i /></div>
+          <span className="voice-orb__status">{status}</span>
+          <div className="voice-orb__controls">
+            <button type="button" aria-label={muted ? 'Unmute realtime voice' : 'Mute realtime voice'} onClick={toggleMute}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
+            <button type="button" aria-label="Close realtime voice" onClick={onClose}><X size={16} /></button>
+          </div>
         </div>
-      </div>
-      {error ? <p role="alert">{error}</p> : null}
-      {taskReceipt ? <div className="voice-orb__receipt" role="status">
-        <strong>Task started</strong>
-        <span>{taskReceipt.projectName} · {taskReceipt.harness === 'omp' ? 'OMP' : 'Prime'}</span>
-        <small>{taskOpened ? 'Opened in the sidebar' : 'Opening task…'}</small>
-      </div> : null}
-    </aside>
+        {error ? <p role="alert">{error}</p> : null}
+        {receipt}
+      </aside>}
+    </>
   )
 }

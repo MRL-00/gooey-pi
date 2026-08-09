@@ -13,13 +13,23 @@
 .pet-orb--failed { filter: grayscale(.55); animation: none; }
 .pet-orb.is-reduced-motion, .pet-orb.is-reduced-motion::after { animation: none; }
 
-.desktop-pet { position: fixed; z-index: 105; width: 112px; min-height: 118px; display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; user-select: none; cursor: grab; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
-.desktop-pet:active { cursor: grabbing; }
-.desktop-pet:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; background: color-mix(in srgb, var(--surface-raised) 52%, transparent); }
+.desktop-pet { position: fixed; z-index: 120; width: 120px; min-height: 146px; display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
+.desktop-pet__drag-target { width: 112px; min-height: 118px; display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
+.desktop-pet__drag-target:active { cursor: grabbing; }
+.desktop-pet__drag-target:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; background: color-mix(in srgb, var(--surface-raised) 52%, transparent); }
 .desktop-pet__name { max-width: 100%; margin-top: -6px; padding: 2px 6px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 72%, transparent); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 82%, transparent); backdrop-filter: blur(8px); font-size: 8.5px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transform: translateY(-2px); transition: opacity 140ms ease, transform 140ms ease; }
-.desktop-pet:hover .desktop-pet__name, .desktop-pet:focus-visible .desktop-pet__name { opacity: 1; transform: translateY(0); }
-.desktop-pet--running-left { transform: rotate(-3deg); }
-.desktop-pet--running-right { transform: rotate(3deg); }
+.desktop-pet:hover .desktop-pet__name, .desktop-pet__drag-target:focus-visible .desktop-pet__name { opacity: 1; transform: translateY(0); }
+.desktop-pet--running-left .desktop-pet__drag-target { transform: rotate(-3deg); }
+.desktop-pet--running-right .desktop-pet__drag-target { transform: rotate(3deg); }
+.desktop-pet__voice-status { max-width: 112px; margin-top: -5px; padding: 3px 8px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--prime) 34%, var(--border)); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 91%, transparent); backdrop-filter: blur(10px); font-size: 9px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-pet__voice-controls { min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 3px; }
+.desktop-pet__voice-controls button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 4px 12px color-mix(in srgb, #000 18%, transparent); backdrop-filter: blur(10px); }
+.desktop-pet__voice-controls button:hover, .desktop-pet__voice-controls button:focus-visible { color: var(--text); border-color: color-mix(in srgb, var(--prime) 52%, var(--border-strong)); background: var(--surface-hover); }
+.desktop-pet__voice-controls button[aria-label="Open realtime voice"] { color: var(--prime); }
+.desktop-pet__voice-error { width: min(210px, calc(100vw - 16px)); max-height: 72px; margin: 4px 0 0; padding: 6px 8px; overflow: auto; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 7px; color: var(--danger); background: var(--surface-raised); font-size: 9.5px; line-height: 1.35; }
+.desktop-pet > .voice-orb__receipt { width: min(210px, calc(100vw - 16px)); margin: 4px 0 0; }
+.desktop-pet[data-horizontal-edge="right"] .desktop-pet__voice-error, .desktop-pet[data-horizontal-edge="right"] > .voice-orb__receipt { align-self: flex-end; margin-right: 0; transform: none; }
+.desktop-pet[data-horizontal-edge="left"] .desktop-pet__voice-error, .desktop-pet[data-horizontal-edge="left"] > .voice-orb__receipt { align-self: flex-start; margin-left: 0; transform: none; }
 
 .pet-hero { min-height: 166px; display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 18px; margin: -8px 0 28px; padding: 15px 18px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--prime) 24%, var(--border)); border-radius: 16px; background: radial-gradient(circle at 12% 35%, color-mix(in srgb, var(--prime) 15%, transparent), transparent 35%), linear-gradient(135deg, var(--surface-subtle), var(--surface-raised)); }
 .pet-hero__stage { min-height: 132px; display: grid; place-items: center; border-radius: 32% 68% 62% 38% / 47% 38% 62% 53%; background: color-mix(in srgb, var(--prime) 8%, var(--surface-selected)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--prime) 16%, transparent); }
