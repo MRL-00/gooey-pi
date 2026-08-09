@@ -639,3 +639,78 @@ const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(installStarted)},'
   })
 
 })
+
+describe('PluginService OMP parity', () => {
+  it('discovers OMP-native user, project, MCP, and installed plugin surfaces', async () => {
+    const root = temp()
+    const agentDir = join(root, '.omp', 'agent')
+    const userSkill = join(root, '.omp', 'skills', 'user-skill', 'SKILL.md')
+    const userPackage = join(root, '.omp', 'plugins', 'node_modules', 'user-plugin')
+    const packageSkill = join(userPackage, 'skills', 'package-skill', 'SKILL.md')
+    const project = join(root, 'project')
+    const projectSkill = join(project, '.omp', 'skills', 'project-skill', 'SKILL.md')
+    const projectPackage = join(project, '.omp', 'plugins', 'node_modules', 'project-plugin')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(resolve(userSkill, '..'), { recursive: true })
+    mkdirSync(resolve(packageSkill, '..'), { recursive: true })
+    mkdirSync(resolve(projectSkill, '..'), { recursive: true })
+    mkdirSync(projectPackage, { recursive: true })
+    writeFileSync(userSkill, '---\nname: OMP user skill\n---\nUser workflow')
+    writeFileSync(packageSkill, '---\nname: Plugin skill\n---\nInstalled workflow')
+    writeFileSync(join(userPackage, 'package.json'), JSON.stringify({ name: 'user-plugin', description: 'User OMP plugin' }))
+    writeFileSync(projectSkill, '---\nname: OMP project skill\n---\nProject workflow')
+    writeFileSync(join(projectPackage, 'package.json'), JSON.stringify({ name: 'project-plugin', description: 'Project OMP plugin' }))
+    writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { docs: { type: 'http', url: 'https://docs.example/mcp' } } }))
+    mkdirSync(join(project, '.omp'), { recursive: true })
+    writeFileSync(join(project, '.omp', 'mcp.json'), JSON.stringify({ mcpServers: { files: { type: 'stdio', command: 'npx' } } }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'omp' })
+
+    const catalog = await service.list(project)
+
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'OMP user skill', kind: 'skill', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'OMP project skill', kind: 'skill', location: 'project' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Plugin skill', kind: 'skill', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-plugin', kind: 'package', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'project-plugin', kind: 'package', location: 'project' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'docs', kind: 'mcp', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))
+  })
+
+  it('writes native OMP mcp.json files with the upstream schema at both scopes', async () => {
+    const root = temp()
+    const agentDir = join(root, '.omp', 'agent')
+    const project = join(root, 'project')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'omp' })
+
+    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
+    const projectResult = await service.connectMcp({ name: 'files', scope: 'project', projectPath: project, type: 'stdio', command: 'npx', args: ['-y', 'server'] })
+    await expect(service.connectMcp({ name: 'invalid name', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/unsupported characters/)
+
+    expect(user).toMatchObject({ ok: true, output: expect.stringContaining('new OMP session') })
+    expect(projectResult.ok).toBe(true)
+    const userConfig = JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8'))
+    const projectConfig = JSON.parse(readFileSync(join(project, '.omp', 'mcp.json'), 'utf8'))
+    expect(userConfig.$schema).toContain('can1357/oh-my-pi')
+    expect(userConfig.mcpServers['docs:remote']).toEqual({ type: 'http', url: 'https://docs.example/mcp', enabled: true })
+    expect(projectConfig.mcpServers.files).toEqual({ type: 'stdio', command: 'npx', args: ['-y', 'server'], enabled: true })
+    expect(existsSync(join(project, '.prime'))).toBe(false)
+  })
+
+  it('installs through the native omp plugin command with validated argv', async () => {
+    const root = temp()
+    const agentDir = join(root, '.omp', 'agent')
+    const executable = join(root, 'omp.cjs')
+    const capture = join(root, 'argv.json')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2))); process.stdout.write('{"ok":true}\\n')\n`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => resolve(path), { agentDir, harness: 'omp' })
+
+    const result = await service.install('npm:@scope/example-plugin')
+
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['plugin', 'install', '@scope/example-plugin', '--json'])
+  })
+})

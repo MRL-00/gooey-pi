@@ -37,6 +37,7 @@ interface Services {
     sessions: SessionService
     agents: AgentRpcManager
     catalog: ModelCatalogProvider
+    plugins: PluginService
   }
 }
 
@@ -102,6 +103,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const projectsFor = (harness: HarnessId): ProjectService => harness === 'omp' ? services.omp.projects : services.projects
   const sessionsFor = (harness: HarnessId): SessionService => harness === 'omp' ? services.omp.sessions : services.sessions
   const agentsFor = (harness: HarnessId): AgentRpcManager => harness === 'omp' ? services.omp.agents : services.agents
+  const pluginsFor = (harness: HarnessId): PluginService => harness === 'omp' ? services.omp.plugins : services.plugins
   // Runtime ids route by ownership; ids no manager owns fall through to the
   // Prime manager so requireRuntime keeps its exact not-found semantics.
   const agentsForRuntime = (runtimeId: unknown): AgentRpcManager =>
@@ -139,6 +141,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       () => services.plugins.authorizeReveal(requested),
       () => services.omp.projects.authorizePath(requested),
       () => services.omp.sessions.requireSessionPath(requested),
+      () => services.omp.plugins.authorizeReveal(requested),
     ]
     for (const authorize of authorizations) {
       let authorized: string
@@ -257,10 +260,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('git:restore', (_event, cwd, paths) => services.git.restore(cwd, paths))
   handle('git:commit', (_event, cwd, message) => services.git.commit(cwd, message))
 
-  handle('plugins:list', (_event, projectPath) => services.plugins.list(projectPath))
-  handle('plugins:install', (_event, source) => services.plugins.install(source))
-  handle('plugins:connect-mcp', (_event, input) => services.plugins.connectMcp(input))
-  handle('plugins:refresh', () => services.plugins.refresh())
+  handle('plugins:list', (_event, projectPath, harness) => pluginsFor(requireHarness(harness)).list(projectPath))
+  handle('plugins:install', (_event, source, harness) => pluginsFor(requireHarness(harness)).install(source))
+  handle('plugins:connect-mcp', (_event, input, harness) => pluginsFor(requireHarness(harness)).connectMcp(input))
+  handle('plugins:refresh', (_event, harness) => pluginsFor(requireHarness(harness)).refresh())
 
   handle('settings:get', () => services.settings.get())
   handle('settings:update', (_event, patch) => services.settings.update(patch))

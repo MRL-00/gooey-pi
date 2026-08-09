@@ -1,17 +1,18 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
+import type { HarnessId, PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
 import { createAdmissionQueue, createSingleFlight } from './lib/async'
 import { requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
 import type { ProjectSettingsPath } from './plugins/mcp'
-import { executePackageInstall, validatePackageSource } from './plugins/package-execution'
+import { executeOmpPluginInstall, executePackageInstall, validatePackageSource } from './plugins/package-execution'
 
 type PluginDiscovery = typeof discoverPlugins
 
 interface PluginServiceOptions {
+  harness?: HarnessId
   agentDir?: string
   discover?: PluginDiscovery
   builtInSkills?: SkillRecord[]
@@ -45,13 +46,15 @@ export class PluginService {
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
   private readonly builtInSkills: SkillRecord[]
+  private readonly harness: HarnessId
 
   constructor(
-    private readonly primeAgentPath: string | null,
+    private readonly agentPath: string | null,
     private readonly authorizeProject: (path: string) => Promise<string>,
     options: PluginServiceOptions = {},
   ) {
-    this.agentDir = options.agentDir ?? join(homedir(), '.prime', 'agent')
+    this.harness = options.harness ?? 'prime'
+    this.agentDir = options.agentDir ?? join(homedir(), this.harness === 'omp' ? '.omp' : '.prime', 'agent')
     this.discoverCatalog = options.discover ?? discoverPlugins
     this.builtInSkills = options.builtInSkills ?? []
   }
@@ -69,7 +72,7 @@ export class PluginService {
 
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
-    const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.primeAgentPath)
+    const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.agentPath, this.harness)
     const combined = [...this.builtInSkills, ...result.skills.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
@@ -94,16 +97,18 @@ export class PluginService {
   }
 
   async install(sourceValue: unknown): Promise<ProcessOutcome> {
-    if (!this.primeAgentPath) return { ok: false, reason: 'blocked', output: 'Prime Agent executable was not found' }
+    if (!this.agentPath) return { ok: false, reason: 'blocked', output: `${this.harness === 'omp' ? 'OMP' : 'Prime Agent'} executable was not found` }
     const source = validatePackageSource(sourceValue)
-    const settingsPath = join(this.agentDir, 'settings.json')
+    const settingsPath = this.harness === 'omp' ? join(this.agentDir, '..', 'plugins', 'omp-plugins.lock.json') : join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
       // The Prime CLI does not participate in Prime Work's settings lock. Holding
       // it around the subprocess still coordinates package installs launched by
       // this app with MCP updates from every PluginService instance.
       const release = await acquireSettingsLock(settingsPath)
       try {
-        return await executePackageInstall(this.primeAgentPath!, source)
+        return this.harness === 'omp'
+          ? await executeOmpPluginInstall(this.agentPath!, source)
+          : await executePackageInstall(this.agentPath!, source)
       } finally {
         await release()
       }
@@ -113,17 +118,25 @@ export class PluginService {
   }
 
   async connectMcp(inputValue: unknown): Promise<ProcessOutcome> {
-    const input = validateMcpConnection(inputValue)
+    const input = validateMcpConnection(inputValue, this.harness)
     let settingsTarget: string | ProjectSettingsPath
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsTarget = await prepareProjectSettingsPath(projectPath)
+      settingsTarget = await prepareProjectSettingsPath(projectPath, this.harness === 'omp' ? { segments: ['.omp'], filename: 'mcp.json' } : undefined)
     } else {
-      settingsTarget = join(this.agentDir, 'settings.json')
+      settingsTarget = join(this.agentDir, this.harness === 'omp' ? 'mcp.json' : 'settings.json')
     }
 
-    const mutation = this.settingsMutation.then(() => updateMcpSettings(settingsTarget, input, (path) => this.settingsFingerprint(path)))
+    const mutation = this.settingsMutation.then(() => updateMcpSettings(
+      settingsTarget,
+      input,
+      (path) => this.settingsFingerprint(path),
+      this.harness === 'omp' ? {
+        agentName: 'OMP',
+        schema: 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json',
+      } : undefined,
+    ))
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
   }

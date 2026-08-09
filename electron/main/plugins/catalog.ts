@@ -3,7 +3,7 @@ import type { Dir } from 'node:fs'
 import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
-import type { PluginCatalog, PluginWarning, SkillRecord } from '../../../src/types/api'
+import type { HarnessId, PluginCatalog, PluginWarning, SkillRecord } from '../../../src/types/api'
 import { mapLimit } from '../lib/async'
 import { isPathWithin, isRecord } from '../validation'
 import { errorCode, readAtMost } from './file-io'
@@ -75,19 +75,20 @@ interface SettingsReadResult { settings: Record<string, unknown>; warning?: Plug
  * Plugins UI surfaces, instead of silently hiding configured plugins.
  */
 async function readSettings(path: string, scope: PluginWarning['scope']): Promise<SettingsReadResult> {
+  const filename = basename(path)
   const invalid = (message: string): SettingsReadResult => ({ settings: {}, warning: { scope, path, message } })
   let content: string
   try {
     const value = await readAtMost(path, MAX_SETTINGS_BYTES)
-    if (value.truncated) return invalid('settings.json is too large — plugins hidden')
+    if (value.truncated) return invalid(`${filename} is too large — plugins hidden`)
     content = value.content
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return { settings: {} }
-    return invalid('settings.json unreadable — plugins hidden')
+    return invalid(`${filename} unreadable — plugins hidden`)
   }
   let value: unknown
-  try { value = JSON.parse(content) } catch { return invalid('settings.json invalid — plugins hidden') }
-  if (!isRecord(value)) return invalid('settings.json invalid — plugins hidden')
+  try { value = JSON.parse(content) } catch { return invalid(`${filename} invalid — plugins hidden`) }
+  if (!isRecord(value)) return invalid(`${filename} invalid — plugins hidden`)
   return { settings: value }
 }
 
@@ -204,7 +205,7 @@ function displayName(candidate: Candidate, metadata: { name?: string }): string 
   return basename(file, extname(file))
 }
 
-async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: string): Promise<SkillRecord[]> {
+async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: string, harness: HarnessId = 'prime'): Promise<SkillRecord[]> {
   const seenPaths = new Set<string>()
   return mapLimit(candidates, METADATA_CONCURRENCY, async (candidate): Promise<SkillRecord | null> => {
     let path: string
@@ -217,7 +218,7 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
     const key = `${candidate.kind}:${path}`
     if (seenPaths.has(key)) return null
     seenPaths.add(key)
-    const metadata = candidate.kind === 'extension' ? { description: 'Prime Agent extension' } : await markdownMetadata(path)
+    const metadata = candidate.kind === 'extension' ? { description: `${harness === 'omp' ? 'OMP' : 'Prime Agent'} extension` } : await markdownMetadata(path)
     const name = displayName(candidate, metadata)
     return {
       id: idFor(candidate.kind, path),
@@ -231,14 +232,14 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
   })
 }
 
-function addSettingsMetadata(settings: Record<string, unknown>, location: 'user' | 'project', output: SkillRecord[]): void {
+function addSettingsMetadata(settings: Record<string, unknown>, location: 'user' | 'project', output: SkillRecord[], harness: HarnessId = 'prime'): void {
   if (Array.isArray(settings.packages)) {
     for (const raw of settings.packages) {
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       const sourceValue = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : undefined
       if (!sourceValue) continue
       const source = safeSource(sourceValue)
-      output.push({ id: idFor('package', location, sourceValue), name: source.replace(/^(npm:|git:)/, '').slice(0, 120), description: `Prime Agent capability package from ${source}`, kind: 'package', location, enabled: true, source })
+      output.push({ id: idFor('package', location, sourceValue), name: source.replace(/^(npm:|git:)/, '').slice(0, 120), description: `${harness === 'omp' ? 'OMP' : 'Prime Agent'} capability package from ${source}`, kind: 'package', location, enabled: true, source })
     }
   }
   if (isRecord(settings.mcpServers)) {
@@ -268,7 +269,60 @@ async function bundledSkillsDirectory(primeAgentPath: string | null): Promise<st
   } catch { return null }
 }
 
-export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, primeAgentPath: string | null): Promise<PluginCatalog> {
+async function collectOmpPluginPackages(
+  root: string,
+  location: 'user' | 'project',
+  safeProjectPath: string | undefined,
+  candidates: Candidate[],
+  records: SkillRecord[],
+  budget: DiscoveryBudget,
+): Promise<void> {
+  const nodeModules = join(root, 'node_modules')
+  const packagePaths: Array<{ name: string; path: string }> = []
+  const collectLevel = async (directory: string, scope?: string): Promise<void> => {
+    let entries: Dir
+    try { entries = await opendir(directory); budget.directories += 1 } catch { return }
+    try {
+      for await (const entry of entries) {
+        if (discoveryExhausted(budget)) break
+        budget.entries += 1
+        if (entry.name.startsWith('.')) continue
+        const path = join(directory, entry.name)
+        if (!scope && entry.name.startsWith('@') && entry.isDirectory()) await collectLevel(path, entry.name)
+        else if (entry.isDirectory() || entry.isSymbolicLink()) packagePaths.push({ name: scope ? `${scope}/${entry.name}` : entry.name, path })
+      }
+    } catch { /* plugin state changed during discovery */ }
+  }
+  await collectLevel(nodeModules)
+  for (const item of packagePaths) {
+    if (records.length >= MAX_DISCOVERY_RECORDS || discoveryExhausted(budget)) break
+    let packageRoot: string
+    try { packageRoot = await realpath(item.path) } catch { continue }
+    if (location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, packageRoot))) {
+      // Project plugin symlinks can target arbitrary paths. Show the installed
+      // package name, but do not inspect or reveal content outside the grant.
+      records.push({ id: idFor('package', location, item.name), name: item.name, description: 'OMP project plugin', kind: 'package', location, enabled: true, source: item.name })
+      continue
+    }
+    let name = item.name
+    let description = 'OMP plugin package'
+    try {
+      const manifest = JSON.parse(await readSmall(join(packageRoot, 'package.json'))) as unknown
+      if (isRecord(manifest)) {
+        if (typeof manifest.name === 'string') name = manifest.name.slice(0, 120)
+        if (typeof manifest.description === 'string') description = manifest.description.slice(0, 500)
+      }
+    } catch { /* retain safe package-directory metadata */ }
+    records.push({ id: idFor('package', location, name), name, description, kind: 'package', location, enabled: true, source: name })
+    const containmentRoots = location === 'project' && safeProjectPath ? [safeProjectPath] : undefined
+    await collectDirectory(join(packageRoot, 'skills'), 'skill', location, candidates, budget, { skillRoot: true, containmentRoots })
+    await collectDirectory(join(packageRoot, 'prompts'), 'prompt', location, candidates, budget, { containmentRoots })
+    await collectDirectory(join(packageRoot, 'commands'), 'prompt', location, candidates, budget, { containmentRoots })
+    await collectDirectory(join(packageRoot, 'extensions'), 'extension', location, candidates, budget, { containmentRoots })
+  }
+}
+
+export async function discoverPlugins(agentDir: string, safeProjectPath: string | undefined, agentPath: string | null, harness: HarnessId = 'prime'): Promise<PluginCatalog> {
   const candidates: Candidate[] = []
   const warnings: PluginWarning[] = []
   const budget: DiscoveryBudget = { candidates: 0, directories: 0, entries: 0, seenCandidates: new Set() }
@@ -276,7 +330,7 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   if (globalRead.warning) warnings.push(globalRead.warning)
   const globalSettings = globalRead.settings
 
-  await collectDirectory(join(agentDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true })
+  await collectDirectory(harness === 'omp' ? resolve(agentDir, '..', 'skills') : join(agentDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true })
   await collectDirectory(join(homedir(), '.agents', 'skills'), 'skill', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'extensions'), 'extension', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'prompts'), 'prompt', 'user', candidates, budget)
@@ -287,12 +341,15 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   await collectConfigured(globalSettings.extensions, agentDir, 'extension', 'user', candidates, budget, userConfiguredRoots)
   await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget, userConfiguredRoots)
 
-  const bundled = await bundledSkillsDirectory(primeAgentPath)
+  const bundled = await bundledSkillsDirectory(harness === 'prime' ? agentPath : null)
   if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget)
+
+  const ompPackageRecords: SkillRecord[] = []
+  if (harness === 'omp') await collectOmpPluginPackages(resolve(agentDir, '..', 'plugins'), 'user', safeProjectPath, candidates, ompPackageRecords, budget)
 
   let projectSettings: Record<string, unknown> = {}
   if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
-    const projectAgentDir = join(safeProjectPath, '.prime', 'agent')
+    const projectAgentDir = harness === 'omp' ? join(safeProjectPath, '.omp') : join(safeProjectPath, '.prime', 'agent')
     const projectSettingsPath = join(projectAgentDir, 'settings.json')
     const projectSkillsDir = join(safeProjectPath, '.agents', 'skills')
     const [sameAgentDir, sameSettingsFile, sameProjectSkillsDir] = await Promise.all([
@@ -322,10 +379,22 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
     if (!sameProjectSkillsDir) {
       await collectDirectory(projectSkillsDir, 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
     }
+    if (harness === 'omp') await collectOmpPluginPackages(join(safeProjectPath, '.omp', 'plugins'), 'project', safeProjectPath, candidates, ompPackageRecords, budget)
   }
 
-  const result = await buildCandidateRecords(candidates, safeProjectPath)
-  addSettingsMetadata(globalSettings, 'user', result)
-  addSettingsMetadata(projectSettings, 'project', result)
+  const result = await buildCandidateRecords(candidates, safeProjectPath, harness)
+  result.push(...ompPackageRecords)
+  addSettingsMetadata(globalSettings, 'user', result, harness)
+  addSettingsMetadata(projectSettings, 'project', result, harness)
+  if (harness === 'omp') {
+    const globalMcp = await readSettings(join(agentDir, 'mcp.json'), 'user')
+    if (globalMcp.warning) warnings.push(globalMcp.warning)
+    addSettingsMetadata(globalMcp.settings, 'user', result, harness)
+    if (safeProjectPath) {
+      const projectMcp = await readSettings(join(safeProjectPath, '.omp', 'mcp.json'), 'project')
+      if (projectMcp.warning) warnings.push(projectMcp.warning)
+      addSettingsMetadata(projectMcp.settings, 'project', result, harness)
+    }
+  }
   return { skills: result.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)), warnings }
 }

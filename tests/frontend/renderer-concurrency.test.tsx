@@ -551,13 +551,13 @@ describe('plugin request ownership', () => {
     const skill = (id: string): SkillRecord => ({ id, name: id, description: id, kind: 'skill', location: 'project', enabled: true })
     let state!: ReturnType<typeof usePluginSkills>
     function PluginProbe({ scope, generation }: { scope?: string; generation: number }) {
-      state = usePluginSkills({ bridge, scope, generation, initialSkills: [], reportError })
+      state = usePluginSkills({ bridge, harness: 'prime', scope, generation, initialSkills: [], reportError })
       return <Probe />
     }
     await act(async () => { root.render(<PluginProbe generation={0} />) })
-    expect(list).toHaveBeenNthCalledWith(1, undefined)
+    expect(list).toHaveBeenNthCalledWith(1, undefined, 'prime')
     await act(async () => { root.render(<PluginProbe scope="/project" generation={1} />) })
-    expect(list).toHaveBeenNthCalledWith(2, '/project')
+    expect(list).toHaveBeenNthCalledWith(2, '/project', 'prime')
 
     await act(async () => { requests[0].resolve({ skills: [skill('stale-global')], warnings: [] }); await requests[0].promise })
     expect(state.skills).toEqual([])
@@ -568,7 +568,7 @@ describe('plugin request ownership', () => {
     await act(async () => { refresh = state.refresh(); await Promise.resolve() })
     await act(async () => { root.render(<PluginProbe scope="/project" generation={2} />) })
     await act(async () => { requests[2].resolve({ skills: [skill('stale-refresh')], warnings: [] }); await refresh })
-    expect(state.skills.map(({ id }) => id)).toEqual(['project-one'])
+    expect(state.skills).toEqual([])
     await act(async () => { requests[3].resolve({ skills: [skill('project-two')], warnings: [] }); await requests[3].promise })
     expect(state.skills.map(({ id }) => id)).toEqual(['project-two'])
     expect(reportError).not.toHaveBeenCalled()

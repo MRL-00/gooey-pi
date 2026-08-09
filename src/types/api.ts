@@ -630,7 +630,12 @@ export interface PrimeWorkApi {
     onExit(callback: (event: TerminalExitEvent) => void): () => void
   }
   git: { status(cwd: string): Promise<GitStatus>; diff(cwd: string, path?: string, staged?: boolean): Promise<GitDiff>; stage(cwd: string, paths: string[]): Promise<boolean>; unstage(cwd: string, paths: string[]): Promise<boolean>; restore(cwd: string, paths: string[]): Promise<boolean>; commit(cwd: string, message: string): Promise<ProcessOutcome> }
-  plugins: { list(projectPath?: string): Promise<PluginCatalog>; install(source: string): Promise<ProcessOutcome>; connectMcp(input: McpConnectionInput): Promise<ProcessOutcome>; refresh(): Promise<PluginCatalog> }
+  plugins: {
+    list(projectPath?: string, harness?: HarnessId): Promise<PluginCatalog>
+    install(source: string, harness?: HarnessId): Promise<ProcessOutcome>
+    connectMcp(input: McpConnectionInput, harness?: HarnessId): Promise<ProcessOutcome>
+    refresh(harness?: HarnessId): Promise<PluginCatalog>
+  }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }
   browser: {
     state(): Promise<AgentBrowserState>

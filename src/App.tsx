@@ -156,10 +156,8 @@ export default function App() {
   })
   // Stable identity: the harness-switch reset lives inside the bootstrap
   // effect, and an unstable callback would re-run the whole bootstrap.
-  // Only still-Prime-only views are vacated on switch; shared views keep the
-  // user in place while their harness-scoped data refreshes.
+  // Shared views stay in place while their harness-scoped data refreshes.
   const onHarnessSwitch = useCallback(() => {
-    setView((current) => current === 'plugins' ? 'session' : current)
     setScheduleFocusId(null)
   }, [])
   const { meta, initialized } = useBootstrap({
@@ -241,11 +239,8 @@ export default function App() {
   }, [agentBrowser.activityEvent, activeRuntimeSessionFile, activeSessionFilePath, settingsState.setInspectorOpen, settingsState.selectInspectorTab])
   useEffect(() => { if (!activeAgentTabs.length) setAgentPreviewSelected(true) }, [activeAgentTabs.length])
   const agentTabVisible = view === 'session' && settingsState.inspectorOpen && settingsState.inspectorTab === 'browser' && !agentPreviewSelected && activeAgentTabId !== null
-  // Plugin skills are a Prime-only surface: OMP discovers its own extensions
-  // in-process, so the renderer neither queries nor displays the Prime catalog
-  // while OMP is active.
-  const pluginScope = activeHarness === 'prime' && activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
-  const pluginSkills = usePluginSkills({ bridge: activeHarness === 'prime' ? bridge : null, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
+  const pluginScope = activeProject?.primaryFolder && !activeProject.inferred ? activeProject.primaryFolder : undefined
+  const pluginSkills = usePluginSkills({ bridge, harness: activeHarness, scope: pluginScope, generation: workspace.workspaceGeneration, initialSkills: bridge ? [] : SAMPLE_SKILLS, reportError })
   useEffect(() => () => { demoTimerRef.current.forEach(window.clearTimeout) }, [])
 
   const refreshSchedules = useCallback(async () => {
@@ -432,7 +427,7 @@ export default function App() {
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage harness={activeHarness} schedules={schedules} nativeHeartbeats={activeHarness === 'prime' ? heartbeats : []} projects={projects} sessions={sessions} models={provider.catalog?.models ?? EMPTY_MODELS} error={scheduleError} initialProjectId={activeProject?.id} initialSessionId={activeSession?.id} selectedScheduleId={scheduleFocusId} onCreate={createSchedule} onUpdate={updateSchedule} onPause={(id: string) => mutateSchedule(() => bridge!.schedules.pause(id))} onResume={(id: string) => mutateSchedule(() => bridge!.schedules.resume(id))} onDelete={(id: string) => mutateSchedule(() => bridge!.schedules.delete(id))} onRunNow={(id: string) => mutateSchedule(() => bridge!.schedules.runNow(id))} onPreview={async (timing: ScheduleTiming) => bridge ? bridge.schedules.preview(timing, 3) : { timing, occurrences: [] }} onOpenSession={openScheduledSession} onManageHeartbeat={manageHeartbeat} />
-    : view === 'plugins' ? <PluginsPage skills={pluginSkills.skills} warnings={pluginSkills.warnings} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
+    : view === 'plugins' ? <PluginsPage harness={activeHarness} skills={pluginSkills.skills} warnings={pluginSkills.warnings} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
     : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} voice={bridge?.voice ?? null} pets={bridge?.pets ?? null} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('GooeyPi could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }

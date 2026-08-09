@@ -346,7 +346,7 @@ describe('sidebar brand switcher', () => {
     await renderSidebar(onSelectHarness, 'omp')
 
     expect([...container.querySelectorAll('nav.sidebar__primary button span')].map((item) => item.textContent)).toContain('Scheduled')
-    expect(container.textContent).not.toContain('Plugins & skills')
+    expect(container.textContent).toContain('Plugins & skills')
 
     await click(container.querySelector('.brand-switcher__trigger')!)
     expect(container.querySelector('[role="menu"]')).not.toBeNull()

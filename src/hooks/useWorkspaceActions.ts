@@ -341,12 +341,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
 
   const installSkill = async (source: string) => {
-    const { bridge, reportError } = getDeps()
+    const { bridge, reportError, settingsState } = getDeps()
     if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Package installation is available in the desktop app.' }
-    try { return await bridge.plugins.install(source) } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
+    try { return await bridge.plugins.install(source, settingsState.settings.activeHarness) } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
   const connectMcp = async (input: McpConnectionInput) => {
-    const { bridge, activeProject, pluginSkills, reportError } = getDeps()
+    const { bridge, activeProject, pluginSkills, reportError, settingsState } = getDeps()
     if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'MCP connections are available in the desktop app.' }
     try {
       let connection = input
@@ -354,7 +354,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         if (!activeProject) return { ok: false as const, reason: 'blocked' as const, output: 'Open a project before adding a project MCP server.' }
         const project = await grantProject(activeProject); connection = { ...input, projectPath: project.primaryFolder }
       }
-      const response = await bridge.plugins.connectMcp(connection)
+      const response = await bridge.plugins.connectMcp(connection, settingsState.settings.activeHarness)
       if (response.ok) await pluginSkills.refresh()
       return response
     } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }

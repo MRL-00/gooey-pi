@@ -8,6 +8,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
 - Switching harness swaps the whole workspace context: each harness has its own granted projects, session catalog, model catalog, and runtimes. Settings gain an `activeHarness` field; the choice persists.
 - All existing features work on OMP where the harness supports them: streaming transcripts, steering/follow-ups, abort, model + thinking selection, compaction, session resume/switch/rename/fork(branch), extension-UI dialogs (which is also how OMP surfaces **tool approval prompts**), browser capability bridge, git/terminal (harness-agnostic already).
 - Scheduled tasks are available in both harnesses. Prime retains its heartbeat tools; OMP receives an injected scheduled-task extension backed by Prime Work's local schedule service and executor. Still Prime-only: daemon-socket follow-up to out-of-app sessions and provider OAuth management. OMP credentials remain CLI-owned; Prime Work keeps a separate `ompDisabledProviders` list that only controls which providers appear in its OMP model picker.
+- Plugins & skills is harness-scoped but available in the same place for both. OMP uses its native plugin manager (`omp plugin install`), user/project plugin roots, `.omp/skills` plus shared `.agents/skills`, and OMP-native `mcp.json`; Prime's package and settings behavior is unchanged.
 
 ## OMP facts (verified on this machine, omp 17.2.11)
 
@@ -19,6 +20,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
   - approvals: `--approval-mode <always-ask|write|yolo>` — only passed when the user overrides the default in settings; otherwise OMP's own `~/.omp/agent/config.yml` governs.
   - extensions: `-e <path>` for each injected capability extension. Prime Work currently injects scheduled-task and browser extensions. No `--skill <path>` flag exists; skills are discovery-based, so Prime Work's browser *skill* is not injected — the OMP browser *extension* carries the tool surface.
 - Paths: agent dir `~/.omp/agent/`; sessions `~/.omp/agent/sessions/<bucket>/<ISO-timestamp>_<uuid>.jsonl` (bucket = scope-basename-hash of cwd); settings `~/.omp/agent/config.yml`; extensions `~/.omp/agent/extensions/`; auth in `~/.omp/agent/agent.db` (SQLite — never touched by Prime Work).
+- Plugins: `omp plugin install <target> --json` installs user-scoped packages under `~/.omp/plugins` by default; project packages live under `<project>/.omp/plugins`. Native skills are discovered from `~/.omp/skills`, project `.omp/skills`, and shared `.agents/skills`. Native MCP files are `~/.omp/agent/mcp.json` and project `.omp/mcp.json`.
 - Model catalog: `omp models --json` → `{ models: [{ provider, id, selector, name, contextWindow, maxTokens, reasoning, thinking: string[]|null, input: string[], cost }] }`.
 - Target model for validation: `openai-codex/gpt-5.6-luna` (Luna GPT-5.6, already authenticated on this machine).
 
@@ -81,6 +83,7 @@ HarnessDescriptor {
 - `SessionService`: second instance with `sessionRoot` parameterized and OMP-specific `catalogIo`/metadata/transcript readers (v3 JSONL: 256-byte `title` slot line, `session` header v3, entries with `id`/`parentId` forming a tree, `model_change.model` as a single `provider/id` string, entry types `message | model_change | thinking_level_change | compaction | branch_summary | custom_message | label | title_change | session_init | mode_change | ...`). Catalog scans one bucket level deep; ordering comes from the filename ISO-timestamp prefix instead of UUIDv7. No live-CLI overlay (OMP has no `list --json`); rename is done via RPC `set_session_name` when a runtime is live, else by rewriting nothing (session files stay read-only; sidebar rename is disabled for offline OMP sessions in v1).
 - Providers: `OmpModelCatalogService` shells out to `omp models --json` (single-flight, 30 s TTL, byte-bounded) and adapts to the existing `PrimeModelCatalog` types. `AgentRpcManager.providers` already accepts an interface-shaped optional dependency; that interface is formalized so both services satisfy it.
 - Projects: `ProjectRecord` gains `harness: HarnessId` (state migration defaults existing records to `'prime'`). Two `ProjectService` views scoped by harness; inferred projects come from each harness's own session catalog.
+- Plugins: two `PluginService` instances preserve one renderer surface while routing discovery, installation, MCP paths, and reveal authorization through the active harness. OMP package installs go through `omp plugin`; catalog discovery includes OMP-native skill/extension roots and enabled package trees. MCP writes use OMP's upstream schema and the same pinned-directory, lock, conflict-retry, atomic replacement, and rollback safeguards as Prime.
 - Capability bridges: the browser `CapabilityBridge` is reused; `assets/extensions/omp-work-browser.ts` speaks OMP's extension API (default export `(pi) => void`, `pi.registerTool`) against the same loopback broker env contract. `assets/extensions/omp-work-schedules.ts` exposes list/create/update/manage tools through a separate scoped broker. Schedule records carry their owning harness, the renderer lists only the active harness, and due runs route to the matching RPC manager and model catalog.
 
 ### Renderer
@@ -104,7 +107,8 @@ Same rules as `docs/security.md`, applied to the second harness: argv arrays onl
 7. Renderer harness switcher + scoped state + settings UI.
 8. OMP browser capability extension.
 9. OMP scheduled-task extension, harness-scoped persistence, and executor routing.
-10. Live validation against omp 17.2.11 with `openai-codex/gpt-5.6-luna`; fixes.
+10. OMP plugin, skill, and MCP catalog/install parity.
+11. Live validation against omp 17.2.11 with `openai-codex/gpt-5.6-luna`; fixes.
 
 ## Non-goals (v1)
 

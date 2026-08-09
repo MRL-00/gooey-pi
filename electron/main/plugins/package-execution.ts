@@ -45,3 +45,9 @@ export async function executePackageInstall(primeAgentPath: string, source: stri
   const result = await runProcess(primeAgentPath, ['package', 'install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
+
+export async function executeOmpPluginInstall(ompPath: string, source: string): Promise<ProcessOutcome> {
+  const target = source.startsWith('npm:') || source.startsWith('git:') ? source.slice(4) : source
+  const result = await runProcess(ompPath, ['plugin', 'install', target, '--json'], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
+}

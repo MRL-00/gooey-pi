@@ -403,6 +403,7 @@ async function bootstrap(): Promise<void> {
     sessions: () => ompSessions.list(undefined, true),
     branch: (cwd) => git.branch(cwd),
     stopProjectProcesses: async (roots) => {
+      ompPlugins.evictProjects(roots)
       await Promise.all([ompManager.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
     },
   })
@@ -433,6 +434,12 @@ async function bootstrap(): Promise<void> {
   const browserSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'prime-work-browser')
     : join(app.getAppPath(), 'assets', 'skills', 'prime-work-browser')
+  const ompBrowserExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
+  const ompScheduleExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
   const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
       id: 'prime-work-schedules', name: 'GooeyPi schedules',
@@ -442,6 +449,18 @@ async function bootstrap(): Promise<void> {
       id: 'prime-work-browser', name: 'GooeyPi browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
       kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
+    }],
+  })
+  const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
+    harness: 'omp',
+    builtInSkills: [{
+      id: 'omp-work-schedules', name: 'GooeyPi schedules',
+      description: 'OMP extension for durable project and thread schedules managed by GooeyPi.',
+      kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
+    }, {
+      id: 'omp-work-browser', name: 'GooeyPi browser',
+      description: 'OMP extension for driving this thread\'s in-app browser.',
+      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
     }],
   })
   const heartbeats = new HeartbeatService(agents, executable)
@@ -521,12 +540,6 @@ async function bootstrap(): Promise<void> {
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
   // app-specific usage guidance while OMP's own skills stay discovery-based.
-  const ompBrowserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
-  const ompScheduleExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
   ompManager.setRuntimeEnvironmentProvider((scope) => {
     const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = ompScheduleBridge.environmentFor(scope)
     const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridge.environmentFor(scope)
@@ -555,7 +568,7 @@ async function bootstrap(): Promise<void> {
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
     meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
-    omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog },
+    omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
   }, trustedRendererUrl)
   // Both managers share the one renderer forwarding path: envelopes carry the
   // runtimeId and RuntimeInfo carries the harness, so the renderer can route.

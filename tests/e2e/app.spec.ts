@@ -527,6 +527,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' })).toBeVisible()
     await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Plugins & skills' })).toBeVisible()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
     await expect(page.getByRole('main').getByText('OMP fixture reply.')).toBeVisible()
     await ompBrand.click()

@@ -70,7 +70,7 @@ function buildServices() {
     },
     terminals: serviceStub(),
     git: serviceStub(),
-    plugins: serviceStub(),
+    plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
     providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined) },
     settings: {
       ...serviceStub(),
@@ -81,6 +81,7 @@ function buildServices() {
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), listWorktrees: vi.fn(async () => ['omp-worktrees']), openWorktree: vi.fn(async () => 'omp-open'), createWorktree: vi.fn(async () => 'omp-create'), grantInferred: vi.fn(async () => 'omp-grant') },
       sessions: {
         ...serviceStub(),
@@ -191,6 +192,21 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.projects.listWorktrees).toHaveBeenCalledWith('/repo')
     expect(harness.services.omp.projects.openWorktree).toHaveBeenCalledWith('/repo', '/linked')
     expect(harness.services.omp.projects.createWorktree).toHaveBeenCalledWith('/repo', 'feature')
+  })
+
+  it('routes plugin catalog, installation, and MCP configuration by harness', async () => {
+    await harness.invoke('plugins:list', '/repo', 'omp')
+    expect(harness.services.omp.plugins.list).toHaveBeenCalledWith('/repo')
+    expect(harness.services.plugins.list).not.toHaveBeenCalled()
+
+    await harness.invoke('plugins:install', 'npm:example', 'omp')
+    expect(harness.services.omp.plugins.install).toHaveBeenCalledWith('npm:example')
+    await harness.invoke('plugins:connect-mcp', { name: 'docs' }, 'omp')
+    expect(harness.services.omp.plugins.connectMcp).toHaveBeenCalledWith({ name: 'docs' })
+    await harness.invoke('plugins:refresh', 'omp')
+    expect(harness.services.omp.plugins.refresh).toHaveBeenCalledOnce()
+
+    await expect(async () => harness.invoke('plugins:list', undefined, 'OMP')).rejects.toThrow('Invalid harness')
   })
 
   it('routes session file operations by which harness root authorizes the path', async () => {

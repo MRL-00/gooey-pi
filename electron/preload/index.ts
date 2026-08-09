@@ -85,10 +85,10 @@ const api: PrimeWorkApi = {
     commit: (cwd, message) => ipcRenderer.invoke('git:commit', cwd, message),
   },
   plugins: {
-    list: (projectPath) => ipcRenderer.invoke('plugins:list', projectPath),
-    install: (source) => ipcRenderer.invoke('plugins:install', source),
-    connectMcp: (input) => ipcRenderer.invoke('plugins:connect-mcp', input),
-    refresh: () => ipcRenderer.invoke('plugins:refresh'),
+    list: (projectPath, harness) => ipcRenderer.invoke('plugins:list', projectPath, harness),
+    install: (source, harness) => ipcRenderer.invoke('plugins:install', source, harness),
+    connectMcp: (input, harness) => ipcRenderer.invoke('plugins:connect-mcp', input, harness),
+    refresh: (harness) => ipcRenderer.invoke('plugins:refresh', harness),
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

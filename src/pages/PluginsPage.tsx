@@ -1,6 +1,6 @@
 import { AlertTriangle, BookOpen, Check, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { McpConnectionInput, PluginWarning, SkillRecord } from '@/types/api'
+import type { HarnessId, McpConnectionInput, PluginWarning, SkillRecord } from '@/types/api'
 import { EmptyState, Modal, Segmented } from '@/components/ui'
 
 type DirectoryTab = 'plugins' | 'skills'
@@ -20,6 +20,7 @@ function SkillIcon({ skill }: { skill: SkillRecord }) {
 }
 
 interface PluginsPageProps {
+  harness: HarnessId
   skills: SkillRecord[]
   warnings: PluginWarning[]
   loading: boolean
@@ -29,7 +30,7 @@ interface PluginsPageProps {
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
 }
 
-export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -86,7 +87,7 @@ export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRe
     <div className="page plugin-page scroll-area">
       <div className="page-container plugin-container">
         <header className="plugin-header">
-          <div><span className="eyebrow">Prime directory</span><h1>Make Prime work your way</h1><p>Add focused tools and repeatable workflows to every project.</p></div>
+          <div><span className="eyebrow">{harness === 'omp' ? 'OMP' : 'Prime'} directory</span><h1>Make {harness === 'omp' ? 'OMP' : 'Prime'} work your way</h1><p>Add focused tools and repeatable workflows to every project.</p></div>
           <div>
             <button type="button" className="button" onClick={() => void onRefresh()}><RefreshCw className={loading ? 'spin' : ''} size={13}/> Refresh</button>
             <button type="button" className="button" onClick={() => setFilter('installed')}><Settings2 size={13}/> Manage</button>
@@ -121,7 +122,7 @@ export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRe
 
         {addOpen ? (
           <Modal
-            title="Add tools to Prime"
+            title={`Add tools to ${harness === 'omp' ? 'OMP' : 'Prime'}`}
             onClose={() => setAddOpen(false)}
             footer={<><button type="button" className="button" onClick={() => setAddOpen(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? 'Saving…' : 'Installing…') : (addKind === 'mcp' ? 'Save server configuration' : 'Install package')}</button></>}
           >
@@ -129,7 +130,7 @@ export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRe
             {addKind === 'repository' ? (
               <div className="add-tool-form">
                 <p className="modal-intro">Install a capability package from a trusted Git repository, npm source, or local package folder. This installs code; it does not connect to a running MCP server.</p>
-                <label className="field"><span>Repository or package source</span><input autoFocus value={source} onChange={(event) => setSource(event.target.value)} placeholder="https://github.com/owner/prime-package"/></label>
+                <label className="field"><span>Repository or package source</span><input autoFocus value={source} onChange={(event) => setSource(event.target.value)} placeholder="https://github.com/owner/agent-plugin"/></label>
                 <small className="field-help">Examples: a Git URL, <code>npm:@scope/package</code>, or an absolute local folder path.</small>
               </div>
             ) : (
@@ -138,9 +139,9 @@ export function PluginsPage({ skills, warnings, loading, activeProjectPath, onRe
                 <label className="field"><span>Server name</span><input autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="my-local-tools"/></label>
                 <div className="field"><span>Connection</span><Segmented value={mcpTransport} options={[{ value: 'http', label: 'Server / Studio URL' }, { value: 'stdio', label: 'Local command' }]} onChange={(value) => setMcpTransport(value as McpTransport)} label="MCP connection type"/></div>
                 {mcpTransport === 'http' ? (
-                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="http://127.0.0.1:3000/mcp"/></label><small className="field-help">Use the MCP endpoint shown by your local Studio or server. Prime Agent also needs a matching MCP integration skill to expose its tools.</small></>
+                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="http://127.0.0.1:3000/mcp"/></label><small className="field-help">{harness === 'omp' ? 'OMP loads this MCP endpoint directly when a new session starts.' : 'Use the MCP endpoint shown by your local Studio or server. Prime Agent also needs a matching MCP integration skill to expose its tools.'}</small></>
                 ) : (
-                  <><p className="field-help">Local command definitions are saved for package-specific bridges; Prime Agent 0.7 does not expose arbitrary stdio servers by itself.</p><label className="field"><span>Executable</span><input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} placeholder="npx"/></label><label className="field"><span>Arguments <small>(one per line)</small></span><textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/project'}/></label></>
+                  <><p className="field-help">{harness === 'omp' ? 'OMP starts this stdio MCP server directly in each new session.' : 'Local command definitions are saved for package-specific bridges; Prime Agent 0.7 does not expose arbitrary stdio servers by itself.'}</p><label className="field"><span>Executable</span><input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} placeholder="npx"/></label><label className="field"><span>Arguments <small>(one per line)</small></span><textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/project'}/></label></>
                 )}
                 <label className="field"><span>Available in</span><select value={mcpScope} onChange={(event) => setMcpScope(event.target.value as McpScope)}><option value="user">All projects (personal)</option><option value="project" disabled={!activeProjectPath}>Current project</option></select></label>
                 <p className="connection-warning"><ShieldCheck size={13}/> Only connect servers you trust. MCP tools can read data or run actions with your user permissions.</p>

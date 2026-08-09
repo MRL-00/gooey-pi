@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { renameSync, type BigIntStats, type Stats } from 'node:fs'
 import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
+import type { HarnessId, McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
 import { isPathWithin, isRecord, requireString } from '../validation'
 import { errorCode, readAtMost } from './file-io'
 
@@ -38,20 +38,20 @@ function sameSettingsLockOwner(left: SettingsLockOwner | null, right: SettingsLo
   return left?.version === right.version && left.pid === right.pid && left.token === right.token && left.createdAt === right.createdAt
 }
 
-async function readSettingsForUpdate(path: string): Promise<{ settings: Record<string, unknown>; fingerprint: string; source: string | null }> {
+async function readSettingsForUpdate(path: string, agentName = 'Prime Agent'): Promise<{ settings: Record<string, unknown>; fingerprint: string; source: string | null }> {
   let content: string
   try {
     const value = await readAtMost(path, MAX_SETTINGS_BYTES)
-    if (value.truncated) throw new TypeError('Prime Agent settings exceed the maximum supported size')
+    if (value.truncated) throw new TypeError(`${agentName} settings exceed the maximum supported size`)
     content = value.content
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return { settings: {}, fingerprint: 'missing', source: null }
     if (error instanceof TypeError && error.message.includes('maximum supported size')) throw error
-    throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server')
+    throw new TypeError(`${agentName} settings are not valid JSON; fix them before connecting an MCP server`)
   }
   let value: unknown
-  try { value = JSON.parse(content) } catch { throw new TypeError('Prime Agent settings are not valid JSON; fix them before connecting an MCP server') }
-  if (!isRecord(value)) throw new TypeError('Prime Agent settings must contain a JSON object')
+  try { value = JSON.parse(content) } catch { throw new TypeError(`${agentName} settings are not valid JSON; fix them before connecting an MCP server`) }
+  if (!isRecord(value)) throw new TypeError(`${agentName} settings must contain a JSON object`)
   return { settings: value, fingerprint: createHash('sha256').update(content).digest('hex'), source: content }
 }
 
@@ -261,10 +261,11 @@ async function writeSettingsAtomically(
   }
 }
 
-export function validateMcpConnection(value: unknown): McpConnectionInput {
+export function validateMcpConnection(value: unknown, harness: HarnessId = 'prime'): McpConnectionInput {
   if (!isRecord(value)) throw new TypeError('MCP connection must be an object')
   const name = requireString(value.name, 'MCP server name', { min: 1, max: 64, trim: true })
-  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name) || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
+  const validName = harness === 'omp' ? /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(name) : /^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name)
+  if (!validName || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
   const scope = value.scope
   if (scope !== 'user' && scope !== 'project') throw new TypeError('MCP scope must be user or project')
   const projectPath = scope === 'project' ? requireString(value.projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
@@ -291,7 +292,10 @@ export function validateMcpConnection(value: unknown): McpConnectionInput {
   throw new TypeError('MCP transport must be http or stdio')
 }
 
-export async function prepareProjectSettingsPath(projectPath: string): Promise<ProjectSettingsPath> {
+export async function prepareProjectSettingsPath(
+  projectPath: string,
+  options: { segments?: readonly string[]; filename?: string } = {},
+): Promise<ProjectSettingsPath> {
   const projectRoot = await realpath(projectPath)
   const pinnedDirectories = new Map<string, { dev: string; ino: string }>()
   const pin = async (path: string): Promise<void> => {
@@ -301,7 +305,7 @@ export async function prepareProjectSettingsPath(projectPath: string): Promise<P
   }
   await pin(projectRoot)
   let directory = projectRoot
-  for (const segment of ['.prime', 'agent']) {
+  for (const segment of options.segments ?? ['.prime', 'agent']) {
     const candidate = join(directory, segment)
     let existing: Stats | undefined
     try {
@@ -318,7 +322,7 @@ export async function prepareProjectSettingsPath(projectPath: string): Promise<P
     if (!isPathWithin(projectRoot, directory)) throw new TypeError('Project MCP configuration path escapes the project')
     await pin(directory)
   }
-  const settingsPath = join(directory, 'settings.json')
+  const settingsPath = join(directory, options.filename ?? 'settings.json')
   const verify = async (): Promise<void> => {
     for (const [path, expected] of pinnedDirectories) {
       let stat: BigIntStats
@@ -343,17 +347,19 @@ export async function updateMcpSettings(
   target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
+  options: { agentName?: string; schema?: string } = {},
 ): Promise<ProcessOutcome> {
+  const agentName = options.agentName ?? 'Prime Agent'
   const settingsPath = typeof target === 'string' ? target : target.path
   const verify = typeof target === 'string' ? undefined : target.verify
   const release = await acquireSettingsLock(settingsPath, verify)
   try {
     for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
       await verify?.()
-      const snapshot = await readSettingsForUpdate(settingsPath)
+      const snapshot = await readSettingsForUpdate(settingsPath, agentName)
       await verify?.()
       const settings = snapshot.settings
-      if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError('Prime Agent mcpServers setting must contain a JSON object')
+      if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError(`${agentName} mcpServers setting must contain a JSON object`)
       const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
       if (Object.hasOwn(currentServers, input.name)) {
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
@@ -362,11 +368,14 @@ export async function updateMcpSettings(
         ? { type: 'http', url: input.url, enabled: true }
         : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
       settings.mcpServers = { ...currentServers, [input.name]: config }
+      if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
       if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
-        return { ok: true, output: `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
+        return { ok: true, output: agentName === 'OMP'
+          ? `Saved MCP server definition “${input.name}”. Start a new OMP session to load it.`
+          : `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
       }
     }
-    throw new Error('Prime Agent settings changed repeatedly; no MCP configuration was overwritten')
+    throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)
   } finally {
     await release()
   }
