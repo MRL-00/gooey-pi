@@ -276,10 +276,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('heartbeats:list', () => services.heartbeats.list())
   handle('heartbeats:manage', (_event, id, action) => services.heartbeats.manage(id, action))
 
-  handle('schedules:list', () => services.schedules.list())
+  handle('schedules:list', (_event, harness) => services.schedules.list(requireHarness(harness)))
   handle('schedules:get', (_event, id) => services.schedules.get(id))
   handle('schedules:preview', (_event, timing, count) => services.schedules.preview(timing, count))
-  handle('schedules:create', (_event, input) => services.schedules.create(input, 'user'))
+  handle('schedules:create', (_event, input, harness) => services.schedules.create(input, 'user', requireHarness(harness)))
   handle('schedules:update', (_event, id, patch) => services.schedules.update(id, patch))
   handle('schedules:pause', (_event, id) => services.schedules.pause(id))
   handle('schedules:resume', (_event, id) => services.schedules.resume(id))

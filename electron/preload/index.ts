@@ -111,10 +111,10 @@ const api: PrimeWorkApi = {
     manage: (id, action) => ipcRenderer.invoke('heartbeats:manage', id, action),
   },
   schedules: {
-    list: () => ipcRenderer.invoke('schedules:list'),
+    list: (harness) => ipcRenderer.invoke('schedules:list', harness),
     get: (id) => ipcRenderer.invoke('schedules:get', id),
     preview: (timing, count) => ipcRenderer.invoke('schedules:preview', timing, count),
-    create: (input) => ipcRenderer.invoke('schedules:create', input),
+    create: (input, harness) => ipcRenderer.invoke('schedules:create', input, harness),
     update: (id, patch) => ipcRenderer.invoke('schedules:update', id, patch),
     pause: (id) => ipcRenderer.invoke('schedules:pause', id),
     resume: (id) => ipcRenderer.invoke('schedules:resume', id),

@@ -132,15 +132,16 @@ describe('OMP RPC adapter argv', () => {
     expect(() => OMP_RPC_ADAPTER.buildStartArgs({ ...baseInput, approvalMode: 'sometimes' })).toThrow('Invalid approval mode')
   })
 
-  it('never emits --skill flags and forwards only the browser extension', () => {
+  it('never emits --skill flags and forwards the scoped app extensions', () => {
     const environment = {
       PRIME_WORK_SCHEDULE_SKILL_PATH: '/skills/schedule.md',
       PRIME_WORK_BROWSER_SKILL_PATH: '/skills/browser.md',
+      PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
     } as NodeJS.ProcessEnv
     const args = OMP_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })
     expect(args).not.toContain('--skill')
-    expect(args.slice(-2)).toEqual(['--extension', '/extensions/browser.ts'])
+    expect(args.slice(-4)).toEqual(['--extension', '/extensions/schedules.ts', '--extension', '/extensions/browser.ts'])
   })
 })
 
@@ -181,6 +182,7 @@ describe('OMP RPC handshake', () => {
     manager.setRuntimeEnvironmentProvider(() => ({
       PRIME_WORK_SCHEDULE_SKILL_PATH: '/skills/schedule.md',
       PRIME_WORK_BROWSER_SKILL_PATH: '/skills/browser.md',
+      PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
     }))
     const events: Array<Record<string, unknown>> = []
@@ -195,7 +197,8 @@ describe('OMP RPC handshake', () => {
     expect(argv[argv.indexOf('--model') + 1]).toBe('openai-codex/gpt-5.6-luna')
     expect(argv).not.toContain('--provider')
     expect(argv).not.toContain('--skill')
-    expect(argv[argv.indexOf('--extension') + 1]).toBe('/extensions/browser.ts')
+    const extensionPaths = argv.flatMap((value, index) => value === '--extension' ? [argv[index + 1]] : [])
+    expect(extensionPaths).toEqual(['/extensions/schedules.ts', '/extensions/browser.ts'])
   })
 
   it('omits --approval-mode when no override is configured', async () => {

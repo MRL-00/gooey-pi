@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type {
   AutomationScheduleRecord,
+  HarnessId,
   NativeHeartbeatRecord,
   PrimeModelDescriptor,
   PrimeThinkingLevel,
@@ -64,6 +65,7 @@ type ScheduleForm = {
 }
 
 interface ScheduledPageProps {
+  harness: HarnessId
   schedules: AutomationScheduleRecord[]
   nativeHeartbeats: NativeHeartbeatRecord[]
   projects: ProjectRecord[]
@@ -292,7 +294,7 @@ function runIcon(status: ScheduleRunRecord['status']) {
 
 
 export function ScheduledPage({
-  schedules, nativeHeartbeats, projects, sessions, models, error, initialProjectId, initialSessionId, selectedScheduleId,
+  harness, schedules, nativeHeartbeats, projects, sessions, models, error, initialProjectId, initialSessionId, selectedScheduleId,
   onCreate, onUpdate, onPause, onResume, onDelete, onRunNow, onPreview, onOpenSession, onManageHeartbeat,
 }: ScheduledPageProps) {
   const [filter, setFilter] = useState<ScheduleFilter>('active')
@@ -389,7 +391,7 @@ export function ScheduledPage({
   }
   const validate = () => {
     if (!form.title.trim()) return 'Give this schedule a title.'
-    if (!form.prompt.trim()) return 'Add a prompt for Prime to run.'
+    if (!form.prompt.trim()) return `Add a prompt for ${harness === 'omp' ? 'OMP' : 'Prime'} to run.`
     if (!form.projectId || !authorizedProjects.some((project) => project.id === form.projectId)) return 'Choose an authorized project.'
     if (form.targetKind === 'session' && !eligibleSessions.some((session) => session.id === form.sessionId)) return 'Choose an authorized session.'
     if (!currentTiming) {
@@ -441,7 +443,7 @@ export function ScheduledPage({
       <form id="schedule-editor-form" className="schedule-editor" onSubmit={(event) => void save(event)}>
         <div className="schedule-editor__lead">
           <Sparkles size={15} />
-          <p>Prime runs this prompt unattended. You can always pause it or open the session produced by a run.</p>
+          <p>{harness === 'omp' ? 'OMP' : 'Prime'} runs this prompt unattended. You can always pause it or open the session produced by a run.</p>
         </div>
         <div className="schedule-editor__copy">
           <label className="field"><span>Title</span><input autoFocus required value={form.title} disabled={saving} placeholder="Morning issue triage" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} /></label>
@@ -548,7 +550,7 @@ export function ScheduledPage({
 
   return (
     <div className="page scroll-area"><div className="page-container schedule-page">
-      <header className="page-header schedule-page__header"><div><span className="schedule-page__kicker"><span /> Automation desk</span><h1>Scheduled</h1><p>Unattended Prime work, with every run accounted for.</p></div><button type="button" className="button button--primary" onClick={openCreate}><Plus size={14} /> New schedule</button></header>
+      <header className="page-header schedule-page__header"><div><span className="schedule-page__kicker"><span /> Automation desk</span><h1>Scheduled</h1><p>Unattended {harness === 'omp' ? 'OMP' : 'Prime'} work, with every run accounted for.</p></div><button type="button" className="button button--primary" onClick={openCreate}><Plus size={14} /> New schedule</button></header>
       <div className="schedule-ledger-summary" aria-label="Schedule summary">
         <span><i className="is-active" /> <strong>{counts.active}</strong> active</span>
         <span><i className="is-paused" /> <strong>{counts.paused}</strong> paused</span>
@@ -566,7 +568,7 @@ export function ScheduledPage({
           <span className="schedule-row__next"><small>Next</small><strong>{item.nextRunAt ? formatDateTime(item.nextRunAt) : '—'}</strong><span>{item.nextRunAt ? formatRelative(item.nextRunAt) : 'No future run'}</span></span>
           <ChevronRight className="schedule-row__chevron" size={16} />
         </button>
-      })}</div> : <EmptyState icon={<CalendarClock size={24} />} title={filter === 'all' ? 'No scheduled work' : `No ${filter === 'attention' ? 'schedules need attention' : `${filter} schedules`}`} action={schedules.length ? undefined : <button type="button" className="button button--primary" onClick={openCreate}><Plus size={13} /> Create schedule</button>}> {schedules.length ? 'Choose another filter to see the rest of your automation ledger.' : 'Create a schedule and Prime will bring every result back here.'}</EmptyState>}
+      })}</div> : <EmptyState icon={<CalendarClock size={24} />} title={filter === 'all' ? 'No scheduled work' : `No ${filter === 'attention' ? 'schedules need attention' : `${filter} schedules`}`} action={schedules.length ? undefined : <button type="button" className="button button--primary" onClick={openCreate}><Plus size={13} /> Create schedule</button>}> {schedules.length ? 'Choose another filter to see the rest of your automation ledger.' : `Create a schedule and ${harness === 'omp' ? 'OMP' : 'Prime'} will bring every result back here.`}</EmptyState>}
       {nativeHeartbeats.length ? <section className="native-heartbeats" aria-labelledby="native-heartbeats-title">
         <div className="native-heartbeats__header"><div><span className="schedule-page__kicker">Prime Agent</span><h2 id="native-heartbeats-title">Agent heartbeats</h2></div><small>Auto-discovered; the owning runtime is authoritative</small></div>
         <div className="native-heartbeats__list">{nativeHeartbeats.map((heartbeat) => <article key={heartbeat.id} className="native-heartbeat">

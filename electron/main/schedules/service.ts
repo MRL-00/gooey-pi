@@ -11,6 +11,7 @@ import type {
   ScheduleRunRecord,
   ScheduleTarget,
   ScheduleTiming,
+  HarnessId,
 } from '../../../src/types/api'
 import type { JsonStateStore } from '../store'
 import { rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
@@ -36,8 +37,8 @@ export interface ScheduleRunResult {
 }
 
 export interface AutomationServiceOptions {
-  validateTarget(target: ScheduleTarget): Promise<void>
-  validateExecution(execution: ScheduleExecution): Promise<void>
+  validateTarget(target: ScheduleTarget, harness: HarnessId): Promise<void>
+  validateExecution(execution: ScheduleExecution, harness: HarnessId): Promise<void>
   run(task: AutomationScheduleRecord): Promise<ScheduleRunResult>
   now?: () => Date
 }
@@ -168,8 +169,8 @@ export class AutomationService {
     return this.store.snapshot().schedules.some((task) => task.status === 'active')
   }
 
-  list(): AutomationScheduleRecord[] {
-    return this.store.snapshot().schedules.map(cloneTask).sort((left, right) => {
+  list(harness?: HarnessId): AutomationScheduleRecord[] {
+    return this.store.snapshot().schedules.filter((task) => harness === undefined || task.harness === harness).map(cloneTask).sort((left, right) => {
       const next = (left.nextRunAt ?? 'z').localeCompare(right.nextRunAt ?? 'z')
       return next || right.updatedAt.localeCompare(left.updatedAt)
     })
@@ -190,15 +191,16 @@ export class AutomationService {
     return { timing, occurrences: previewScheduleOccurrences(timing, count, now) }
   }
 
-  async create(inputValue: unknown, createdBy: 'user' | 'agent' = 'user'): Promise<AutomationScheduleRecord> {
+  async create(inputValue: unknown, createdBy: 'user' | 'agent' = 'user', harness: HarnessId = 'prime'): Promise<AutomationScheduleRecord> {
     const now = this.now()
     const input = parseInput(inputValue, now)
-    await Promise.all([this.options.validateTarget(input.target), this.options.validateExecution(input.execution)])
+    await Promise.all([this.options.validateTarget(input.target, harness), this.options.validateExecution(input.execution, harness)])
     const nextRunAt = nextScheduleOccurrence(input.timing, new Date(now.getTime() - 1))
     if (!nextRunAt) throw new TypeError('Schedule has no future occurrence')
     const task: AutomationScheduleRecord = {
       schemaVersion: 1,
       id: randomUUID(),
+      harness,
       revision: 1,
       title: input.title ?? titleFromPrompt(input.prompt),
       prompt: input.prompt,
@@ -229,7 +231,7 @@ export class AutomationService {
     if (current.revision !== patch.revision) throw new Error('Scheduled task changed; reload it before saving')
     const target = patch.target ?? current.target
     const execution = patch.execution ?? current.execution
-    await Promise.all([this.options.validateTarget(target), this.options.validateExecution(execution)])
+    await Promise.all([this.options.validateTarget(target, current.harness), this.options.validateExecution(execution, current.harness)])
     const timing = patch.timing ?? current.timing
     const nextRunAt = nextScheduleOccurrence(timing, new Date(now.getTime() - 1))
     if (!nextRunAt) throw new TypeError('Schedule has no future occurrence')
@@ -264,7 +266,7 @@ export class AutomationService {
     const id = requireId(idValue, 'schedule id')
     const now = this.now()
     const current = this.get(id)
-    await Promise.all([this.options.validateTarget(current.target), this.options.validateExecution(current.execution)])
+    await Promise.all([this.options.validateTarget(current.target, current.harness), this.options.validateExecution(current.execution, current.harness)])
     const nextRunAt = nextScheduleOccurrence(current.timing, new Date(now.getTime() - 1))
     if (!nextRunAt) throw new Error('This schedule has no future occurrence')
     let updated!: AutomationScheduleRecord
@@ -298,7 +300,7 @@ export class AutomationService {
 
   async runNow(idValue: unknown): Promise<ScheduleRunRecord> {
     const task = this.get(idValue)
-    await Promise.all([this.options.validateTarget(task.target), this.options.validateExecution(task.execution)])
+    await Promise.all([this.options.validateTarget(task.target, task.harness), this.options.validateExecution(task.execution, task.harness)])
     return this.enqueue(task, 'manual', this.now().toISOString())
   }
 

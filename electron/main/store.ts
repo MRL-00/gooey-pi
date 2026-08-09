@@ -218,6 +218,7 @@ function parseSchedule(value: unknown): AutomationScheduleRecord | null {
   return {
     schemaVersion: 1,
     id: value.id,
+    harness: parseHarness(value.harness),
     revision: Number(value.revision),
     title: value.title,
     prompt: value.prompt,

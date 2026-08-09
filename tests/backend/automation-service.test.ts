@@ -39,7 +39,7 @@ describe('AutomationService', () => {
       title: 'Triage', prompt: 'Review issues', target,
       timing: onceAt('2030-01-02T09:00:00Z'), execution,
     })
-    expect(created).toMatchObject({ revision: 1, status: 'active', createdBy: 'user', nextRunAt: '2030-01-02T09:00:00.000Z' })
+    expect(created).toMatchObject({ harness: 'prime', revision: 1, status: 'active', createdBy: 'user', nextRunAt: '2030-01-02T09:00:00.000Z' })
 
     now = new Date('2030-01-01T01:00:00Z')
     const updated = await service.update(created.id, { revision: 1, title: 'Morning triage', timing: onceAt('2030-01-03T09:00:00Z') })
@@ -52,6 +52,28 @@ describe('AutomationService', () => {
     expect(resumed).toMatchObject({ revision: 4, status: 'active', nextRunAt: '2030-01-03T09:00:00.000Z' })
     expect(await service.delete(created.id)).toBe(true)
     expect(service.list()).toEqual([])
+  })
+
+  it('keeps OMP schedules isolated and routes validation and runs by harness', async () => {
+    const validateTarget = vi.fn(async () => undefined)
+    const validateExecution = vi.fn(async () => undefined)
+    const run = vi.fn(async () => ({}))
+    const service = new AutomationService(store(), {
+      validateTarget,
+      validateExecution,
+      run,
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    await service.start()
+    const prime = await service.create({ prompt: 'Prime run', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const omp = await service.create({ prompt: 'OMP run', target, timing: onceAt('2030-01-02T00:00:00Z'), execution }, 'user', 'omp')
+    expect(service.list('prime').map((task) => task.id)).toEqual([prime.id])
+    expect(service.list('omp').map((task) => task.id)).toEqual([omp.id])
+    expect(validateTarget).toHaveBeenCalledWith(target, 'omp')
+    expect(validateExecution).toHaveBeenCalledWith(execution, 'omp')
+    await service.runNow(omp.id)
+    await eventually(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: omp.id, harness: 'omp' })))
+    await service.stop()
   })
 
   it('runs a manual project task and persists its linked session result', async () => {

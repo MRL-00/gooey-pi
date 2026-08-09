@@ -42,7 +42,7 @@ let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
 let store: JsonStateStore | null = null
 let automation: AutomationService | null = null
-let agentScheduleBridge: AgentScheduleBridge | null = null
+let agentScheduleBridges: AgentScheduleBridge[] = []
 let agentBrowser: AgentBrowserService | null = null
 let agentBrowserBridge: AgentBrowserBridge | null = null
 let shutdownStarted = false
@@ -445,22 +445,31 @@ async function bootstrap(): Promise<void> {
     }],
   })
   const heartbeats = new HeartbeatService(agents, executable)
-  const scheduledRuns = new ScheduledRunExecutor(
+  const primeScheduledRuns = new ScheduledRunExecutor(
     projects,
     sessions,
     agents,
     providers,
     () => new Set(stateStore.getSettings().disabledProviders),
   )
+  const ompScheduledRuns = new ScheduledRunExecutor(
+    ompProjects,
+    ompSessions,
+    ompManager,
+    ompCatalog,
+    () => new Set(stateStore.getSettings().ompDisabledProviders),
+  )
+  const scheduledRunsFor = (harness: 'prime' | 'omp') => harness === 'omp' ? ompScheduledRuns : primeScheduledRuns
   const schedules = new AutomationService(stateStore, {
-    validateTarget: (target) => scheduledRuns.validateTarget(target),
-    validateExecution: (execution) => scheduledRuns.validateExecution(execution),
-    run: (task) => scheduledRuns.run(task),
+    validateTarget: (target, harness) => scheduledRunsFor(harness).validateTarget(target),
+    validateExecution: (execution, harness) => scheduledRunsFor(harness).validateExecution(execution),
+    run: (task) => scheduledRunsFor(task.harness).run(task),
   })
   automation = schedules
   await schedules.start()
   const scheduleBridge = new AgentScheduleBridge({
     service: schedules,
+    harness: 'prime',
     skillPath: scheduleSkillPath,
     resolveScope: async ({ cwd, sessionPath }) => {
       const catalog = await projects.list()
@@ -475,8 +484,25 @@ async function bootstrap(): Promise<void> {
       return { projectId: project.id, sessionId: scheduledSession?.id }
     },
   })
-  await scheduleBridge.start()
-  agentScheduleBridge = scheduleBridge
+  const ompScheduleBridge = new AgentScheduleBridge({
+    service: schedules,
+    harness: 'omp',
+    skillPath: scheduleSkillPath,
+    resolveScope: async ({ cwd, sessionPath }) => {
+      const catalog = await ompProjects.list()
+      const canonicalCwd = resolve(cwd)
+      const project = catalog.find((candidate) => !candidate.inferred && candidate.folders.some((folder) => {
+        const root = resolve(folder)
+        return canonicalCwd === root || canonicalCwd.startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`)
+      }))
+      if (!project) throw new Error('The agent is not running in an explicitly granted OMP Work project')
+      if (!sessionPath) return { projectId: project.id }
+      const scheduledSession = (await ompSessions.list(undefined, true)).find((candidate) => resolve(candidate.filePath) === resolve(sessionPath))
+      return { projectId: project.id, sessionId: scheduledSession?.id }
+    },
+  })
+  await Promise.all([scheduleBridge.start(), ompScheduleBridge.start()])
+  agentScheduleBridges = [scheduleBridge, ompScheduleBridge]
   const browserService = new AgentBrowserService({
     getGuest: (webContentsId) => {
       const contents = webContents.fromId(webContentsId)
@@ -492,16 +518,24 @@ async function bootstrap(): Promise<void> {
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
-  // OMP runtimes get the same browser broker credentials but load the
-  // OMP-flavored extension; OMP has no --skill flag, so the skill path is
-  // stripped and the extension carries the usage guidance. The schedules
-  // bridge stays Prime-only.
+  // OMP runtimes get the same capability-scoped brokers through OMP-flavored
+  // extensions. OMP has no --skill flag, so their tool descriptions carry the
+  // app-specific usage guidance while OMP's own skills stay discovery-based.
   const ompBrowserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
+  const ompScheduleExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
   ompManager.setRuntimeEnvironmentProvider((scope) => {
-    const { PRIME_WORK_BROWSER_SKILL_PATH: _skill, ...environment } = browserBridge.environmentFor(scope)
-    return { ...environment, PRIME_WORK_BROWSER_EXTENSION_PATH: ompBrowserExtensionPath }
+    const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = ompScheduleBridge.environmentFor(scope)
+    const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridge.environmentFor(scope)
+    return {
+      ...scheduleEnvironment,
+      ...browserEnvironment,
+      PRIME_WORK_SCHEDULE_EXTENSION_PATH: ompScheduleExtensionPath,
+      PRIME_WORK_BROWSER_EXTENSION_PATH: ompBrowserExtensionPath,
+    }
   })
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   const [detectedPrimeVersion, detectedOmpVersion] = await Promise.all([
@@ -605,7 +639,7 @@ app.on('before-quit', (event) => {
   providerService?.cancelAll()
   agentBrowser?.beginShutdown()
   void settleShutdown([
-    agentScheduleBridge?.stop() ?? Promise.resolve(),
+    ...agentScheduleBridges.map((bridge) => bridge.stop()),
     agentBrowserBridge?.stop() ?? Promise.resolve(),
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),

@@ -469,6 +469,8 @@ export interface ScheduleRunRecord {
 export interface AutomationScheduleRecord {
   schemaVersion: 1
   id: string
+  /** Harness that owns the target, model catalog, and runtime for every run. */
+  harness: HarnessId
   revision: number
   title: string
   prompt: string
@@ -646,10 +648,10 @@ export interface PrimeWorkApi {
     manage(id: string, action: 'pause' | 'resume' | 'stop'): Promise<NativeHeartbeatRecord | null>
   }
   schedules: {
-    list(): Promise<AutomationScheduleRecord[]>
+    list(harness?: HarnessId): Promise<AutomationScheduleRecord[]>
     get(id: string): Promise<AutomationScheduleRecord>
     preview(timing: ScheduleTiming, count?: number): Promise<SchedulePreview>
-    create(input: ScheduleInput): Promise<AutomationScheduleRecord>
+    create(input: ScheduleInput, harness?: HarnessId): Promise<AutomationScheduleRecord>
     update(id: string, patch: SchedulePatch): Promise<AutomationScheduleRecord>
     pause(id: string): Promise<AutomationScheduleRecord>
     resume(id: string): Promise<AutomationScheduleRecord>

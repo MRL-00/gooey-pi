@@ -13,7 +13,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-async function fixture() {
+async function fixture(harness: 'prime' | 'omp' = 'prime') {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-agent-schedules-'))
   dirs.push(dir)
   const service = new AutomationService(new JsonStateStore(join(dir, 'state.json')), {
@@ -23,7 +23,7 @@ async function fixture() {
     now: () => new Date('2030-01-01T00:00:00Z'),
   })
   const bridge = new AgentScheduleBridge({
-    service, skillPath: '/app/skills/prime-work-schedules',
+    service, harness, skillPath: '/app/skills/prime-work-schedules',
     resolveScope: async ({ sessionPath }) => ({ projectId: 'project-one', sessionId: sessionPath ? 'session-one' : undefined }),
   })
   await bridge.start()
@@ -52,9 +52,23 @@ describe('AgentScheduleBridge', () => {
       },
     })
     expect(response.status).toBe(200)
-    expect(service.list()[0]).toMatchObject({ createdBy: 'agent', target: { kind: 'session', projectId: 'project-one', sessionId: 'session-one' } })
+    expect(service.list()[0]).toMatchObject({ harness: 'prime', createdBy: 'agent', target: { kind: 'session', projectId: 'project-one', sessionId: 'session-one' } })
     const list = await call('list', {})
     expect(list.body.result).toEqual(expect.arrayContaining([expect.objectContaining({ title: 'Follow up' })]))
+  })
+
+  it('attributes OMP-created tasks to OMP and never lists same-project Prime tasks', async () => {
+    const { service, call } = await fixture('omp')
+    await service.create({
+      prompt: 'Prime-only', target: { kind: 'project', projectId: 'project-one' },
+      timing: { kind: 'once', at: '2030-01-02T00:00:00Z' },
+      execution: { model: 'auto', thinking: 'auto', speed: 'normal' },
+    })
+    await call('create', {
+      target: 'current_project',
+      input: { prompt: 'OMP-only', timing: { kind: 'once', at: '2030-01-02T00:00:00Z' }, execution: { model: 'auto', thinking: 'auto', speed: 'normal' } },
+    })
+    expect((await call('list', {})).body.result).toEqual([expect.objectContaining({ harness: 'omp', prompt: 'OMP-only' })])
   })
 
   it('rejects missing tokens, browser origins, and unavailable target scopes', async () => {

@@ -147,7 +147,7 @@ export function useBootstrap({
       if (!cancelled) setMeta(value)
     }).catch((error) => { if (!cancelled) reportError(error) })
 
-    void bridge.schedules.list().then((value) => {
+    void bridge.schedules.list(harness).then((value) => {
       if (!cancelled) {
         setSchedules(value)
         setScheduleError('')

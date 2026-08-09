@@ -341,11 +341,11 @@ describe('sidebar brand switcher', () => {
     expect(container.querySelector('[role="menu"]')).toBeNull()
   })
 
-  it('closes on Escape without selecting and hides prime-only navigation for OMP', async () => {
+  it('closes on Escape without selecting and shows shared navigation for OMP', async () => {
     const onSelectHarness = vi.fn()
     await renderSidebar(onSelectHarness, 'omp')
 
-    expect([...container.querySelectorAll('nav.sidebar__primary button span')].map((item) => item.textContent)).not.toContain('Scheduled')
+    expect([...container.querySelectorAll('nav.sidebar__primary button span')].map((item) => item.textContent)).toContain('Scheduled')
     expect(container.textContent).not.toContain('Plugins & skills')
 
     await click(container.querySelector('.brand-switcher__trigger')!)

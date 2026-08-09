@@ -7,7 +7,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
 - The sidebar brand in the top-left gains a chevron. Clicking it opens a harness switcher: **Prime Work** (Prime Intellect butterfly) or **OMP Work** (OMP pi-plug mark, `assets/brand/omp-icon.svg`, MIT-licensed from the oh-my-pi repo).
 - Switching harness swaps the whole workspace context: each harness has its own granted projects, session catalog, model catalog, and runtimes. Settings gain an `activeHarness` field; the choice persists.
 - All existing features work on OMP where the harness supports them: streaming transcripts, steering/follow-ups, abort, model + thinking selection, compaction, session resume/switch/rename/fork(branch), extension-UI dialogs (which is also how OMP surfaces **tool approval prompts**), browser capability bridge, git/terminal (harness-agnostic already).
-- Prime-only for now (hidden when OMP is active): schedules/heartbeats (built on `prime-agent schedule`), daemon-socket follow-up to out-of-app sessions, provider OAuth management. OMP credentials remain CLI-owned; Prime Work keeps a separate `ompDisabledProviders` list that only controls which providers appear in its OMP model picker.
+- Scheduled tasks are available in both harnesses. Prime retains its heartbeat tools; OMP receives an injected scheduled-task extension backed by Prime Work's local schedule service and executor. Still Prime-only: daemon-socket follow-up to out-of-app sessions and provider OAuth management. OMP credentials remain CLI-owned; Prime Work keeps a separate `ompDisabledProviders` list that only controls which providers appear in its OMP model picker.
 
 ## OMP facts (verified on this machine, omp 17.2.11)
 
@@ -17,7 +17,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
   - model: `--model <provider>/<modelId>` (single flag, unlike Prime's `--provider X --model Y`)
   - thinking: `--thinking <off|minimal|low|medium|high|xhigh|max>`
   - approvals: `--approval-mode <always-ask|write|yolo>` — only passed when the user overrides the default in settings; otherwise OMP's own `~/.omp/agent/config.yml` governs.
-  - extensions: `-e <path>` for our injected capability extension. No `--skill <path>` flag exists; skills are discovery-based, so Prime Work's browser *skill* is not injected — the OMP browser *extension* carries the tool surface.
+  - extensions: `-e <path>` for each injected capability extension. Prime Work currently injects scheduled-task and browser extensions. No `--skill <path>` flag exists; skills are discovery-based, so Prime Work's browser *skill* is not injected — the OMP browser *extension* carries the tool surface.
 - Paths: agent dir `~/.omp/agent/`; sessions `~/.omp/agent/sessions/<bucket>/<ISO-timestamp>_<uuid>.jsonl` (bucket = scope-basename-hash of cwd); settings `~/.omp/agent/config.yml`; extensions `~/.omp/agent/extensions/`; auth in `~/.omp/agent/agent.db` (SQLite — never touched by Prime Work).
 - Model catalog: `omp models --json` → `{ models: [{ provider, id, selector, name, contextWindow, maxTokens, reasoning, thinking: string[]|null, input: string[], cost }] }`.
 - Target model for validation: `openai-codex/gpt-5.6-luna` (Luna GPT-5.6, already authenticated on this machine).
@@ -46,7 +46,7 @@ The renderer sends the same command objects it sends today; the OMP command sche
 | `set_service_tier {serviceTier}` | `set_fast_mode {enabled: serviceTier === 'priority'}` |
 | everything else | unchanged (`prompt`, `steer`, `follow_up`, `abort`, `new_session`, `get_state`, `set_model`, `set_thinking_level`, `switch_session`, `compact`, `set_auto_compaction`, `set_auto_retry`, `set_session_name`, `set_steering_mode`, `set_follow_up_mode`, `get_*`, `extension_ui_response`) |
 
-Prime-only commands (`send_message`, heartbeat family, `clone`) are rejected by the OMP schema with a clear error. `prompt` responses may carry `data.agentInvoked === false` (local slash command, no agent turn) and OMP may later push a standalone `prompt_result` frame. No dedicated handling exists or is needed: Prime Work never blocks on per-prompt turn completion (the renderer's busy state is event- and state-driven, and `runPromptToCompletion` is a Prime-only scheduled-run path), so a local-only prompt simply completes its request/response cycle, and `prompt_result` frames are forwarded as unknown events the reducer ignores.
+Prime-only commands (`send_message`, heartbeat family, `clone`) are rejected by the OMP schema with a clear error. OMP scheduled tasks do not use heartbeat RPC commands: the injected extension calls a harness-scoped loopback broker, and due work is executed through OMP's normal prompt lifecycle. `prompt` responses may carry `data.agentInvoked === false` (local slash command, no agent turn) and OMP may later push a standalone `prompt_result` frame. No dedicated renderer handling exists or is needed: interactive Prime Work prompts never block on per-prompt turn completion, so a local-only prompt simply completes its request/response cycle, and `prompt_result` frames are forwarded as unknown events the reducer ignores.
 
 The OMP argv contract (`--mode rpc`, `--cwd`, `--resume`, `--model`, `--thinking`, `--approval-mode`, `--extension`) was verified live against omp 17.2.11: `omp --help` lists every long form, and the in-app validation run spawned a runtime with all of them accepted.
 
@@ -81,7 +81,7 @@ HarnessDescriptor {
 - `SessionService`: second instance with `sessionRoot` parameterized and OMP-specific `catalogIo`/metadata/transcript readers (v3 JSONL: 256-byte `title` slot line, `session` header v3, entries with `id`/`parentId` forming a tree, `model_change.model` as a single `provider/id` string, entry types `message | model_change | thinking_level_change | compaction | branch_summary | custom_message | label | title_change | session_init | mode_change | ...`). Catalog scans one bucket level deep; ordering comes from the filename ISO-timestamp prefix instead of UUIDv7. No live-CLI overlay (OMP has no `list --json`); rename is done via RPC `set_session_name` when a runtime is live, else by rewriting nothing (session files stay read-only; sidebar rename is disabled for offline OMP sessions in v1).
 - Providers: `OmpModelCatalogService` shells out to `omp models --json` (single-flight, 30 s TTL, byte-bounded) and adapts to the existing `PrimeModelCatalog` types. `AgentRpcManager.providers` already accepts an interface-shaped optional dependency; that interface is formalized so both services satisfy it.
 - Projects: `ProjectRecord` gains `harness: HarnessId` (state migration defaults existing records to `'prime'`). Two `ProjectService` views scoped by harness; inferred projects come from each harness's own session catalog.
-- Capability bridges: the browser `CapabilityBridge` is reused; a new `assets/extensions/omp-work-browser.ts` speaks OMP's extension API (default export `(pi) => void`, `pi.registerTool`) against the same loopback broker env contract. Schedules bridge is not wired for OMP.
+- Capability bridges: the browser `CapabilityBridge` is reused; `assets/extensions/omp-work-browser.ts` speaks OMP's extension API (default export `(pi) => void`, `pi.registerTool`) against the same loopback broker env contract. `assets/extensions/omp-work-schedules.ts` exposes list/create/update/manage tools through a separate scoped broker. Schedule records carry their owning harness, the renderer lists only the active harness, and due runs route to the matching RPC manager and model catalog.
 
 ### Renderer
 
@@ -103,11 +103,12 @@ Same rules as `docs/security.md`, applied to the second harness: argv arrays onl
 6. Harness threading through IPC/preload/types, per-harness projects, settings migration.
 7. Renderer harness switcher + scoped state + settings UI.
 8. OMP browser capability extension.
-9. Live validation against omp 17.2.11 with `openai-codex/gpt-5.6-luna`; fixes.
+9. OMP scheduled-task extension, harness-scoped persistence, and executor routing.
+10. Live validation against omp 17.2.11 with `openai-codex/gpt-5.6-luna`; fixes.
 
 ## Non-goals (v1)
 
 - OMP OAuth/login flows in-app (RPC `login` exists; deferred).
-- Schedules/heartbeats on OMP.
+- Prime heartbeat RPC tools on OMP; OMP schedules use the local extension bridge instead.
 - Host tools / host URI schemes, subagent transcript streaming, collab sessions, handoff — protocol supports them; UI later.
 - Importing sessions across harnesses (`--from-claude`/`--from-codex` style).

@@ -112,10 +112,11 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
       if (!OMP_APPROVAL_MODES.has(input.approvalMode)) throw new TypeError('Invalid approval mode')
       args.push('--approval-mode', input.approvalMode)
     }
-    // OMP has no --skill flag: skills are discovery-based, so only the browser
-    // extension is injected.
-    const extensionPath = input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH
-    if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
+    // OMP has no --skill flag: app capabilities are injected as explicit,
+    // self-contained extensions while normal OMP skills remain discovery-based.
+    for (const extensionPath of [input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH, input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH]) {
+      if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
+    }
     return args
   },
   translateCommand: (command) => {

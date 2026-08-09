@@ -360,9 +360,9 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
   const createSchedule = async (input: ScheduleInput) => {
-    const { bridge, refreshSchedules, reportError } = getDeps()
+    const { bridge, refreshSchedules, reportError, settingsState } = getDeps()
     if (!bridge) throw new Error('Scheduled tasks are available in the desktop app.')
-    try { await bridge.schedules.create(input); await refreshSchedules() } catch (error) { reportError(error); throw error }
+    try { await bridge.schedules.create(input, settingsState.settings.activeHarness); await refreshSchedules() } catch (error) { reportError(error); throw error }
   }
   const updateSchedule = async (id: string, patch: SchedulePatch) => {
     const { bridge, refreshSchedules, reportError } = getDeps()

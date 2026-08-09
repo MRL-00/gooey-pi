@@ -1,4 +1,4 @@
-import type { AutomationScheduleRecord, ScheduleInput, SchedulePatch, ScheduleTarget } from '../../../src/types/api'
+import type { AutomationScheduleRecord, HarnessId, ScheduleInput, SchedulePatch, ScheduleTarget } from '../../../src/types/api'
 import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
 import { requireRecord, requireString } from '../validation'
 import type { AutomationService } from './service'
@@ -10,12 +10,13 @@ interface AgentScheduleScope {
 
 export interface AgentScheduleBridgeOptions {
   service: AutomationService
+  harness: HarnessId
   skillPath: string
   resolveScope(input: { cwd: string; sessionPath?: string }): Promise<AgentScheduleScope>
 }
 
-function taskInScope(task: AutomationScheduleRecord, scope: AgentScheduleScope): boolean {
-  return task.target.projectId === scope.projectId && (task.target.kind === 'project' || task.target.sessionId === scope.sessionId)
+function taskInScope(task: AutomationScheduleRecord, scope: AgentScheduleScope, harness: HarnessId): boolean {
+  return task.harness === harness && task.target.projectId === scope.projectId && (task.target.kind === 'project' || task.target.sessionId === scope.sessionId)
 }
 
 export class AgentScheduleBridge extends CapabilityBridge {
@@ -38,7 +39,7 @@ export class AgentScheduleBridge extends CapabilityBridge {
   }
 
   private async call(method: string, params: Record<string, unknown>, scope: AgentScheduleScope): Promise<unknown> {
-    if (method === 'list') return this.options.service.list().filter((task) => taskInScope(task, scope))
+    if (method === 'list') return this.options.service.list(this.options.harness).filter((task) => taskInScope(task, scope, this.options.harness))
     if (method === 'create') {
       const raw = requireRecord(params.input, 'input')
       const targetName = requireString(params.target, 'target', { min: 1, max: 32, trim: true })
@@ -53,11 +54,11 @@ export class AgentScheduleBridge extends CapabilityBridge {
         execution: raw.execution as ScheduleInput['execution'],
         target,
       }
-      return this.options.service.create(input, 'agent')
+      return this.options.service.create(input, 'agent', this.options.harness)
     }
     const id = requireString(params.id, 'id', { min: 1, max: 256, trim: true })
     const task = this.options.service.get(id)
-    if (!taskInScope(task, scope)) throw new Error('Scheduled task is outside this agent capability')
+    if (!taskInScope(task, scope, this.options.harness)) throw new Error('Scheduled task is outside this agent capability')
     if (method === 'pause') return this.options.service.pause(id)
     if (method === 'resume') return this.options.service.resume(id)
     if (method === 'delete') return this.options.service.delete(id)

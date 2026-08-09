@@ -1,6 +1,6 @@
 import type { RuntimeInfo, ScheduleExecution, AutomationScheduleRecord, ScheduleTarget } from '../../../src/types/api'
 import type { AgentRpcManager } from '../agent-rpc'
-import type { PrimeProviderService } from '../providers'
+import type { ModelCatalogProvider } from '../model-catalog'
 import type { ProjectService } from '../projects'
 import type { SessionService } from '../sessions'
 import { ScheduleBlockedError, type ScheduleRunResult } from './service'
@@ -17,7 +17,7 @@ export class ScheduledRunExecutor {
     private readonly projects: ProjectService,
     private readonly sessions: SessionService,
     private readonly agents: AgentRpcManager,
-    private readonly providers: PrimeProviderService,
+    private readonly providers: ModelCatalogProvider,
     private readonly disabledProviders: () => ReadonlySet<string>,
   ) {}
 

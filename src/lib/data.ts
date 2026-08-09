@@ -166,7 +166,7 @@ export const SAMPLE_SKILLS: SkillRecord[] = [
 
 export const SAMPLE_SCHEDULES: AutomationScheduleRecord[] = [
   {
-    schemaVersion: 1, id: 'morning', revision: 1, title: 'Morning issue triage',
+    schemaVersion: 1, id: 'morning', harness: 'prime', revision: 1, title: 'Morning issue triage',
     prompt: 'Review new high-priority issues and propose owners.',
     target: { kind: 'project', projectId: 'prime-work' },
     timing: { kind: 'rrule', dtstartLocal: '2026-08-06T09:00:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' },
