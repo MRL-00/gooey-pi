@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { lstat, readdir, realpath } from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
+import type { BigIntStats, Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import type { GitWorktree, HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
@@ -11,6 +11,57 @@ import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId,
 
 function inferredId(path: string): string {
   return `inferred-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`
+}
+
+interface VerifiedFolderIdentity {
+  path: string
+  identity: FolderIdentity
+}
+
+interface FolderIdentityRefresh {
+  configured: string
+  canonical: string
+  expected: FolderIdentity
+  current: FolderIdentity
+}
+
+export interface FolderIdentityFilesystem {
+  lstat(path: string): Promise<BigIntStats>
+  realpath(path: string): Promise<string>
+}
+
+const defaultFolderIdentityFilesystem: FolderIdentityFilesystem = {
+  lstat: (path) => lstat(path, { bigint: true }),
+  realpath,
+}
+
+function folderIdentitiesEqual(left: FolderIdentity, right: FolderIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs
+}
+
+/**
+ * Device numbers can change when the same filesystem is remounted. Inode plus
+ * birth time remains stable across that event and still rejects replacement.
+ * Legacy grants lack birth time, so they may upgrade once when the canonical
+ * path keeps its inode and the current filesystem proves that the directory
+ * predates the grant. Exact device/inode matching is only enough on filesystems
+ * that cannot provide a birth time.
+ */
+function isSameFolderIdentity(expected: FolderIdentity, current: FolderIdentity, grantedAt?: string): boolean {
+  if (expected.ino !== current.ino) return false
+  if (expected.birthtimeNs !== undefined) {
+    if (current.birthtimeNs !== undefined) return expected.birthtimeNs === current.birthtimeNs
+    return expected.dev === current.dev
+  }
+  if (current.birthtimeNs === undefined) return expected.dev === current.dev
+  if (grantedAt === undefined) return false
+  const grantedAtMs = Date.parse(grantedAt)
+  if (!Number.isFinite(grantedAtMs)) return false
+  try {
+    // The object must predate the grant. A small allowance covers filesystems
+    // whose birth time and the desktop clock have different precision.
+    return BigInt(current.birthtimeNs) <= BigInt(Math.ceil(grantedAtMs + 5_000)) * 1_000_000n
+  } catch { return false }
 }
 
 /**
@@ -34,6 +85,7 @@ export class ProjectService {
     private readonly store: JsonStateStore,
     private readonly windowProvider: () => BrowserWindow | null,
     private readonly harness: HarnessId = 'prime',
+    private readonly identityFilesystem: FolderIdentityFilesystem = defaultFolderIdentityFilesystem,
   ) {}
 
   /** Persisted projects visible to this instance: exactly its own harness's records. */
@@ -43,20 +95,57 @@ export class ProjectService {
 
   private async captureFolderIdentity(pathValue: string): Promise<{ path: string; identity: FolderIdentity }> {
     const configured = resolve(requireString(pathValue, 'project folder', { min: 1, max: 4096 }))
-    // One lstat both validates the folder and captures its identity; the
-    // canonical path then needs only the realpath call (not a second stat).
-    const info = await lstat(configured, { bigint: true })
-    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError('Project folder must be a stable directory')
-    const path = await realpath(configured)
-    return { path, identity: { dev: info.dev.toString(), ino: info.ino.toString() } }
+    const configuredInfo = await this.identityFilesystem.lstat(configured)
+    if (!configuredInfo.isDirectory() || configuredInfo.isSymbolicLink()) throw new TypeError('Project folder must be a stable directory')
+    const path = await this.identityFilesystem.realpath(configured)
+    const canonicalInfo = await this.identityFilesystem.lstat(path)
+    if (!canonicalInfo.isDirectory() || canonicalInfo.isSymbolicLink()) throw new TypeError('Project folder must be a stable directory')
+    const toIdentity = (info: BigIntStats): FolderIdentity => ({
+      dev: info.dev.toString(),
+      ino: info.ino.toString(),
+      birthtimeNs: info.birthtimeNs > 0n ? info.birthtimeNs.toString() : undefined,
+    })
+    const configuredIdentity = toIdentity(configuredInfo)
+    const canonicalIdentity = toIdentity(canonicalInfo)
+    if (!folderIdentitiesEqual(configuredIdentity, canonicalIdentity)) throw new TypeError('Project folder identity changed while it was being verified')
+    return { path, identity: canonicalIdentity }
   }
 
-  private async verifyFolderIdentity(pathValue: string, expected?: FolderIdentity): Promise<string | undefined> {
+  private async verifyFolderIdentity(pathValue: string, expected?: FolderIdentity, grantedAt?: string): Promise<VerifiedFolderIdentity | undefined> {
     if (!expected) return undefined
     try {
       const current = await this.captureFolderIdentity(pathValue)
-      return current.identity.dev === expected.dev && current.identity.ino === expected.ino ? current.path : undefined
+      return isSameFolderIdentity(expected, current.identity, grantedAt) ? current : undefined
     } catch { return undefined }
+  }
+
+  /**
+   * Refreshes only still-present grants whose persisted identity is exactly the
+   * one that was verified. A concurrent removal or re-grant cannot be undone.
+   */
+  private async persistFolderIdentityRefreshes(
+    refreshes: FolderIdentityRefresh[],
+    authorizationRevision: number,
+  ): Promise<Set<string>> {
+    if (!refreshes.length || authorizationRevision !== this.authorizationRevision) return new Set()
+    return this.store.update((state) => {
+      if (authorizationRevision !== this.authorizationRevision) return new Set<string>()
+      const refreshed = new Set<string>()
+      for (const refresh of refreshes) {
+        const project = state.projects.find((item) => item.harness === this.harness && item.folders.some((folder) => resolve(folder) === refresh.configured))
+        const storedKey = project?.folderIdentities?.[refresh.configured] ? refresh.configured : refresh.canonical
+        const stored = project?.folderIdentities?.[storedKey]
+        if (!project || !stored) continue
+        if (folderIdentitiesEqual(stored, refresh.current)) {
+          refreshed.add(refresh.configured)
+          continue
+        }
+        if (!folderIdentitiesEqual(stored, refresh.expected)) continue
+        project.folderIdentities = { ...project.folderIdentities, [storedKey]: refresh.current }
+        refreshed.add(refresh.configured)
+      }
+      return refreshed
+    })
   }
 
   /**
@@ -66,14 +155,14 @@ export class ProjectService {
    * when the on-disk identity still matches the grant.
    */
   private async resolveFolderAuthorization(
-    project: Pick<PersistedProject, 'folderIdentities'>,
+    project: Pick<PersistedProject, 'folderIdentities' | 'createdAt'>,
     folder: string,
-  ): Promise<{ configured: string; canonical: string; expected?: FolderIdentity; verified?: string }> {
+  ): Promise<{ configured: string; canonical: string; expected?: FolderIdentity; verified?: VerifiedFolderIdentity }> {
     const configured = resolve(folder)
     let canonical = configured
     try { canonical = await requireExistingDirectory(configured, 'project folder') } catch { /* Keep stale lexical path visible. */ }
     const expected = project.folderIdentities?.[configured] ?? project.folderIdentities?.[canonical]
-    const verified = await this.verifyFolderIdentity(configured, expected)
+    const verified = await this.verifyFolderIdentity(configured, expected, project.createdAt)
     return { configured, canonical, expected, verified }
   }
 
@@ -130,6 +219,7 @@ export class ProjectService {
     const records: ProjectRecord[] = []
     const represented = new Set<string>()
     const nextAuthorized = new Map<string, FolderIdentity>()
+    const identityRefreshes: FolderIdentityRefresh[] = []
     const branchTargets: Array<{ record: ProjectRecord; cwd: string }> = []
 
     for (const project of persisted) {
@@ -142,7 +232,10 @@ export class ProjectService {
         represented.add(canonical)
         if (verified && expected) {
           if (configured === resolve(project.primaryFolder)) primaryGranted = true
-          nextAuthorized.set(configured, expected)
+          nextAuthorized.set(configured, verified.identity)
+          if (!folderIdentitiesEqual(expected, verified.identity)) {
+            identityRefreshes.push({ configured, canonical, expected, current: verified.identity })
+          }
         }
       }
       const record: ProjectRecord = {
@@ -155,8 +248,12 @@ export class ProjectService {
       if (primaryGranted) branchTargets.push({ record, cwd: project.primaryFolder })
     }
 
-    // Swap the fully built map in one step; the previous map keeps serving
-    // authorization checks while this refresh was collecting identities.
+    // Persist any legacy/remount identity upgrades before exposing them as
+    // grants. The previous complete map keeps serving while this is in flight.
+    if (authorizationRevision === this.authorizationRevision && identityRefreshes.length) {
+      const refreshed = await this.persistFolderIdentityRefreshes(identityRefreshes, authorizationRevision)
+      for (const refresh of identityRefreshes) if (!refreshed.has(refresh.configured)) nextAuthorized.delete(refresh.configured)
+    }
     if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
 
     for (const projectPath of [...new Set(sessions.map((session) => session.projectPath).filter(Boolean))]) {
@@ -382,12 +479,22 @@ export class ProjectService {
   /** Rebuilds authorization into a fresh map and swaps it in one step. */
   private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
     const nextAuthorized = new Map<string, FolderIdentity>()
+    const identityRefreshes: FolderIdentityRefresh[] = []
     for (const project of this.ownProjects(this.store.snapshot().projects)) {
       for (const folder of project.folders) {
         if (authorizationRevision !== this.authorizationRevision) return
-        const { configured, expected, verified } = await this.resolveFolderAuthorization(project, folder)
-        if (verified && expected) nextAuthorized.set(configured, expected)
+        const { configured, canonical, expected, verified } = await this.resolveFolderAuthorization(project, folder)
+        if (verified && expected) {
+          nextAuthorized.set(configured, verified.identity)
+          if (!folderIdentitiesEqual(expected, verified.identity)) {
+            identityRefreshes.push({ configured, canonical, expected, current: verified.identity })
+          }
+        }
       }
+    }
+    if (authorizationRevision === this.authorizationRevision && identityRefreshes.length) {
+      const refreshed = await this.persistFolderIdentityRefreshes(identityRefreshes, authorizationRevision)
+      for (const refresh of identityRefreshes) if (!refreshed.has(refresh.configured)) nextAuthorized.delete(refresh.configured)
     }
     if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
   }
@@ -451,14 +558,25 @@ export class ProjectService {
       if (this.removalRoots.has(configured)) continue
       const verified = await this.verifyFolderIdentity(configured, expected)
       if (!verified) { authorized.delete(configured); continue }
-      if (this.removalRoots.has(verified)) continue
-      roots.push(verified)
+      if (!folderIdentitiesEqual(expected, verified.identity)) {
+        const refreshed = await this.persistFolderIdentityRefreshes([{
+          configured,
+          canonical: verified.path,
+          expected,
+          current: verified.identity,
+        }], authorizationRevision)
+        if (!refreshed.has(configured)) { authorized.delete(configured); continue }
+        authorized.set(configured, verified.identity)
+      }
+      if (this.removalRoots.has(verified.path)) continue
+      roots.push(verified.path)
     }
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
     if (!authorizedRoot) {
-      if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError('path is not inside an added Prime Work project because its project is being removed')
-      throw new TypeError('path is not inside an added Prime Work project or its folder identity changed')
+      const productName = this.harness === 'omp' ? 'OMP Work' : 'Prime Work'
+      if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError(`path is not inside an added ${productName} project because its project is being removed`)
+      throw new TypeError(`path is not inside an added ${productName} project or its folder identity changed`)
     }
     return authorizedRoot
   }

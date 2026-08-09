@@ -162,13 +162,15 @@ describe('project removal', () => {
     }) })
     await service.list()
 
-    const internal = service as unknown as { verifyFolderIdentity(path: string, expected?: { dev: string; ino: string }): Promise<string | undefined> }
+    const internal = service as unknown as {
+      verifyFolderIdentity(path: string, expected?: { dev: string; ino: string; birthtimeNs?: string }, grantedAt?: string): Promise<{ path: string; identity: { dev: string; ino: string; birthtimeNs?: string } } | undefined>
+    }
     const original = internal.verifyFolderIdentity.bind(service)
     let releaseVerification!: () => void
     let markEntered!: () => void
     const entered = new Promise<void>((resolve) => { markEntered = resolve })
     const release = new Promise<void>((resolve) => { releaseVerification = resolve })
-    internal.verifyFolderIdentity = async (path, expected) => { markEntered(); await release; return original(path, expected) }
+    internal.verifyFolderIdentity = async (path, expected, grantedAt) => { markEntered(); await release; return original(path, expected, grantedAt) }
 
     const pendingAuthorization = service.authorizeCwd(folder)
     await entered

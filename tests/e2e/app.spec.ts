@@ -104,7 +104,11 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
   ].join('\n'))
   const identity = (path: string) => {
     const info = lstatSync(path, { bigint: true })
-    return { dev: info.dev.toString(), ino: info.ino.toString() }
+    return {
+      dev: info.dev.toString(),
+      ino: info.ino.toString(),
+      birthtimeNs: info.birthtimeNs > 0n ? info.birthtimeNs.toString() : undefined,
+    }
   }
   writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
     version: 1,

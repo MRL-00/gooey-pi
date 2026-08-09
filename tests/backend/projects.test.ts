@@ -1,4 +1,5 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { lstat, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -7,7 +8,15 @@ import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
-const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => { const info = lstatSync(path, { bigint: true }); return [realpathSync(path), { dev: info.dev.toString(), ino: info.ino.toString() }] }))
+function identity(path: string): { dev: string; ino: string; birthtimeNs?: string } {
+  const info = lstatSync(path, { bigint: true })
+  return {
+    dev: info.dev.toString(),
+    ino: info.ino.toString(),
+    birthtimeNs: info.birthtimeNs > 0n ? info.birthtimeNs.toString() : undefined,
+  }
+}
+const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => [realpathSync(path), identity(path)]))
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
 function setup(): { root: string; service: ProjectService; store: JsonStateStore } {
@@ -84,6 +93,100 @@ describe('ProjectService file listing', () => {
 
     expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'README.md', type: 'file' }], skipped: 0 })
     expect(store.snapshot().projects[0].folderIdentities).toEqual(identities(root))
+  })
+
+  it('upgrades a legacy grant after a remount renumbers the filesystem device', async () => {
+    const { root, service, store } = setup()
+    const current = identity(root)
+    expect(current.birthtimeNs).toBeDefined()
+    const legacy = { dev: (BigInt(current.dev) + 1n).toString(), ino: current.ino }
+    await store.update((state) => { state.projects.push({
+      id: 'legacy-remount', harness: 'prime', name: 'Legacy remount', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: { [realpathSync(root)]: legacy },
+    }) })
+
+    await expect(service.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+    expect(store.snapshot().projects[0].folderIdentities?.[realpathSync(root)]).toEqual(current)
+  })
+
+  it('does not migrate a legacy cross-device identity when the folder postdates the grant', async () => {
+    const { root, service, store } = setup()
+    const current = identity(root)
+    expect(current.birthtimeNs).toBeDefined()
+    const legacy = { dev: (BigInt(current.dev) + 1n).toString(), ino: current.ino }
+    await store.update((state) => { state.projects.push({
+      id: 'legacy-replacement', harness: 'prime', name: 'Legacy replacement', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: new Date(0).toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: { [realpathSync(root)]: legacy },
+    }) })
+
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+    expect(store.snapshot().projects[0].folderIdentities?.[realpathSync(root)]).toEqual(legacy)
+  })
+
+  it('does not migrate a legacy same-device identity when the folder postdates the grant', async () => {
+    const { root, service, store } = setup()
+    const current = identity(root)
+    expect(current.birthtimeNs).toBeDefined()
+    const legacy = { dev: current.dev, ino: current.ino }
+    await store.update((state) => { state.projects.push({
+      id: 'legacy-same-device-replacement', harness: 'prime', name: 'Legacy same-device replacement', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: new Date(0).toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: { [realpathSync(root)]: legacy },
+    }) })
+
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+    expect(store.snapshot().projects[0].folderIdentities?.[realpathSync(root)]).toEqual(legacy)
+  })
+
+  it('rejects a project folder swapped while its canonical path is being resolved', async () => {
+    const { root, store } = setup()
+    const original = `${root}-original`
+    const replacement = `${root}-replacement`
+    mkdirSync(replacement)
+    let swapped = false
+    const service = new ProjectService(store, () => null, 'prime', {
+      lstat: (path) => lstat(path, { bigint: true }),
+      realpath: async (path) => {
+        if (!swapped) {
+          swapped = true
+          renameSync(root, original)
+          symlinkSync(replacement, root, 'dir')
+        }
+        return realpath(path)
+      },
+    })
+    const captureFolderIdentity = (service as unknown as {
+      captureFolderIdentity(path: string): Promise<unknown>
+    }).captureFolderIdentity.bind(service)
+
+    await expect(captureFolderIdentity(root)).rejects.toThrow(/identity changed while it was being verified/)
+  })
+
+  it('keeps a fingerprinted grant across a filesystem device renumber', async () => {
+    const { root, service, store } = setup()
+    const current = identity(root)
+    expect(current.birthtimeNs).toBeDefined()
+    const beforeRemount = { ...current, dev: (BigInt(current.dev) + 1n).toString() }
+    await store.update((state) => { state.projects.push({
+      id: 'fingerprinted-remount', harness: 'prime', name: 'Fingerprinted remount', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: { [realpathSync(root)]: beforeRemount },
+    }) })
+
+    await expect(service.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+    expect(store.snapshot().projects[0].folderIdentities?.[realpathSync(root)]).toEqual(current)
+  })
+
+  it('rejects a same-inode folder whose persisted birth time does not match', async () => {
+    const { root, service, store } = setup()
+    const current = identity(root)
+    expect(current.birthtimeNs).toBeDefined()
+    const replaced = { ...current, birthtimeNs: (BigInt(current.birthtimeNs!) + 1n).toString() }
+    await store.update((state) => { state.projects.push({
+      id: 'replaced', harness: 'prime', name: 'Replaced', path: root, folders: [root], primaryFolder: root,
+      pinned: false, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), folderIdentities: { [realpathSync(root)]: replaced },
+    }) })
+
+    await expect(service.authorizeCwd(root)).rejects.toThrow(/identity changed/)
+    expect(store.snapshot().projects[0].folderIdentities?.[realpathSync(root)]).toEqual(replaced)
   })
 
   it('revokes a grant when its directory is replaced by a symlink, including after restart', async () => {
@@ -173,6 +276,37 @@ describe('ProjectService file listing', () => {
 })
 
 describe('ProjectService harness scoping', () => {
+  it('repairs remounted project grants for both harnesses without crossing scopes', async () => {
+    const { root, service: primeService, store } = setup()
+    const ompRoot = `${root}-omp`
+    mkdirSync(ompRoot)
+    const ompService = new ProjectService(store, () => null, 'omp')
+    const primeCurrent = identity(root)
+    const ompCurrent = identity(ompRoot)
+    expect(primeCurrent.birthtimeNs).toBeDefined()
+    expect(ompCurrent.birthtimeNs).toBeDefined()
+    const now = new Date().toISOString()
+    await store.update((state) => { state.projects.push(
+      {
+        id: 'prime-remount', harness: 'prime', name: 'Prime', path: root, folders: [root], primaryFolder: root,
+        pinned: false, createdAt: now, lastOpenedAt: now,
+        folderIdentities: { [realpathSync(root)]: { ...primeCurrent, dev: (BigInt(primeCurrent.dev) + 1n).toString() } },
+      },
+      {
+        id: 'omp-remount', harness: 'omp', name: 'OMP', path: ompRoot, folders: [ompRoot], primaryFolder: ompRoot,
+        pinned: false, createdAt: now, lastOpenedAt: now,
+        folderIdentities: { [realpathSync(ompRoot)]: { ...ompCurrent, dev: (BigInt(ompCurrent.dev) + 1n).toString() } },
+      },
+    ) })
+
+    await expect(primeService.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+    await expect(ompService.authorizeCwd(ompRoot)).resolves.toBe(realpathSync(ompRoot))
+    await expect(primeService.authorizeCwd(ompRoot)).rejects.toThrow(/Prime Work/)
+    await expect(ompService.authorizeCwd(root)).rejects.toThrow(/OMP Work/)
+    expect(store.snapshot().projects.find((project) => project.id === 'prime-remount')?.folderIdentities?.[realpathSync(root)]).toEqual(primeCurrent)
+    expect(store.snapshot().projects.find((project) => project.id === 'omp-remount')?.folderIdentities?.[realpathSync(ompRoot)]).toEqual(ompCurrent)
+  })
+
   it('never authorizes a cwd through the other harness\'s grants', async () => {
     const { root, service: primeService, store } = setup()
     const ompRoot = `${root}-omp`
@@ -187,7 +321,7 @@ describe('ProjectService harness scoping', () => {
     await expect(primeService.authorizeCwd(root)).resolves.toBe(realpathSync(root))
     await expect(primeService.authorizeCwd(ompRoot)).rejects.toThrow(/not inside an added Prime Work project/)
     await expect(ompService.authorizeCwd(ompRoot)).resolves.toBe(realpathSync(ompRoot))
-    await expect(ompService.authorizeCwd(root)).rejects.toThrow(/not inside an added Prime Work project/)
+    await expect(ompService.authorizeCwd(root)).rejects.toThrow(/not inside an added OMP Work project/)
   })
 
   it('lists, tags, and removes only its own harness\'s records against the shared store', async () => {

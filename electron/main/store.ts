@@ -6,7 +6,12 @@ import { dirname, isAbsolute } from 'node:path'
 import { PRIME_THINKING_LEVELS, type AppSettings, type HarnessId, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
 import { isRecord } from './validation'
 
-export interface FolderIdentity { dev: string; ino: string }
+export interface FolderIdentity {
+  dev: string
+  ino: string
+  /** Stable across filesystem device-number changes caused by a remount. */
+  birthtimeNs?: string
+}
 
 export interface PersistedProject extends Omit<ProjectRecord, 'sessionCount' | 'gitBranch' | 'inferred'> {
   folderIdentities?: Record<string, FolderIdentity>
@@ -80,7 +85,13 @@ function parseProject(value: unknown): PersistedProject | null {
   const folderIdentities: Record<string, FolderIdentity> = {}
   if (isRecord(value.folderIdentities)) {
     for (const [path, identity] of Object.entries(value.folderIdentities)) {
-      if (isRecord(identity) && typeof identity.dev === 'string' && typeof identity.ino === 'string') folderIdentities[path] = { dev: identity.dev, ino: identity.ino }
+      if (isRecord(identity) && typeof identity.dev === 'string' && typeof identity.ino === 'string') {
+        folderIdentities[path] = {
+          dev: identity.dev,
+          ino: identity.ino,
+          birthtimeNs: typeof identity.birthtimeNs === 'string' && /^\d{1,40}$/.test(identity.birthtimeNs) ? identity.birthtimeNs : undefined,
+        }
+      }
     }
   }
   return {
