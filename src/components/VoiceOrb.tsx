@@ -38,6 +38,21 @@ function toolRequest(name: unknown, args: unknown): VoiceToolRequest | null {
   return null
 }
 
+function boundedErrorField(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 500) : ''
+}
+
+function realtimeErrorMessage(message: Record<string, unknown>): string {
+  if (!message.error || typeof message.error !== 'object' || Array.isArray(message.error)) return 'The realtime voice session reported an error.'
+  const error = message.error as Record<string, unknown>
+  const detail = boundedErrorField(error.message)
+  const code = boundedErrorField(error.code)
+  const param = boundedErrorField(error.param)
+  const eventId = boundedErrorField(error.event_id)
+  if (!detail) return 'The realtime voice session reported an error.'
+  return `Realtime error${code ? ` (${code})` : ''}: ${detail}${param ? ` [${param}]` : ''}${eventId ? ` [event ${eventId}]` : ''}`
+}
+
 export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
@@ -49,30 +64,52 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbPro
   const channelRef = useRef<RTCDataChannel | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
-  const handledCallsRef = useRef(new Set<string>())
   const harnessRef = useRef(harness)
 
   useEffect(() => {
     let active = true
+    const handledCalls = new Set<string>()
+    let responseActive = false
+    let pendingToolCalls = 0
+    let continuationPending = false
+    let pendingResponseCreateEventId: string | null = null
+    let clientEventSequence = 0
     const peer = new RTCPeerConnection()
     const channel = peer.createDataChannel('oai-events')
     channelRef.current = channel
 
+    const continueAfterTools = () => {
+      if (!active || channel.readyState !== 'open' || responseActive || pendingToolCalls > 0 || !continuationPending) return
+      continuationPending = false
+      responseActive = true
+      pendingResponseCreateEventId = `gooeypi-response-${Date.now().toString(36)}-${++clientEventSequence}`
+      channel.send(JSON.stringify({ type: 'response.create', event_id: pendingResponseCreateEventId }))
+    }
+
+    const sendToolOutput = (callId: string, output: string) => {
+      if (!active) return
+      pendingToolCalls = Math.max(0, pendingToolCalls - 1)
+      if (channel.readyState === 'open') {
+        channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output } }))
+        continuationPending = true
+      }
+      continueAfterTools()
+    }
+
     const execute = async (callId: string, name: unknown, rawArguments: unknown) => {
-      if (handledCallsRef.current.has(callId)) return
+      if (handledCalls.has(callId)) return
       let args: unknown
       try { args = typeof rawArguments === 'string' ? JSON.parse(rawArguments) : rawArguments } catch { args = null }
       const request = toolRequest(name, args)
       if (!request) return
-      handledCallsRef.current.add(callId)
+      handledCalls.add(callId)
+      pendingToolCalls += 1
       setOrbState('thinking')
       if (request.name === 'start_task') setError('')
       try {
         const result = await voice.executeTool(request, harnessRef.current)
-        if (!active || channel.readyState !== 'open') return
-        channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: result.output } }))
-        channel.send(JSON.stringify({ type: 'response.create' }))
-        if (result.task) {
+        sendToolOutput(callId, result.output)
+        if (active && result.task) {
           setTaskReceipt(result.task)
           setTaskOpened(false)
           void onTaskStarted(result.task).then(() => {
@@ -83,14 +120,12 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbPro
           })
         }
       } catch (failure) {
-        if (!active || channel.readyState !== 'open') return
         const message = failure instanceof Error ? failure.message : 'Voice tool failed'
-        if (request.name === 'start_task') {
+        if (active && request.name === 'start_task') {
           setTaskReceipt(null)
           setError(`Task was not started: ${message}`)
         }
-        channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify({ error: message }) } }))
-        channel.send(JSON.stringify({ type: 'response.create' }))
+        sendToolOutput(callId, JSON.stringify({ error: message }))
       }
     }
 
@@ -101,15 +136,46 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted }: VoiceOrbPro
       if (!payload || typeof payload !== 'object') return
       const message = payload as Record<string, unknown>
       if (message.type === 'input_audio_buffer.speech_started') setOrbState('user-speaking')
-      else if (message.type === 'input_audio_buffer.speech_stopped' || message.type === 'response.created') setOrbState('thinking')
+      else if (message.type === 'input_audio_buffer.speech_stopped') setOrbState('thinking')
+      else if (message.type === 'response.created') {
+        responseActive = true
+        setOrbState('thinking')
+      }
       else if (message.type === 'response.audio.delta' || message.type === 'output_audio_buffer.started') setOrbState('agent-speaking')
-      else if (message.type === 'output_audio_buffer.stopped' || message.type === 'response.done') setOrbState('listening')
+      else if (message.type === 'output_audio_buffer.stopped') setOrbState('listening')
+      else if (message.type === 'response.done') {
+        responseActive = false
+        pendingResponseCreateEventId = null
+        setOrbState('listening')
+        continueAfterTools()
+      }
       else if (message.type === 'response.function_call_arguments.done' && typeof message.call_id === 'string') void execute(message.call_id, message.name, message.arguments)
       else if (message.type === 'response.output_item.done' && message.item && typeof message.item === 'object') {
         const item = message.item as Record<string, unknown>
         if (item.type === 'function_call' && typeof item.call_id === 'string') void execute(item.call_id, item.name, item.arguments)
       } else if (message.type === 'error') {
-        setError('The realtime voice session reported an error.')
+        const detail = realtimeErrorMessage(message)
+        const realtimeError = message.error && typeof message.error === 'object' && !Array.isArray(message.error) ? message.error as Record<string, unknown> : {}
+        const triggeringEventId = boundedErrorField(realtimeError.event_id)
+        const correlatedResponseCreate = Boolean(triggeringEventId && triggeringEventId === pendingResponseCreateEventId)
+        console.error('[voice] realtime error', {
+          type: boundedErrorField(realtimeError.type),
+          code: boundedErrorField(realtimeError.code),
+          message: boundedErrorField(realtimeError.message),
+          param: boundedErrorField(realtimeError.param),
+          event_id: triggeringEventId,
+        })
+        if (correlatedResponseCreate) {
+          pendingResponseCreateEventId = null
+          if (boundedErrorField(realtimeError.code) === 'conversation_already_has_active_response') {
+            responseActive = true
+            continuationPending = true
+          } else {
+            responseActive = false
+            continuationPending = false
+          }
+        }
+        setError((current) => current.startsWith('Task was not started:') ? current : detail)
         setOrbState('error')
       }
     })
