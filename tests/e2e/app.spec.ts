@@ -114,7 +114,7 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
       pinned: false, createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z',
       folderIdentities: { [canonicalProject]: identity(canonicalProject), [canonicalSecondary]: identity(canonicalSecondary) },
     }],
-    settings: { browserHome: 'about:blank', telemetry: true },
+    settings: { activeHarness: 'prime', browserHome: 'about:blank', telemetry: true },
     archivedSessions: [],
     dismissedProjectPaths: [],
   }))
@@ -427,9 +427,9 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(desktopPet.locator('.pet-sprite img')).toBeVisible()
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await page.getByRole('button', { name: 'Pets', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Pets' })).toBeVisible()
-    await expect(page.getByRole('radio', { name: /GooeyPi/ })).toBeChecked()
-    await expect(page.getByRole('radio', { name: /Orb/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Pets', exact: true })).toBeVisible()
+    await expect(page.getByRole('radio', { name: /^GooeyPi Built/ })).toBeChecked()
+    await expect(page.getByRole('radio', { name: /^Orb Built/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex Pets' })).toBeVisible()
   })
 
@@ -771,6 +771,8 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('keeps transcript text from showing through the composer disclaimer', async () => {
+    await page.getByRole('button', { name: 'Toggle inspector' }).click()
+    await expect(page.locator('.composer-note')).toBeVisible()
     const colors = await page.locator('.composer-note').evaluate((node) => {
       const probe = document.createElement('div')
       probe.style.background = 'var(--canvas)'
