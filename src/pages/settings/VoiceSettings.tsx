@@ -114,7 +114,7 @@ export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps)
       {serviceState === 'restart-required' ? (
         <div className="voice-bridge-notice" role="status">
           <RefreshCw size={17} />
-          <span><strong>Restart GUI Pie to finish enabling Voice</strong><small>This app window is connected to an older desktop process without the Voice handlers. Quit GUI Pie completely with ⌘Q, then reopen it.</small></span>
+          <span><strong>Restart GooeyPi to finish enabling Voice</strong><small>This app window is connected to an older desktop process without the Voice handlers. Quit GooeyPi completely with ⌘Q, then reopen it.</small></span>
         </div>
       ) : null}
 
@@ -165,7 +165,7 @@ export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps)
           {settings.voiceTranscriptionProvider === 'deepgram' ? <ModelSelect label="Dictation model" description="Choose a general or audio-specific Nova model." value={settings.voiceDeepgramTranscriptionModel} options={DEEPGRAM_MODELS} onChange={(value) => update('voiceDeepgramTranscriptionModel', value)} /> : null}
           {settings.voiceTranscriptionProvider === 'local-whisper' ? (
             <div className="voice-local-setup">
-              <span className="voice-local-setup__intro"><Laptop size={15} /><span><strong>Local whisper.cpp setup</strong><small>These are file paths because GUI Pie runs your installed whisper.cpp directly. Hosted services do not need them.</small></span></span>
+              <span className="voice-local-setup__intro"><Laptop size={15} /><span><strong>Local whisper.cpp setup</strong><small>These are file paths because GooeyPi runs your installed whisper.cpp directly. Hosted services do not need them.</small></span></span>
               <PathInput label="whisper-cli executable" description="Path to the whisper.cpp command-line program." placeholder="/opt/homebrew/bin/whisper-cli" value={settings.voiceLocalWhisperExecutable} onCommit={(value) => update('voiceLocalWhisperExecutable', value)} />
               <PathInput label="GGML model file" description="Path to the downloaded whisper.cpp model." placeholder="/path/to/ggml-large-v3-turbo.bin" value={settings.voiceLocalWhisperModel} onCommit={(value) => update('voiceLocalWhisperModel', value)} />
             </div>
@@ -196,7 +196,7 @@ export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps)
       </section>
 
       {credential ? <Modal title={`Connect ${CREDENTIALS.find((item) => item.id === credential)?.name ?? credential}`} onClose={closeCredential} footer={<><button type="button" className="button" disabled={busy} onClick={closeCredential}>Cancel</button><button type="button" className="button button--primary" disabled={busy || !apiKey.trim()} onClick={() => void saveCredential()}>{busy ? 'Saving…' : 'Save API key'}</button></>}>
-        <p className="modal-intro">Paste the provider API key. GUI Pie encrypts it in the desktop process and never reads it back into this screen.</p>
+        <p className="modal-intro">Paste the provider API key. GooeyPi encrypts it in the desktop process and never reads it back into this screen.</p>
         {failure ? <p className="settings-error" role="alert">{failure}</p> : null}
         <label className="field"><span>API key</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} placeholder="Paste API key" onChange={(event) => setApiKey(event.target.value)} /></label>
       </Modal> : null}

@@ -39,7 +39,7 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
     timer.unref()
     const write = (value: Record<string, unknown>): void => {
       try { socket.write(`${JSON.stringify(value)}\n`) }
-      catch { finish(new Error('GUI Pie could not write to the Prime Agent daemon')) }
+      catch { finish(new Error('GooeyPi could not write to the Prime Agent daemon')) }
     }
     const decoder = new StrictJsonlDecoder((line) => {
       let value: unknown
@@ -81,13 +81,13 @@ export async function queueDaemonFollowUp(socketPath: string, activeSessionId: s
         command: { id: ackId, type: 'ack_result', commandId },
       }
       try { socket.end(`${JSON.stringify(ack)}\n`, () => finish()) }
-      catch { finish(new Error('GUI Pie could not acknowledge the queued reply')) }
+      catch { finish(new Error('GooeyPi could not acknowledge the queued reply')) }
     }, DAEMON_FRAME_LIMIT_BYTES)
 
     socket.on('data', (chunk: Buffer) => {
       try { decoder.push(chunk) } catch { finish(new Error('Prime Agent daemon response exceeded its limit')) }
     })
-    socket.once('error', () => finish(new Error('GUI Pie could not connect to the Prime Agent daemon')))
+    socket.once('error', () => finish(new Error('GooeyPi could not connect to the Prime Agent daemon')))
     socket.once('close', () => { if (!settled) finish(new Error('Prime Agent daemon closed before queuing the reply')) })
   })
 }

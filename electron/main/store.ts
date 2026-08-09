@@ -283,7 +283,7 @@ export class JsonStateStore {
       this.state = defaultState()
       try {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          console.error(`GUI Pie desktop state was reset and backed up: ${error instanceof Error ? error.message : String(error)}`)
+          console.error(`GooeyPi desktop state was reset and backed up: ${error instanceof Error ? error.message : String(error)}`)
           renameSync(filePath, `${filePath}.corrupt-${Date.now()}`)
         }
       } catch { /* The valid in-memory fallback remains usable. */ }

@@ -5,7 +5,7 @@ import { SettingsToggle } from './SettingsToggle'
 export function GeneralSettings({ settings, onUpdate }: SettingsSectionProps) {
   return (
     <>
-      <header><h1>General</h1><p>Choose how GUI Pie behaves across projects.</p></header>
+      <header><h1>General</h1><p>Choose how GooeyPi behaves across projects.</p></header>
       <section className="settings-group">
         <h2>Window</h2>
         <SettingsToggle checked={settings.sidebarOpen} onChange={(sidebarOpen) => { void onUpdate({ sidebarOpen }) }} label="Show project sidebar" description="Keep projects and sessions visible when the app opens." />

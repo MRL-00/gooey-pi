@@ -141,13 +141,13 @@ export class PrimeProviderService {
 
     const warnings = [
       snapshot.models.length > models.length
-        ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; GUI Pie loaded the first ${models.length.toLocaleString()} valid entries.`
+        ? `Prime Agent returned ${snapshot.models.length.toLocaleString()} models; GooeyPi loaded the first ${models.length.toLocaleString()} valid entries.`
         : undefined,
       validProviderIds.length > providers.length
-        ? `Prime Agent returned ${validProviderIds.length.toLocaleString()} providers; GUI Pie loaded the first ${providers.length.toLocaleString()} sorted by name.`
+        ? `Prime Agent returned ${validProviderIds.length.toLocaleString()} providers; GooeyPi loaded the first ${providers.length.toLocaleString()} sorted by name.`
         : undefined,
       fallbackProviders.includes('openai-codex')
-        ? 'ChatGPT subscription model discovery was unavailable or incomplete; GUI Pie is showing Prime Agent’s configured Codex catalogue.'
+        ? 'ChatGPT subscription model discovery was unavailable or incomplete; GooeyPi is showing Prime Agent’s configured Codex catalogue.'
         : undefined,
       executableDiscoveryWarning,
       this.registry.getError()?.slice(0, 4_000),
@@ -170,7 +170,7 @@ export class PrimeProviderService {
     const model = catalog.models.find((candidate) => candidate.key === key)
     if (!model) throw new Error('Model was not found in the Prime Agent catalog')
     const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
-    if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled in GUI Pie`)
+    if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled in GooeyPi`)
     if (!model.available) throw new Error(`Provider ${model.provider} is not configured for ${model.name}`)
     return model
   }

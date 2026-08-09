@@ -310,10 +310,10 @@ printf 'mutated by filter\n'
     const diff = await service.diff(cwd, 'file.txt', false)
     expect(diff.truncated).toBe(true)
     expect(diff.error).toMatch(/lines.*truncated/i)
-    expect(diff.text).toContain('[GUI Pie: diff truncated')
+    expect(diff.text).toContain('[GooeyPi: diff truncated')
     const outputLines = diff.text.split('\n')
     expect(outputLines).toHaveLength(GIT_DIFF_LINE_LIMIT + 1)
-    expect(outputLines[outputLines.length - 1]).toContain('[GUI Pie: diff truncated')
+    expect(outputLines[outputLines.length - 1]).toContain('[GooeyPi: diff truncated')
   }, 30_000)
 
   it('lists and creates linked worktrees with bounded porcelain parsing', async () => {

@@ -267,7 +267,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
           if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
-            throw new Error('Image attachments cannot be queued while this session is active outside GUI Pie. Wait for it to finish, then try again.')
+            throw new Error('Image attachments cannot be queued while this session is active outside GooeyPi. Wait for it to finish, then try again.')
           }
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await followUpExternalSession(selected.sessionFile)) {

@@ -204,13 +204,13 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
 
     const warnings = [
       seenKeys.size > models.length
-        ? `OMP returned ${seenKeys.size.toLocaleString()} models; GUI Pie loaded the first ${models.length.toLocaleString()}.`
+        ? `OMP returned ${seenKeys.size.toLocaleString()} models; GooeyPi loaded the first ${models.length.toLocaleString()}.`
         : undefined,
       providerIds.length > providers.length
-        ? `OMP returned ${providerIds.length.toLocaleString()} providers; GUI Pie loaded the first ${providers.length.toLocaleString()} sorted by name.`
+        ? `OMP returned ${providerIds.length.toLocaleString()} providers; GooeyPi loaded the first ${providers.length.toLocaleString()} sorted by name.`
         : undefined,
       invalidEntries > 0
-        ? `OMP returned ${invalidEntries.toLocaleString()} model entries GUI Pie could not validate; they were skipped.`
+        ? `OMP returned ${invalidEntries.toLocaleString()} model entries GooeyPi could not validate; they were skipped.`
         : undefined,
     ].filter((warning): warning is string => Boolean(warning))
 

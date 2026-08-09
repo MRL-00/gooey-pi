@@ -22,7 +22,7 @@ export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, o
     {id:'browser',label:'Toggle browser',detail:'Open the in-app browser',shortcut:'⌘⇧B',icon:<BrowserGlobe size={14}/>,run:onOpenBrowser},
     {id:'terminal',label:'Toggle terminal',detail:'Open a project shell',shortcut:'⌘J',icon:<Terminal size={14}/>,run:onToggleTerminal},
     {id:'sidebar',label:'Toggle sidebar',detail:'Show or hide project navigation',shortcut:'⌘B',icon:<LayoutPanelLeft size={14}/>,run:onToggleSidebar},
-    {id:'settings',label:'Open Settings',detail:'Configure GUI Pie',shortcut:'⌘,',icon:<Settings size={14}/>,run:()=>onNavigate('settings')},
+    {id:'settings',label:'Open Settings',detail:'Configure GooeyPi',shortcut:'⌘,',icon:<Settings size={14}/>,run:()=>onNavigate('settings')},
   ]
   const visible=commands.filter((command)=>!primeOnly.has(command.id)&&`${command.label} ${command.detail}`.toLowerCase().includes(query.toLowerCase()))
   useEffect(()=>{if(open){setQuery('');setActive(0);requestAnimationFrame(()=>inputRef.current?.focus())}},[open])
