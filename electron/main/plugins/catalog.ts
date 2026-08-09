@@ -121,6 +121,10 @@ function discoveryExhausted(budget: DiscoveryBudget): boolean {
     || budget.entries >= MAX_DISCOVERY_ENTRIES
 }
 
+function runtimePluginEnabled(value: unknown): boolean {
+  return !isRecord(value) || value.enabled !== false
+}
+
 function addCandidate(candidate: Candidate, output: Candidate[], budget: DiscoveryBudget): void {
   if (budget.candidates >= MAX_DISCOVERY_CANDIDATES) return
   const key = `${candidate.kind}:${candidate.path}`
@@ -279,6 +283,19 @@ async function collectOmpPluginPackages(
 ): Promise<void> {
   const nodeModules = join(root, 'node_modules')
   const packagePaths: Array<{ name: string; path: string }> = []
+  let runtimePlugins: Record<string, unknown> = {}
+  let disabledPlugins = new Set<string>()
+  try {
+    const lockFile = await readAtMost(join(root, 'omp-plugins.lock.json'), MAX_SETTINGS_BYTES)
+    const lock = lockFile.truncated ? undefined : JSON.parse(lockFile.content) as unknown
+    if (isRecord(lock) && isRecord(lock.plugins)) runtimePlugins = lock.plugins
+  } catch { /* missing or invalid runtime state cannot authorize extra packages */ }
+  if (location === 'project') {
+    try {
+      const overrides = JSON.parse(await readSmall(join(dirname(root), 'plugin-overrides.json'))) as unknown
+      if (isRecord(overrides) && Array.isArray(overrides.disabled)) disabledPlugins = new Set(overrides.disabled.filter((name): name is string => typeof name === 'string'))
+    } catch { /* no project overrides */ }
+  }
   const collectLevel = async (directory: string, scope?: string): Promise<void> => {
     let entries: Dir
     try { entries = await opendir(directory); budget.directories += 1 } catch { return }
@@ -298,22 +315,32 @@ async function collectOmpPluginPackages(
     if (records.length >= MAX_DISCOVERY_RECORDS || discoveryExhausted(budget)) break
     let packageRoot: string
     try { packageRoot = await realpath(item.path) } catch { continue }
-    if (location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, packageRoot))) {
-      // Project plugin symlinks can target arbitrary paths. Show the installed
-      // package name, but do not inspect or reveal content outside the grant.
-      records.push({ id: idFor('package', location, item.name), name: item.name, description: 'OMP project plugin', kind: 'package', location, enabled: true, source: item.name })
+    const itemRuntimeState = isRecord(runtimePlugins[item.name]) ? runtimePlugins[item.name] : undefined
+    const outsideProject = location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, packageRoot))
+    if (outsideProject) {
+      // Marketplace installs commonly point at OMP's cache. A runtime lock
+      // entry proves OMP owns the link; never inspect an arbitrary out-of-grant
+      // project symlink just because it appears under node_modules.
+      if (!itemRuntimeState) continue
+      const enabled = runtimePluginEnabled(itemRuntimeState) && !disabledPlugins.has(item.name)
+      records.push({ id: idFor('package', location, item.name), name: item.name, description: 'OMP project plugin', kind: 'package', location, enabled, source: item.name })
       continue
     }
     let name = item.name
     let description = 'OMP plugin package'
+    let manifest: Record<string, unknown>
     try {
-      const manifest = JSON.parse(await readSmall(join(packageRoot, 'package.json'))) as unknown
-      if (isRecord(manifest)) {
-        if (typeof manifest.name === 'string') name = manifest.name.slice(0, 120)
-        if (typeof manifest.description === 'string') description = manifest.description.slice(0, 500)
-      }
-    } catch { /* retain safe package-directory metadata */ }
-    records.push({ id: idFor('package', location, name), name, description, kind: 'package', location, enabled: true, source: name })
+      const value = JSON.parse(await readSmall(join(packageRoot, 'package.json'))) as unknown
+      if (!isRecord(value)) continue
+      manifest = value
+      if (typeof manifest.name === 'string') name = manifest.name.slice(0, 120)
+      if (typeof manifest.description === 'string') description = manifest.description.slice(0, 500)
+    } catch { continue }
+    const runtimeState = itemRuntimeState ?? (isRecord(runtimePlugins[name]) ? runtimePlugins[name] : undefined)
+    if (!isRecord(manifest.omp) && !isRecord(manifest.pi) && !runtimeState) continue
+    const enabled = runtimePluginEnabled(runtimeState) && !disabledPlugins.has(item.name) && !disabledPlugins.has(name)
+    records.push({ id: idFor('package', location, name), name, description, kind: 'package', location, enabled, source: name })
+    if (!enabled) continue
     const containmentRoots = location === 'project' && safeProjectPath ? [safeProjectPath] : undefined
     await collectDirectory(join(packageRoot, 'skills'), 'skill', location, candidates, budget, { skillRoot: true, containmentRoots })
     await collectDirectory(join(packageRoot, 'prompts'), 'prompt', location, candidates, budget, { containmentRoots })
