@@ -4,6 +4,7 @@ import type { AgentRpcManager } from './agent-rpc'
 import type { GitService } from './git'
 import type { ModelCatalogProvider } from './model-catalog'
 import type { PluginService } from './plugins'
+import type { PetService } from './pets'
 import type { PrimeProviderService } from './providers'
 import type { ProjectService } from './projects'
 import type { SettingsService } from './settings-schedules'
@@ -29,6 +30,7 @@ interface Services {
   schedules: AutomationService
   browser: AgentBrowserService
   voice: VoiceService
+  pets: PetService
   /** OMP-harness counterparts; always constructed, even when the omp CLI is absent. */
   omp: {
     projects: ProjectService
@@ -236,6 +238,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('voice:create-realtime-call', (_event, request) => services.voice.createRealtimeCall(request))
   handle('voice:transcribe', (_event, request) => services.voice.transcribe(request))
   handle('voice:execute-tool', (_event, request, harness) => services.voice.executeTool(request, requireHarness(harness)))
+
+  handle('pets:list', () => services.pets.list())
+  handle('pets:sprite', (_event, id) => services.pets.sprite(id))
 
   handle('terminal:create', (event, options) => services.terminals.create(event.sender, options))
   handle('terminal:bind-session', (event, terminalId, sessionPath) => services.terminals.bindSession(event.sender, terminalId, sessionPath))

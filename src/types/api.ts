@@ -310,6 +310,17 @@ export interface TerminalActiveContext { label: string; content: string; truncat
 export type MessageEnterAction = 'queue' | 'steer'
 export type PromptDeliveryIntent = 'queue' | 'steer'
 
+export interface PetDefinition {
+  /** Stable settings key. Codex pets are namespaced as codex/<folder>. */
+  id: string
+  /** Package manifest id, used to deduplicate bundled and Codex copies. */
+  petId: string
+  displayName: string
+  description: string
+  source: 'built-in' | 'codex'
+  kind: 'orb' | 'spritesheet'
+}
+
 export interface QueuedPrompt {
   id: string
   text: string
@@ -350,6 +361,10 @@ export interface AppSettings {
   activeHarness: HarnessId
   /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
   ompApprovalMode: OmpApprovalMode
+  /** Desktop companion shown above the workspace. */
+  petEnabled: boolean
+  /** Built-in or discovered pet selection id. */
+  petId: string
   /** Speech-to-text path used by the composer microphone. */
   voiceTranscriptionProvider: VoiceTranscriptionProvider
   /** Provider model IDs stay configurable without exposing provider credentials. */
@@ -594,6 +609,10 @@ export interface PrimeWorkApi {
     createRealtimeCall(request: VoiceRealtimeCallRequest): Promise<string>
     transcribe(request: VoiceTranscriptionRequest): Promise<string>
     executeTool(request: VoiceToolRequest, harness: HarnessId): Promise<VoiceToolResult>
+  }
+  pets: {
+    list(): Promise<PetDefinition[]>
+    sprite(id: string): Promise<string | null>
   }
   terminal: {
     create(options: TerminalSpawnOptions): Promise<{ terminalId: string; shell: string }>

@@ -28,4 +28,14 @@ describe('preload project worktree bridge', () => {
       ['projects:create-worktree', '/repo', 'feature', 'omp'],
     ])
   })
+
+  it('exposes fixed read-only pet IPC calls', async () => {
+    const api = electronMocks.api as { pets: { list(): Promise<unknown>; sprite(id: string): Promise<unknown> } }
+    await api.pets.list()
+    await api.pets.sprite('gooey-pi')
+    expect(electronMocks.ipcRenderer.invoke.mock.calls).toEqual([
+      ['pets:list'],
+      ['pets:sprite', 'gooey-pi'],
+    ])
+  })
 })

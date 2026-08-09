@@ -44,6 +44,8 @@ export function defaultSettings(): AppSettings {
     ompDisabledProviders: [],
     activeHarness: 'omp',
     ompApprovalMode: 'inherit',
+    petEnabled: true,
+    petId: 'gooey-pi',
     voiceTranscriptionProvider: 'openai-live',
     voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
     voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',
@@ -123,6 +125,8 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
       ? value.activeHarness
       : legacyState ? 'prime' : defaults.activeHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
+    petEnabled: typeof value.petEnabled === 'boolean' ? value.petEnabled : defaults.petEnabled,
+    petId: boundedString(value.petId, 128) && /^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(value.petId) ? value.petId : defaults.petId,
     voiceTranscriptionProvider: value.voiceTranscriptionProvider === 'openai-live' || value.voiceTranscriptionProvider === 'openai' || value.voiceTranscriptionProvider === 'groq' || value.voiceTranscriptionProvider === 'deepgram' || value.voiceTranscriptionProvider === 'local-whisper' ? value.voiceTranscriptionProvider : defaults.voiceTranscriptionProvider,
     voiceOpenAiLiveTranscriptionModel: boundedString(value.voiceOpenAiLiveTranscriptionModel, 128) ? value.voiceOpenAiLiveTranscriptionModel : defaults.voiceOpenAiLiveTranscriptionModel,
     voiceOpenAiTranscriptionModel: boundedString(value.voiceOpenAiTranscriptionModel, 128) ? value.voiceOpenAiTranscriptionModel : defaults.voiceOpenAiTranscriptionModel,

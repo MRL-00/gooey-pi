@@ -404,7 +404,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
@@ -419,6 +419,18 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(menu.getByRole('menuitemradio', { name: /OMP Work/ })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(menu).toHaveCount(0)
+  })
+
+  test('shows the bundled GooeyPi pet and exposes Orb and Codex Pets settings', async () => {
+    const desktopPet = page.getByRole('button', { name: /GooeyPi, draggable GooeyPi pet/ })
+    await expect(desktopPet).toBeVisible()
+    await expect(desktopPet.locator('.pet-sprite img')).toBeVisible()
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Pets', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Pets' })).toBeVisible()
+    await expect(page.getByRole('radio', { name: /GooeyPi/ })).toBeChecked()
+    await expect(page.getByRole('radio', { name: /Orb/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Codex Pets' })).toBeVisible()
   })
 
   test('exposes Voice settings and places both voice controls in their requested positions', async () => {

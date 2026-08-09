@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   activeHarness: 'omp',
   ompApprovalMode: 'inherit',
+  petEnabled: true,
+  petId: 'gooey-pi',
   sidebarOpen: true,
   inspectorOpen: true,
   showFileChangesPopup: true,

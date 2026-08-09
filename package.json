@@ -1,10 +1,10 @@
 {
-  "name": "gui-pie",
+  "name": "gooeypi",
   "version": "0.1.0",
   "private": true,
   "description": "A desktop workspace for OMP and Prime Agent",
   "main": "out/main/index.js",
-  "author": "GUI Pie contributors",
+  "author": "GooeyPi contributors",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -71,8 +71,8 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "app.gui.pie",
-    "productName": "GUI Pie",
+    "appId": "app.gooeypi.desktop",
+    "productName": "GooeyPi",
     "asar": {
       "smartUnpack": false
     },
@@ -91,7 +91,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "GUI Pie uses the microphone for dictation and realtime voice sessions you start."
+        "NSMicrophoneUsageDescription": "GooeyPi uses the microphone for dictation and realtime voice sessions you start."
       },
       "notarize": true,
       "asarUnpack": [
@@ -160,6 +160,10 @@
       {
         "from": "assets/extensions",
         "to": "extensions"
+      },
+      {
+        "from": "assets/pets",
+        "to": "pets"
       }
     ],
     "electronLanguages": [

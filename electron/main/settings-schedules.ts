@@ -45,6 +45,12 @@ export class SettingsService {
         if (value !== 'inherit' && value !== 'always-ask' && value !== 'write' && value !== 'yolo') throw new TypeError('Invalid OMP approval mode')
         return value
       },
+      petEnabled: (value) => requireBoolean(value, 'petEnabled'),
+      petId: (value) => {
+        const id = requireString(value, 'petId', { min: 1, max: 128, trim: true })
+        if (!/^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(id)) throw new TypeError('Invalid pet id')
+        return id
+      },
       voiceTranscriptionProvider: (value) => {
         if (value !== 'openai-live' && value !== 'openai' && value !== 'groq' && value !== 'deepgram' && value !== 'local-whisper') throw new TypeError('Invalid voice transcription provider')
         return value

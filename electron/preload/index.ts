@@ -61,6 +61,10 @@ const api: PrimeWorkApi = {
     transcribe: (request) => ipcRenderer.invoke('voice:transcribe', request),
     executeTool: (request, harness) => ipcRenderer.invoke('voice:execute-tool', request, harness),
   },
+  pets: {
+    list: () => ipcRenderer.invoke('pets:list'),
+    sprite: (id) => ipcRenderer.invoke('pets:sprite', id),
+  },
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),
     bindSession: (terminalId, sessionPath) => ipcRenderer.invoke('terminal:bind-session', terminalId, sessionPath),

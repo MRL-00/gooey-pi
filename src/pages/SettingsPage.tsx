@@ -1,4 +1,4 @@
-import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, Settings2, Sun, Terminal } from 'lucide-react'
+import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, PawPrint, Settings2, Sun, Terminal } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
@@ -11,6 +11,7 @@ import { BrowserSettings } from './settings/BrowserSettings'
 import type { SettingsSection, SettingsUpdate } from './settings/contracts'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { PrivacySettings } from './settings/PrivacySettings'
+import { PetsSettings } from './settings/PetsSettings'
 import { ProvidersSettings } from './settings/ProviderSettings'
 import { TerminalSettings } from './settings/TerminalSettings'
 import { VoiceSettings } from './settings/VoiceSettings'
@@ -21,6 +22,7 @@ const sections: Array<{ id: SettingsSection; label: string; icon: ComponentType<
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'providers', label: 'Providers', icon: Boxes },
   { id: 'voice', label: 'Voice', icon: AudioLines },
+  { id: 'pets', label: 'Pets', icon: PawPrint },
   { id: 'browser', label: 'Browser', icon: BrowserGlobe },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'privacy', label: 'Privacy', icon: LockKeyhole },
@@ -32,6 +34,7 @@ interface SettingsPageProps {
   meta?: AppMeta | null
   providerCatalog: PrimeModelCatalog | null
   voice: PrimeWorkApi['voice'] | null
+  pets: PrimeWorkApi['pets'] | null
   onUpdate: SettingsUpdate
   onResetBrowser(): Promise<void> | void
   onOpenDocs(): void
@@ -44,7 +47,7 @@ interface SettingsPageProps {
   onStartProviderOAuth(providerId: string): Promise<void>
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, voice, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>('general')
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -70,6 +73,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, onUpdate,
       case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
       case 'providers': return <ProvidersSettings harness={settings.activeHarness} catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'voice': return <VoiceSettings settings={settings} onUpdate={onUpdate} voice={voice} />
+      case 'pets': return <PetsSettings settings={settings} onUpdate={onUpdate} pets={pets} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
@@ -102,7 +106,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, onUpdate,
             </>
           )}
         >
-          <p>This signs you out of websites opened in GUI Pie and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>
+          <p>This signs you out of websites opened in GooeyPi and removes history, cache, cookies, and saved permissions. This cannot be undone.</p>
           {resetError ? <p className="settings-error" role="alert">{resetError}</p> : null}
         </Modal>
       ) : null}

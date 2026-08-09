@@ -44,6 +44,7 @@ function services(): Record<string, unknown> {
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+    pets: { list: vi.fn(async () => [{ id: 'orb' }]), sprite: vi.fn(async () => 'data:image/webp;base64,pet') },
     omp: ompStub(),
   }
 }
@@ -95,6 +96,14 @@ describe('registerIpc verify gate', () => {
     const event = fakeEvent()
     registration.authorize(event.sender as never)
     expect(handlers.get('app:get-meta')!(event)).toEqual({ version: '0.0.0-test' })
+    registration.dispose()
+  })
+
+  it('exposes fixed read-only pet discovery channels to an authorized renderer', async () => {
+    const event = fakeEvent()
+    registration.authorize(event.sender as never)
+    await expect(handlers.get('pets:list')!(event)).resolves.toEqual([{ id: 'orb' }])
+    await expect(handlers.get('pets:sprite')!(event, 'gooey-pi')).resolves.toBe('data:image/webp;base64,pet')
     registration.dispose()
   })
 

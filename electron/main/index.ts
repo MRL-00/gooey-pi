@@ -14,6 +14,7 @@ import { beginProcessShutdown, findHarnessExecutable, runProcess, stopChildProce
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { OmpModelCatalogService } from './providers-omp'
+import { PetService } from './pets'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
 import { ScheduledRunExecutor } from './schedules/executor'
@@ -67,11 +68,11 @@ function appIconPath(): string {
 function createTray(): void {
   if (tray || shutdownStarted) return
   const nextTray = new Tray(appIconPath())
-  nextTray.setToolTip('GUI Pie')
+  nextTray.setToolTip('GooeyPi')
   nextTray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open GUI Pie', click: () => requestWindow('tray') },
+    { label: 'Open GooeyPi', click: () => requestWindow('tray') },
     { type: 'separator' },
-    { label: 'Quit GUI Pie', click: () => app.quit() },
+    { label: 'Quit GooeyPi', click: () => app.quit() },
   ]))
   nextTray.on('click', () => requestWindow('tray'))
   tray = nextTray
@@ -284,13 +285,13 @@ export async function settleShutdown(
   const watchdogMs = options.watchdogMs ?? 10_000
   const settled = Promise.allSettled(steps).then((results) => {
     for (const result of results) {
-      if (result.status === 'rejected') log(`GUI Pie shutdown step failed: ${boundedErrorMessage(result.reason)}`)
+      if (result.status === 'rejected') log(`GooeyPi shutdown step failed: ${boundedErrorMessage(result.reason)}`)
     }
   })
   let timer: NodeJS.Timeout | undefined
   const watchdog = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
-      log(`GUI Pie shutdown did not finish within ${watchdogMs} ms; quitting anyway`)
+      log(`GooeyPi shutdown did not finish within ${watchdogMs} ms; quitting anyway`)
       resolve()
     }, watchdogMs)
     timer.unref?.()
@@ -309,7 +310,7 @@ function requestWindow(reason: 'activation' | 'second instance' | 'tray'): void 
     window.show()
     window.focus()
   }).catch((error: unknown) => {
-    if (!shutdownStarted) console.error(`GUI Pie failed to open a window after ${reason}: ${boundedErrorMessage(error)}`)
+    if (!shutdownStarted) console.error(`GooeyPi failed to open a window after ${reason}: ${boundedErrorMessage(error)}`)
   })
 }
 
@@ -420,6 +421,10 @@ async function bootstrap(): Promise<void> {
     catalogs: { prime: providers, omp: ompCatalog },
     runProcess,
   })
+  const pets = new PetService({
+    builtInRoot: app.isPackaged ? join(process.resourcesPath, 'pets') : join(app.getAppPath(), 'assets', 'pets'),
+    codexRoot: join(homedir(), '.codex', 'pets'),
+  })
   const browserProfile = session.fromPartition(BROWSER_PARTITION)
   browserProfile.on('will-download', (event, item, owner) => downloads?.handle(event, item, owner, settings.get().browserAskForDownloads))
   const scheduleSkillPath = app.isPackaged
@@ -430,11 +435,11 @@ async function bootstrap(): Promise<void> {
     : join(app.getAppPath(), 'assets', 'skills', 'prime-work-browser')
   const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
-      id: 'prime-work-schedules', name: 'GUI Pie schedules',
+      id: 'prime-work-schedules', name: 'GooeyPi schedules',
       description: 'Create and manage durable project and thread schedules from an agent.',
       kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
     }, {
-      id: 'prime-work-browser', name: 'GUI Pie browser',
+      id: 'prime-work-browser', name: 'GooeyPi browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
       kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
     }],
@@ -515,7 +520,7 @@ async function bootstrap(): Promise<void> {
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice,
+    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog },
   }, trustedRendererUrl)
   // Both managers share the one renderer forwarding path: envelopes carry the
@@ -575,7 +580,7 @@ else void app.whenReady().then(async () => {
     if (!shutdownStarted && BrowserWindow.getAllWindows().length === 0) requestWindow('activation')
   })
 }).catch((error: unknown) => {
-  if (!shutdownStarted) console.error(`GUI Pie failed to start: ${boundedErrorMessage(error)}`)
+  if (!shutdownStarted) console.error(`GooeyPi failed to start: ${boundedErrorMessage(error)}`)
   app.quit()
 })
 
@@ -609,6 +614,6 @@ app.on('before-quit', (event) => {
     stopChildProcesses(),
   ]).then(async () => {
     // Await the drain so the final persist lands before the process exits.
-    try { await store?.beginShutdown() } catch (error) { console.error(`GUI Pie store shutdown failed: ${boundedErrorMessage(error)}`) }
+    try { await store?.beginShutdown() } catch (error) { console.error(`GooeyPi store shutdown failed: ${boundedErrorMessage(error)}`) }
   }).finally(() => app.quit())
 })

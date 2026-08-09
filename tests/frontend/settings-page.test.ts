@@ -161,6 +161,8 @@ describe('settings field ownership', () => {
       ompDisabledProviders: 'providers',
       activeHarness: 'agent',
       ompApprovalMode: 'agent',
+      petEnabled: 'pets',
+      petId: 'pets',
       voiceTranscriptionProvider: 'voice',
       voiceOpenAiLiveTranscriptionModel: 'voice',
       voiceOpenAiTranscriptionModel: 'voice',
