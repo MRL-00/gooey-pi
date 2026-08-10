@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -40,6 +41,18 @@ function assertExpectedArtifacts(outputDirectory, target) {
     const matches = files.filter((name) => name.endsWith(extension))
     if (matches.length !== 1) throw new Error(`Expected exactly one ${extension} artifact, found ${matches.length}`)
   }
+  return files
+}
+
+export function assertValidAuthenticode(path, spawn = spawnSync) {
+  const command =
+    "$signature = Get-AuthenticodeSignature -LiteralPath $env:GOOEYPI_SIGNED_FILE; if ($signature.Status -ne 'Valid') { Write-Error ('Authenticode status: ' + $signature.Status + '; ' + $signature.StatusMessage); exit 1 }"
+  const result = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    env: { ...process.env, GOOEYPI_SIGNED_FILE: path },
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`Invalid Authenticode signature for ${path}: ${(result.stderr || result.stdout || 'verification failed').trim()}`)
 }
 
 /** Maps a packaging target (electron-builder CLI naming) to the Node process.platform directory native modules ship under. */
@@ -86,10 +99,10 @@ export function assertUnpackedNativeLayout(directory, target, architecture) {
   }
 }
 
-export function verifyPackage(target, architecture, { unpackedOnly = false } = {}) {
+export function verifyPackage(target, architecture, { unpackedOnly = false, mode = 'qa' } = {}) {
   const outputDirectory = resolve('release', target, architecture)
   if (!existsSync(outputDirectory)) throw new Error(`Release directory does not exist: ${outputDirectory}`)
-  if (!unpackedOnly) assertExpectedArtifacts(outputDirectory, target)
+  const artifacts = unpackedOnly ? [] : assertExpectedArtifacts(outputDirectory, target)
   const app = findUnpackedDirectory(outputDirectory, target)
   const resources = join(app, 'resources')
   const asar = join(resources, 'app.asar')
@@ -99,8 +112,15 @@ export function verifyPackage(target, architecture, { unpackedOnly = false } = {
   if (!existsSync(unpacked)) throw new Error('Packaged application must contain resources/app.asar.unpacked')
   assertAsarLayout(listPackage(asar, { isPack: false }))
   assertUnpackedNativeLayout(unpacked, target, architecture)
+  if (!unpackedOnly && target === 'win' && mode === 'public') {
+    const installer = artifacts.find((name) => name.endsWith('.exe'))
+    if (!installer) throw new Error('Windows installer is missing')
+    assertValidAuthenticode(join(outputDirectory, installer))
+    assertValidAuthenticode(join(app, 'GooeyPi.exe'))
+  }
   const scope = unpackedOnly ? 'unpacked directory build' : 'installable artifacts'
-  console.log(`Verified ${target}/${architecture} package: ${scope}, ASAR runtime layout, and exact native unpack allowlist.`)
+  const signature = !unpackedOnly && target === 'win' && mode === 'public' ? ', and valid Authenticode signatures' : ''
+  console.log(`Verified ${target}/${architecture} package: ${scope}, ASAR runtime layout, exact native unpack allowlist${signature}.`)
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
@@ -110,8 +130,13 @@ if (invokedDirectly) {
   const archIndex = process.argv.indexOf('--arch')
   const arch = archIndex === -1 ? undefined : process.argv[archIndex + 1]
   const unpackedOnly = process.argv.includes('--unpacked-only')
+  const modeIndex = process.argv.indexOf('--mode')
+  const mode = modeIndex === -1 ? 'qa' : process.argv[modeIndex + 1]
   try {
-    verifyPackage(requireOption(platform, 'platform', ['linux', 'win']), requireOption(arch, 'arch', ['arm64', 'x64']), { unpackedOnly })
+    verifyPackage(requireOption(platform, 'platform', ['linux', 'win']), requireOption(arch, 'arch', ['arm64', 'x64']), {
+      unpackedOnly,
+      mode: requireOption(mode, 'mode', ['public', 'qa']),
+    })
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1

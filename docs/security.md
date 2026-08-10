@@ -22,7 +22,7 @@ Prime Work separates remote presentation from privileged local execution.
 
 Prime Agent packages, tools, terminals, and configured MCP bridges execute with the user's OS permissions. The desktop boundary protects the renderer and remote browser; it is not an OS sandbox for intentionally launched capabilities. Review projects, commands, and third-party integrations before granting access.
 
-Public macOS distribution requires an external Developer ID Application identity plus Apple notarization and stapling. Public Windows distribution should use an Authenticode identity; Linux packages should be distributed with release checksums and, when a package repository is introduced, repository signing metadata. Local builds are not represented as trust-ready packages.
+Public macOS distribution requires an external Developer ID Application identity plus Apple notarization and stapling. Public Windows packaging fails closed unless an Authenticode identity is injected and verifies both the packaged application and NSIS installer before publication. GitHub Releases are built only from an existing semantic version tag whose version matches both package manifests and whose commit is on `main`; the final publishing job receives `contents: write` only after every native package and verification job succeeds. Every published installer/archive is covered by `SHA256SUMS.txt` and a GitHub build-provenance attestation. Linux packages should additionally use repository signing metadata if package repositories are introduced. Local builds are not represented as trust-ready packages.
 
 ## Dependency pinning and supply chain
 
