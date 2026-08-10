@@ -49,6 +49,30 @@ describe('DesktopPet', () => {
     expect(container.querySelector('.desktop-pet--idle')).not.toBeNull()
   })
 
+  it('pops up a dismiss drawer and turns off the pet when dropped on its red target', async () => {
+    const onDismiss = vi.fn()
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('pet-dismiss-drawer__target')) return { x: 169, y: 418, top: 418, right: 231, bottom: 480, left: 169, width: 62, height: 62, toJSON: () => ({}) }
+      return { x: 0, y: 0, top: 0, right: 96, bottom: 130, left: 0, width: 96, height: 130, toJSON: () => ({}) }
+    })
+    await act(async () => { root.render(<DesktopPet pets={pets} petId="gooey-pi" agentBusy={false} reduceMotion={false} voiceActive={false} onDismiss={onDismiss} />); await Promise.resolve() })
+    const pet = container.querySelector<HTMLElement>('.desktop-pet__drag-target')!
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 })
+      Object.defineProperty(event, 'pointerId', { value: 11 })
+      return event
+    }
+    act(() => pet.dispatchEvent(pointer('pointerdown', 100, 100)))
+    expect(document.body.querySelector('.pet-dismiss-drawer')).not.toBeNull()
+    act(() => pet.dispatchEvent(pointer('pointermove', 200, 449)))
+    expect(document.body.querySelector('.pet-dismiss-drawer')?.classList.contains('is-armed')).toBe(true)
+    expect(document.body.querySelector('.pet-dismiss-drawer__label')?.textContent).toBe('Release to hide')
+    act(() => pet.dispatchEvent(pointer('pointerup', 200, 449)))
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('.pet-dismiss-drawer')).toBeNull()
+    bounds.mockRestore()
+  })
+
   it('keeps realtime voice controls attached to the pet', async () => {
     const onOpenVoice = vi.fn()
     const onToggleVoiceMute = vi.fn()

@@ -1,5 +1,6 @@
 import { AudioWaveform, Mic, MicOff, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 import { PetAvatar, type PetActivity } from './PetAvatar'
 
@@ -40,13 +41,14 @@ export interface DesktopPetProps {
   onOpenVoice?(): void
   onToggleVoiceMute?(): void
   onCloseVoice?(): void
+  onDismiss?(): void
   focusVoiceControl?: boolean
   onVoiceControlFocused?(): void
   hasSessionNotification?: boolean
   children?: ReactNode
 }
 
-export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
+export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, onDismiss, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
   const normalizedPetSize = Math.max(50, Math.min(125, Math.round(petSize)))
   const avatarSize = Math.round(96 * normalizedPetSize / 100)
   const surfaceWidth = Math.max(72, avatarSize + 24)
@@ -57,10 +59,12 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   const [dragging, setDragging] = useState(false)
   const [direction, setDirection] = useState<'left' | 'right'>('right')
   const [jumping, setJumping] = useState(false)
+  const [dismissArmed, setDismissArmed] = useState(false)
   const dragRef = useRef<DragState | null>(null)
   const positionRef = useRef(position)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const voiceControlRef = useRef<HTMLButtonElement>(null)
+  const dismissTargetRef = useRef<HTMLSpanElement>(null)
   const hasVoiceDetails = Boolean(voiceError || children)
 
   useEffect(() => {
@@ -114,7 +118,16 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     if (event.button !== 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
     dragRef.current = { pointerId: event.pointerId, dx: event.clientX - position.x, dy: event.clientY - position.y, lastX: event.clientX, lastY: event.clientY, moved: false }
+    setDismissArmed(false)
     setDragging(true)
+  }
+  const isOverDismissTarget = (clientX: number, clientY: number) => {
+    const bounds = dismissTargetRef.current?.getBoundingClientRect()
+    if (!bounds || bounds.width === 0 || bounds.height === 0) return false
+    const radius = Math.min(bounds.width, bounds.height) / 2 + 12
+    const dx = clientX - (bounds.left + bounds.width / 2)
+    const dy = clientY - (bounds.top + bounds.height / 2)
+    return dx * dx + dy * dy <= radius * radius
   }
   const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
@@ -125,15 +138,22 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     drag.lastX = event.clientX
     drag.lastY = event.clientY
     drag.moved ||= Math.abs(deltaX) + Math.abs(deltaY) > 2
+    setDismissArmed(isOverDismissTarget(event.clientX, event.clientY))
     const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, surfaceHeight, surfaceWidth)
     positionRef.current = next
     setPosition(next)
   }
-  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     dragRef.current = null
     setDragging(false)
+    const shouldDismiss = !cancelled && onDismiss && isOverDismissTarget(event.clientX, event.clientY)
+    setDismissArmed(false)
+    if (shouldDismiss) {
+      onDismiss()
+      return
+    }
     window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(positionRef.current))
     if (!drag.moved) setJumping(true)
   }
@@ -161,7 +181,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   return (
     <div
       ref={surfaceRef}
-      className={`desktop-pet desktop-pet--${activity}`}
+      className={`desktop-pet desktop-pet--${activity}${dismissArmed ? ' is-dismiss-armed' : ''}`}
       style={{ left: position.x, top: position.y, '--pet-avatar-size': `${avatarSize}px`, '--pet-surface-width': `${surfaceWidth}px`, '--pet-surface-min-height': `${initialSurfaceHeight - 8}px` } as React.CSSProperties}
       role={voiceActive ? 'complementary' : undefined}
       aria-label={voiceActive ? 'Realtime voice session' : undefined}
@@ -176,7 +196,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={finishDrag}
-        onPointerCancel={finishDrag}
+        onPointerCancel={(event) => finishDrag(event, true)}
         onKeyDown={moveByKeyboard}
       >
         <span className="desktop-pet__avatar">
@@ -193,6 +213,15 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       </div>
       {voiceError ? <p className="desktop-pet__voice-error" role="alert">{voiceError}</p> : null}
       {children}
+      {dragging && onDismiss ? createPortal(
+        <div className={`pet-dismiss-drawer${dismissArmed ? ' is-armed' : ''}`} role="status" aria-label={dismissArmed ? 'Release to hide desktop pet' : 'Drag here to hide desktop pet'}>
+          <span className="pet-dismiss-drawer__tray">
+            <span ref={dismissTargetRef} className="pet-dismiss-drawer__target"><X size={28} strokeWidth={2.7} /></span>
+            <span className="pet-dismiss-drawer__label">{dismissArmed ? 'Release to hide' : 'Drop to hide'}</span>
+          </span>
+        </div>,
+        document.body,
+      ) : null}
     </div>
   )
 }
