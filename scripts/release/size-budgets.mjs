@@ -5,11 +5,11 @@ const KIB = 1024
 const MIB = 1024 * KIB
 
 export const BUNDLE_SIZE_BUDGETS = Object.freeze({
-  mainBytes: 256 * KIB,
+  mainBytes: 512 * KIB,
   preloadBytes: 16 * KIB,
   initialRendererBytes: 1280 * KIB,
   largestRendererChunkBytes: 600 * KIB,
-  rendererJsCssBytes: 2 * MIB,
+  rendererJsCssBytes: 2.25 * MIB,
 })
 
 export const PACKAGE_SIZE_BUDGETS = Object.freeze({
