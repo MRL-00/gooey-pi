@@ -136,6 +136,7 @@ jobs:
               release/linux/**/*.AppImage
               release/linux/**/*.deb
               release/linux/**/*.rpm
+              release/linux/**/*.pacman
           - runner: windows-2022
             package: npm run package:win:local-qa
             artifact: gooeypi-local-qa-windows

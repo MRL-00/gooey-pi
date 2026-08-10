@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { rmSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { assertSupportedNode, runCommand, validateReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
+import { assertSupportedNode, runCommand, validateReleaseCredentials, validateWindowsReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
 
 const args = new Set(process.argv.slice(2))
 const isPublic = args.has('--public')
@@ -44,11 +44,13 @@ try {
   assertSupportedNode()
   if (process.platform !== platformHosts[platform]) throw new Error(`${platform} packaging must run natively on ${platformHosts[platform]}`)
   if (isPublic && platform === 'mac') validateReleaseCredentials(process.env)
+  if (isPublic && platform === 'win') validateWindowsReleaseCredentials(process.env)
   const verifyScript = skipVerify ? 'build:bundle' : platform === 'mac' ? 'release:verify' : 'release:verify:package'
   run('npm', ['run', verifyScript], withoutReleaseCredentials(process.env))
   if (!dryRun) rmSync(resolve('release', platform, arch), { recursive: true, force: true })
 
   const builderArgs = [`--${platform}`, `--${arch}`, '--publish', 'never', `--config.directories.output=release/${platform}/${arch}`]
+  if (isPublic && platform === 'win') builderArgs.push('--config.forceCodeSigning=true')
   const builderEnv = isQa ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' } : process.env
   if (isQa && platform === 'mac') builderArgs.push('--config.mac.identity=null', '--config.mac.notarize=false')
   run('electron-builder', builderArgs, builderEnv)
@@ -59,7 +61,7 @@ try {
       withoutReleaseCredentials(process.env, ['RELEASE_SIGNING_TEAM_ID']),
     )
   } else {
-    run('node', ['scripts/release/verify-cross-platform-package.mjs', '--platform', platform, '--arch', arch], withoutReleaseCredentials(process.env))
+    run('node', ['scripts/release/verify-cross-platform-package.mjs', '--platform', platform, '--arch', arch, '--mode', isPublic ? 'public' : 'qa'], withoutReleaseCredentials(process.env))
   }
   if (dryRun) console.log('\nDRY RUN — nothing executed.')
   else console.log(`\n${isPublic ? 'Distribution' : 'Local QA'} ${platform}/${arch} package pipeline passed.`)
