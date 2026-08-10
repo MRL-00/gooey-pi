@@ -18,6 +18,7 @@ import { registerIpc, type IpcRegistration } from '../../electron/main/ipc'
 const EXPECTED_URL = 'prime-work://app/'
 const PRIME_SESSION = '/home/user/.prime/agent/sessions/session.jsonl'
 const OMP_SESSION = '/home/user/.omp/agent/sessions/bucket/session.jsonl'
+const PI_SESSION = '/home/user/.pi/agent/sessions/--home-user-project--/session.jsonl'
 
 function serviceStub(): Record<string, unknown> {
   return new Proxy({}, { get: () => vi.fn(async () => undefined) })
@@ -30,7 +31,7 @@ interface Harness {
 }
 
 function buildServices() {
-  const settingsState = { disabledProviders: ['blocked'], ompDisabledProviders: ['anthropic'] }
+  const settingsState = { disabledProviders: ['blocked'], ompDisabledProviders: ['anthropic'], piDisabledProviders: ['openai'] }
   const catalog = (from: string, disabled: ReadonlySet<string> = new Set()) => ({
     from,
     models: [
@@ -45,6 +46,10 @@ function buildServices() {
   })
   const ompSessionGate = vi.fn(async (path: unknown) => {
     if (path === OMP_SESSION) return path
+    throw new TypeError('Session path is outside the Prime session directory')
+  })
+  const piSessionGate = vi.fn(async (path: unknown) => {
+    if (path === PI_SESSION) return path
     throw new TypeError('Session path is outside the Prime session directory')
   })
   return {
@@ -103,6 +108,31 @@ function buildServices() {
       },
       catalog: {
         catalog: vi.fn(async (_force, disabled) => catalog('omp', disabled)),
+      },
+    },
+    pi: {
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'pi-plugins'), install: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'pi-plugins') },
+      projects: { ...serviceStub(), list: vi.fn(async () => ['pi-projects']), listWorktrees: vi.fn(async () => ['pi-worktrees']), openWorktree: vi.fn(async () => 'pi-open'), createWorktree: vi.fn(async () => 'pi-create'), grantInferred: vi.fn(async () => 'pi-grant') },
+      sessions: {
+        ...serviceStub(),
+        onDidChange: vi.fn(() => () => undefined),
+        requireSessionPath: piSessionGate,
+        list: vi.fn(async () => ['pi-sessions']),
+        read: vi.fn(async () => ['pi-transcript']),
+        followUp: vi.fn(async () => true),
+        rename: vi.fn(async () => false),
+        archive: vi.fn(async () => true),
+      },
+      agents: {
+        ...serviceStub(),
+        has: vi.fn((id: string) => id === 'pi-runtime'),
+        start: vi.fn(async (options: unknown) => ({ started: 'pi', options })),
+        command: vi.fn(async () => ({ ok: 'pi' })),
+        stop: vi.fn(async () => true),
+        list: vi.fn(() => [{ runtimeId: 'pi-runtime', harness: 'pi' }]),
+      },
+      catalog: {
+        catalog: vi.fn(async (_force, disabled) => catalog('pi', disabled)),
       },
     },
   }
@@ -169,10 +199,11 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.agents.stop).toHaveBeenCalledWith('omp-runtime')
   })
 
-  it('concatenates both managers for agent:list', () => {
+  it('concatenates all managers for agent:list', () => {
     expect(harness.invoke('agent:list')).toEqual([
       { runtimeId: 'prime-runtime', harness: 'prime' },
       { runtimeId: 'omp-runtime', harness: 'omp' },
+      { runtimeId: 'pi-runtime', harness: 'pi' },
     ])
   })
 

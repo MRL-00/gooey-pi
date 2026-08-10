@@ -32,19 +32,23 @@ interface Services {
   voice: VoiceService
   pets: PetService
   /** OMP-harness counterparts; always constructed, even when the omp CLI is absent. */
-  omp: {
-    projects: ProjectService
-    sessions: SessionService
-    agents: AgentRpcManager
-    catalog: ModelCatalogProvider
-    plugins: PluginService
-  }
+  omp: HarnessServices
+  /** Pi-harness counterparts; always constructed, even when the pi CLI is absent. */
+  pi: HarnessServices
+}
+
+interface HarnessServices {
+  projects: ProjectService
+  sessions: SessionService
+  agents: AgentRpcManager
+  catalog: ModelCatalogProvider
+  plugins: PluginService
 }
 
 /** Strict enum gate for the untrusted optional harness argument; absence means 'prime'. */
 function requireHarness(value: unknown): HarnessId {
   if (value === undefined) return 'prime'
-  if (value === 'prime' || value === 'omp') return value
+  if (value === 'prime' || value === 'omp' || value === 'pi') return value
   throw new TypeError('Invalid harness')
 }
 
@@ -100,18 +104,26 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     eventChannels.push(channel)
   }
 
-  const projectsFor = (harness: HarnessId): ProjectService => harness === 'omp' ? services.omp.projects : services.projects
-  const sessionsFor = (harness: HarnessId): SessionService => harness === 'omp' ? services.omp.sessions : services.sessions
-  const agentsFor = (harness: HarnessId): AgentRpcManager => harness === 'omp' ? services.omp.agents : services.agents
-  const pluginsFor = (harness: HarnessId): PluginService => harness === 'omp' ? services.omp.plugins : services.plugins
+  const projectServices: Record<HarnessId, ProjectService> = { prime: services.projects, omp: services.omp.projects, pi: services.pi.projects }
+  const sessionServices: Record<HarnessId, SessionService> = { prime: services.sessions, omp: services.omp.sessions, pi: services.pi.sessions }
+  const agentManagers: Record<HarnessId, AgentRpcManager> = { prime: services.agents, omp: services.omp.agents, pi: services.pi.agents }
+  const pluginServices: Record<HarnessId, PluginService> = { prime: services.plugins, omp: services.omp.plugins, pi: services.pi.plugins }
+  const projectsFor = (harness: HarnessId): ProjectService => projectServices[harness]
+  const sessionsFor = (harness: HarnessId): SessionService => sessionServices[harness]
+  const agentsFor = (harness: HarnessId): AgentRpcManager => agentManagers[harness]
+  const pluginsFor = (harness: HarnessId): PluginService => pluginServices[harness]
   // Runtime ids route by ownership; ids no manager owns fall through to the
   // Prime manager so requireRuntime keeps its exact not-found semantics.
-  const agentsForRuntime = (runtimeId: unknown): AgentRpcManager =>
-    typeof runtimeId === 'string' && services.omp.agents.has(runtimeId) ? services.omp.agents : services.agents
+  const agentsForRuntime = (runtimeId: unknown): AgentRpcManager => {
+    if (typeof runtimeId === 'string') {
+      for (const manager of [services.omp.agents, services.pi.agents]) if (manager.has(runtimeId)) return manager
+    }
+    return services.agents
+  }
   /**
    * Routes a session file to the harness whose validated session root contains
    * it, using each service's own canonicalizing path authorization (never
-   * substring checks). Paths neither root accepts rethrow the Prime error, so
+   * substring checks). Paths no root accepts rethrow the Prime error, so
    * rejection shape and text are unchanged.
    */
   const sessionsForPath = async (filePath: unknown): Promise<{ harness: HarnessId; service: SessionService }> => {
@@ -119,13 +131,21 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       await services.sessions.requireSessionPath(filePath)
       return { harness: 'prime', service: services.sessions }
     } catch (primeError) {
-      try { await services.omp.sessions.requireSessionPath(filePath) } catch { throw primeError }
-      return { harness: 'omp', service: services.omp.sessions }
+      for (const harness of ['omp', 'pi'] as const) {
+        try { await sessionServices[harness].requireSessionPath(filePath) } catch { continue }
+        return { harness, service: sessionServices[harness] }
+      }
+      throw primeError
     }
   }
-  /** OMP credentials stay CLI-owned; desktop-only visibility is routed separately below. */
+  /** OMP and pi credentials stay CLI-owned; desktop-only visibility is routed separately below. */
+  const cliOwnedProviderAuth: Partial<Record<HarnessId, string>> = {
+    omp: 'OMP provider authentication is managed by the omp CLI',
+    pi: 'Pi provider authentication is managed by the pi CLI',
+  }
   const requirePrimeProviderAuth = (harness: unknown): void => {
-    if (requireHarness(harness) === 'omp') throw new Error('OMP provider authentication is managed by the omp CLI')
+    const rejection = cliOwnedProviderAuth[requireHarness(harness)]
+    if (rejection) throw new Error(rejection)
   }
 
   handle('app:get-meta', () => services.meta)
@@ -142,6 +162,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       () => services.omp.projects.authorizePath(requested),
       () => services.omp.sessions.requireSessionPath(requested),
       () => services.omp.plugins.authorizeReveal(requested),
+      () => services.pi.projects.authorizePath(requested),
+      () => services.pi.sessions.requireSessionPath(requested),
+      () => services.pi.plugins.authorizeReveal(requested),
     ]
     for (const authorize of authorizations) {
       let authorized: string
@@ -171,9 +194,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('sessions:read', async (_event, filePath) => (await sessionsForPath(filePath)).service.read(filePath))
   handle('sessions:follow-up', async (_event, filePath, message, intent) => {
     const routed = await sessionsForPath(filePath)
-    // Daemon-socket follow-up is Prime-only; an OMP session answers exactly
-    // like an inactive Prime session instead of introducing a new error shape.
-    if (routed.harness === 'omp') return false
+    // Daemon-socket follow-up is Prime-only; an OMP or pi session answers
+    // exactly like an inactive Prime session instead of a new error shape.
+    if (routed.harness !== 'prime') return false
     return routed.service.followUp(filePath, message, intent)
   })
   handle('sessions:rename', async (_event, filePath, title) => (await sessionsForPath(filePath)).service.rename(filePath, title))
@@ -189,11 +212,17 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   })
   handle('agent:command', (_event, runtimeId, command) => agentsForRuntime(runtimeId).command(runtimeId, command))
   handle('agent:stop', (_event, runtimeId) => agentsForRuntime(runtimeId).stop(runtimeId))
-  handle('agent:list', () => [...services.agents.list(), ...services.omp.agents.list()])
+  handle('agent:list', () => [...services.agents.list(), ...services.omp.agents.list(), ...services.pi.agents.list()])
 
   const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders))
   const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force, new Set(services.settings.get().ompDisabledProviders))
-  handle('providers:catalog', (_event, force, harness) => requireHarness(harness) === 'omp' ? ompProviderCatalog(force === true) : providerCatalog(force === true))
+  const piProviderCatalog = (force = false) => services.pi.catalog.catalog(force, new Set(services.settings.get().piDisabledProviders))
+  const providerCatalogs: Record<HarnessId, (force?: boolean) => ReturnType<ModelCatalogProvider['catalog']>> = {
+    prime: providerCatalog, omp: ompProviderCatalog, pi: piProviderCatalog,
+  }
+  /** Desktop-owned provider-visibility settings key per harness. */
+  const disabledProvidersKeys = { prime: 'disabledProviders', omp: 'ompDisabledProviders', pi: 'piDisabledProviders' } as const
+  handle('providers:catalog', (_event, force, harness) => providerCatalogs[requireHarness(harness)](force === true))
   handle('providers:save-api-key', async (_event, providerId, apiKey, harness) => {
     requirePrimeProviderAuth(harness)
     await services.providers.saveApiKey(providerId, apiKey)
@@ -208,25 +237,25 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     const target = requireHarness(harness)
     const id = requireString(providerId, 'providerId', { min: 1, max: 128, trim: true })
     if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
-    const catalog = target === 'omp' ? await ompProviderCatalog() : await providerCatalog()
+    const catalog = await providerCatalogs[target]()
     if (!catalog.providers.some((provider) => provider.id === id)) throw new Error('Provider was not found')
-    const settingsKey = target === 'omp' ? 'ompDisabledProviders' : 'disabledProviders'
+    const settingsKey = disabledProvidersKeys[target]
     const disabled = new Set(services.settings.get()[settingsKey])
     if (enabled) disabled.delete(id)
     else disabled.add(id)
     await services.settings.update({ [settingsKey]: [...disabled].sort() })
-    return target === 'omp' ? ompProviderCatalog() : providerCatalog()
+    return providerCatalogs[target]()
   })
   handle('providers:set-disabled', async (_event, providerIds, harness) => {
     const target = requireHarness(harness)
     if (!Array.isArray(providerIds) || providerIds.length > 256) throw new TypeError('providerIds must be a bounded array')
     const ids = [...new Set(providerIds.map((value, index) => requireString(value, `providerIds[${index}]`, { min: 1, max: 128, trim: true })))].sort()
-    const catalog = target === 'omp' ? await ompProviderCatalog() : await providerCatalog()
+    const catalog = await providerCatalogs[target]()
     const known = new Set(catalog.providers.map((provider) => provider.id))
     if (ids.some((id) => !known.has(id))) throw new Error('Provider was not found')
-    const settingsKey = target === 'omp' ? 'ompDisabledProviders' : 'disabledProviders'
+    const settingsKey = disabledProvidersKeys[target]
     await services.settings.update({ [settingsKey]: ids })
-    return target === 'omp' ? ompProviderCatalog() : providerCatalog()
+    return providerCatalogs[target]()
   })
   handle('providers:start-oauth', (_event, providerId, harness) => {
     requirePrimeProviderAuth(harness)
@@ -302,6 +331,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   }
   const unsubscribeSessionChanges = services.sessions.onDidChange(forwardSessionChange)
   const unsubscribeOmpSessionChanges = services.omp.sessions.onDidChange(forwardSessionChange)
+  const unsubscribePiSessionChanges = services.pi.sessions.onDidChange(forwardSessionChange)
   const scheduleSubscription = services.schedules.onDidChange((change) => {
     for (const [id, contents] of authorized) {
       if (contents.isDestroyed()) { authorized.delete(id); continue }
@@ -345,6 +375,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
       authorized.clear()
       unsubscribeSessionChanges()
       unsubscribeOmpSessionChanges()
+      unsubscribePiSessionChanges()
       if (typeof unsubscribeScheduleChanges === 'function') unsubscribeScheduleChanges()
       if (typeof unsubscribeBrowserChanges === 'function') unsubscribeBrowserChanges()
       if (typeof unsubscribeBrowserPointer === 'function') unsubscribeBrowserPointer()

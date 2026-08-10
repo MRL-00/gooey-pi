@@ -23,7 +23,7 @@ function serviceStub(): Record<string, unknown> {
   return new Proxy({}, { get: () => vi.fn(async () => undefined) })
 }
 
-function ompStub(): Record<string, unknown> {
+function harnessStub(): Record<string, unknown> {
   return {
     projects: { ...serviceStub(), authorizePath: vi.fn(async () => { throw new Error('denied') }) },
     sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath: vi.fn(async () => { throw new Error('denied') }) },
@@ -48,7 +48,8 @@ describe('app:reveal-path authorization', () => {
       heartbeats: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
-      omp: ompStub(),
+      omp: harnessStub(),
+      pi: harnessStub(),
     }
     electronMocks.ipcMain.handle.mockClear()
     electronMocks.shell.showItemInFolder.mockClear()
@@ -136,7 +137,8 @@ describe('session change IPC', () => {
       settings: serviceStub(),
       schedules: serviceStub(),
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
-      omp: ompStub(),
+      omp: harnessStub(),
+      pi: harnessStub(),
     }
     const expectedUrl = 'prime-work://app/'
     const trusted = {
@@ -206,7 +208,8 @@ describe('shell-facing app handlers', () => {
       settings: serviceStub(),
       schedules: serviceStub(),
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
-      omp: ompStub(),
+      omp: harnessStub(),
+      pi: harnessStub(),
       ...overrides,
     }
     const registration = registerIpc(services as never, expectedUrl)
@@ -322,7 +325,8 @@ describe('IPC registration lifecycle', () => {
       settings: serviceStub(),
       schedules: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()) },
       browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
-      omp: ompStub(),
+      omp: harnessStub(),
+      pi: harnessStub(),
     }
   }
 

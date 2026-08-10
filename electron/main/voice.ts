@@ -15,6 +15,7 @@ import type {
   VoiceToolResult,
 } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
+import { HARNESSES } from './harness'
 import type { ModelCatalogProvider } from './model-catalog'
 import type { ProcessResult } from './process-utils'
 import type { ProjectService } from './projects'
@@ -54,7 +55,7 @@ function credentialProvider(value: unknown): VoiceCredentialProvider {
 }
 
 function harnessId(value: unknown): HarnessId {
-  if (value !== 'prime' && value !== 'omp') throw new TypeError('Invalid voice harness')
+  if (value !== 'prime' && value !== 'omp' && value !== 'pi') throw new TypeError('Invalid voice harness')
   return value
 }
 
@@ -255,7 +256,7 @@ class VoiceSecretStore {
 }
 
 function orchestrationInstructions(harness: HarnessId): string {
-  const harnessName = harness === 'omp' ? 'OMP' : 'Prime Agent'
+  const harnessName = HARNESSES[harness].agentName
   return [
     'You are the voice orchestrator inside GooeyPi, a desktop client for OMP and Prime Agent.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
@@ -276,6 +277,7 @@ function orchestrationInstructions(harness: HarnessId): string {
 }
 
 function realtimeSession(settings: AppSettings, harness: HarnessId): Record<string, unknown> {
+  const harnessName = HARNESSES[harness].agentName
   return {
     type: 'realtime',
     model: settings.voiceRealtimeModel,
@@ -285,7 +287,7 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
     tools: [
       {
         type: 'function', name: 'list_projects',
-        description: `Find explicitly granted projects in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Projects from the other harness are never returned.`,
+        description: `Find explicitly granted projects in the currently selected ${harnessName} harness. Projects from the other harness are never returned.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
@@ -295,7 +297,7 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
       },
       {
         type: 'function', name: 'list_models',
-        description: `Find task models available from providers currently shown as active in GooeyPi for the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
+        description: `Find task models available from providers currently shown as active in GooeyPi for the selected ${harnessName} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
@@ -305,7 +307,7 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
       },
       {
         type: 'function', name: 'start_task',
-        description: `Immediately create and start a new task in the currently selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions. Optional model and reasoning preferences are resolved against active GUI providers and applied before the prompt.`,
+        description: `Immediately create and start a new task in the currently selected ${harnessName} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions. Optional model and reasoning preferences are resolved against active GUI providers and applied before the prompt.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {
@@ -448,7 +450,12 @@ export class VoiceService {
 
   private disabledProviders(harness: HarnessId): ReadonlySet<string> {
     const settings = this.options.settings()
-    return new Set(harness === 'omp' ? settings.ompDisabledProviders : settings.disabledProviders)
+    const disabled: Record<HarnessId, string[]> = {
+      prime: settings.disabledProviders,
+      omp: settings.ompDisabledProviders,
+      pi: settings.piDisabledProviders,
+    }
+    return new Set(disabled[harness])
   }
 
   private async availableModels(harness: HarnessId): Promise<PrimeModelDescriptor[]> {
@@ -478,7 +485,7 @@ export class VoiceService {
     const reasoningQuery = args.reasoning === undefined ? undefined : requireString(args.reasoning, 'reasoning', { min: 1, max: 64, trim: true })
     const project: ProjectRecord | undefined = (await this.options.projects[harness].list())
       .find((candidate) => candidate.id === projectId && !candidate.inferred)
-    if (!project) throw new Error(`The requested project is not explicitly granted to the selected ${harness === 'omp' ? 'OMP' : 'Prime Agent'} harness`)
+    if (!project) throw new Error(`The requested project is not explicitly granted to the selected ${HARNESSES[harness].agentName} harness`)
     const selectedModel = modelQuery ? resolveModel(modelQuery, await this.availableModels(harness)) : undefined
     const selectedReasoning = selectedModel && reasoningQuery
       ? resolveReasoning(reasoningQuery, selectedModel.availableThinkingLevels)
@@ -505,7 +512,7 @@ export class VoiceService {
     const current = manager.list().find((candidate) => candidate.runtimeId === runtime.runtimeId) ?? runtime
     if (!current.sessionFile) {
       await manager.stop(runtime.runtimeId).catch(() => false)
-      throw new Error(`${project.harness === 'omp' ? 'OMP' : 'Prime Agent'} accepted the prompt but did not create a visible session. The task was not reported as started.`)
+      throw new Error(`${HARNESSES[project.harness].agentName} accepted the prompt but did not create a visible session. The task was not reported as started.`)
     }
     const task: VoiceTaskStarted = {
       projectId: project.id, projectName: project.name, harness: project.harness,

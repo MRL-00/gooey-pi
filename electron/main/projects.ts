@@ -6,6 +6,7 @@ import { dialog, type BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import type { GitWorktree, HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
 import { createGitWorktree, isNotARepositoryFailure, listGitWorktrees, validateGitBranch } from './git'
+import { HARNESSES } from './harness'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId, requireString } from './validation'
 
@@ -574,7 +575,7 @@ export class ProjectService {
     if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
     const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
     if (!authorizedRoot) {
-      const productName = this.harness === 'omp' ? 'OMP Work' : 'Prime Work'
+      const productName = HARNESSES[this.harness].productName
       if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError(`path is not inside an added ${productName} project because its project is being removed`)
       throw new TypeError(`path is not inside an added ${productName} project or its folder identity changed`)
     }
