@@ -48,6 +48,8 @@ export const RELEASE_CREDENTIAL_NAMES = [
   'APPLE_API_KEY',
   'APPLE_API_KEY_ID',
   'APPLE_API_ISSUER',
+  'WIN_CSC_LINK',
+  'WIN_CSC_KEY_PASSWORD',
 ]
 
 export function withoutReleaseCredentials(env = process.env, allowed = []) {
@@ -97,6 +99,10 @@ export function validateReleaseCredentials(env = process.env, options = {}) {
     throw new Error(`APPLE_API_KEY does not exist: ${env.APPLE_API_KEY}`)
   }
   if (hasApiKeyValue && checkApiKeyFile) accessSync(env.APPLE_API_KEY, constants.R_OK)
+}
+
+export function validateWindowsReleaseCredentials(env = process.env) {
+  requireNonEmpty(env, ['WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD'], 'Windows Authenticode signing')
 }
 
 export function requireReleaseArtifacts(paths) {

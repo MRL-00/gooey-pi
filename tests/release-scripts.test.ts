@@ -18,12 +18,16 @@ import {
   requireReleaseArtifacts,
   resolveCommandInvocation,
   validateReleaseCredentials,
+  validateWindowsReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
+import { expectedGitHubReleaseAssets, prepareGitHubRelease } from '../scripts/release/prepare-github-release.mjs'
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
+import { assertReleaseTag } from '../scripts/release/validate-release-tag.mjs'
 // after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
 import { executablePath } from '../scripts/release/after-pack.cjs'
 import {
+  assertValidAuthenticode,
   assertUnpackedNativeLayout as assertCrossPlatformUnpackedNativeLayout,
   expectedArtifactExtensions,
   expectedNativeFiles,
@@ -155,6 +159,14 @@ describe('release preflight', () => {
     expect(() => validateReleaseCredentials({ ...baseEnvironment, APPLE_TEAM_ID: 'OTHER' }, { checkApiKeyFile: false })).toThrow(/must match/)
   })
 
+  test('fails closed without Windows Authenticode credentials', () => {
+    expect(() => validateWindowsReleaseCredentials({})).toThrow(/WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD/)
+    expect(() => validateWindowsReleaseCredentials({ WIN_CSC_LINK: 'certificate', WIN_CSC_KEY_PASSWORD: 'password' })).not.toThrow()
+    const packaging = readFileSync('scripts/release/package.mjs', 'utf8')
+    expect(packaging).toContain("builderArgs.push('--config.forceCodeSigning=true')")
+    expect(packaging).toContain("'--mode', isPublic ? 'public' : 'qa'")
+  })
+
   test('removes release credentials from untrusted verification commands', () => {
     const environment = { PATH: '/usr/bin', ...baseEnvironment, APPLE_API_KEY: '/tmp/private-key' }
     expect(withoutReleaseCredentials(environment)).toEqual({ PATH: '/usr/bin' })
@@ -162,6 +174,7 @@ describe('release preflight', () => {
       PATH: '/usr/bin',
       RELEASE_SIGNING_TEAM_ID: 'TEAM123',
     })
+    expect(withoutReleaseCredentials({ PATH: '/usr/bin', WIN_CSC_LINK: 'certificate', WIN_CSC_KEY_PASSWORD: 'password' })).toEqual({ PATH: '/usr/bin' })
   })
 
   interface WorkflowStep {
@@ -223,6 +236,7 @@ describe('release preflight', () => {
     const releaseSteps = parseWorkflowSteps(readFileSync('.github/workflows/release.yml', 'utf8'))
     const secretSteps = releaseSteps.filter((step) => step.secretLines.length > 0)
     expect(secretSteps.map((step) => `${step.job}: ${step.name}`).sort()).toEqual([
+      'package-windows: Build, Authenticode-sign, and verify Windows packages',
       'package: Build, sign, notarize, and verify release packages',
       'package: Fail closed unless every release credential is configured',
     ])
@@ -269,17 +283,36 @@ describe('release preflight', () => {
     expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
     expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
     expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
+    expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
     expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
+  })
+
+  test('publishes one verified GitHub Release from an existing version tag', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    expect(workflow).toMatch(/push:\n {4}tags:\n {6}- 'v\*\.\*\.\*'/)
+    expect(workflow).toContain('node scripts/release/validate-release-tag.mjs --tag "$RELEASE_TAG"')
+    expect(workflow).toContain('git merge-base --is-ancestor HEAD refs/remotes/origin/main')
+    expect(workflow).toContain('node scripts/release/prepare-github-release.mjs')
+    expect(workflow).toContain('actions/download-artifact@')
+    expect(workflow).toContain('actions/attest-build-provenance@')
+    expect(workflow).toContain('gh release create "$RELEASE_TAG" release-assets/*')
+    expect(workflow).toContain('gh release upload "$RELEASE_TAG" release-assets/* --clobber')
+    expect(workflow).toContain('gh release edit "$RELEASE_TAG" --verify-tag --draft=false --latest')
+    expect(workflow).toContain('is already published and will not be replaced')
+    expect(workflow).toContain('--verify-tag')
+    expect(workflow).toContain('--fail-on-no-commits')
+    expect(workflow).toContain('--generate-notes')
+    expect(workflow).toMatch(/release-packages:\n {4}needs: \[package, package-linux, package-windows\]\n {4}runs-on: ubuntu-22\.04\n {4}permissions:\n {6}contents: write/)
   })
 
   test('ships both mac architectures as separate builds from native-arch runners', () => {
     const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
     // Two matrix legs, each on a runner whose native architecture matches the
-    // target (arm64 on macos-14, x64 on macos-13) so node-pty/zeromq never
+    // target (arm64 on macos-15, x64 on macos-15-intel) so node-pty/zeromq never
     // cross-compile, and one leg's failure never cancels the other's build.
     expect(releaseWorkflow).toContain('fail-fast: false')
-    expect(releaseWorkflow).toMatch(/- arch: arm64\n {12}runner: macos-14/)
-    expect(releaseWorkflow).toMatch(/- arch: x64\n {12}runner: macos-13/)
+    expect(releaseWorkflow).toMatch(/- arch: arm64\n {12}runner: macos-15/)
+    expect(releaseWorkflow).toMatch(/- arch: x64\n {12}runner: macos-15-intel/)
     expect(releaseWorkflow).toContain('runs-on: ${{ matrix.runner }}')
     // The explicit target arch drives packaging, and each leg uploads only its
     // own arch directory under a per-arch artifact name and cache key.
@@ -290,6 +323,75 @@ describe('release preflight', () => {
     expect(releaseWorkflow).toContain('electron-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles(')
     // Universal binaries are excluded by design: the release ships two builds.
     expect(releaseWorkflow).not.toContain('--universal')
+  })
+})
+
+describe('GitHub Release publication', () => {
+  test('requires the tag and both package manifests to agree exactly', () => {
+    expect(assertReleaseTag('v0.2.0', '0.2.0', '0.2.0')).toEqual({ tag: 'v0.2.0', version: '0.2.0' })
+    expect(() => assertReleaseTag('0.2.0', '0.2.0', '0.2.0')).toThrow(/must exactly match/)
+    expect(() => assertReleaseTag('v0.2.1', '0.2.0', '0.2.0')).toThrow(/v0\.2\.0/)
+    expect(() => assertReleaseTag('v0.2.0', '0.2.0', '0.1.9')).toThrow(/does not match/)
+    expect(() => assertReleaseTag('v0.2.0', '0.2.0', '0.2.0', '0.1.9')).toThrow(/root package version/)
+    expect(() => assertReleaseTag('v01.2.3', '01.2.3', '01.2.3')).toThrow(/not a supported semantic version/)
+  })
+
+  test('selects the exact cross-platform asset set and writes reproducible checksums', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'gooeypi-github-release-'))
+    const projectDirectory = join(directory, 'project')
+    const inputDirectory = join(directory, 'downloaded')
+    const outputDirectory = join(directory, 'release-assets')
+    mkdirSync(projectDirectory, { recursive: true })
+    mkdirSync(inputDirectory, { recursive: true })
+    writeFileSync(join(projectDirectory, 'package.json'), JSON.stringify({ version: '0.2.0' }))
+    writeFileSync(join(projectDirectory, 'package-lock.json'), JSON.stringify({ version: '0.2.0', packages: { '': { version: '0.2.0' } } }))
+    const expected = expectedGitHubReleaseAssets('0.2.0')
+    for (const [index, name] of expected.entries()) {
+      const artifactDirectory = join(inputDirectory, `artifact-${index}`)
+      mkdirSync(artifactDirectory)
+      writeFileSync(join(artifactDirectory, name), `asset ${index}`)
+      writeFileSync(join(artifactDirectory, 'latest.yml'), 'ignored update metadata')
+    }
+
+    try {
+      const result = await prepareGitHubRelease({ inputDirectory, outputDirectory, projectDirectory, tag: 'v0.2.0' })
+      expect(result.assets).toEqual(expected)
+      expect(readdirSync(outputDirectory).sort()).toEqual([...expected, 'SHA256SUMS.txt'].sort())
+      const checksums = readFileSync(join(outputDirectory, 'SHA256SUMS.txt'), 'utf8').trim().split('\n')
+      expect(checksums).toHaveLength(expected.length)
+      for (const [index, name] of expected.entries()) {
+        const digest = createHash('sha256').update(`asset ${index}`).digest('hex')
+        expect(checksums).toContain(`${digest}  ${name}`)
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects incomplete and duplicate downloaded release assets', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'gooeypi-github-release-invalid-'))
+    const projectDirectory = join(directory, 'project')
+    const inputDirectory = join(directory, 'downloaded')
+    mkdirSync(projectDirectory, { recursive: true })
+    mkdirSync(inputDirectory, { recursive: true })
+    writeFileSync(join(projectDirectory, 'package.json'), JSON.stringify({ version: '0.2.0' }))
+    writeFileSync(join(projectDirectory, 'package-lock.json'), JSON.stringify({ version: '0.2.0', packages: { '': { version: '0.2.0' } } }))
+
+    try {
+      await expect(prepareGitHubRelease({ inputDirectory, outputDirectory: join(directory, 'missing-output'), projectDirectory, tag: 'v0.2.0' })).rejects.toThrow(/incomplete/)
+      const expected = expectedGitHubReleaseAssets('0.2.0')
+      for (const [index, name] of expected.entries()) {
+        const artifactDirectory = join(inputDirectory, `artifact-${index}`)
+        mkdirSync(artifactDirectory)
+        writeFileSync(join(artifactDirectory, name), `asset ${index}`)
+      }
+      const duplicateDirectory = join(inputDirectory, 'duplicate')
+      mkdirSync(duplicateDirectory)
+      writeFileSync(join(duplicateDirectory, expected[0]), 'duplicate')
+      await expect(prepareGitHubRelease({ inputDirectory, outputDirectory: join(directory, 'duplicate-output'), projectDirectory, tag: 'v0.2.0' })).rejects.toThrow(/duplicate/)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
 
@@ -385,6 +487,24 @@ describe('post-package verification helpers', () => {
     const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
     expect(ciWorkflow).toContain('release/linux/**/*.pacman')
     expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
+  })
+
+  test('fails closed when Windows Authenticode verification is not valid', () => {
+    const calls: Array<{ file: string; args: string[]; path: string | undefined }> = []
+    const validSpawn = (file: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+      calls.push({ file, args, path: options.env?.GOOEYPI_SIGNED_FILE })
+      return { status: 0, stdout: '', stderr: '' }
+    }
+    expect(() => assertValidAuthenticode('C:\\release\\GooeyPi.exe', validSpawn as unknown as Parameters<typeof assertValidAuthenticode>[1])).not.toThrow()
+    expect(calls).toEqual([
+      {
+        file: 'powershell.exe',
+        args: expect.arrayContaining(['-NoProfile', '-NonInteractive', '-Command']),
+        path: 'C:\\release\\GooeyPi.exe',
+      },
+    ])
+    const invalidSpawn = () => ({ status: 1, stdout: '', stderr: 'NotSigned' })
+    expect(() => assertValidAuthenticode('C:\\release\\GooeyPi.exe', invalidSpawn as unknown as Parameters<typeof assertValidAuthenticode>[1])).toThrow(/NotSigned/)
   })
 
   test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
