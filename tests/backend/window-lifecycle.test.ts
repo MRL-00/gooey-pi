@@ -10,7 +10,6 @@ const electron = vi.hoisted(() => ({
   },
   BrowserWindow: class {},
   Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
-  Tray: class {},
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
 }))
@@ -21,6 +20,17 @@ import { hardenRenderer, loadInitialRenderer, settleShutdown } from '../../elect
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
+
+describe('application window lifecycle', () => {
+  it('quits when the last window closes', () => {
+    electron.app.quit.mockClear()
+    const registration = electron.app.on.mock.calls.find(([event]) => event === 'window-all-closed')
+
+    expect(registration).toBeDefined()
+    registration?.[1]()
+    expect(electron.app.quit).toHaveBeenCalledOnce()
+  })
+})
 
 function hardenedWindow(currentUrl = 'prime-work://app/index.html') {
   const handlers = new Map<string, Handler>()

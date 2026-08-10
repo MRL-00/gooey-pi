@@ -71,7 +71,7 @@ npm run test:e2e        # production build + Playwright Electron smoke suite
 npm run build           # main, CommonJS preload, and renderer bundles
 ```
 
-The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and macOS last-window recreation.
+The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and last-window app shutdown.
 
 ## Build installable packages
 

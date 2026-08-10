@@ -1264,11 +1264,10 @@ test.describe('Prime Work desktop smoke', () => {
     expect(prompt.message).not.toContain('Terminal buffer')
   })
 
-  test('closes and recreates the last macOS window cleanly', async () => {
+  test('quits when the last window closes', async () => {
+    const closed = app!.waitForEvent('close', { timeout: 45_000 })
     await page.close()
-    await app!.evaluate(({ app: electronApp }) => electronApp.emit('activate'))
-    page = await app!.firstWindow({ timeout: 45_000 })
-    attachDiagnostics(page)
-    await expect(page.locator('.app-shell')).toBeVisible()
+    await closed
+    app = undefined
   })
 })
