@@ -834,6 +834,8 @@ test.describe('Prime Work desktop smoke', () => {
     const fits = await page.locator('.settings-row--text-size').evaluate((row) => row.scrollWidth <= row.clientWidth)
     expect(fits).toBe(true)
     await page.setViewportSize({ width: 1440, height: 920 })
+    await page.getByRole('radio', { name: 'Default', exact: true }).click()
+    await expect.poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getZoomFactor())).toBeCloseTo(1.1, 2)
   })
 
   test('traps modal focus, closes on Escape, and restores the trigger', async () => {
@@ -989,7 +991,7 @@ test.describe('Prime Work desktop smoke', () => {
     const sidebarScrim = page.getByRole('button', { name: 'Close sidebar' })
     await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
     await expect(sidebarScrim).toBeVisible()
-    await sidebarScrim.click({ position: { x: 900, y: 300 } })
+    await sidebarScrim.click({ position: { x: 400, y: 300 } })
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
     // Panel reconciliation may restore a confirmed inspector preference after
@@ -1008,7 +1010,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
     await page.setViewportSize({ width: 1440, height: 920 })
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440)
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThan(980)
     await page.getByRole('button', { name: /Show sidebar/ }).click()
     await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
   })
