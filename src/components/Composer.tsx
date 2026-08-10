@@ -402,7 +402,7 @@ export const Composer = memo(function Composer({
             },
           }))
       : menu === 'skill'
-        ? suggestedSkills.map((skill) => ({ key: skill.id, label: `@ ${skill.name}`, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
+        ? suggestedSkills.map((skill) => ({ key: skill.id, label: `@${skill.name}`, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
         : menu === 'add'
           ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
           : []
