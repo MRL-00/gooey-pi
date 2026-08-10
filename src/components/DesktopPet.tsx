@@ -51,7 +51,7 @@ export interface DesktopPetProps {
 export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, onDismiss, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
   const normalizedPetSize = Math.max(50, Math.min(125, Math.round(petSize)))
   const avatarSize = Math.round(96 * normalizedPetSize / 100)
-  const surfaceWidth = Math.max(72, avatarSize + 24)
+  const surfaceWidth = Math.max(112, avatarSize + 24)
   const initialSurfaceHeight = avatarSize + 58
   const [available, setAvailable] = useState<PetDefinition[]>(BUILT_INS)
   const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight, surfaceWidth))
@@ -65,6 +65,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   const surfaceRef = useRef<HTMLDivElement>(null)
   const voiceControlRef = useRef<HTMLButtonElement>(null)
   const dismissTargetRef = useRef<HTMLSpanElement>(null)
+  const metricsRef = useRef({ width: surfaceWidth, idleHeight: initialSurfaceHeight })
   const hasVoiceDetails = Boolean(voiceError || children)
 
   useEffect(() => {
@@ -84,11 +85,18 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     const updateBounds = () => {
       const measured = Math.ceil(surface.getBoundingClientRect().height)
       const nextHeight = Math.max(initialSurfaceHeight, measured || (voiceActive ? 320 : initialSurfaceHeight))
+      const previous = metricsRef.current
+      const sizeChanged = previous.width !== surfaceWidth || previous.idleHeight !== initialSurfaceHeight
       setSurfaceHeight((current) => current === nextHeight ? current : nextHeight)
       setPosition((current) => {
-        const next = constrained(current, nextHeight, surfaceWidth)
+        const anchored = sizeChanged ? {
+          x: current.x + (previous.width - surfaceWidth) / 2,
+          y: current.y + previous.idleHeight - initialSurfaceHeight,
+        } : current
+        const next = constrained(anchored, nextHeight, surfaceWidth)
         return next.x === current.x && next.y === current.y ? current : next
       })
+      metricsRef.current = { width: surfaceWidth, idleHeight: initialSurfaceHeight }
     }
     updateBounds()
     if (typeof ResizeObserver === 'undefined') return
@@ -175,6 +183,9 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       setJumping(true)
+    } else if (onDismiss && (event.key === 'Delete' || event.key === 'Backspace')) {
+      event.preventDefault()
+      onDismiss()
     }
   }
 
@@ -192,7 +203,8 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
         role="button"
         tabIndex={0}
         aria-label={`${pet.displayName}, draggable GooeyPi pet`}
-        title={`${pet.displayName} · drag to move`}
+        aria-keyshortcuts={onDismiss ? 'Delete Backspace' : undefined}
+        title={`${pet.displayName} · drag to move${onDismiss ? ' · Delete to hide' : ''}`}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={finishDrag}
@@ -215,9 +227,9 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       {children}
       {dragging && onDismiss ? createPortal(
         <div className={`pet-dismiss-drawer${dismissArmed ? ' is-armed' : ''}`} role="status" aria-label={dismissArmed ? 'Release to hide desktop pet' : 'Drag here to hide desktop pet'}>
-          <span className="pet-dismiss-drawer__tray">
-            <span ref={dismissTargetRef} className="pet-dismiss-drawer__target"><X size={28} strokeWidth={2.7} /></span>
-            <span className="pet-dismiss-drawer__label">{dismissArmed ? 'Release to hide' : 'Drop to hide'}</span>
+          <span ref={dismissTargetRef} className="pet-dismiss-drawer__hitbox" aria-hidden="true" />
+          <span className="pet-dismiss-drawer__visual">
+            <span className="pet-dismiss-drawer__target"><X size={28} strokeWidth={2.7} /></span>
           </span>
         </div>,
         document.body,
