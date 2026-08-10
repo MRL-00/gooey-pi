@@ -450,11 +450,11 @@ async function bootstrap(): Promise<void> {
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
   const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
-      id: 'prime-work-schedules', name: 'GooeyPi schedules',
+      id: 'prime-work-schedules', name: 'Scheduled tasks',
       description: 'Create and manage durable project and thread schedules from an agent.',
       kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
     }, {
-      id: 'prime-work-browser', name: 'GooeyPi browser',
+      id: 'prime-work-browser', name: 'Browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
       kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
     }],
@@ -462,11 +462,11 @@ async function bootstrap(): Promise<void> {
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
     harness: 'omp',
     builtInSkills: [{
-      id: 'omp-work-schedules', name: 'GooeyPi schedules',
+      id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'OMP extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
     }, {
-      id: 'omp-work-browser', name: 'GooeyPi browser',
+      id: 'omp-work-browser', name: 'Browser',
       description: 'OMP extension for driving this thread\'s in-app browser.',
       kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
     }, {
