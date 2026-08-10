@@ -45,10 +45,10 @@ interface SelectControlProps extends SelectHTMLAttributes<HTMLSelectElement> {
 export function SelectControl({ icon, compact, className = '', label, children, ...props }: SelectControlProps) {
   return (
     <label className={`select-control ${compact ? 'select-control--compact' : ''} ${className}`} title={label}>
-      {icon}
+      <span className="select-control__icon" aria-hidden="true">{icon}</span>
       <span className="sr-only">{label}</span>
       <select aria-label={label} {...props}>{children}</select>
-      <ChevronDown size={12} aria-hidden="true" />
+      <ChevronDown className="select-control__chevron" size={12} aria-hidden="true" />
     </label>
   )
 }

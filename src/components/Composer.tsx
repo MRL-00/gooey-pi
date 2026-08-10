@@ -664,7 +664,7 @@ export const Composer = memo(function Composer({
                 title={fastAvailable ? `Use ${agentName} priority service tier` : `The installed ${agentName} RPC runtime does not expose fast mode`}
                 onClick={() => onFastChange(!fast)}
               >
-                <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> Fast
+                <Zap size={12} fill={fast ? 'currentColor' : 'none'} /> <span className="fast-mode-toggle__label">Fast</span>
               </button>
             ) : null}
             <div className="worktree-picker" ref={worktreeMenuRef}>
@@ -679,7 +679,7 @@ export const Composer = memo(function Composer({
               >
                 <FolderGit2 size={12} />
                 <span className="worktree-picker__label">{worktreeLabel}</span>
-                <ChevronDown size={11} />
+                <ChevronDown className="worktree-picker__chevron" size={11} />
               </button>
               {worktreeMenuOpen ? (
                 <div className="worktree-picker__menu" id={worktreeMenuId} role="menu" aria-label="Git worktrees">

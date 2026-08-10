@@ -402,6 +402,46 @@ test.describe('Prime Work desktop smoke', () => {
     expect(Math.abs(offset.y)).toBeLessThanOrEqual(0.5)
   })
 
+  test('collapses composer selectors and keeps the checkout menu inside a narrow conversation pane', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    await page.locator('.conversation-column').evaluate((node) => {
+      node.style.flex = '0 0 560px'
+      const pane = node.querySelector<HTMLElement>('.conversation-pane')
+      if (pane) pane.style.minWidth = '0'
+    })
+
+    const model = page.locator('.select-control').filter({ has: page.getByRole('combobox', { name: 'Model' }) })
+    const reasoning = page.locator('.select-control').filter({ has: page.getByRole('combobox', { name: 'Reasoning effort' }) })
+    await expect(model.locator('.select-control__chevron')).toHaveCSS('display', 'none')
+    await expect(reasoning.locator('.select-control__chevron')).toHaveCSS('display', 'none')
+    await expect(model.getByRole('combobox')).toHaveCSS('opacity', '1')
+    await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '1')
+
+    await page.locator('.conversation-column').evaluate((node) => { node.style.flex = '0 0 300px' })
+    await expect(model.getByRole('combobox')).toHaveCSS('opacity', '0')
+    await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '0')
+    await expect(model.locator('.select-control__icon')).not.toHaveCSS('display', 'none')
+    await expect(reasoning.locator('.select-control__icon')).not.toHaveCSS('display', 'none')
+
+    const controlBounds = await page.locator('.composer__footer').evaluate((footer) => {
+      const controls = footer.querySelector<HTMLElement>('.composer__controls')!
+      const actions = footer.querySelector<HTMLElement>('.composer__actions')!
+      const controlsRect = controls.getBoundingClientRect()
+      const actionsRect = actions.getBoundingClientRect()
+      return { controlsRight: controlsRect.right, actionsLeft: actionsRect.left }
+    })
+    expect(controlBounds.controlsRight).toBeLessThanOrEqual(controlBounds.actionsLeft)
+
+    await page.getByRole('button', { name: /^Checkout:/ }).click()
+    const menuBounds = await page.getByRole('menu', { name: 'Git worktrees' }).evaluate((menu) => {
+      const menuRect = menu.getBoundingClientRect()
+      const footerRect = menu.closest('.composer__footer')!.getBoundingClientRect()
+      return { menuLeft: menuRect.left, menuRight: menuRect.right, footerLeft: footerRect.left, footerRight: footerRect.right }
+    })
+    expect(menuBounds.menuLeft).toBeGreaterThanOrEqual(menuBounds.footerLeft - 0.5)
+    expect(menuBounds.menuRight).toBeLessThanOrEqual(menuBounds.footerRight + 0.5)
+  })
+
   test('loads the sandboxed preload bridge and hermetic service data', async () => {
     const bridge = await page.evaluate(() => {
       const prime = (window as typeof window & { prime?: Record<string, unknown> }).prime

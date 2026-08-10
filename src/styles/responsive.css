@@ -2,11 +2,18 @@
   .permissions-chip:not(.worktree-picker__trigger) { display: none; }
   .worktree-picker__trigger { display: inline-flex; max-width: 112px; }
   .composer__controls { min-width: 0; }
-  .select-control select { max-width: 106px; }
+  .select-control select { max-width: 92px; }
+  .select-control__chevron, .worktree-picker__chevron { display: none; }
 }
 
 @container (max-width: 490px) {
-  .select-control select { max-width: 84px; }
+  .select-control { position: relative; width: 28px; flex: 0 0 28px; justify-content: center; gap: 0; padding-inline: 0; }
+  .select-control select { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; opacity: 0; cursor: pointer; }
+  .select-control__icon { pointer-events: none; }
+  .fast-mode-toggle { width: 28px; justify-content: center; padding-inline: 0; }
+  .fast-mode-toggle__label, .worktree-picker__label { display: none; }
+  .worktree-picker, .worktree-picker__trigger { width: 28px; max-width: 28px; flex: 0 0 28px; }
+  .worktree-picker__trigger { justify-content: center; padding-inline: 0; }
   .composer-note { display: none; }
 }
 
@@ -63,7 +70,7 @@
   .composer-wrap { left: 9px; right: 9px; bottom: 8px; width: calc(100% - 18px); }
   .composer { min-height: 118px; }
   .composer__footer { align-items: flex-end; }
-  .composer__controls { max-width: calc(100% - 76px); flex-wrap: wrap; }
+  .composer__controls { flex-wrap: wrap; }
   .select-control { min-height: 28px; }
   .select-control select { max-width: 91px; }
   .composer__controls > .icon-button { width: 32px; height: 32px; }
