@@ -868,6 +868,22 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Enter')
     await expect(composer).toHaveValue('/plan ')
     await expect(composer).toHaveAttribute('aria-expanded', 'false')
+    await composer.fill('@')
+    const browserMention = page.locator('.composer-menu').getByRole('option', { name: /@ Browser/ })
+    await expect(browserMention).toBeVisible()
+    await browserMention.click()
+    await expect(composer).toHaveValue('@Browser ')
+    await composer.fill('@Browser inspect example.com')
+    const highlightedMention = page.locator('.composer-input__highlight mark')
+    await expect(highlightedMention).toHaveText('@Browser')
+    expect(await highlightedMention.evaluate((node) => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--prime)'
+      document.body.append(probe)
+      const matches = getComputedStyle(node).color === getComputedStyle(probe).color
+      probe.remove()
+      return matches
+    })).toBe(true)
     await page.getByRole('button', { name: /^New session/ }).first().click()
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
