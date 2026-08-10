@@ -42,7 +42,7 @@ export class SettingsService {
       browserHome: (value) => requireWebUrl(value),
       terminalShell: (value) => this.validateShell(value),
       activeHarness: (value) => {
-        if (value !== 'prime' && value !== 'omp') throw new TypeError('Invalid harness')
+        if (value !== 'prime' && value !== 'omp' && value !== 'pi') throw new TypeError('Invalid harness')
         return value
       },
       ompApprovalMode: (value) => {
@@ -81,6 +81,14 @@ export class SettingsService {
         return [...new Set(value.map((entry, index) => {
           const id = requireString(entry, `ompDisabledProviders[${index}]`, { min: 1, max: 128, trim: true })
           if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(id)) throw new TypeError(`ompDisabledProviders[${index}] is not a valid provider ID`)
+          return id
+        }))]
+      },
+      piDisabledProviders: (value) => {
+        if (!Array.isArray(value) || value.length > 256) throw new TypeError('piDisabledProviders must be a bounded array')
+        return [...new Set(value.map((entry, index) => {
+          const id = requireString(entry, `piDisabledProviders[${index}]`, { min: 1, max: 128, trim: true })
+          if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(id)) throw new TypeError(`piDisabledProviders[${index}] is not a valid provider ID`)
           return id
         }))]
       },

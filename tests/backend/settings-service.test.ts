@@ -88,6 +88,8 @@ describe('SettingsService.update', () => {
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)
     await expect(service.update({ ompDisabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ ompDisabledProviders: Array.from({ length: 257 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ piDisabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
+    await expect(service.update({ piDisabledProviders: Array.from({ length: 257 }, () => 'p') })).rejects.toThrow(/bounded/)
     await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
     await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
     await expect(service.update({ petId: '../escape' })).rejects.toThrow(/Invalid pet id/)
@@ -95,6 +97,13 @@ describe('SettingsService.update', () => {
     await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)
     await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
     expect(service.get()).toEqual(before)
+  })
+
+  it('accepts the pi harness and dedupes piDisabledProviders', async () => {
+    const service = makeService()
+    const next = await service.update({ activeHarness: 'pi', piDisabledProviders: ['openai', 'openai', 'anthropic'] })
+    expect(next.activeHarness).toBe('pi')
+    expect(next.piDisabledProviders).toEqual(['openai', 'anthropic'])
   })
 
   it('routes terminalShell through the injected shell validator', async () => {
