@@ -46,12 +46,34 @@ export function applySessionLifecycleEvent(
 export function sessionAttentionSignature(session: SessionRecord): string | undefined {
   const revision = session.eventRevision ?? session.updatedAt
   if (session.status === 'waiting') return `waiting:${revision}`
+  if (session.status === 'failed') return `failed:${revision}`
   if (session.status === 'complete' && session.unread) return `complete:${revision}`
   return session.unread ? `unread:${revision}` : undefined
 }
 
-export function sessionShowsCompanionNotification(session: SessionRecord): boolean {
-  if (session.status === 'waiting' || session.status === 'failed') return true
-  if (session.unread) return true
-  return session.status === 'complete' && typeof session.eventRevision === 'number'
+export function sessionCompanionNotificationSignature(session: SessionRecord): string | undefined {
+  const revision = session.eventRevision ?? session.updatedAt
+  if (session.status === 'waiting' || session.status === 'failed') return `${session.status}:${revision}`
+  if (session.status === 'complete' && (session.unread || typeof session.eventRevision === 'number')) return `complete:${revision}`
+  return session.unread ? `unread:${revision}` : undefined
+}
+
+export function sessionShowsCompanionNotification(session: SessionRecord, clearedSignature?: string): boolean {
+  const signature = sessionCompanionNotificationSignature(session)
+  return Boolean(signature && signature !== clearedSignature)
+}
+
+export function readClearedAttention(storedValue?: string | null): Record<string, string> {
+  const raw = storedValue !== undefined
+    ? storedValue
+    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-session-attention')
+  try {
+    const parsed: unknown = JSON.parse(raw ?? '{}')
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const result: Record<string, string> = {}
+    for (const [id, signature] of Object.entries(parsed)) {
+      if (typeof signature === 'string') result[id] = signature
+    }
+    return result
+  } catch { return {} }
 }

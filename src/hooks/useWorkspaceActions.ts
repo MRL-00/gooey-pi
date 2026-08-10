@@ -35,6 +35,7 @@ export interface WorkspaceActionsDeps {
   setSubmitting: Dispatch<SetStateAction<boolean>>
   refreshSchedules(): Promise<void>
   refreshHeartbeats(): Promise<void>
+  clearSessionAttention(session: SessionRecord): void
   reportError(error: unknown): void
 }
 
@@ -82,9 +83,13 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     persistPanel({ terminalOpen: !settingsState.terminalOpen })
   }
   const selectProject = async (project: ProjectRecord) => {
-    const { bridge, layout, settingsState, sessions, workspace, setView, reportError } = getDeps()
+    const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
     if (layout.compactLayout) settingsState.setSidebarOpen(false)
     const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
+    if (session) {
+      clearSessionAttention(session)
+      setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
+    }
     const generation = workspace.activateWorkspace(project, session)
     setView('session')
     try {
@@ -96,8 +101,9 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { if (workspace.workspaceRef.current.generation === generation) reportError(error) }
   }
   const selectSession = async (session: SessionRecord) => {
-    const { layout, settingsState, projects, workspace, setSessions, setView, reportError } = getDeps()
+    const { layout, settingsState, projects, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
     if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    clearSessionAttention(session)
     setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
     const project = findProjectForSession(projects, session)
     if (!project) { reportError('This session is not contained by an available project.'); return }

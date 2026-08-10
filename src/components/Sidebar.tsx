@@ -20,7 +20,7 @@ import {
   SquarePen,
   Trash2,
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { HARNESS_IDS, type AppMeta, type HarnessId, type ProjectRecord, type SessionRecord, type WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -35,6 +35,7 @@ export interface SidebarProps {
   activeView: WorkspaceView
   activeHarness?: HarnessId
   harnesses?: AppMeta['harnesses'] | null
+  clearedAttention?: Record<string, string>
   onSelectHarness?(harness: HarnessId): void
   onSelectProject(project: ProjectRecord): void
   onSelectSession(session: SessionRecord): void
@@ -94,29 +95,6 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
 }
 
 
-export function readClearedAttention(storedValue?: string | null): Record<string, string> {
-  const raw = storedValue !== undefined
-    ? storedValue
-    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-session-attention')
-  try {
-    const parsed: unknown = JSON.parse(raw ?? '{}')
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const result: Record<string, string> = {}
-    for (const [id, signature] of Object.entries(parsed)) {
-      if (typeof signature === 'string') result[id] = signature
-    }
-    return result
-  } catch { return {} }
-}
-
-export function pruneClearedAttention(current: Record<string, string>, sessions: SessionRecord[]): Record<string, string> {
-  // An empty catalog usually means the list has not loaded yet; keep the store.
-  if (!sessions.length) return current
-  const known = new Set(sessions.map((session) => session.id))
-  const kept = Object.entries(current).filter(([id]) => known.has(id))
-  return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
-}
-
 function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
   if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={statusLabel[status]}><LoaderCircle className="spin" size={13} /></span>
   if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={statusLabel[status]}><MessageCircleQuestion size={12} /></span>
@@ -128,7 +106,7 @@ function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
   return harness === 'omp' ? <OmpMark size={size} /> : <PrimeMark size={size} />
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -140,26 +118,11 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
   const [removeTarget, setRemoveTarget] = useState<ProjectRecord | null>(null)
-  const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(() => readClearedAttention())
-  const clearedAttentionPersistedRef = useRef(false)
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
     const signature = sessionAttentionSignature(session)
     return Boolean(signature && clearedAttention[session.id] !== signature)
   }
-  const clearAttention = (session: SessionRecord) => {
-    const signature = sessionAttentionSignature(session)
-    if (!signature) return
-    setClearedAttention((current) => ({ ...current, [session.id]: signature }))
-  }
-  useEffect(() => {
-    // The mount value came from localStorage; only persist actual changes.
-    if (!clearedAttentionPersistedRef.current) { clearedAttentionPersistedRef.current = true; return }
-    window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
-  }, [clearedAttention])
-  useEffect(() => {
-    setClearedAttention((current) => pruneClearedAttention(current, sessions))
-  }, [sessions])
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   useEffect(() => {
     if (!harnessMenuOpen) return
@@ -284,7 +247,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                 <div className="session-list">
                   {boundedSidebarSessions(projectSessions).map((session) => (
                     <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
-                      <button type="button" title={session.title} className="session-row" onClick={() => { setSessionMenu(null); clearAttention(session); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
+                      <button type="button" title={session.title} className="session-row" onClick={() => { setSessionMenu(null); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
                         <SessionStatusMark status={session.status} />
                         <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
                       </button>
@@ -330,6 +293,7 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.activeView === next.activeView
     && previous.activeHarness === next.activeHarness
     && previous.harnesses === next.harnesses
+    && previous.clearedAttention === next.clearedAttention
     && previous.onSelectHarness === next.onSelectHarness
     && previous.onSelectProject === next.onSelectProject
     && previous.onSelectSession === next.onSelectSession

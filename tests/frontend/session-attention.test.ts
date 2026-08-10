@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applySessionLifecycleEvent, sessionAttentionSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
+import { applySessionLifecycleEvent, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
-import { pruneClearedAttention, readClearedAttention } from '../../src/components/Sidebar'
 import type { SessionRecord } from '../../src/types/api'
 
 const session = (): SessionRecord => ({
@@ -23,6 +22,7 @@ describe('session lifecycle attention', () => {
     expect(completed.updatedAt).toBe('2025-01-01T00:00:01.000Z')
     expect(sessionAttentionSignature(completed)).toBeUndefined()
     expect(sessionShowsCompanionNotification(completed)).toBe(true)
+    expect(sessionShowsCompanionNotification(completed, sessionCompanionNotificationSignature(completed))).toBe(false)
   })
 
   it('gives repeated background waits and completions distinct attention revisions', () => {
@@ -41,7 +41,7 @@ describe('session lifecycle attention', () => {
   it('advances lifecycle revision without changing attention for failures', () => {
     const failed = applySessionLifecycleEvent(session(), { type: 'transport_error' }, false, 1)
     expect(failed).toMatchObject({ status: 'failed', eventRevision: 1 })
-    expect(sessionAttentionSignature(failed)).toBeUndefined()
+    expect(sessionAttentionSignature(failed)).toBe('failed:1')
     expect(sessionShowsCompanionNotification(failed)).toBe(true)
   })
 
@@ -50,6 +50,7 @@ describe('session lifecycle attention', () => {
     expect(sessionShowsCompanionNotification({ ...session(), status: 'complete' })).toBe(false)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'complete', unread: true })).toBe(true)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' })).toBe(true)
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' }, `waiting:${session().updatedAt}`)).toBe(false)
   })
 
   it('ignores desktop rate-limit drops: the agent is still running', () => {
@@ -112,16 +113,5 @@ describe('cleared-attention store', () => {
     expect(readClearedAttention('not json')).toEqual({})
     expect(readClearedAttention(null)).toEqual({})
     expect(readClearedAttention('{"a":"waiting:1","b":7}')).toEqual({ a: 'waiting:1' })
-  })
-
-  it('prunes ids that are absent from the session catalog', () => {
-    const current = { session: 'waiting:1', ghost: 'complete:2' }
-    expect(pruneClearedAttention(current, [session()])).toEqual({ session: 'waiting:1' })
-  })
-
-  it('keeps the store identity when nothing needs pruning or the catalog is empty', () => {
-    const current = { session: 'waiting:1' }
-    expect(pruneClearedAttention(current, [session()])).toBe(current)
-    expect(pruneClearedAttention(current, [])).toBe(current)
   })
 })

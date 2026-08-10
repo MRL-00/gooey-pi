@@ -7,7 +7,7 @@ import { Composer } from '@/components/Composer'
 import type { TerminalDrawerHandle } from '@/components/TerminalDrawer'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
-import { sessionShowsCompanionNotification } from '@/app/session-attention'
+import { readClearedAttention, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '@/app/session-attention'
 import { errorMessage } from '@/lib/errors'
 import { createSingleFlightAdmission, findProjectForSession, gitStatusForWorkspace, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
 import { waitForVoiceSession } from '@/lib/voice'
@@ -62,6 +62,7 @@ export default function App() {
   const initialSession = bridge ? undefined : SAMPLE_SESSIONS[0]
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
   const [sessions, setSessions] = useState<SessionRecord[]>(() => bridge ? [] : SAMPLE_SESSIONS)
+  const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(() => readClearedAttention())
   const [schedules, setSchedules] = useState<AutomationScheduleRecord[]>(() => bridge ? [] : SAMPLE_SCHEDULES)
   const [heartbeats, setHeartbeats] = useState<NativeHeartbeatRecord[]>([])
   const [scheduleFocusId, setScheduleFocusId] = useState<string | null>(null)
@@ -97,6 +98,14 @@ export default function App() {
   }, [])
   useEffect(() => () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+  }, [])
+  useEffect(() => {
+    window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
+  }, [clearedAttention])
+  const clearSessionAttention = useCallback((session: SessionRecord) => {
+    const signature = sessionCompanionNotificationSignature(session)
+    if (!signature) return
+    setClearedAttention((current) => current[session.id] === signature ? current : { ...current, [session.id]: signature })
   }, [])
   const settingsState = useAppSettings({ bridge, reportError })
   const activeHarness = settingsState.settings.activeHarness
@@ -281,7 +290,7 @@ export default function App() {
     workspace, settingsState, layout, provider, pluginSkills,
     submissionAdmissionRef, gitRequestRef, demoTimerRef,
     setProjects, setSessions, setGitSnapshot, setView, setPaletteOpen, setToast, setSubmitting,
-    refreshSchedules, refreshHeartbeats, reportError,
+    refreshSchedules, refreshHeartbeats, clearSessionAttention, reportError,
   })
   const handleVoiceTaskStarted = useCallback(async (task: VoiceTaskStarted) => {
     if (!bridge) return
@@ -400,7 +409,10 @@ export default function App() {
     () => workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'queue'),
     [workspace.pendingQueuedPrompts],
   )
-  const hasSessionNotification = useMemo(() => sessions.some(sessionShowsCompanionNotification), [sessions])
+  const hasSessionNotification = useMemo(
+    () => sessions.some((session) => sessionShowsCompanionNotification(session, clearedAttention[session.id])),
+    [clearedAttention, sessions],
+  )
   const toggleVoice = useCallback(() => {
     const nextOpen = !voiceOrbOpen
     setFocusPetVoiceControl(nextOpen && settingsState.settings.petEnabled)
@@ -428,7 +440,7 @@ export default function App() {
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(activeHarness === 'omp' ? 'https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md' : 'https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
-    {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
+    {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
       <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={toggleVoice} onOpenBrowser={openBrowser} />
