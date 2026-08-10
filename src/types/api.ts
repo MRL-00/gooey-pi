@@ -338,8 +338,13 @@ export interface SessionActionSnapshot {
   }
 }
 
+export const INTERFACE_FONT_SCALES = [100, 105, 110] as const
+export type InterfaceFontScale = typeof INTERFACE_FONT_SCALES[number]
+
 export interface AppSettings {
   theme: ThemeMode
+  /** Bounded interface text scale; 100 is the designed default. */
+  interfaceFontScale: InterfaceFontScale
   sidebarOpen: boolean
   inspectorOpen: boolean
   showFileChangesPopup: boolean

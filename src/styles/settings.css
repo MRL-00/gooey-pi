@@ -79,6 +79,10 @@
 .theme-options button strong { font-size: 10.5px; font-weight: 520; }
 .theme-options button.is-active { color: var(--text); border-color: var(--prime); }
 .theme-options button.is-active > svg { color: var(--prime); }
+.text-size-options { display: flex; flex: 0 0 auto; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-subtle); }
+.text-size-options button { min-width: 56px; height: 28px; padding: 0 7px; border-radius: 5px; color: var(--text-secondary); background: transparent; font-size: 10.5px; }
+.text-size-options button:hover { color: var(--text); background: var(--surface-hover); }
+.text-size-options button.is-active { color: var(--text); background: var(--surface-raised); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
 .runtime-card { min-height: 74px; display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--border); }
 .runtime-card > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; color: var(--danger); background: var(--danger-soft); }
 .runtime-card > span.is-online { color: var(--success); background: var(--success-soft); }

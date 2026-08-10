@@ -63,6 +63,7 @@ function fakeEvent(options: FakeSenderOptions = {}) {
     id: options.id ?? 1,
     isDestroyed: () => options.destroyed === true,
     getURL: () => options.url ?? EXPECTED_URL,
+    setZoomFactor: vi.fn(),
     mainFrame,
   }
   // A sub-frame sender presents a senderFrame that is not the main frame,
@@ -104,6 +105,23 @@ describe('registerIpc verify gate', () => {
     registration.authorize(event.sender as never)
     await expect(handlers.get('pets:list')!(event)).resolves.toEqual([{ id: 'orb' }])
     await expect(handlers.get('pets:sprite')!(event, 'gooey-pi')).resolves.toBe('data:image/webp;base64,pet')
+    registration.dispose()
+  })
+
+  it('applies a validated interface scale only after the settings update succeeds', async () => {
+    const event = fakeEvent()
+    const update = vi.fn(async () => ({ interfaceFontScale: 110 }))
+    stubs.settings = { update }
+    registration.authorize(event.sender as never)
+
+    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 110 })).resolves.toEqual({ interfaceFontScale: 110 })
+    expect(update).toHaveBeenCalledWith({ interfaceFontScale: 110 })
+    expect(event.sender.setZoomFactor).toHaveBeenCalledWith(1.1)
+
+    event.sender.setZoomFactor.mockClear()
+    update.mockRejectedValueOnce(new TypeError('Invalid interface font scale'))
+    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 125 })).rejects.toThrow('Invalid interface font scale')
+    expect(event.sender.setZoomFactor).not.toHaveBeenCalled()
     registration.dispose()
   })
 

@@ -823,6 +823,19 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: /System/ }).click()
   })
 
+  test('increases interface text within the bounded appearance choices', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.getByRole('radio', { name: 'Larger', exact: true }).click()
+    await expect(page.getByRole('radio', { name: 'Larger', exact: true })).toHaveAttribute('aria-checked', 'true')
+    await expect.poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getZoomFactor())).toBeCloseTo(1.1, 2)
+
+    await page.setViewportSize({ width: 480, height: 700 })
+    const fits = await page.locator('.settings-row--text-size').evaluate((row) => row.scrollWidth <= row.clientWidth)
+    expect(fits).toBe(true)
+    await page.setViewportSize({ width: 1440, height: 920 })
+  })
+
   test('traps modal focus, closes on Escape, and restores the trigger', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Browser', exact: true }).first().click()
