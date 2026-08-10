@@ -1,5 +1,5 @@
 import { session } from 'electron'
-import { BROWSER_PARTITION, type AppSettings } from '../../src/types/api'
+import { BROWSER_PARTITION, INTERFACE_FONT_SCALES, type AppSettings } from '../../src/types/api'
 import type { JsonStateStore } from './store'
 import { isRecord, rejectUnknownKeys, requireBoolean, requireInteger, requireString, requireWebUrl } from './validation'
 
@@ -17,6 +17,10 @@ export class SettingsService {
       theme: (value) => {
         if (value !== 'system' && value !== 'light' && value !== 'dark') throw new TypeError('Invalid theme')
         return value
+      },
+      interfaceFontScale: (value) => {
+        if (!INTERFACE_FONT_SCALES.includes(value as AppSettings['interfaceFontScale'])) throw new TypeError('Invalid interface font scale')
+        return value as AppSettings['interfaceFontScale']
       },
       sidebarOpen: (value) => requireBoolean(value, 'sidebarOpen'),
       inspectorOpen: (value) => requireBoolean(value, 'inspectorOpen'),

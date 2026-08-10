@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, protocol, safeStorage, session, shell, Tray, webContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -33,7 +33,6 @@ import { isAllowedRendererAudioPermission } from './voice-permissions'
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 let mainWindow: BrowserWindow | null = null
-let tray: Tray | null = null
 let ipc: IpcRegistration | null = null
 let agents: AgentRpcManager | null = null
 let ompAgents: AgentRpcManager | null = null
@@ -64,19 +63,6 @@ installCrashGuards({
 
 function appIconPath(): string {
   return app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'assets', 'icon.png')
-}
-
-function createTray(): void {
-  if (tray || shutdownStarted) return
-  const nextTray = new Tray(appIconPath())
-  nextTray.setToolTip('GooeyPi')
-  nextTray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open GooeyPi', click: () => requestWindow('tray') },
-    { type: 'separator' },
-    { label: 'Quit GooeyPi', click: () => app.quit() },
-  ]))
-  nextTray.on('click', () => requestWindow('tray'))
-  tray = nextTray
 }
 
 // One policy for every surface that serves renderer content: the app protocol
@@ -195,6 +181,19 @@ export async function loadInitialRenderer(window: InitialRendererWindow, rendere
   }
 }
 
+export function confirmAppClose(window: BrowserWindow): boolean {
+  return dialog.showMessageBoxSync(window, {
+    type: 'warning',
+    buttons: ['Cancel', 'Close GooeyPi'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: 'GooeyPi',
+    message: 'Are you sure?',
+    detail: 'Automations will not run if GooeyPi is closed.',
+  }) === 1
+}
+
 async function createWindow(): Promise<BrowserWindow | null> {
   if (shutdownStarted) return null
   const macOptions = process.platform === 'darwin' ? {
@@ -214,6 +213,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     ...macOptions,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      zoomFactor: (store?.getSettings().interfaceFontScale ?? 110) / 100,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -239,6 +239,9 @@ async function createWindow(): Promise<BrowserWindow | null> {
   window.once('ready-to-show', () => {
     readyToShow = true
     if (!keepTestWindowsHidden && rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
+  })
+  window.on('close', (event) => {
+    if (!shutdownStarted && !confirmAppClose(window)) event.preventDefault()
   })
   window.on('closed', () => {
     ipc?.revoke(rendererId)
@@ -304,7 +307,7 @@ export async function settleShutdown(
   }
 }
 
-function requestWindow(reason: 'activation' | 'second instance' | 'tray'): void {
+function requestWindow(reason: 'activation' | 'second instance'): void {
   void ensureWindow().then((window) => {
     if (!window || shutdownStarted || window.isDestroyed()) return
     if (keepTestWindowsHidden) return
@@ -608,7 +611,6 @@ if (!hasSingleInstanceLock) app.quit()
 else void app.whenReady().then(async () => {
   registerRendererProtocol()
   if (process.platform === 'darwin') app.dock?.setIcon(appIconPath())
-  createTray()
   const browserSession = session.defaultSession
   browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes = permission === 'media' && 'mediaTypes' in details ? details.mediaTypes : undefined
@@ -642,8 +644,7 @@ else void app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  // Active Prime Work schedules keep the local broker alive. A second launch reopens the window.
-  if (process.platform !== 'darwin' && !automation?.hasActiveSchedules()) app.quit()
+  app.quit()
 })
 
 app.on('before-quit', (event) => {

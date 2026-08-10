@@ -2,7 +2,8 @@
 
 GooeyPi is a macOS, Linux, and Windows desktop workspace for [OMP](https://github.com/can1357/oh-my-pi) and [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with each harness's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
 
-![GooeyPi session workspace](research/prime-work-final-light.png)
+<img width="2234" height="1332" alt="CleanShot 2026-08-10 at 12 02 52" src="https://github.com/user-attachments/assets/864ff0e1-71cc-49da-955f-f226710ef890" />
+
 
 ## Features
 
@@ -70,7 +71,7 @@ npm run test:e2e        # production build + Playwright Electron smoke suite
 npm run build           # main, CommonJS preload, and renderer bundles
 ```
 
-The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and macOS last-window recreation.
+The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and last-window app shutdown.
 
 ## Build installable packages
 

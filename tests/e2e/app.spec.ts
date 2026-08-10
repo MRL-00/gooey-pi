@@ -823,6 +823,21 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: /System/ }).click()
   })
 
+  test('increases interface text within the bounded appearance choices', async () => {
+    await page.keyboard.press('Meta+,')
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.getByRole('radio', { name: 'Larger', exact: true }).click()
+    await expect(page.getByRole('radio', { name: 'Larger', exact: true })).toHaveAttribute('aria-checked', 'true')
+    await expect.poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getZoomFactor())).toBeCloseTo(1.15, 2)
+
+    await page.setViewportSize({ width: 480, height: 700 })
+    const fits = await page.locator('.settings-row--text-size').evaluate((row) => row.scrollWidth <= row.clientWidth)
+    expect(fits).toBe(true)
+    await page.setViewportSize({ width: 1440, height: 920 })
+    await page.getByRole('radio', { name: 'Default', exact: true }).click()
+    await expect.poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getZoomFactor())).toBeCloseTo(1.1, 2)
+  })
+
   test('traps modal focus, closes on Escape, and restores the trigger', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Browser', exact: true }).first().click()
@@ -976,7 +991,7 @@ test.describe('Prime Work desktop smoke', () => {
     const sidebarScrim = page.getByRole('button', { name: 'Close sidebar' })
     await expect(page.locator('.panel-scrim--sidebar')).toBeVisible()
     await expect(sidebarScrim).toBeVisible()
-    await sidebarScrim.click({ position: { x: 900, y: 300 } })
+    await sidebarScrim.click({ position: { x: 400, y: 300 } })
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
     // Panel reconciliation may restore a confirmed inspector preference after
@@ -995,7 +1010,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect(page.locator('.panel-scrim--inspector')).toBeVisible()
     await page.setViewportSize({ width: 1440, height: 920 })
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1440)
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThan(980)
     await page.getByRole('button', { name: /Show sidebar/ }).click()
     await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
   })
@@ -1251,11 +1266,32 @@ test.describe('Prime Work desktop smoke', () => {
     expect(prompt.message).not.toContain('Terminal buffer')
   })
 
-  test('closes and recreates the last macOS window cleanly', async () => {
-    await page.close()
-    await app!.evaluate(({ app: electronApp }) => electronApp.emit('activate'))
-    page = await app!.firstWindow({ timeout: 45_000 })
-    attachDiagnostics(page)
+  test('asks before closing and quits after confirmation', async () => {
+    const warning = await app!.evaluate(({ BrowserWindow, dialog }) => {
+      let captured: { message: string; detail?: string; buttons: string[] } | undefined
+      const closeDialog = dialog as unknown as { showMessageBoxSync: (...args: unknown[]) => number }
+      closeDialog.showMessageBoxSync = (...args) => {
+        const options = args[1] as { message: string; detail?: string; buttons?: string[] }
+        captured = { message: options.message, detail: options.detail, buttons: options.buttons ?? [] }
+        return 0
+      }
+      BrowserWindow.getAllWindows()[0]?.close()
+      return captured
+    })
+    expect(warning).toEqual({
+      message: 'Are you sure?',
+      detail: 'Automations will not run if GooeyPi is closed.',
+      buttons: ['Cancel', 'Close GooeyPi'],
+    })
     await expect(page.locator('.app-shell')).toBeVisible()
+
+    const closed = app!.waitForEvent('close', { timeout: 45_000 })
+    await app!.evaluate(({ BrowserWindow, dialog }) => {
+      const closeDialog = dialog as unknown as { showMessageBoxSync: (...args: unknown[]) => number }
+      closeDialog.showMessageBoxSync = () => 1
+      BrowserWindow.getAllWindows()[0]?.close()
+    })
+    await closed
+    app = undefined
   })
 })

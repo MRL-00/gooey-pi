@@ -149,6 +149,9 @@
 }
 
 @media (max-width: 490px) {
+  .settings-row--text-size { align-items: stretch; flex-direction: column; gap: 9px; padding: 12px 0; }
+  .text-size-options { width: 100%; }
+  .text-size-options button { min-width: 0; flex: 1; }
   .schedule-ledger-summary > span:last-child { display: none; }
   .schedule-row__status { width: 32px; height: 32px; }
   .schedule-row__tags > span:nth-child(n+2) { display: none; }

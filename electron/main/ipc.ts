@@ -266,7 +266,11 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('plugins:refresh', (_event, harness) => pluginsFor(requireHarness(harness)).refresh())
 
   handle('settings:get', () => services.settings.get())
-  handle('settings:update', (_event, patch) => services.settings.update(patch))
+  handle('settings:update', async (event, patch) => {
+    const settings = await services.settings.update(patch)
+    event.sender.setZoomFactor(settings.interfaceFontScale / 100)
+    return settings
+  })
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())
 
   handle('browser:state', () => services.browser.state())

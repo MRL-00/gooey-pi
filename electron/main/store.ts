@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
-import { PRIME_THINKING_LEVELS, type AppSettings, type HarnessId, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
+import { INTERFACE_FONT_SCALES, PRIME_THINKING_LEVELS, type AppSettings, type HarnessId, type ProjectRecord, type ScheduleExecution, type AutomationScheduleRecord, type ScheduleRunRecord, type ScheduleTarget, type ScheduleTiming } from '../../src/types/api'
 import { isRecord } from './validation'
 
 export interface FolderIdentity {
@@ -32,6 +32,7 @@ export function defaultSettings(): AppSettings {
     : (process.env.SHELL?.startsWith('/') ? process.env.SHELL : '/bin/zsh')
   return {
     theme: 'system',
+    interfaceFontScale: 110,
     sidebarOpen: true,
     inspectorOpen: true,
     showFileChangesPopup: true,
@@ -114,6 +115,9 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
   if (!isRecord(value)) return defaults
   return {
     theme: value.theme === 'light' || value.theme === 'dark' || value.theme === 'system' ? value.theme : defaults.theme,
+    interfaceFontScale: INTERFACE_FONT_SCALES.includes(value.interfaceFontScale as AppSettings['interfaceFontScale'])
+      ? value.interfaceFontScale as AppSettings['interfaceFontScale']
+      : defaults.interfaceFontScale,
     sidebarOpen: typeof value.sidebarOpen === 'boolean' ? value.sidebarOpen : defaults.sidebarOpen,
     inspectorOpen: typeof value.inspectorOpen === 'boolean' ? value.inspectorOpen : defaults.inspectorOpen,
     showFileChangesPopup: typeof value.showFileChangesPopup === 'boolean' ? value.showFileChangesPopup : defaults.showFileChangesPopup,
