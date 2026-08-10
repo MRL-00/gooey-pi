@@ -13,7 +13,7 @@ import { JsonStateStore } from '../../electron/main/store'
 import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5 }) })
 
 function setup(
   maxSessionFiles?: number,
