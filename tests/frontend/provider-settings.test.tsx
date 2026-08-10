@@ -6,7 +6,7 @@ import { ProviderAuthModal } from '../../src/components/ProviderAuthModal'
 import { useProviderCatalog } from '../../src/hooks/useProviderCatalog'
 import { PrivacySettings } from '../../src/pages/settings/PrivacySettings'
 import { ProviderSettings } from '../../src/pages/settings/ProviderSettings'
-import type { AppSettings, PrimeModelCatalog, PrimeWorkApi, RuntimeInfo } from '../../src/types/api'
+import type { AppSettings, HarnessId, PrimeModelCatalog, PrimeWorkApi, RuntimeInfo } from '../../src/types/api'
 
 vi.mock('../../src/components/ui', () => ({
   Modal: ({ title, children, footer }: { title: string; children: ReactNode; footer?: ReactNode }) => <div role="dialog" aria-label={title}>{children}{footer}</div>,
@@ -162,7 +162,7 @@ describe('provider runtime mutations', () => {
     syncRuntime?: (runtimeId: string) => Promise<void>
     setEnabled?: PrimeWorkApi['providers']['setEnabled']
     setDisabled?: PrimeWorkApi['providers']['setDisabled']
-    harness?: 'prime' | 'omp'
+    harness?: HarnessId
     reportError?: (error: unknown) => void
   }) {
     let value: ReturnType<typeof useProviderCatalog> | undefined
@@ -274,5 +274,17 @@ describe('provider runtime mutations', () => {
     expect(setEnabled).toHaveBeenCalledWith('anthropic', true, 'omp')
     await act(async () => { await hook.value.setAllEnabled() })
     expect(setDisabled).toHaveBeenCalledWith([], 'omp')
+  })
+
+  it('routes Pi provider visibility to the Pi desktop-settings bucket', async () => {
+    const next = { ...catalog, providers: catalog.providers.map((provider) => provider.id === 'anthropic' ? { ...provider, enabled: true } : provider) }
+    const setEnabled = vi.fn().mockResolvedValue(next)
+    const setDisabled = vi.fn().mockResolvedValue(next)
+    const hook = await mountCatalogHook({ command: vi.fn(), harness: 'pi', setEnabled, setDisabled })
+
+    await act(async () => { await hook.value.setEnabled('anthropic', true) })
+    expect(setEnabled).toHaveBeenCalledWith('anthropic', true, 'pi')
+    await act(async () => { await hook.value.setAllEnabled() })
+    expect(setDisabled).toHaveBeenCalledWith([], 'pi')
   })
 })

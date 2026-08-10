@@ -31,6 +31,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   telemetry: 'privacy',
   disabledProviders: 'providers',
   ompDisabledProviders: 'providers',
+  piDisabledProviders: 'providers',
   activeHarness: 'agent',
   ompApprovalMode: 'agent',
   petEnabled: 'pets',

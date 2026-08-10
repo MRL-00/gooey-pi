@@ -20,12 +20,12 @@ import {
   SquarePen,
   Trash2,
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { HARNESS_IDS, type AppMeta, type HarnessId, type ProjectRecord, type SessionRecord, type WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { sessionAttentionSignature } from '@/app/session-attention'
-import { IconButton, Modal, OmpMark, PrimeMark, useFocusTrap } from './ui'
+import { IconButton, Modal, OmpMark, PiMark, PrimeMark, useFocusTrap } from './ui'
 
 export interface SidebarProps {
   projects: ProjectRecord[]
@@ -102,8 +102,11 @@ function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
   return <span className={`session-status-mark session-status-mark--${status}`} title={statusLabel[status]}><span /></span>
 }
 
+const HARNESS_MARKS: Record<HarnessId, (props: { size?: number }) => ReactElement> = { omp: OmpMark, prime: PrimeMark, pi: PiMark }
+
 function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
-  return harness === 'omp' ? <OmpMark size={size} /> : <PrimeMark size={size} />
+  const Mark = HARNESS_MARKS[harness]
+  return <Mark size={size} />
 }
 
 function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {

@@ -7,7 +7,7 @@ import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { MarkdownText } from '../MarkdownText'
-import { OmpMark, PrimeMark } from '../ui'
+import { OmpMark, PiMark, PrimeMark } from '../ui'
 import { InlineText } from './syntax'
 import { TranscriptImage } from './TranscriptImage'
 import { ThinkingDots, WorkDisclosure, WorkTimeline } from './timeline'
@@ -116,6 +116,13 @@ function MessageActions({ message, text: suppliedText }: { message: TranscriptMe
   )
 }
 
+const HARNESS_MARKS = { omp: OmpMark, prime: PrimeMark, pi: PiMark } satisfies Record<HarnessId, unknown>
+
+function AssistantHarnessMark({ harness, size = 24 }: { harness: HarnessId; size?: number }) {
+  const Mark = HARNESS_MARKS[harness]
+  return <Mark size={size} />
+}
+
 export const AssistantMessage = memo(
   function AssistantMessage({ message, harness = 'prime', showReasoning, showTools }: { message: TranscriptMessage; harness?: HarnessId; showReasoning: boolean; showTools: boolean }) {
     const isActivity = (part: MessagePart) => part.type === 'thinking' || part.type === 'toolCall' || part.type === 'toolResult' || part.type === 'agentMessage' || part.type === 'compaction'
@@ -144,7 +151,7 @@ export const AssistantMessage = memo(
     return (
       <article className="message message--assistant">
         <div className="assistant-mark">
-          {harness === 'omp' ? <OmpMark size={24} /> : <PrimeMark size={24} />}
+          <AssistantHarnessMark harness={harness} />
         </div>
         <div className="message__content">
           {renderNarrative(before, 'before', message.streaming)}

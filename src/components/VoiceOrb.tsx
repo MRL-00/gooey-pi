@@ -1,6 +1,7 @@
 import { Mic, MicOff, X } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { HarnessId, PrimeWorkApi, VoiceTaskStarted, VoiceToolRequest } from '@/types/api'
+import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { DesktopPet, type DesktopPetProps } from './DesktopPet'
 import type { PetActivity } from './PetAvatar'
 
@@ -259,7 +260,7 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
       : orbState === 'error' ? 'failed' : 'working'
   const receipt = taskReceipt ? <div className="voice-orb__receipt" role="status">
     <strong>Task started</strong>
-    <span>{taskReceipt.projectName} · {taskReceipt.harness === 'omp' ? 'OMP' : 'Prime'}</span>
+    <span>{taskReceipt.projectName} · {HARNESS_SHORT_NAMES[taskReceipt.harness]}</span>
     <small>{taskOpened ? 'Opened in the sidebar' : 'Opening task…'}</small>
   </div> : null
   return (
