@@ -25,6 +25,7 @@ import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS,
 import { executablePath } from '../scripts/release/after-pack.cjs'
 import {
   assertUnpackedNativeLayout as assertCrossPlatformUnpackedNativeLayout,
+  expectedArtifactExtensions,
   expectedNativeFiles,
   nativeRuntimeDirectory,
   zeroMqAddonPattern,
@@ -351,6 +352,11 @@ describe('post-package verification helpers', () => {
 
   test('keeps every platform native unpack allowlist exact and architecture-specific', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(packageJson.author).toEqual({ name: 'GooeyPi contributors', email: '42459108+am-will@users.noreply.github.com' })
+    expect(packageJson.homepage).toBe('https://github.com/am-will/prime-work')
+    expect(packageJson.desktopName).toBe('gooeypi.desktop')
+    expect(packageJson.build.linux.synopsis).toBe(packageJson.description)
+    expect(packageJson.build.linux.syncDesktopName).toBe(true)
     expect(packageJson.build.asarUnpack).toBeUndefined()
     expect(packageJson.build.mac.asarUnpack).toEqual([
       '**/node_modules/node-pty/build/Release/pty.node',
@@ -368,9 +374,17 @@ describe('post-package verification helpers', () => {
       '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll',
       '**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node',
     ])
-    expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm'])
+    expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm', 'pacman'])
     expect(packageJson.build.win.target).toEqual(['nsis', 'zip'])
     expect(packageJson.build.directories.output).toBe('release')
+  })
+
+  test('verifies and uploads every configured Linux installer format', () => {
+    expect(expectedArtifactExtensions('linux')).toEqual(['.AppImage', '.deb', '.rpm', '.pacman'])
+    const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    expect(ciWorkflow).toContain('release/linux/**/*.pacman')
+    expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
   })
 
   test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
