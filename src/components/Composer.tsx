@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, Brain, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -23,7 +23,7 @@ import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { useDictation } from '@/hooks/useDictation'
-import { IconButton, PrimeMark, SelectControl } from './ui'
+import { IconButton, SelectControl } from './ui'
 
 interface ComposerProps {
   busy: boolean
@@ -644,7 +644,7 @@ export const Composer = memo(function Composer({
             >
               <Plus size={17} />
             </IconButton>
-            <SelectControl label="Model" compact icon={<PrimeMark size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
+            <SelectControl label="Model" compact icon={<Brain size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option>
               {modelOptions}
             </SelectControl>
