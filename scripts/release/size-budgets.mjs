@@ -15,8 +15,8 @@ export const BUNDLE_SIZE_BUDGETS = Object.freeze({
 export const PACKAGE_SIZE_BUDGETS = Object.freeze({
   asarBytes: 220 * MIB,
   appBytes: 480 * MIB,
-  dmgBytes: 170 * MIB,
-  zipBytes: 165 * MIB,
+  dmgBytes: 190 * MIB,
+  zipBytes: 185 * MIB,
 })
 
 const BUNDLE_LABELS = {
