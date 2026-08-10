@@ -13,9 +13,9 @@
 .pet-orb--failed { filter: grayscale(.55); animation: none; }
 .pet-orb.is-reduced-motion, .pet-orb.is-reduced-motion::after { animation: none; }
 
-.desktop-pet { position: fixed; z-index: 120; width: 120px; min-height: 146px; display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
+.desktop-pet { position: fixed; z-index: 120; width: var(--pet-surface-width, 96px); min-height: var(--pet-surface-min-height, 122px); display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
 .session-attention-badge { position: absolute; z-index: 4; width: 22px; height: 22px; display: grid; place-items: center; border: 3px solid var(--canvas); border-radius: 50%; color: #fff; background: var(--danger); box-shadow: 0 2px 5px color-mix(in srgb, #000 28%, transparent), 0 0 12px color-mix(in srgb, var(--danger) 68%, transparent); font-size: 12px; font-weight: 800; line-height: 1; pointer-events: none; }
-.desktop-pet__drag-target { width: 112px; min-height: 118px; display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
+.desktop-pet__drag-target { width: calc(var(--pet-avatar-size, 72px) + 16px); min-height: calc(var(--pet-avatar-size, 72px) + 22px); display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
 .desktop-pet__avatar { position: relative; display: inline-flex; }
 .desktop-pet__avatar > .session-attention-badge { top: -5px; right: -5px; }
 .voice-orb__drag > .session-attention-badge { top: 14px; right: 9px; }
@@ -50,6 +50,13 @@
 .pet-choice > span:last-child { min-width: 0; display: flex; flex-direction: column; }
 .pet-choice strong { overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .pet-choice small { margin-top: 2px; color: var(--text-tertiary); font-size: 9.5px; }
+.pet-size-row { align-items: center; }
+.pet-size-control { min-width: 226px; display: grid; grid-template-columns: minmax(150px, 1fr) 45px; align-items: center; gap: 11px; }
+.settings-row .pet-size-control input[type="range"] { width: 100%; min-width: 0; height: 18px; padding: 0; border: 0; border-radius: 999px; outline: 0; background: transparent; accent-color: var(--prime); cursor: ew-resize; }
+.settings-row .pet-size-control input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--prime) 78%, #fff) 0 var(--pet-size-progress, 33%), var(--surface-selected) var(--pet-size-progress, 33%) 100%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 55%, transparent); }
+.settings-row .pet-size-control input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -6px; border: 2px solid var(--surface-raised); border-radius: 50%; background: var(--prime); box-shadow: 0 1px 4px color-mix(in srgb, #000 32%, transparent), 0 0 0 1px color-mix(in srgb, var(--prime) 72%, transparent); -webkit-appearance: none; }
+.settings-row .pet-size-control input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent); }
+.pet-size-control output { color: var(--text-secondary); font: 600 10px/1 "SFMono-Regular", Menlo, monospace; text-align: right; font-variant-numeric: tabular-nums; }
 
 @keyframes pet-placeholder { 50% { transform: scale(.92, 1.05); border-radius: 56% 44% 42% 58%; } }
 @keyframes pet-orb-idle { 50% { transform: scale(1.05,.96) rotate(3deg); border-radius: 56% 44% 45% 55% / 44% 58% 42% 56%; } }
@@ -63,7 +70,6 @@
   .pet-hero { grid-template-columns: 100px minmax(0, 1fr); padding-inline: 12px; }
   .pet-hero__stage { min-height: 112px; }
   .pet-grid { grid-template-columns: 1fr; }
-  .desktop-pet { transform: scale(.86); transform-origin: bottom right; }
 }
 
 @media (prefers-reduced-motion: reduce) {

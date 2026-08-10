@@ -19,9 +19,9 @@ function initialPosition(): Position {
   } catch { return fallback }
 }
 
-function constrained(position: Position, surfaceHeight: number): Position {
+function constrained(position: Position, surfaceHeight: number, surfaceWidth: number): Position {
   return {
-    x: Math.max(8, Math.min(window.innerWidth - 124, position.x)),
+    x: Math.max(8, Math.min(window.innerWidth - surfaceWidth - 4, position.x)),
     y: Math.max(54, Math.min(window.innerHeight - surfaceHeight - 8, position.y)),
   }
 }
@@ -32,6 +32,7 @@ export interface DesktopPetProps {
   agentBusy: boolean
   voiceActive: boolean
   reduceMotion: boolean
+  petSize?: number
   voiceActivity?: PetActivity
   voiceMuted?: boolean
   voiceStatus?: string
@@ -45,10 +46,13 @@ export interface DesktopPetProps {
   children?: ReactNode
 }
 
-export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
-  const initialSurfaceHeight = 154
+export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
+  const normalizedPetSize = Math.max(50, Math.min(125, Math.round(petSize)))
+  const avatarSize = Math.round(96 * normalizedPetSize / 100)
+  const surfaceWidth = Math.max(72, avatarSize + 24)
+  const initialSurfaceHeight = avatarSize + 58
   const [available, setAvailable] = useState<PetDefinition[]>(BUILT_INS)
-  const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight))
+  const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight, surfaceWidth))
   const [surfaceHeight, setSurfaceHeight] = useState(initialSurfaceHeight)
   const [dragging, setDragging] = useState(false)
   const [direction, setDirection] = useState<'left' | 'right'>('right')
@@ -66,19 +70,19 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   }, [pets])
   useEffect(() => { positionRef.current = position }, [position])
   useEffect(() => {
-    const onResize = () => setPosition((current) => constrained(current, surfaceHeight))
+    const onResize = () => setPosition((current) => constrained(current, surfaceHeight, surfaceWidth))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [surfaceHeight])
+  }, [surfaceHeight, surfaceWidth])
   useLayoutEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
     const updateBounds = () => {
       const measured = Math.ceil(surface.getBoundingClientRect().height)
-      const nextHeight = Math.max(154, measured || (voiceActive ? 320 : 154))
+      const nextHeight = Math.max(initialSurfaceHeight, measured || (voiceActive ? 320 : initialSurfaceHeight))
       setSurfaceHeight((current) => current === nextHeight ? current : nextHeight)
       setPosition((current) => {
-        const next = constrained(current, nextHeight)
+        const next = constrained(current, nextHeight, surfaceWidth)
         return next.x === current.x && next.y === current.y ? current : next
       })
     }
@@ -87,7 +91,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     const observer = new ResizeObserver(updateBounds)
     observer.observe(surface)
     return () => observer.disconnect()
-  }, [voiceActive, hasVoiceDetails])
+  }, [voiceActive, hasVoiceDetails, initialSurfaceHeight, surfaceWidth])
   useEffect(() => {
     if (!focusVoiceControl || !voiceControlRef.current) return
     voiceControlRef.current.focus()
@@ -121,7 +125,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     drag.lastX = event.clientX
     drag.lastY = event.clientY
     drag.moved ||= Math.abs(deltaX) + Math.abs(deltaY) > 2
-    const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, surfaceHeight)
+    const next = constrained({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, surfaceHeight, surfaceWidth)
     positionRef.current = next
     setPosition(next)
   }
@@ -143,7 +147,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       event.preventDefault()
       setDirection(delta.x < 0 ? 'left' : delta.x > 0 ? 'right' : direction)
       setPosition((current) => {
-        const next = constrained({ x: current.x + delta.x, y: current.y + delta.y }, surfaceHeight)
+        const next = constrained({ x: current.x + delta.x, y: current.y + delta.y }, surfaceHeight, surfaceWidth)
         positionRef.current = next
         window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(next))
         return next
@@ -158,7 +162,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     <div
       ref={surfaceRef}
       className={`desktop-pet desktop-pet--${activity}`}
-      style={{ left: position.x, top: position.y }}
+      style={{ left: position.x, top: position.y, '--pet-avatar-size': `${avatarSize}px`, '--pet-surface-width': `${surfaceWidth}px`, '--pet-surface-min-height': `${initialSurfaceHeight - 8}px` } as React.CSSProperties}
       role={voiceActive ? 'complementary' : undefined}
       aria-label={voiceActive ? 'Realtime voice session' : undefined}
       data-horizontal-edge={position.x > window.innerWidth / 2 ? 'right' : 'left'}
@@ -176,7 +180,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
         onKeyDown={moveByKeyboard}
       >
         <span className="desktop-pet__avatar">
-          <PetAvatar pet={pet} pets={pets} activity={activity} size={96} reduceMotion={reduceMotion} />
+          <PetAvatar pet={pet} pets={pets} activity={activity} size={avatarSize} reduceMotion={reduceMotion} />
           {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
         </span>
         <span className="desktop-pet__name">{pet.displayName}</span>

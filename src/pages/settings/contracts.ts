@@ -34,6 +34,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   ompApprovalMode: 'agent',
   petEnabled: 'pets',
   petId: 'pets',
+  petSize: 'pets',
   voiceTranscriptionProvider: 'voice',
   voiceOpenAiLiveTranscriptionModel: 'voice',
   voiceOpenAiTranscriptionModel: 'voice',

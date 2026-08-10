@@ -1,7 +1,7 @@
 import { session } from 'electron'
 import { BROWSER_PARTITION, type AppSettings } from '../../src/types/api'
 import type { JsonStateStore } from './store'
-import { isRecord, rejectUnknownKeys, requireBoolean, requireString, requireWebUrl } from './validation'
+import { isRecord, rejectUnknownKeys, requireBoolean, requireInteger, requireString, requireWebUrl } from './validation'
 
 export class SettingsService {
   constructor(private readonly store: JsonStateStore, private readonly validateShell: (shell: unknown) => string, private readonly cancelBrowserDownloads: () => void = () => undefined) {}
@@ -51,6 +51,7 @@ export class SettingsService {
         if (!/^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(id)) throw new TypeError('Invalid pet id')
         return id
       },
+      petSize: (value) => requireInteger(value, 'petSize', 50, 125),
       voiceTranscriptionProvider: (value) => {
         if (value !== 'openai-live' && value !== 'openai' && value !== 'groq' && value !== 'deepgram' && value !== 'local-whisper') throw new TypeError('Invalid voice transcription provider')
         return value

@@ -1,5 +1,5 @@
 import { PawPrint, RefreshCw, Sparkles } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { PetAvatar } from '@/components/PetAvatar'
 import type { PetDefinition, PrimeWorkApi } from '@/types/api'
 import type { SettingsSectionProps } from './contracts'
@@ -34,12 +34,19 @@ export function PetsSettings({ settings, onUpdate, pets }: SettingsSectionProps 
     <>
       <header><h1>Pets</h1><p>Choose a companion that reacts while OMP or Prime works.</p></header>
       <section className="pet-hero">
-        <div className="pet-hero__stage"><PetAvatar pet={selected} pets={pets} activity="speaking" size={108} reduceMotion={settings.reduceMotion} /></div>
+        <div className="pet-hero__stage"><PetAvatar pet={selected} pets={pets} activity="speaking" size={Math.round(96 * settings.petSize / 100)} reduceMotion={settings.reduceMotion} /></div>
         <div><span className="pet-kicker"><Sparkles size={12} /> Active companion</span><h2>{selected.displayName}</h2><p>{selected.description}</p><small>Drag the pet around the workspace. It runs while moving, reviews while an agent works, and waves during voice mode.</small></div>
       </section>
       <section className="settings-group">
         <h2>Companion</h2>
         <SettingsToggle checked={settings.petEnabled} onChange={(petEnabled) => { void onUpdate({ petEnabled }) }} label="Show desktop pet" description="Keep your selected companion floating above the workspace." />
+        <div className="settings-row pet-size-row">
+          <span><label htmlFor="pet-size"><strong>Pet size</strong></label><small>Scale the companion without shrinking its voice controls.</small></span>
+          <div className="pet-size-control">
+            <input id="pet-size" type="range" min="50" max="125" step="5" value={settings.petSize} style={{ '--pet-size-progress': `${(settings.petSize - 50) / .75}%` } as CSSProperties} onChange={(event) => { void onUpdate({ petSize: Number(event.target.value) }) }} />
+            <output htmlFor="pet-size">{settings.petSize}%</output>
+          </div>
+        </div>
         <div className="pet-grid" role="radiogroup" aria-label="Desktop pet">
           {available.map((pet) => (
             <button

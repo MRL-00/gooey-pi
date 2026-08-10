@@ -90,7 +90,7 @@ describe('DesktopPet', () => {
     const surface = container.querySelector<HTMLElement>('.desktop-pet')!
     expect(surface.getAttribute('role')).toBe('complementary')
     expect(surface.getAttribute('aria-label')).toBe('Realtime voice session')
-    expect(Number.parseFloat(surface.style.left)).toBeLessThanOrEqual(196)
+    expect(Number.parseFloat(surface.style.left)).toBeLessThanOrEqual(220)
     expect(Number.parseFloat(surface.style.top) + 340).toBeLessThanOrEqual(492)
     expect(surface.dataset.horizontalEdge).toBe('right')
     bounds.mockRestore()

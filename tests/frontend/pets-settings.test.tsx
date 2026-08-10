@@ -43,5 +43,13 @@ describe('PetsSettings', () => {
     expect(rockyChoice).toBeDefined()
     act(() => rockyChoice!.click())
     expect(update).toHaveBeenCalledWith({ petId: 'codex/rocky', petEnabled: true })
+
+    const size = container.querySelector<HTMLInputElement>('#pet-size')!
+    expect(size.value).toBe('75')
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(size, '60')
+      size.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(update).toHaveBeenCalledWith({ petSize: 60 })
   })
 })

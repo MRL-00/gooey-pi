@@ -40,6 +40,7 @@ describe('SettingsService.update', () => {
       ompApprovalMode: 'always-ask',
       petEnabled: true,
       petId: 'codex/rocky',
+      petSize: 65,
       voiceTranscriptionProvider: 'groq',
       voiceOpenAiLiveTranscriptionModel: 'gpt-realtime-whisper',
       voiceOpenAiTranscriptionModel: 'gpt-4o-mini-transcribe',
@@ -56,7 +57,7 @@ describe('SettingsService.update', () => {
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
       telemetry: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
-      activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky',
+      activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky', petSize: 65,
       voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
     })
     expect(service.get()).toEqual(next)
@@ -88,6 +89,7 @@ describe('SettingsService.update', () => {
     await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
     await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
     await expect(service.update({ petId: '../escape' })).rejects.toThrow(/Invalid pet id/)
+    await expect(service.update({ petSize: 49 })).rejects.toThrow(/integer from 50 to 125/)
     await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)
     await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
     expect(service.get()).toEqual(before)

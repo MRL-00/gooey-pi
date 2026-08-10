@@ -11,7 +11,7 @@ interface VoiceOrbProps {
   harness: HarnessId
   onClose(): void
   onTaskStarted(task: VoiceTaskStarted): Promise<void>
-  pet?: Pick<DesktopPetProps, 'pets' | 'petId' | 'agentBusy' | 'reduceMotion'>
+  pet?: Pick<DesktopPetProps, 'pets' | 'petId' | 'agentBusy' | 'reduceMotion' | 'petSize'>
   focusPetControl?: boolean
   onPetControlFocused?(): void
   hasSessionNotification?: boolean

@@ -365,6 +365,8 @@ export interface AppSettings {
   petEnabled: boolean
   /** Built-in or discovered pet selection id. */
   petId: string
+  /** Desktop companion size as a percentage of its native workspace size. */
+  petSize: number
   /** Speech-to-text path used by the composer microphone. */
   voiceTranscriptionProvider: VoiceTranscriptionProvider
   /** Provider model IDs stay configurable without exposing provider credentials. */

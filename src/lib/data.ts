@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ompApprovalMode: 'inherit',
   petEnabled: true,
   petId: 'gooey-pi',
+  petSize: 75,
   sidebarOpen: true,
   inspectorOpen: true,
   showFileChangesPopup: true,
