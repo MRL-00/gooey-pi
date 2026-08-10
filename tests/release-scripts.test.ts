@@ -23,7 +23,12 @@ import {
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
 // after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
 import { executablePath } from '../scripts/release/after-pack.cjs'
-import { expectedNativeFiles, nativeRuntimeDirectory, zeroMqAddonPattern } from '../scripts/release/verify-cross-platform-package.mjs'
+import {
+  assertUnpackedNativeLayout as assertCrossPlatformUnpackedNativeLayout,
+  expectedNativeFiles,
+  nativeRuntimeDirectory,
+  zeroMqAddonPattern,
+} from '../scripts/release/verify-cross-platform-package.mjs'
 
 const baseEnvironment = {
   RELEASE_SIGNING_TEAM_ID: 'TEAM123',
@@ -241,6 +246,8 @@ describe('release preflight', () => {
     expect(ciWorkflow).toMatch(/packaging-smoke:\n {4}if: github\.event_name == 'pull_request'/)
     for (const runner of ['macos-14', 'ubuntu-22.04', 'windows-2022']) expect(ciWorkflow).toContain(`runner: ${runner}`)
     expect(ciWorkflow).toContain('electron-builder --dir')
+    expect(ciWorkflow).toContain('--publish=never')
+    expect(ciWorkflow).not.toContain('--publish never')
     expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')
   })
 
@@ -532,6 +539,27 @@ describe('cross-platform packaging repair', () => {
     }
     expect(nativeRuntimeDirectory('win')).toBe('win32')
     expect(nativeRuntimeDirectory('linux')).toBe('linux')
+  })
+
+  test('accepts ZeroMQ ABI and libc fallbacks only within the target architecture', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'prime-work-cross-platform-unpacked-'))
+    const nativeFiles = [
+      ...expectedNativeFiles('linux', 'x64'),
+      'node_modules/zeromq/build/linux/x64/node/glibc-127-Release/addon.node',
+      'node_modules/zeromq/build/linux/x64/node/musl-127-Release/addon.node',
+    ]
+    for (const relativePath of nativeFiles) {
+      const path = join(directory, relativePath)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, 'fixture')
+    }
+    try {
+      expect(() => assertCrossPlatformUnpackedNativeLayout(directory, 'linux', 'x64')).not.toThrow()
+      rmSync(join(directory, 'node_modules/zeromq'), { recursive: true, force: true })
+      expect(() => assertCrossPlatformUnpackedNativeLayout(directory, 'linux', 'x64')).toThrow(/expected at least 1/)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   test('resolves release-script commands to Windows-safe spawns', () => {

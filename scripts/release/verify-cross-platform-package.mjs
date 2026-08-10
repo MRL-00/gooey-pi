@@ -65,7 +65,7 @@ export function zeroMqAddonPattern(target, architecture) {
   return new RegExp(`^node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/[^/]+-Release/addon\\.node$`)
 }
 
-function assertUnpackedNativeLayout(directory, target, architecture) {
+export function assertUnpackedNativeLayout(directory, target, architecture) {
   const files = listFiles(directory)
     .map((path) => relative(directory, path).replaceAll('\\', '/'))
     .sort()
@@ -75,10 +75,11 @@ function assertUnpackedNativeLayout(directory, target, architecture) {
   const unexpected = files.filter((path) => !allowed.has(path) && !zeroMqPattern.test(path))
   const missing = required.filter((path) => !files.includes(path))
   const zeroMq = files.filter((path) => zeroMqPattern.test(path))
-  // Exactly one ZeroMQ addon per platform/architecture: zero means the native
-  // runtime is missing, more than one means another toolchain's build leaked in.
-  if (missing.length || zeroMq.length !== 1 || unexpected.length) {
-    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ addons: ${zeroMq.length}, expected exactly 1; extra: ${unexpected.join(', ') || 'none'})`)
+  // ZeroMQ intentionally ships ABI and, on Linux, libc fallbacks. Its loader
+  // tries matching platform/architecture candidates from newest to oldest.
+  // Keep that bounded fallback set while still rejecting off-target paths.
+  if (missing.length || zeroMq.length === 0 || unexpected.length) {
+    throw new Error(`Unexpected native unpack layout (missing: ${missing.join(', ') || 'none'}; ZeroMQ addons: ${zeroMq.length}, expected at least 1; extra: ${unexpected.join(', ') || 'none'})`)
   }
 }
 
