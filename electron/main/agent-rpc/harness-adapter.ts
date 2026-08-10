@@ -114,7 +114,11 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     }
     // OMP has no --skill flag: app capabilities are injected as explicit,
     // self-contained extensions while normal OMP skills remain discovery-based.
-    for (const extensionPath of [input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH, input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH]) {
+    for (const extensionPath of [
+      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
+      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
+      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
+    ]) {
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args

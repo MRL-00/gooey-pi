@@ -69,7 +69,8 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
   mkdirSync(ompSessions, { recursive: true })
   const ompTitleUnpadded = JSON.stringify({ type: 'title', v: 1, title: 'OMP hermetic fixture', updatedAt: '2026-02-01T00:00:00.000Z', pad: '' })
   const ompTitleSlot = JSON.stringify({ type: 'title', v: 1, title: 'OMP hermetic fixture', updatedAt: '2026-02-01T00:00:00.000Z', pad: ' '.repeat(256 - 1 - Buffer.byteLength(ompTitleUnpadded, 'utf8')) })
-  writeFileSync(join(ompSessions, '2026-02-01T00-00-00-000Z_019fdf24-aaaa-7000-8000-000000000001.jsonl'), [
+  const ompSessionFile = join(ompSessions, '2026-02-01T00-00-00-000Z_019fdf24-aaaa-7000-8000-000000000001.jsonl')
+  writeFileSync(ompSessionFile, [
     ompTitleSlot,
     JSON.stringify({ type: 'session', version: 3, id: '019fdf24-aaaa-7000-8000-000000000001', timestamp: '2026-02-01T00:00:00.000Z', cwd: canonicalProject }),
     JSON.stringify({ type: 'message', id: 'omp-user', parentId: null, timestamp: '2026-02-01T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'OMP hermetic fixture' }], timestamp: 1774915201000 } }),
@@ -268,6 +269,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   chmodSync(executable, 0o755)
   const ompExecutable = join(fixtureRoot, 'omp-fixture.cjs')
   writeFileSync(ompExecutable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const readline = require('node:readline')
 const args = process.argv.slice(2)
 if (args.includes('--version')) { process.stdout.write('omp/17.2.11\\n'); process.exit(0) }
 if (args[0] === 'models' && args.includes('--json')) {
@@ -276,7 +279,55 @@ if (args[0] === 'models' && args.includes('--json')) {
     { provider: 'openai-codex', id: 'gpt-fixture', name: 'GPT Fixture', contextWindow: 200000, maxTokens: 8192, reasoning: true, thinking: ['low', 'high'], input: ['text'] },
   ] })); process.exit(0)
 }
-process.exit(2)
+if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') process.exit(2)
+fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'omp-runtime-args.json'))}, JSON.stringify(args))
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+const resumeIndex = args.indexOf('--resume')
+const sessionFile = resumeIndex >= 0 ? args[resumeIndex + 1] : ${JSON.stringify(ompSessionFile)}
+let negotiated = false
+let pendingPrompt
+let answers = {}
+send({ type: 'ready', protocolVersion: 1, supportedProtocolVersions: [1, 2] })
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'negotiate_protocol') {
+    negotiated = true
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { protocolVersion: 2 } })
+  } else if (!negotiated) {
+    send({ id: command.id, type: 'response', command: command.type, success: false, error: 'Protocol was not negotiated' })
+  } else if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: {
+      sessionId: '019fdf24-aaaa-7000-8000-000000000001', sessionFile, isStreaming: false, thinkingLevel: 'medium',
+      model: { provider: 'openai-codex', id: 'gpt-fixture', name: 'GPT Fixture' },
+      contextUsage: { tokens: 1000, contextWindow: 200000, percent: 0.5 },
+    } })
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { contextUsage: { tokens: 1000, contextWindow: 200000, percent: 0.5 } } })
+  } else if (command.type === 'prompt' || command.type === 'follow_up') {
+    pendingPrompt = command
+    answers = {}
+    send({ type: 'agent_start' })
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { agentInvoked: true } })
+    send({ type: 'tool_execution_start', toolCallId: 'omp-ask-2', toolName: 'ask_user', args: { questions: [
+      { question: 'Which OMP release channel?', options: ['Stable', 'Beta'] },
+      { question: 'What should OMP optimize for?', options: ['Speed', 'Safety'] },
+    ] } })
+    send({ type: 'extension_ui_request', id: 'omp-fixture-question-1', method: 'select', title: 'Which OMP release channel?', options: ['__prime_ask_user__omp-fixture-group:0:2', 'Stable', 'Beta', 'Other (type your own answer)'] })
+    send({ type: 'extension_ui_request', id: 'omp-fixture-question-2', method: 'select', title: 'What should OMP optimize for?', options: ['__prime_ask_user__omp-fixture-group:1:2', 'Speed', 'Safety', 'Other (type your own answer)'] })
+  } else if (command.type === 'extension_ui_response') {
+    answers[command.id] = command.value
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: {} })
+    if (pendingPrompt && Object.keys(answers).length === 2) {
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'omp-questionnaire-values.json'))}, JSON.stringify(answers))
+      pendingPrompt = undefined
+      send({ type: 'tool_execution_end', toolCallId: 'omp-ask-2', toolName: 'ask_user', result: { values: answers } })
+      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The OMP questionnaire answers are ready.' } })
+      send({ type: 'agent_end', isTerminal: true })
+    }
+  } else if (command.id) {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: {} })
+  }
+})
 `)
   chmodSync(ompExecutable, 0o755)
   return { userData, home, project, executable, ompExecutable, sessionFile: realpathSync(sessionFile) }
@@ -1073,6 +1124,40 @@ test.describe('Prime Work desktop smoke', () => {
     await worked.click()
     await expect(page.locator('.activity-line--question')).toContainText('What should I optimize for?')
     await expect(page.locator('.app-shell')).not.toHaveAttribute('data-ready', 'false')
+  })
+
+  test('injects ask_user into OMP and answers its grouped questionnaire in the app', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+
+    const composer = page.getByRole('combobox', { name: 'Message OMP' })
+    await composer.fill('Ask me two OMP questions')
+    await composer.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Answer 2 questions' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('Which OMP release channel?')
+    await dialog.getByRole('textbox', { name: 'Additional context' }).fill('OMP app verification')
+    await dialog.getByRole('option', { name: 'Beta' }).click()
+    await page.keyboard.press('Enter')
+    await expect(dialog).toContainText('What should OMP optimize for?')
+    await dialog.getByRole('option', { name: 'Safety' }).click()
+    await page.keyboard.press('Enter')
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await expect(dialog).toHaveCount(0)
+
+    const valuesPath = join(fixtureRoot, 'omp-questionnaire-values.json')
+    await expect.poll(() => existsSync(valuesPath)).toBe(true)
+    expect(JSON.parse(readFileSync(valuesPath, 'utf8'))).toEqual({
+      'omp-fixture-question-1': JSON.stringify({ answer: 'Beta', answerSource: 'option', context: 'OMP app verification' }),
+      'omp-fixture-question-2': JSON.stringify({ answer: 'Safety', answerSource: 'option' }),
+    })
+    const runtimeArgs = JSON.parse(readFileSync(join(fixtureRoot, 'omp-runtime-args.json'), 'utf8')) as string[]
+    const injectedExtensions = runtimeArgs.flatMap((value, index) => value === '--extension' ? [runtimeArgs[index + 1]] : [])
+    expect(injectedExtensions).toContain(join(process.cwd(), 'assets', 'extensions', 'omp-work-ask-user.ts'))
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
+    await expect(page.getByText(/OMP RPC exited|Request failed/)).toHaveCount(0)
   })
 
   test('preserves a rejected shell draft while rolling back the committed setting', async () => {

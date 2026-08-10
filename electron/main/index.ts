@@ -440,6 +440,9 @@ async function bootstrap(): Promise<void> {
   const ompScheduleExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
+  const ompAskUserExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
   const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
       id: 'prime-work-schedules', name: 'GooeyPi schedules',
@@ -461,6 +464,10 @@ async function bootstrap(): Promise<void> {
       id: 'omp-work-browser', name: 'GooeyPi browser',
       description: 'OMP extension for driving this thread\'s in-app browser.',
       kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
+    }, {
+      id: 'omp-work-ask-user', name: 'Ask user',
+      description: 'OMP extension for asking focused multiple-choice questions in the GooeyPi app.',
+      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
     }],
   })
   const heartbeats = new HeartbeatService(agents, executable)
@@ -548,6 +555,7 @@ async function bootstrap(): Promise<void> {
       ...browserEnvironment,
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: ompScheduleExtensionPath,
       PRIME_WORK_BROWSER_EXTENSION_PATH: ompBrowserExtensionPath,
+      PRIME_WORK_ASK_USER_EXTENSION_PATH: ompAskUserExtensionPath,
     }
   })
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
