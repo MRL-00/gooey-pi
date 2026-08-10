@@ -88,6 +88,7 @@ jobs:
             release/linux/**/*.AppImage
             release/linux/**/*.deb
             release/linux/**/*.rpm
+            release/linux/**/*.pacman
             release/linux/**/latest*.yml
           if-no-files-found: error
 

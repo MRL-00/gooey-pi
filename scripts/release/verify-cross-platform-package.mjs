@@ -28,12 +28,15 @@ function findUnpackedDirectory(outputDirectory, target) {
   return matches[0]
 }
 
+export function expectedArtifactExtensions(target) {
+  return target === 'linux' ? ['.AppImage', '.deb', '.rpm', '.pacman'] : ['.exe', '.zip']
+}
+
 function assertExpectedArtifacts(outputDirectory, target) {
   const files = readdirSync(outputDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-  const extensions = target === 'linux' ? ['.AppImage', '.deb', '.rpm'] : ['.exe', '.zip']
-  for (const extension of extensions) {
+  for (const extension of expectedArtifactExtensions(target)) {
     const matches = files.filter((name) => name.endsWith(extension))
     if (matches.length !== 1) throw new Error(`Expected exactly one ${extension} artifact, found ${matches.length}`)
   }

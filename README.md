@@ -82,11 +82,11 @@ npm run package:linux
 npm run package:win
 ```
 
-Pass `-- --arch x64` or `-- --arch arm64` when building for a supported non-default native architecture. The default is the build machine's architecture. The macOS release path emits a signed, notarized DMG and ZIP; it needs the Apple credentials described below. Linux emits AppImage, DEB, and RPM packages. Windows emits an NSIS installer and ZIP.
+Pass `-- --arch x64` or `-- --arch arm64` when building for a supported non-default native architecture. The default is the build machine's architecture. The macOS release path emits a signed, notarized DMG and ZIP; it needs the Apple credentials described below. Linux emits AppImage, DEB, RPM, and pacman (`.pacman`) packages. Windows emits an NSIS installer and ZIP.
 
 For local unsigned smoke packages, use `npm run package:<platform>:local-qa` instead. macOS local QA packages deliberately do not pass Gatekeeper on another Mac.
 
-For users, ship the conventional installer for their operating system: DMG on macOS, DEB/RPM (or portable AppImage) on Linux, and the NSIS setup executable on Windows. The Windows package should be Authenticode-signed before public distribution; macOS remains subject to Developer ID signing and notarization.
+For users, ship the conventional installer for their operating system: DMG on macOS; DEB for Debian/Ubuntu-family distributions, RPM for Fedora/RHEL/openSUSE-family distributions, pacman for Arch-family distributions, or the portable AppImage fallback on Linux; and the NSIS setup executable on Windows. The Windows package should be Authenticode-signed before public distribution; macOS remains subject to Developer ID signing and notarization.
 
 Electron Builder uses an available signing identity automatically. Public macOS distribution additionally requires Apple notarization credentials supported by Electron Builder (Apple ID/app-specific password/team ID or App Store Connect API key). A locally signed but unnotarized build will be rejected by Gatekeeper on another Mac; this repository does not contain release credentials.
 

@@ -4,7 +4,12 @@
   "private": true,
   "description": "A desktop workspace for OMP and Prime Agent",
   "main": "out/main/index.js",
-  "author": "GooeyPi contributors",
+  "desktopName": "gooeypi.desktop",
+  "author": {
+    "name": "GooeyPi contributors",
+    "email": "42459108+am-will@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/am-will/prime-work",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -106,10 +111,13 @@
     },
     "linux": {
       "category": "Development",
+      "synopsis": "A desktop workspace for OMP and Prime Agent",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
         "deb",
-        "rpm"
+        "rpm",
+        "pacman"
       ],
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "icon": "assets/icon.png",
