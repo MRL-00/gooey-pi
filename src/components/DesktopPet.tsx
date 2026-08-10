@@ -163,7 +163,6 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       aria-label={voiceActive ? 'Realtime voice session' : undefined}
       data-horizontal-edge={position.x > window.innerWidth / 2 ? 'right' : 'left'}
     >
-      {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
       <div
         className="desktop-pet__drag-target"
         role="button"
@@ -176,7 +175,10 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
         onPointerCancel={finishDrag}
         onKeyDown={moveByKeyboard}
       >
-        <PetAvatar pet={pet} pets={pets} activity={activity} size={96} reduceMotion={reduceMotion} />
+        <span className="desktop-pet__avatar">
+          <PetAvatar pet={pet} pets={pets} activity={activity} size={96} reduceMotion={reduceMotion} />
+          {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
+        </span>
         <span className="desktop-pet__name">{pet.displayName}</span>
       </div>
       {voiceActive && voiceStatus ? <span className="desktop-pet__voice-status" role="status">{voiceStatus}</span> : null}

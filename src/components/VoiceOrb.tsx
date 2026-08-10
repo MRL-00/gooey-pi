@@ -281,8 +281,8 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
       >
         {receipt}
       </DesktopPet> : <aside className={`voice-orb voice-orb--${orbState} ${muted ? 'is-muted' : ''}`} style={{ '--orb-x': `${position.x}px`, '--orb-y': `${position.y}px` } as CSSProperties} aria-label="Realtime voice session">
-        {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
         <div className="voice-orb__drag" onPointerDown={beginDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+          {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
           <div className="voice-orb__halo" aria-hidden="true" />
           <div className="voice-orb__core" aria-hidden="true"><i /><i /><i /></div>
           <span className="voice-orb__status">{status}</span>

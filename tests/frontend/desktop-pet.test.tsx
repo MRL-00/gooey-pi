@@ -72,6 +72,7 @@ describe('DesktopPet', () => {
     const badge = container.querySelector<HTMLElement>('.session-attention-badge')!
     expect(badge.getAttribute('aria-label')).toBe('A session turn ended or needs attention')
     expect(badge.textContent).toBe('!')
+    expect(badge.parentElement?.classList.contains('desktop-pet__avatar')).toBe(true)
   })
 
   it('keeps an expanded voice pet inside a small viewport and exposes the voice landmark', async () => {

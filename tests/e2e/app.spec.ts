@@ -961,7 +961,19 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
     await expect(page.locator('.unread-dot')).toHaveCount(0)
-    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toBeVisible()
+    const companionBadge = page.getByRole('status', { name: 'A session turn ended or needs attention' })
+    await expect(companionBadge).toBeVisible()
+    const badgeBounds = await companionBadge.boundingBox()
+    const avatarBounds = await page.locator('.desktop-pet__avatar').boundingBox()
+    expect(badgeBounds).not.toBeNull()
+    expect(avatarBounds).not.toBeNull()
+    expect(badgeBounds!.width).toBeGreaterThanOrEqual(22)
+    expect(Math.abs(badgeBounds!.x + badgeBounds!.width / 2 - (avatarBounds!.x + avatarBounds!.width))).toBeLessThanOrEqual(12)
+    expect(badgeBounds!.y + badgeBounds!.height / 2).toBeGreaterThanOrEqual(avatarBounds!.y - 2)
+    expect(badgeBounds!.y + badgeBounds!.height / 2).toBeLessThanOrEqual(avatarBounds!.y + 16)
+
+    await completedRow.locator('.session-row').click()
+    await expect(companionBadge).toHaveCount(0)
   })
 
   test('answers a grouped ask_user questionnaire with context and back navigation', async () => {

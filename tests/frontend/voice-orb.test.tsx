@@ -90,7 +90,7 @@ describe('realtime voice surface', () => {
   it('shows session attention on the legacy realtime orb', async () => {
     const voice = { createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'), executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
     await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" onClose={vi.fn()} onTaskStarted={vi.fn()} hasSessionNotification />))
-    expect(container.querySelector('.voice-orb > .session-attention-badge')).not.toBeNull()
+    expect(container.querySelector('.voice-orb__drag > .session-attention-badge')).not.toBeNull()
   })
 
   it('keeps the remote audio element and stream when the pet surface is toggled', async () => {

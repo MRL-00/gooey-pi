@@ -14,9 +14,11 @@
 .pet-orb.is-reduced-motion, .pet-orb.is-reduced-motion::after { animation: none; }
 
 .desktop-pet { position: fixed; z-index: 120; width: 120px; min-height: 146px; display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
-.session-attention-badge { position: absolute; z-index: 4; top: 2px; right: 5px; width: 15px; height: 15px; display: grid; place-items: center; border: 2px solid var(--canvas); border-radius: 50%; color: #fff; background: var(--danger); box-shadow: 0 2px 8px color-mix(in srgb, var(--danger) 48%, transparent); font-size: 9px; font-weight: 760; line-height: 1; pointer-events: none; }
-.voice-orb > .session-attention-badge { top: 5px; right: 3px; }
+.session-attention-badge { position: absolute; z-index: 4; width: 22px; height: 22px; display: grid; place-items: center; border: 3px solid var(--canvas); border-radius: 50%; color: #fff; background: var(--danger); box-shadow: 0 2px 5px color-mix(in srgb, #000 28%, transparent), 0 0 12px color-mix(in srgb, var(--danger) 68%, transparent); font-size: 12px; font-weight: 800; line-height: 1; pointer-events: none; }
 .desktop-pet__drag-target { width: 112px; min-height: 118px; display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
+.desktop-pet__avatar { position: relative; display: inline-flex; }
+.desktop-pet__avatar > .session-attention-badge { top: -5px; right: -5px; }
+.voice-orb__drag > .session-attention-badge { top: 14px; right: 9px; }
 .desktop-pet__drag-target:active { cursor: grabbing; }
 .desktop-pet__drag-target:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; background: color-mix(in srgb, var(--surface-raised) 52%, transparent); }
 .desktop-pet__name { max-width: 100%; margin-top: -6px; padding: 2px 6px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 72%, transparent); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 82%, transparent); backdrop-filter: blur(8px); font-size: 8.5px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transform: translateY(-2px); transition: opacity 140ms ease, transform 140ms ease; }
