@@ -1,6 +1,6 @@
 import { ArrowUp, AtSign, Brain, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import type {
   BrowserAnnotation,
   GitWorktree,
@@ -19,6 +19,7 @@ import type {
   VoiceTranscriptionProvider,
 } from '@/types/api'
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
+import { appendCapabilityRouting, findCapabilityMentions } from '@/lib/capability-mentions'
 import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
@@ -176,13 +177,28 @@ export const Composer = memo(function Composer({
   const worktreeMenuId = useId()
   const worktreeMenuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const mentionHighlightRef = useRef<HTMLDivElement>(null)
   const submittingRef = useRef(false)
   const pendingImagesRef = useRef(0)
   const imagesRef = useRef<ComposerImage[]>([])
   const annotationsRef = useRef(annotations)
   annotationsRef.current = annotations
   const mountedRef = useRef(true)
-  const enabledSkills = skills.filter((skill) => skill.enabled).slice(0, 6)
+  const enabledSkills = useMemo(() => skills.filter((skill) => skill.enabled), [skills])
+  const suggestedSkills = enabledSkills.slice(0, 6)
+  const capabilityMentions = useMemo(() => findCapabilityMentions(value, enabledSkills), [enabledSkills, value])
+  const highlightedValue = useMemo(() => {
+    if (!capabilityMentions.length) return value
+    const parts: ReactNode[] = []
+    let cursor = 0
+    for (const mention of capabilityMentions) {
+      if (mention.start > cursor) parts.push(value.slice(cursor, mention.start))
+      parts.push(<mark key={`${mention.start}:${mention.skill.id}`}>{mention.text}</mark>)
+      cursor = mention.end
+    }
+    if (cursor < value.length) parts.push(value.slice(cursor))
+    return parts
+  }, [capabilityMentions, value])
 
   useEffect(() => {
     setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : value.endsWith('@') ? 'skill' : null)
@@ -262,8 +278,10 @@ export const Composer = memo(function Composer({
       return
     }
     const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
-    // Annotations ride along inside the prompt as a delimited plain-text block.
-    const promptWithAnnotations = appendAnnotationsToPrompt(prompt, currentAnnotations)
+    // Recognized @ mentions carry explicit routing semantics; annotations then
+    // ride along inside the prompt as their own delimited plain-text block.
+    const promptWithCapabilities = appendCapabilityRouting(prompt, enabledSkills)
+    const promptWithAnnotations = appendAnnotationsToPrompt(promptWithCapabilities, currentAnnotations)
     const promptWithContext = appendTerminalContextToPrompt(promptWithAnnotations, currentTerminalContext)
     const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: promptWithContext, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
     if (new TextEncoder().encode(frame).byteLength > MAX_IMAGE_PROMPT_BYTES) {
@@ -384,7 +402,7 @@ export const Composer = memo(function Composer({
             },
           }))
       : menu === 'skill'
-        ? enabledSkills.map((skill) => ({ key: skill.id, label: skill.name, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
+        ? suggestedSkills.map((skill) => ({ key: skill.id, label: `@ ${skill.name}`, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
         : menu === 'add'
           ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
           : []
@@ -449,63 +467,74 @@ export const Composer = memo(function Composer({
         </section>
       ) : null}
       <div className={`composer ${busy || submitting ? 'composer--busy' : ''}`}>
-        <textarea
-          ref={textareaRef}
-          value={value}
-          disabled={disabled || loading}
-          rows={2}
-          placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? `Starting ${shortName}…` : `Ask ${shortName} anything, @ for skills, / for commands`}
-          aria-label={`Message ${shortName}`}
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={Boolean(menu && suggestions.length)}
-          aria-controls={menu ? menuId : undefined}
-          aria-activedescendant={menu && suggestions.length ? `${menuId}-option-${activeSuggestion}` : undefined}
-          onChange={(event) => setValue(event.target.value)}
-          onPaste={(event) => {
-            const files = [...event.clipboardData.items]
-              .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-              .flatMap((item) => {
-                const file = item.getAsFile()
-                return file ? [file] : []
-              })
-            if (!files.length) return
-            const pastedText = event.clipboardData.getData('text/plain')
-            event.preventDefault()
-            if (pastedText) insertAtCaret(event.currentTarget, pastedText)
-            void addPastedImages(files)
-          }}
-          onKeyDown={(event) => {
-            if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        <div className="composer-input">
+          <div ref={mentionHighlightRef} className="composer-input__highlight" aria-hidden="true">
+            {highlightedValue}
+            {value.endsWith('\n') ? '\n ' : null}
+          </div>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            disabled={disabled || loading}
+            rows={2}
+            placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? `Starting ${shortName}…` : `Ask ${shortName} anything, @ for skills, / for commands`}
+            aria-label={`Message ${shortName}`}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={Boolean(menu && suggestions.length)}
+            aria-controls={menu ? menuId : undefined}
+            aria-activedescendant={menu && suggestions.length ? `${menuId}-option-${activeSuggestion}` : undefined}
+            onChange={(event) => setValue(event.target.value)}
+            onScroll={(event) => {
+              if (!mentionHighlightRef.current) return
+              mentionHighlightRef.current.scrollTop = event.currentTarget.scrollTop
+              mentionHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft
+            }}
+            onPaste={(event) => {
+              const files = [...event.clipboardData.items]
+                .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                .flatMap((item) => {
+                  const file = item.getAsFile()
+                  return file ? [file] : []
+                })
+              if (!files.length) return
+              const pastedText = event.clipboardData.getData('text/plain')
               event.preventDefault()
-              setActiveSuggestion((current) => (event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length))
-              return
-            }
-            if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing && menu && suggestions.length) {
-              event.preventDefault()
-              chooseSuggestion(activeSuggestion)
-              return
-            }
-            const intent = messageActionForKey(
-              {
-                key: event.key,
-                ctrlKey: event.ctrlKey,
-                metaKey: event.metaKey,
-                altKey: event.altKey,
-                shiftKey: event.shiftKey,
-                isComposing: event.nativeEvent.isComposing,
-              },
-            )
-            if (intent) {
-              event.preventDefault()
-              void submit(intent)
-            }
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              setMenu(null)
-            }
-          }}
-        />
+              if (pastedText) insertAtCaret(event.currentTarget, pastedText)
+              void addPastedImages(files)
+            }}
+            onKeyDown={(event) => {
+              if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+                event.preventDefault()
+                setActiveSuggestion((current) => (event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length))
+                return
+              }
+              if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing && menu && suggestions.length) {
+                event.preventDefault()
+                chooseSuggestion(activeSuggestion)
+                return
+              }
+              const intent = messageActionForKey(
+                {
+                  key: event.key,
+                  ctrlKey: event.ctrlKey,
+                  metaKey: event.metaKey,
+                  altKey: event.altKey,
+                  shiftKey: event.shiftKey,
+                  isComposing: event.nativeEvent.isComposing,
+                },
+              )
+              if (intent) {
+                event.preventDefault()
+                void submit(intent)
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setMenu(null)
+              }
+            }}
+          />
+        </div>
         {menu && suggestions.length ? (
           <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
             {suggestions.map((suggestion, index) => (

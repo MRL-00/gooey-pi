@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import { Composer } from '../../src/components/Composer'
 import { groupModelsByProvider } from '../../src/hooks/useProviderCatalog'
-import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage, TerminalPromptContext, TerminalSelectionContext } from '../../src/types/api'
+import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage, SkillRecord, TerminalPromptContext, TerminalSelectionContext } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -73,9 +73,10 @@ interface RenderOptions {
   terminalSelection?: TerminalSelectionContext
   getTerminalContext?: () => TerminalPromptContext | undefined
   onClearTerminalSelection?: Mock<() => void>
+  skills?: SkillRecord[]
 }
 
-function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn(), terminalSelection, getTerminalContext, onClearTerminalSelection = vi.fn() }: RenderOptions = {}) {
+function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn(), terminalSelection, getTerminalContext, onClearTerminalSelection = vi.fn(), skills = [] }: RenderOptions = {}) {
   act(() =>
     root.render(
       <Composer
@@ -90,7 +91,7 @@ function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async
         fastAvailable
         imageInputSupported
         messageEnterAction="queue"
-        skills={[]}
+        skills={skills}
         annotations={annotations}
         terminalSelection={terminalSelection}
         getTerminalContext={getTerminalContext}
@@ -117,6 +118,41 @@ const setDraft = async (value: string) => {
     textarea.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
+
+const browserSkill: SkillRecord = {
+  id: 'prime-work-browser',
+  name: 'Browser',
+  description: 'Drive the in-app browser.',
+  kind: 'skill',
+  location: 'system',
+  enabled: true,
+}
+
+describe('Composer capability mentions', () => {
+  it('highlights recognized mentions and routes Browser to the in-app capability', async () => {
+    const onSend: NonNullable<RenderOptions['onSend']> = vi.fn(async () => undefined)
+    renderComposer({ onSend, skills: [browserSkill] })
+    await setDraft('@Browser open example.com')
+
+    expect(container.querySelector('.composer-input__highlight mark')?.textContent).toBe('@Browser')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click())
+
+    const prompt = onSend.mock.calls[0]?.[0] ?? ''
+    expect(prompt).toContain('@Browser open example.com')
+    expect(prompt).toContain("use GooeyPi's in-app Browser capability and its own browser tools")
+    expect(prompt).toContain('Do not substitute Chrome, an external browser, or another connected browser tool.')
+  })
+
+  it('keeps ordinary @ text as plain prompt text', async () => {
+    const onSend: NonNullable<RenderOptions['onSend']> = vi.fn(async () => undefined)
+    renderComposer({ onSend, skills: [browserSkill] })
+    await setDraft('Email me@example.com')
+
+    expect(container.querySelector('.composer-input__highlight mark')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click())
+    expect(onSend).toHaveBeenCalledWith('Email me@example.com', [], 'queue')
+  })
+})
 
 const clickSend = async () => {
   await act(async () => {

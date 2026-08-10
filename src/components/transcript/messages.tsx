@@ -2,6 +2,7 @@ import { memo, useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { HarnessId, MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
+import { splitCapabilityRouting } from '@/lib/capability-mentions'
 import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -168,13 +169,15 @@ export const AssistantMessage = memo(
 
 function UserText({ text }: { text: string }) {
   // Sent prompts can carry verbose model-facing context blocks. Keep both
-  // collapsed in the transcript while preserving the user's own message.
+  // attachments collapsed and capability routing hidden while preserving the
+  // user's own message.
   const terminal = splitTerminalContextBlock(text)
   const annotations = splitAnnotationBlock(terminal.text)
-  if (!annotations.block && !terminal.block) return <InlineText text={text} />
+  const capability = splitCapabilityRouting(annotations.text)
+  if (!capability.block && !annotations.block && !terminal.block) return <InlineText text={text} />
   return (
     <>
-      {annotations.text && annotations.text !== '[Page annotations]' && annotations.text !== '[Terminal selection]' ? <InlineText text={annotations.text} /> : null}
+      {capability.text && capability.text !== '[Page annotations]' && capability.text !== '[Terminal selection]' ? <InlineText text={capability.text} /> : null}
       {annotations.block ? (
         <details className="user-annotations">
           <summary>{annotations.count > 0 ? `${annotations.count} page annotation${annotations.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
