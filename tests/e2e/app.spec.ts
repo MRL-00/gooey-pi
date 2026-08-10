@@ -557,6 +557,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     const primaryRow = page.locator('.session-row-wrap').filter({ hasText: 'Primary workspace fixture' })
     await expect(primaryRow).toHaveClass(/has-attention/)
+    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toBeVisible()
     await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
     const attentionColor = await primaryRow.evaluate((node) => getComputedStyle(node).backgroundColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [])
     expect(attentionColor.length).toBeGreaterThanOrEqual(3)
@@ -564,6 +565,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     await primaryRow.locator('.session-row').click()
     await expect(primaryRow).not.toHaveClass(/has-attention/)
+    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
     appendFileSync(primaryFile, `${JSON.stringify({
       type: 'message', id: 'primary-new-user', parentId: 'primary-background-assistant', timestamp: '2028-01-01T00:00:00.000Z',
       message: { role: 'user', content: 'Move this thread now.' },
@@ -959,6 +961,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
     await expect(page.locator('.unread-dot')).toHaveCount(0)
+    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toBeVisible()
   })
 
   test('answers a grouped ask_user questionnaire with context and back navigation', async () => {

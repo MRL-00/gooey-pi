@@ -49,3 +49,9 @@ export function sessionAttentionSignature(session: SessionRecord): string | unde
   if (session.status === 'complete' && session.unread) return `complete:${revision}`
   return session.unread ? `unread:${revision}` : undefined
 }
+
+export function sessionShowsCompanionNotification(session: SessionRecord): boolean {
+  if (session.status === 'waiting' || session.status === 'failed') return true
+  if (session.unread) return true
+  return session.status === 'complete' && typeof session.eventRevision === 'number'
+}

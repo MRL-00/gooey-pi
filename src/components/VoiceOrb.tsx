@@ -14,6 +14,7 @@ interface VoiceOrbProps {
   pet?: Pick<DesktopPetProps, 'pets' | 'petId' | 'agentBusy' | 'reduceMotion'>
   focusPetControl?: boolean
   onPetControlFocused?(): void
+  hasSessionNotification?: boolean
 }
 
 interface OrbPosition { x: number; y: number }
@@ -58,7 +59,7 @@ function realtimeErrorMessage(message: Record<string, unknown>): string {
   return `Realtime error${code ? ` (${code})` : ''}: ${detail}${param ? ` [${param}]` : ''}${eventId ? ` [event ${eventId}]` : ''}`
 }
 
-export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPetControl = false, onPetControlFocused }: VoiceOrbProps) {
+export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPetControl = false, onPetControlFocused, hasSessionNotification = false }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState('')
@@ -276,9 +277,11 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
         onCloseVoice={onClose}
         focusVoiceControl={focusPetControl}
         onVoiceControlFocused={onPetControlFocused}
+        hasSessionNotification={hasSessionNotification}
       >
         {receipt}
       </DesktopPet> : <aside className={`voice-orb voice-orb--${orbState} ${muted ? 'is-muted' : ''}`} style={{ '--orb-x': `${position.x}px`, '--orb-y': `${position.y}px` } as CSSProperties} aria-label="Realtime voice session">
+        {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
         <div className="voice-orb__drag" onPointerDown={beginDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag}>
           <div className="voice-orb__halo" aria-hidden="true" />
           <div className="voice-orb__core" aria-hidden="true"><i /><i /><i /></div>

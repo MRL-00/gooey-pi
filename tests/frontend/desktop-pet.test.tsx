@@ -67,6 +67,13 @@ describe('DesktopPet', () => {
     expect(onCloseVoice).toHaveBeenCalledTimes(1)
   })
 
+  it('shows a red session-attention badge above any desktop pet', async () => {
+    await act(async () => { root.render(<DesktopPet pets={pets} petId="orb" agentBusy={false} reduceMotion={false} voiceActive={false} hasSessionNotification />); await Promise.resolve() })
+    const badge = container.querySelector<HTMLElement>('.session-attention-badge')!
+    expect(badge.getAttribute('aria-label')).toBe('A session turn ended or needs attention')
+    expect(badge.textContent).toBe('!')
+  })
+
   it('keeps an expanded voice pet inside a small viewport and exposes the voice landmark', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })

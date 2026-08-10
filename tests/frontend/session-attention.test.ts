@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySessionLifecycleEvent, sessionAttentionSignature } from '../../src/app/session-attention'
+import { applySessionLifecycleEvent, sessionAttentionSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
 import { pruneClearedAttention, readClearedAttention } from '../../src/components/Sidebar'
 import type { SessionRecord } from '../../src/types/api'
@@ -22,6 +22,7 @@ describe('session lifecycle attention', () => {
     expect(completed).toMatchObject({ status: 'complete', unread: false, eventRevision: 1 })
     expect(completed.updatedAt).toBe('2025-01-01T00:00:01.000Z')
     expect(sessionAttentionSignature(completed)).toBeUndefined()
+    expect(sessionShowsCompanionNotification(completed)).toBe(true)
   })
 
   it('gives repeated background waits and completions distinct attention revisions', () => {
@@ -41,6 +42,14 @@ describe('session lifecycle attention', () => {
     const failed = applySessionLifecycleEvent(session(), { type: 'transport_error' }, false, 1)
     expect(failed).toMatchObject({ status: 'failed', eventRevision: 1 })
     expect(sessionAttentionSignature(failed)).toBeUndefined()
+    expect(sessionShowsCompanionNotification(failed)).toBe(true)
+  })
+
+  it('shows the companion badge only for new terminal turns or attention states', () => {
+    expect(sessionShowsCompanionNotification(session())).toBe(false)
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'complete' })).toBe(false)
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'complete', unread: true })).toBe(true)
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' })).toBe(true)
   })
 
   it('ignores desktop rate-limit drops: the agent is still running', () => {

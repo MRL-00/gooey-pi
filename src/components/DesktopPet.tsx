@@ -41,10 +41,11 @@ export interface DesktopPetProps {
   onCloseVoice?(): void
   focusVoiceControl?: boolean
   onVoiceControlFocused?(): void
+  hasSessionNotification?: boolean
   children?: ReactNode
 }
 
-export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, children }: DesktopPetProps) {
+export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
   const initialSurfaceHeight = 154
   const [available, setAvailable] = useState<PetDefinition[]>(BUILT_INS)
   const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight))
@@ -162,6 +163,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       aria-label={voiceActive ? 'Realtime voice session' : undefined}
       data-horizontal-edge={position.x > window.innerWidth / 2 ? 'right' : 'left'}
     >
+      {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
       <div
         className="desktop-pet__drag-target"
         role="button"
