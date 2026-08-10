@@ -214,7 +214,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     ...macOptions,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      zoomFactor: (store?.getSettings().interfaceFontScale ?? 100) / 100,
+      zoomFactor: (store?.getSettings().interfaceFontScale ?? 110) / 100,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,

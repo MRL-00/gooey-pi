@@ -27,10 +27,10 @@ describe('AppearanceSettings', () => {
     act(() => root.render(<AppearanceSettings settings={DEFAULT_SETTINGS} onUpdate={update} />))
 
     const options = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
-    expect(options.map((option) => option.textContent)).toEqual(['Default', 'Large', 'Larger'])
-    expect(options.map((option) => option.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
+    expect(options.map((option) => option.textContent)).toEqual(['Smaller', 'Default', 'Larger'])
+    expect(options.map((option) => option.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false'])
 
     act(() => options[2].click())
-    expect(update).toHaveBeenCalledWith({ interfaceFontScale: 110 })
+    expect(update).toHaveBeenCalledWith({ interfaceFontScale: 115 })
   })
 })

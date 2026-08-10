@@ -110,13 +110,13 @@ describe('registerIpc verify gate', () => {
 
   it('applies a validated interface scale only after the settings update succeeds', async () => {
     const event = fakeEvent()
-    const update = vi.fn(async () => ({ interfaceFontScale: 110 }))
+    const update = vi.fn(async () => ({ interfaceFontScale: 115 }))
     stubs.settings = { update }
     registration.authorize(event.sender as never)
 
-    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 110 })).resolves.toEqual({ interfaceFontScale: 110 })
-    expect(update).toHaveBeenCalledWith({ interfaceFontScale: 110 })
-    expect(event.sender.setZoomFactor).toHaveBeenCalledWith(1.1)
+    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 115 })).resolves.toEqual({ interfaceFontScale: 115 })
+    expect(update).toHaveBeenCalledWith({ interfaceFontScale: 115 })
+    expect(event.sender.setZoomFactor).toHaveBeenCalledWith(1.15)
 
     event.sender.setZoomFactor.mockClear()
     update.mockRejectedValueOnce(new TypeError('Invalid interface font scale'))

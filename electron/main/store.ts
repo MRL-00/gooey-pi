@@ -32,7 +32,7 @@ export function defaultSettings(): AppSettings {
     : (process.env.SHELL?.startsWith('/') ? process.env.SHELL : '/bin/zsh')
   return {
     theme: 'system',
-    interfaceFontScale: 100,
+    interfaceFontScale: 110,
     sidebarOpen: true,
     inspectorOpen: true,
     showFileChangesPopup: true,

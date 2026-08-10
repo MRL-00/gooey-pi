@@ -57,13 +57,13 @@ describe('JsonStateStore', () => {
   it('keeps supported interface font scales and resets values outside the bounded choices', () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')
-    const settings = { ...defaultSettings(), interfaceFontScale: 110 }
+    const settings = { ...defaultSettings(), interfaceFontScale: 115 }
+    writeFileSync(path, JSON.stringify({ version: 3, projects: [], settings, archivedSessions: [], dismissedProjectPaths: [], schedules: [] }))
+    expect(new JsonStateStore(path).snapshot().settings.interfaceFontScale).toBe(115)
+
+    settings.interfaceFontScale = 100 as typeof settings.interfaceFontScale
     writeFileSync(path, JSON.stringify({ version: 3, projects: [], settings, archivedSessions: [], dismissedProjectPaths: [], schedules: [] }))
     expect(new JsonStateStore(path).snapshot().settings.interfaceFontScale).toBe(110)
-
-    settings.interfaceFontScale = 125 as typeof settings.interfaceFontScale
-    writeFileSync(path, JSON.stringify({ version: 3, projects: [], settings, archivedSessions: [], dismissedProjectPaths: [], schedules: [] }))
-    expect(new JsonStateStore(path).snapshot().settings.interfaceFontScale).toBe(100)
   })
 
   it('stops update admission and drains a write when shutdown starts immediately', async () => {

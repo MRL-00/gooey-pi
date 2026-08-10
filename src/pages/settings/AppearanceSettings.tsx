@@ -10,9 +10,9 @@ const themes: Array<{ id: ThemeMode; label: string; icon: typeof Sun }> = [
 ]
 
 const fontScales: Array<{ value: InterfaceFontScale; label: string }> = [
-  { value: 100, label: 'Default' },
-  { value: 105, label: 'Large' },
-  { value: 110, label: 'Larger' },
+  { value: 105, label: 'Smaller' },
+  { value: 110, label: 'Default' },
+  { value: 115, label: 'Larger' },
 ]
 
 export function AppearanceSettings({ settings, onUpdate }: SettingsSectionProps) {
