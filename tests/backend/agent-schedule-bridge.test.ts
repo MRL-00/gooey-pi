@@ -10,7 +10,7 @@ const dirs: string[] = []
 const bridges: AgentScheduleBridge[] = []
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map((bridge) => bridge.stop()))
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
 })
 
 async function fixture(harness: 'prime' | 'omp' = 'prime') {
