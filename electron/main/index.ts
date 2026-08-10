@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -181,6 +181,19 @@ export async function loadInitialRenderer(window: InitialRendererWindow, rendere
   }
 }
 
+export function confirmAppClose(window: BrowserWindow): boolean {
+  return dialog.showMessageBoxSync(window, {
+    type: 'warning',
+    buttons: ['Cancel', 'Close GooeyPi'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: 'GooeyPi',
+    message: 'Are you sure?',
+    detail: 'Automations will not run if GooeyPi is closed.',
+  }) === 1
+}
+
 async function createWindow(): Promise<BrowserWindow | null> {
   if (shutdownStarted) return null
   const macOptions = process.platform === 'darwin' ? {
@@ -226,6 +239,9 @@ async function createWindow(): Promise<BrowserWindow | null> {
   window.once('ready-to-show', () => {
     readyToShow = true
     if (!keepTestWindowsHidden && rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
+  })
+  window.on('close', (event) => {
+    if (!shutdownStarted && !confirmAppClose(window)) event.preventDefault()
   })
   window.on('closed', () => {
     ipc?.revoke(rendererId)

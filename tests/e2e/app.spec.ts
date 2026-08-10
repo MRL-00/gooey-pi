@@ -1264,9 +1264,31 @@ test.describe('Prime Work desktop smoke', () => {
     expect(prompt.message).not.toContain('Terminal buffer')
   })
 
-  test('quits when the last window closes', async () => {
+  test('asks before closing and quits after confirmation', async () => {
+    const warning = await app!.evaluate(({ BrowserWindow, dialog }) => {
+      let captured: { message: string; detail?: string; buttons: string[] } | undefined
+      const closeDialog = dialog as unknown as { showMessageBoxSync: (...args: unknown[]) => number }
+      closeDialog.showMessageBoxSync = (...args) => {
+        const options = args[1] as { message: string; detail?: string; buttons?: string[] }
+        captured = { message: options.message, detail: options.detail, buttons: options.buttons ?? [] }
+        return 0
+      }
+      BrowserWindow.getAllWindows()[0]?.close()
+      return captured
+    })
+    expect(warning).toEqual({
+      message: 'Are you sure?',
+      detail: 'Automations will not run if GooeyPi is closed.',
+      buttons: ['Cancel', 'Close GooeyPi'],
+    })
+    await expect(page.locator('.app-shell')).toBeVisible()
+
     const closed = app!.waitForEvent('close', { timeout: 45_000 })
-    await page.close()
+    await app!.evaluate(({ BrowserWindow, dialog }) => {
+      const closeDialog = dialog as unknown as { showMessageBoxSync: (...args: unknown[]) => number }
+      closeDialog.showMessageBoxSync = () => 1
+      BrowserWindow.getAllWindows()[0]?.close()
+    })
     await closed
     app = undefined
   })

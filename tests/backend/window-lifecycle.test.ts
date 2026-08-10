@@ -9,6 +9,7 @@ const electron = vi.hoisted(() => ({
     requestSingleInstanceLock: vi.fn(() => false),
   },
   BrowserWindow: class {},
+  dialog: { showMessageBoxSync: vi.fn() },
   Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
@@ -16,12 +17,32 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => electron)
 
-import { hardenRenderer, loadInitialRenderer, settleShutdown } from '../../electron/main/index'
+import { confirmAppClose, hardenRenderer, loadInitialRenderer, settleShutdown } from '../../electron/main/index'
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
 
 describe('application window lifecycle', () => {
+  it('defaults to cancel and warns that automations stop when GooeyPi closes', () => {
+    const window = {} as BrowserWindow
+    electron.dialog.showMessageBoxSync.mockReturnValueOnce(0)
+
+    expect(confirmAppClose(window)).toBe(false)
+    expect(electron.dialog.showMessageBoxSync).toHaveBeenCalledWith(window, {
+      type: 'warning',
+      buttons: ['Cancel', 'Close GooeyPi'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      title: 'GooeyPi',
+      message: 'Are you sure?',
+      detail: 'Automations will not run if GooeyPi is closed.',
+    })
+
+    electron.dialog.showMessageBoxSync.mockReturnValueOnce(1)
+    expect(confirmAppClose(window)).toBe(true)
+  })
+
   it('quits when the last window closes', () => {
     electron.app.quit.mockClear()
     const registration = electron.app.on.mock.calls.find(([event]) => event === 'window-all-closed')
