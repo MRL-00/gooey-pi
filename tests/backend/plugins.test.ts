@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
+import { executePiPluginInstall, executePiPluginRemove } from '../../electron/main/plugins/package-execution'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
@@ -722,5 +723,194 @@ describe('PluginService OMP parity', () => {
 
     expect(result.ok).toBe(true)
     expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['plugin', 'install', '@scope/example-plugin', '--json'])
+  })
+})
+
+describe('PluginService Pi parity', () => {
+  it('discovers pi-native user, project, shared skill, and mcp.json surfaces', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const userSkill = join(agentDir, 'skills', 'user-skill', 'SKILL.md')
+    const userExtension = join(agentDir, 'extensions', 'user-tool.ts')
+    const project = join(root, 'project')
+    const projectSkill = join(project, '.pi', 'skills', 'project-skill', 'SKILL.md')
+    const projectExtension = join(project, '.pi', 'extensions', 'project-tool.ts')
+    const sharedSkill = join(project, '.agents', 'skills', 'shared-skill', 'SKILL.md')
+    mkdirSync(resolve(userSkill, '..'), { recursive: true })
+    mkdirSync(resolve(userExtension, '..'), { recursive: true })
+    mkdirSync(resolve(projectSkill, '..'), { recursive: true })
+    mkdirSync(resolve(projectExtension, '..'), { recursive: true })
+    mkdirSync(resolve(sharedSkill, '..'), { recursive: true })
+    writeFileSync(userSkill, '---\nname: Pi user skill\n---\nUser workflow')
+    writeFileSync(userExtension, 'export default (pi) => {}')
+    writeFileSync(projectSkill, '---\nname: Pi project skill\n---\nProject workflow')
+    writeFileSync(projectExtension, 'export default (pi) => {}')
+    writeFileSync(sharedSkill, '---\nname: Shared skill\n---\nShared workflow')
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({
+      packages: ['npm:installed-package'],
+      mcpServers: { stray: { type: 'stdio', command: 'never-loaded' } },
+    }))
+    writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { docs: { type: 'http', url: 'https://docs.example/mcp' } } }))
+    writeFileSync(join(project, '.pi', 'mcp.json'), JSON.stringify({ mcpServers: { files: { type: 'stdio', command: 'npx' } } }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    const catalog = await service.list(project)
+
+    expect(catalog.warnings).toEqual([])
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Pi user skill', kind: 'skill', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Pi project skill', kind: 'skill', location: 'project' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Shared skill', kind: 'skill', location: 'project' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-tool', kind: 'extension', location: 'user', description: 'Pi extension' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'project-tool', kind: 'extension', location: 'project', description: 'Pi extension' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'installed-package', kind: 'package', description: 'Pi capability package from npm:installed-package' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'docs', kind: 'mcp', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))
+    // settings.json is not an MCP source for pi; only mcp.json entries surface.
+    expect(catalog.skills.some((item) => item.name === 'stray')).toBe(false)
+  })
+
+  it('bounds hostile oversized pi mcp.json files with a structured warning', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'mcp.json'), `{"mcpServers":{"big":{"type":"stdio","command":"${'a'.repeat(5 * 1024 * 1024)}"}}}`)
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    const catalog = await service.list()
+
+    expect(catalog.warnings).toContainEqual({ scope: 'user', path: join(agentDir, 'mcp.json'), message: 'mcp.json is too large — plugins hidden' })
+    expect(catalog.skills.some((item) => item.kind === 'mcp')).toBe(false)
+  })
+
+  it('writes native pi mcp.json files at both scopes with the adapter advisory', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const project = join(root, 'project')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
+    const projectResult = await service.connectMcp({ name: 'files', scope: 'project', projectPath: project, type: 'stdio', command: 'npx', args: ['-y', 'server'] })
+    await expect(service.connectMcp({ name: 'invalid name', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/unsupported characters/)
+
+    expect(user).toMatchObject({ ok: true, output: expect.stringContaining('new Pi session') })
+    expect(user.output).toContain('pi install npm:pi-mcp-adapter')
+    expect(projectResult.ok).toBe(true)
+    const userConfig = JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8'))
+    const projectConfig = JSON.parse(readFileSync(join(project, '.pi', 'mcp.json'), 'utf8'))
+    expect(userConfig.$schema).toBeUndefined()
+    expect(userConfig.mcpServers['docs:remote']).toEqual({ type: 'http', url: 'https://docs.example/mcp', enabled: true })
+    expect(projectConfig.mcpServers.files).toEqual({ type: 'stdio', command: 'npx', args: ['-y', 'server'], enabled: true })
+    expect(existsSync(join(agentDir, 'settings.json'))).toBe(false)
+    expect(existsSync(join(project, '.prime'))).toBe(false)
+  })
+
+  it('omits the adapter advisory when settings.json lists pi-mcp-adapter', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    const result = await service.connectMcp({ name: 'docs', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
+
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain('Saved MCP server definition')
+    expect(result.output).not.toContain('not installed')
+    // The adapter check reads settings.json without rewriting it.
+    expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))).toEqual({ packages: ['npm:pi-mcp-adapter'] })
+  })
+
+  it('rejects pi project MCP paths that traverse repository symlinks', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const project = join(root, 'project')
+    const outside = join(root, 'outside')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    mkdirSync(outside)
+    symlinkSync(outside, join(project, '.pi'))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    await expect(service.connectMcp({
+      name: 'escaped', scope: 'project', projectPath: project, type: 'http', url: 'http://127.0.0.1:3333/mcp',
+    })).rejects.toThrow(/real directory/)
+    expect(() => readFileSync(join(outside, 'mcp.json'))).toThrow()
+  })
+
+  it('installs through the native pi install command with validated argv', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const executable = join(root, 'pi.cjs')
+    const capture = join(root, 'argv.json')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2))); process.stdout.write('installed\\n')\n`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => resolve(path), { agentDir, harness: 'pi' })
+
+    const result = await service.install('npm:@scope/example-plugin')
+
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['install', 'npm:@scope/example-plugin'])
+
+    const missing = new PluginService(null, async (path) => resolve(path), { agentDir, harness: 'pi' })
+    expect(await missing.install('npm:@scope/example-plugin')).toEqual({ ok: false, reason: 'blocked', output: 'Pi executable was not found' })
+    await expect(service.install('--registry=https://evil.test')).rejects.toThrow(/Invalid package source/)
+  })
+
+  it('constructs remove argv without shell interpolation', async () => {
+    const root = temp()
+    const executable = join(root, 'pi.cjs')
+    const capture = join(root, 'argv.json')
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)))\n`)
+    chmodSync(executable, 0o755)
+
+    const result = await executePiPluginRemove(executable, 'npm:@scope/example-plugin')
+
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['remove', 'npm:@scope/example-plugin'])
+  })
+
+  it('bounds and sanitizes untrusted pi CLI output', async () => {
+    const root = temp()
+    const noisy = join(root, 'pi-noisy.cjs')
+    writeFileSync(noisy, '#!/usr/bin/env node\nprocess.stdout.write("\\u001b[32minstalled pi plugin\\u001b[0m\\n")\n')
+    chmodSync(noisy, 0o755)
+    const flooding = join(root, 'pi-flooding.cjs')
+    writeFileSync(flooding, '#!/usr/bin/env node\nprocess.stdout.write(Buffer.alloc(9 * 1024 * 1024, 97))\n')
+    chmodSync(flooding, 0o755)
+
+    const sanitized = await executePiPluginInstall(noisy, 'npm:example-plugin')
+    const flooded = await executePiPluginInstall(flooding, 'npm:example-plugin')
+
+    expect(sanitized.ok).toBe(true)
+    expect(sanitized.output).toContain('installed pi plugin')
+    expect(sanitized.output).not.toContain('\u001b')
+    expect(flooded.ok).toBe(false)
+    expect(flooded.reason).toBe('overflow')
+  })
+
+  it('keeps pi project discovery contained and reveal authorization scoped to discovered paths', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const project = join(root, 'project')
+    const localSkill = join(project, '.pi', 'skills', 'local', 'SKILL.md')
+    const outside = join(root, 'outside')
+    const outsideSkill = join(outside, 'SKILL.md')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(resolve(localSkill, '..'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(localSkill, '---\nname: local\n---\nLocal skill')
+    writeFileSync(outsideSkill, '---\nname: outside\n---\nShould not be disclosed')
+    symlinkSync(outside, join(project, '.pi', 'skills', 'linked-outside'))
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    const { skills: records } = await service.list(project)
+
+    expect(records).toContainEqual(expect.objectContaining({ name: 'local', path: realpathSync(localSkill) }))
+    expect(records.some((record) => record.path === outsideSkill || record.path === realpathSync(outsideSkill))).toBe(false)
+    expect(service.authorizeReveal(localSkill)).toBe(realpathSync(localSkill))
+    expect(() => service.authorizeReveal(outsideSkill)).toThrow('plugin path was not discovered')
   })
 })

@@ -2,12 +2,14 @@ import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { HarnessId, PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
+import { HARNESSES } from './harness'
 import { createAdmissionQueue, createSingleFlight } from './lib/async'
-import { requireString } from './validation'
+import { isRecord, requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
+import { readAtMost } from './plugins/file-io'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
 import type { ProjectSettingsPath } from './plugins/mcp'
-import { executeOmpPluginInstall, executePackageInstall, validatePackageSource } from './plugins/package-execution'
+import { executeOmpPluginInstall, executePackageInstall, executePiPluginInstall, validatePackageSource } from './plugins/package-execution'
 
 type PluginDiscovery = typeof discoverPlugins
 
@@ -17,6 +19,8 @@ interface PluginServiceOptions {
   discover?: PluginDiscovery
   builtInSkills?: SkillRecord[]
 }
+
+const MAX_ADAPTER_SETTINGS_BYTES = 4 * 1024 * 1024
 
 const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
 const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
@@ -54,7 +58,7 @@ export class PluginService {
     options: PluginServiceOptions = {},
   ) {
     this.harness = options.harness ?? 'prime'
-    this.agentDir = options.agentDir ?? join(homedir(), this.harness === 'omp' ? '.omp' : '.prime', 'agent')
+    this.agentDir = options.agentDir ?? HARNESSES[this.harness].agentDir(homedir())
     this.discoverCatalog = options.discover ?? discoverPlugins
     this.builtInSkills = options.builtInSkills ?? []
   }
@@ -97,8 +101,10 @@ export class PluginService {
   }
 
   async install(sourceValue: unknown): Promise<ProcessOutcome> {
-    if (!this.agentPath) return { ok: false, reason: 'blocked', output: `${this.harness === 'omp' ? 'OMP' : 'Prime Agent'} executable was not found` }
+    if (!this.agentPath) return { ok: false, reason: 'blocked', output: `${HARNESSES[this.harness].agentName} executable was not found` }
     const source = validatePackageSource(sourceValue)
+    // Pi and Prime record installed sources in the agent settings.json; OMP
+    // tracks installs through its plugin lock file.
     const settingsPath = this.harness === 'omp' ? join(this.agentDir, '..', 'plugins', 'omp-plugins.lock.json') : join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
       // The Prime CLI does not participate in Prime Work's settings lock. Holding
@@ -108,7 +114,9 @@ export class PluginService {
       try {
         return this.harness === 'omp'
           ? await executeOmpPluginInstall(this.agentPath!, source)
-          : await executePackageInstall(this.agentPath!, source)
+          : this.harness === 'pi'
+            ? await executePiPluginInstall(this.agentPath!, source)
+            : await executePackageInstall(this.agentPath!, source)
       } finally {
         await release()
       }
@@ -123,22 +131,50 @@ export class PluginService {
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
       this.lastProjectPath = projectPath
-      settingsTarget = await prepareProjectSettingsPath(projectPath, this.harness === 'omp' ? { segments: ['.omp'], filename: 'mcp.json' } : undefined)
+      settingsTarget = await prepareProjectSettingsPath(projectPath, this.harness === 'prime'
+        ? undefined
+        : { segments: [this.harness === 'omp' ? '.omp' : '.pi'], filename: 'mcp.json' })
     } else {
-      settingsTarget = join(this.agentDir, this.harness === 'omp' ? 'mcp.json' : 'settings.json')
+      settingsTarget = join(this.agentDir, this.harness === 'prime' ? 'settings.json' : 'mcp.json')
     }
 
+    const options = this.harness === 'omp' ? {
+      agentName: 'OMP',
+      schema: 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json',
+    } : this.harness === 'pi' ? {
+      agentName: 'Pi',
+      successMessage: `Saved MCP server definition “${input.name}”. Start a new Pi session to load it.${await this.piMcpAdapterAdvisory()}`,
+    } : undefined
     const mutation = this.settingsMutation.then(() => updateMcpSettings(
       settingsTarget,
       input,
       (path) => this.settingsFingerprint(path),
-      this.harness === 'omp' ? {
-        agentName: 'OMP',
-        schema: 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json',
-      } : undefined,
+      options,
     ))
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
+  }
+
+  /**
+   * Pi loads mcp.json through the pi-mcp-adapter extension. The installed
+   * sources recorded in ~/.pi/agent/settings.json are read (bounded, never
+   * written) to warn when the adapter is missing; the write itself proceeds.
+   */
+  private async piMcpAdapterAdvisory(): Promise<string> {
+    const advisory = ' Note: Pi loads MCP servers through the pi-mcp-adapter extension, which is not installed — run: pi install npm:pi-mcp-adapter'
+    try {
+      const { content, truncated } = await readAtMost(join(this.agentDir, 'settings.json'), MAX_ADAPTER_SETTINGS_BYTES)
+      if (truncated) return advisory
+      const value = JSON.parse(content) as unknown
+      if (!isRecord(value) || !Array.isArray(value.packages)) return advisory
+      const installed = value.packages.some((raw) => {
+        const source = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : ''
+        return source.includes('pi-mcp-adapter')
+      })
+      return installed ? '' : advisory
+    } catch {
+      return advisory
+    }
   }
 
   refresh(): Promise<PluginCatalog> {

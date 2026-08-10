@@ -4,6 +4,7 @@ import { lstat, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import type { HarnessId, PluginCatalog, PluginWarning, SkillRecord } from '../../../src/types/api'
+import { HARNESSES } from '../harness'
 import { mapLimit } from '../lib/async'
 import { isPathWithin, isRecord } from '../validation'
 import { errorCode, readAtMost } from './file-io'
@@ -11,6 +12,13 @@ import { errorCode, readAtMost } from './file-io'
 type Kind = SkillRecord['kind']
 type Location = SkillRecord['location']
 interface Candidate { path: string; kind: Exclude<Kind, 'package' | 'mcp'>; location: Location }
+
+/** Project-relative directory that holds a harness's project agent state. */
+const PROJECT_AGENT_SEGMENTS: Record<HarnessId, readonly string[]> = {
+  prime: ['.prime', 'agent'],
+  omp: ['.omp'],
+  pi: ['.pi'],
+}
 
 const MAX_DISCOVERY_CANDIDATES = 2_000
 const MAX_DISCOVERY_DIRECTORIES = 1_000
@@ -222,7 +230,7 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
     const key = `${candidate.kind}:${path}`
     if (seenPaths.has(key)) return null
     seenPaths.add(key)
-    const metadata = candidate.kind === 'extension' ? { description: `${harness === 'omp' ? 'OMP' : 'Prime Agent'} extension` } : await markdownMetadata(path)
+    const metadata = candidate.kind === 'extension' ? { description: `${HARNESSES[harness].agentName} extension` } : await markdownMetadata(path)
     const name = displayName(candidate, metadata)
     return {
       id: idFor(candidate.kind, path),
@@ -236,17 +244,26 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
   })
 }
 
-function addSettingsMetadata(settings: Record<string, unknown>, location: 'user' | 'project', output: SkillRecord[], harness: HarnessId = 'prime'): void {
+function addSettingsMetadata(
+  settings: Record<string, unknown>,
+  location: 'user' | 'project',
+  output: SkillRecord[],
+  harness: HarnessId = 'prime',
+  // Pi's settings.json is not an MCP source (the pi-mcp-adapter extension reads
+  // mcp.json files, surfaced separately below); a stray mcpServers key there
+  // would advertise servers pi never loads.
+  includeMcpServers: boolean = harness !== 'pi',
+): void {
   if (Array.isArray(settings.packages)) {
     for (const raw of settings.packages) {
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       const sourceValue = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : undefined
       if (!sourceValue) continue
       const source = safeSource(sourceValue)
-      output.push({ id: idFor('package', location, sourceValue), name: source.replace(/^(npm:|git:)/, '').slice(0, 120), description: `${harness === 'omp' ? 'OMP' : 'Prime Agent'} capability package from ${source}`, kind: 'package', location, enabled: true, source })
+      output.push({ id: idFor('package', location, sourceValue), name: source.replace(/^(npm:|git:)/, '').slice(0, 120), description: `${HARNESSES[harness].agentName} capability package from ${source}`, kind: 'package', location, enabled: true, source })
     }
   }
-  if (isRecord(settings.mcpServers)) {
+  if (includeMcpServers && isRecord(settings.mcpServers)) {
     for (const [name, raw] of Object.entries(settings.mcpServers)) {
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       if (!isRecord(raw)) continue
@@ -376,7 +393,7 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
 
   let projectSettings: Record<string, unknown> = {}
   if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
-    const projectAgentDir = harness === 'omp' ? join(safeProjectPath, '.omp') : join(safeProjectPath, '.prime', 'agent')
+    const projectAgentDir = join(safeProjectPath, ...PROJECT_AGENT_SEGMENTS[harness])
     const projectSettingsPath = join(projectAgentDir, 'settings.json')
     const projectSkillsDir = join(safeProjectPath, '.agents', 'skills')
     const [sameAgentDir, sameSettingsFile, sameProjectSkillsDir] = await Promise.all([
@@ -413,14 +430,16 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   result.push(...ompPackageRecords)
   addSettingsMetadata(globalSettings, 'user', result, harness)
   addSettingsMetadata(projectSettings, 'project', result, harness)
-  if (harness === 'omp') {
+  // OMP reads mcp.json natively; pi reads the same layout through the
+  // pi-mcp-adapter extension (~/.pi/agent/mcp.json and project .pi/mcp.json).
+  if (harness !== 'prime') {
     const globalMcp = await readSettings(join(agentDir, 'mcp.json'), 'user')
     if (globalMcp.warning) warnings.push(globalMcp.warning)
-    addSettingsMetadata(globalMcp.settings, 'user', result, harness)
+    addSettingsMetadata(globalMcp.settings, 'user', result, harness, true)
     if (safeProjectPath) {
-      const projectMcp = await readSettings(join(safeProjectPath, '.omp', 'mcp.json'), 'project')
+      const projectMcp = await readSettings(join(safeProjectPath, ...PROJECT_AGENT_SEGMENTS[harness], 'mcp.json'), 'project')
       if (projectMcp.warning) warnings.push(projectMcp.warning)
-      addSettingsMetadata(projectMcp.settings, 'project', result, harness)
+      addSettingsMetadata(projectMcp.settings, 'project', result, harness, true)
     }
   }
   return { skills: result.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)), warnings }
