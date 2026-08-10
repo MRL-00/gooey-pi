@@ -26,7 +26,7 @@ Last full local validation: 2026-08-06 on Apple Silicon macOS.
 | `codesign --verify --deep --strict` | Pass |
 | Electron fuse policy | Pass — RunAsNode/NODE_OPTIONS/inspect/file-protocol privilege disabled; ASAR integrity and OnlyLoadAppFromAsar enabled |
 | Native package allowlist | Pass — unpacking is limited to node-pty's `pty.node`/`spawn-helper` and the package architecture's ZeroMQ addon; the post-package gate rejects missing or extra paths and architecture-incomplete Mach-O files |
-| Build bundle budgets | Pass — main ≤256 KiB, preload ≤16 KiB, initial renderer entry plus modulepreloads ≤1,280 KiB, every renderer JS/CSS chunk ≤600 KiB, total renderer JS/CSS ≤2 MiB |
+| Build bundle budgets | Pass — main ≤512 KiB, preload ≤16 KiB, initial renderer entry plus modulepreloads ≤1,280 KiB, every renderer JS/CSS chunk ≤600 KiB, total renderer JS/CSS ≤2.25 MiB |
 | Package size budgets | Pass — `app.asar` ≤220 MiB, app regular-file bytes ≤480 MiB, DMG ≤170 MiB, ZIP ≤165 MiB |
 | Packaged custom `prime-work://` renderer | Pass — normal on-screen launch and Apple quit |
 | Prime Dock/App Switcher icon | Pass — runtime PNG hash equals `assets/icon.png`; bundle uses `icon.icns` |

@@ -23,7 +23,12 @@ import {
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
 // after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
 import { executablePath } from '../scripts/release/after-pack.cjs'
-import { expectedNativeFiles, nativeRuntimeDirectory, zeroMqAddonPattern } from '../scripts/release/verify-cross-platform-package.mjs'
+import {
+  assertUnpackedNativeLayout as assertCrossPlatformUnpackedNativeLayout,
+  expectedNativeFiles,
+  nativeRuntimeDirectory,
+  zeroMqAddonPattern,
+} from '../scripts/release/verify-cross-platform-package.mjs'
 
 const baseEnvironment = {
   RELEASE_SIGNING_TEAM_ID: 'TEAM123',
@@ -240,7 +245,9 @@ describe('release preflight', () => {
     expect(ciWorkflow).toContain('cancel-in-progress: true')
     expect(ciWorkflow).toMatch(/packaging-smoke:\n {4}if: github\.event_name == 'pull_request'/)
     for (const runner of ['macos-14', 'ubuntu-22.04', 'windows-2022']) expect(ciWorkflow).toContain(`runner: ${runner}`)
-    expect(ciWorkflow).toContain('electron-builder --dir')
+    expect(ciWorkflow).toContain('node node_modules/electron-builder/cli.js --dir')
+    expect(ciWorkflow).toContain('--publish=never')
+    expect(ciWorkflow).not.toContain('--publish never')
     expect(ciWorkflow).toContain('verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only')
   })
 
@@ -339,6 +346,7 @@ describe('post-package verification helpers', () => {
     expect(() => assertAsarLayout(entries)).not.toThrow()
     expect(() => assertAsarLayout([...entries, '/node_modules/react/index.js'])).toThrow(/duplicated/)
     expect(() => assertAsarLayout(entries.filter((entry) => !entry.includes('node-pty')))).toThrow(/missing required/)
+    expect(() => assertAsarLayout(entries.map((entry) => entry.replaceAll('/', '\\')))).not.toThrow()
   })
 
   test('keeps every platform native unpack allowlist exact and architecture-specific', () => {
@@ -534,6 +542,27 @@ describe('cross-platform packaging repair', () => {
     expect(nativeRuntimeDirectory('linux')).toBe('linux')
   })
 
+  test('accepts ZeroMQ ABI and libc fallbacks only within the target architecture', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'prime-work-cross-platform-unpacked-'))
+    const nativeFiles = [
+      ...expectedNativeFiles('linux', 'x64'),
+      'node_modules/zeromq/build/linux/x64/node/glibc-127-Release/addon.node',
+      'node_modules/zeromq/build/linux/x64/node/musl-127-Release/addon.node',
+    ]
+    for (const relativePath of nativeFiles) {
+      const path = join(directory, relativePath)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, 'fixture')
+    }
+    try {
+      expect(() => assertCrossPlatformUnpackedNativeLayout(directory, 'linux', 'x64')).not.toThrow()
+      rmSync(join(directory, 'node_modules/zeromq'), { recursive: true, force: true })
+      expect(() => assertCrossPlatformUnpackedNativeLayout(directory, 'linux', 'x64')).toThrow(/expected at least 1/)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   test('resolves release-script commands to Windows-safe spawns', () => {
     expect(resolveCommandInvocation('node', ['scripts/release/verify.mjs'])).toEqual({ file: process.execPath, args: ['scripts/release/verify.mjs'], shell: false })
     const builder = resolveCommandInvocation('electron-builder', ['install-app-deps'])
@@ -541,6 +570,9 @@ describe('cross-platform packaging repair', () => {
     expect(builder.shell).toBe(false)
     expect(builder.args[0]).toMatch(/electron-builder[\\/]cli\.js$/)
     expect(builder.args.at(-1)).toBe('install-app-deps')
+    const packageScript = readFileSync('scripts/release/package.mjs', 'utf8')
+    expect(packageScript).toContain("run('electron-builder', builderArgs, builderEnv)")
+    expect(packageScript).not.toContain("['exec', '--', 'electron-builder'")
     const npmViaLifecycle = resolveCommandInvocation('npm', ['run', 'release:verify'], 'win32', { npm_execpath: 'C:/npm/npm-cli.js' })
     expect(npmViaLifecycle).toEqual({ file: process.execPath, args: ['C:/npm/npm-cli.js', 'run', 'release:verify'], shell: false })
     expect(resolveCommandInvocation('npm', ['ci'], 'win32', {})).toEqual({ file: 'npm.cmd', args: ['ci'], shell: true })

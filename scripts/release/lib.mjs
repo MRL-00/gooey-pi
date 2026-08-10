@@ -141,7 +141,7 @@ export function assertArchitectureCoverage(appArchitectures, nativeArchitectures
 }
 
 export function assertAsarLayout(entries) {
-  const normalized = new Set(entries.map((entry) => entry.replace(/^\//, '')))
+  const normalized = new Set(entries.map((entry) => entry.replaceAll('\\', '/').replace(/^\//, '')))
   const required = [
     'out/main/index.js',
     'out/preload/index.js',
