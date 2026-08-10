@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HARNESSES } from '../../electron/main/harness'
 import { PROCESS_CONCURRENCY_LIMIT, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
 vi.mock('node:child_process', async (importOriginal) => {
@@ -20,14 +21,6 @@ vi.mock('node:child_process', async (importOriginal) => {
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
-const waitUntil = async (predicate: () => boolean, timeoutMs = 5_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
-  }
-}
-
 describe('runProcess resource bounds', () => {
   it('uses a combined output budget and explicitly reports truncation with independent kill escalation', async () => {
     const started = Date.now()

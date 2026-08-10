@@ -10,6 +10,7 @@ import { SessionService, type SessionServiceOptions } from '../../electron/main/
 import { boundedSessionDiscoveryNames, SessionMetadataCatalog, type SessionCatalogIo } from '../../electron/main/sessions/catalog'
 import { applyLiveMetadata, createSessionMetadataReader, METADATA_VERIFY_TAIL_BYTES, readSessionMetadata, type SessionMetadata } from '../../electron/main/sessions/metadata'
 import { JsonStateStore } from '../../electron/main/store'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -33,14 +34,6 @@ function writeSession(path: string, project: string, id: string, timestamp = '20
     JSON.stringify({ type: 'message', id: `${id}-message`, parentId: null, message: { role: 'user', content: id, timestamp } }),
     '',
   ].join('\n'))
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
-  }
 }
 
 function metadata(filePath: string, projectPath: string, id: string): SessionMetadata {

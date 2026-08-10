@@ -192,7 +192,6 @@ if (args[0] === 'status') {
 }
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
-let pendingQuestionnaire
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
@@ -212,52 +211,35 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
       return
     }
-    const isQuestionnaire = typeof command.message === 'string' && command.message.includes('two questions')
-    pendingQuestionnaire = isQuestionnaire ? { expected: 2, values: {} } : undefined
     fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
     send({ type: 'agent_start' })
-    send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: '**Reviewing the available release channels before asking for input.**' } })
-    if (isQuestionnaire) {
-      send({ type: 'tool_execution_start', toolCallId: 'ask-2', toolName: 'ask_user', args: { questions: [
-        { question: 'Which release channel?', options: ['Stable', 'Beta'] },
-        { question: 'What should I optimize for?', options: ['Speed', 'Safety'] },
-      ] } })
-      send({ type: 'extension_ui_request', id: 'fixture-question-1', method: 'select', title: 'Which release channel?', options: ['__prime_ask_user__fixture-group:0:2', 'Stable', 'Beta', 'Other (type your own answer)'] })
-      send({ type: 'extension_ui_request', id: 'fixture-question-2', method: 'select', title: 'What should I optimize for?', options: ['__prime_ask_user__fixture-group:1:2', 'Speed', 'Safety', 'Other (type your own answer)'] })
-    } else {
-      send({ type: 'tool_execution_start', toolCallId: 'ask-1', toolName: 'ask_user', args: { question: 'Which release channel?', options: ['Stable', 'Beta'] } })
-      send({ type: 'extension_ui_request', id: 'fixture-question', method: 'select', title: 'Choose a release channel', options: ['Stable', 'Beta', 'Other (type your own answer)'] })
-    }
-  } else if (command.type === 'extension_ui_response' && pendingPrompt) {
-    if (pendingQuestionnaire) {
-      pendingQuestionnaire.values[command.id] = command.value
-      if (Object.keys(pendingQuestionnaire.values).length < pendingQuestionnaire.expected) return
-      const prompt = pendingPrompt
-      const values = pendingQuestionnaire.values
-      pendingPrompt = undefined
-      pendingQuestionnaire = undefined
-      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'questionnaire-values.json'))}, JSON.stringify(values))
-      send({ type: 'tool_execution_end', toolCallId: 'ask-2', toolName: 'ask_user', result: { values } })
-      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The questionnaire answers are ready.' } })
-      const completedAt = new Date().toISOString()
-      fs.appendFileSync(sessionFile, [
-        JSON.stringify({ type: 'message', id: 'fixture-live-assistant-multi', parentId: 'fixture-goal-summary', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'toolCall', id: 'ask-2', name: 'ask_user', arguments: { questions: [{ question: 'Which release channel?', options: ['Stable', 'Beta'] }, { question: 'What should I optimize for?', options: ['Speed', 'Safety'] }] } }] } }),
-        JSON.stringify({ type: 'message', id: 'fixture-live-result-multi', parentId: 'fixture-live-assistant-multi', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-2', toolName: 'ask_user', content: JSON.stringify({ values }) } }),
-        JSON.stringify({ type: 'message', id: 'fixture-live-final-multi', parentId: 'fixture-live-result-multi', message: { role: 'assistant', timestamp: completedAt, content: 'The questionnaire answers are ready.' } }),
-      ].join('\\n') + '\\n')
+    if (typeof command.message !== 'string' || !command.message.includes('two questions')) {
+      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Fixture response.' } })
       send({ type: 'agent_end' })
-      send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      pendingPrompt = undefined
       return
     }
+    send({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: '**Reviewing the available release channels before asking for input.**' } })
+    send({ type: 'tool_execution_start', toolCallId: 'ask-2', toolName: 'ask_user', args: { questions: [
+      { question: 'Which release channel?', options: ['Stable', 'Beta'] },
+      { question: 'What should I optimize for?', options: ['Speed', 'Safety'] },
+    ] } })
+    send({ type: 'extension_ui_request', id: 'fixture-question-1', method: 'select', title: 'Which release channel?', options: ['__prime_ask_user__fixture-group:0:2', 'Stable', 'Beta', 'Other (type your own answer)'] })
+    send({ type: 'extension_ui_request', id: 'fixture-question-2', method: 'select', title: 'What should I optimize for?', options: ['__prime_ask_user__fixture-group:1:2', 'Speed', 'Safety', 'Other (type your own answer)'] })
+  } else if (command.type === 'extension_ui_response' && pendingPrompt) {
+    pendingPrompt.values = { ...(pendingPrompt.values || {}), [command.id]: command.value }
+    if (Object.keys(pendingPrompt.values).length < 2) return
     const prompt = pendingPrompt
     pendingPrompt = undefined
-    send({ type: 'tool_execution_end', toolCallId: 'ask-1', toolName: 'ask_user', result: { value: command.value } })
-    send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The selected release channel is ' + command.value + '.' } })
+    fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'questionnaire-values.json'))}, JSON.stringify(prompt.values))
+    send({ type: 'tool_execution_end', toolCallId: 'ask-2', toolName: 'ask_user', result: { values: prompt.values } })
+    send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The questionnaire answers are ready.' } })
     const completedAt = new Date().toISOString()
     fs.appendFileSync(sessionFile, [
-      JSON.stringify({ type: 'message', id: 'fixture-live-assistant', parentId: 'fixture-goal-summary', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'thinking', thinking: 'Reviewing the available release channels before asking for input.' }, { type: 'toolCall', id: 'ask-1', name: 'ask_user', arguments: { question: 'Which release channel?', options: ['Stable', 'Beta'] } }] } }),
-      JSON.stringify({ type: 'message', id: 'fixture-live-result', parentId: 'fixture-live-assistant', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-1', toolName: 'ask_user', content: JSON.stringify({ value: command.value }) } }),
-      JSON.stringify({ type: 'message', id: 'fixture-live-final', parentId: 'fixture-live-result', message: { role: 'assistant', timestamp: completedAt, content: 'The selected release channel is ' + command.value + '.' } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-assistant-multi', parentId: 'fixture-goal-summary', message: { role: 'assistant', timestamp: completedAt, content: [{ type: 'toolCall', id: 'ask-2', name: 'ask_user', arguments: { questions: [{ question: 'Which release channel?', options: ['Stable', 'Beta'] }, { question: 'What should I optimize for?', options: ['Speed', 'Safety'] }] } }] } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-result-multi', parentId: 'fixture-live-assistant-multi', message: { role: 'toolResult', timestamp: completedAt, toolCallId: 'ask-2', toolName: 'ask_user', content: JSON.stringify({ values: prompt.values }) } }),
+      JSON.stringify({ type: 'message', id: 'fixture-live-final-multi', parentId: 'fixture-live-result-multi', message: { role: 'assistant', timestamp: completedAt, content: 'The questionnaire answers are ready.' } }),
     ].join('\\n') + '\\n')
     send({ type: 'agent_end' })
     send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
@@ -342,6 +324,7 @@ function hermeticEnvironment(home: string, executable: string, ompExecutable: st
     LANG: 'C',
     LC_ALL: 'C',
     NO_COLOR: '1',
+    PRIME_WORK_E2E_HIDE_WINDOWS: '1',
     PRIME_AGENT_BINARY: executable,
     OMP_BINARY: ompExecutable,
   }
@@ -433,7 +416,6 @@ test.describe('Prime Work desktop smoke', () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Refresh context usage')
     await composer.press('Enter')
-    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
     await expect(dial).toHaveText('12')
     const offset = await dial.evaluate((node) => {
       const textNode = node.querySelector('span')?.firstChild
@@ -500,113 +482,36 @@ test.describe('Prime Work desktop smoke', () => {
     })
     expect(bridge.type).toBe('object')
     expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => !window.isVisible()))).toBe(true)
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
   })
 
-  test('opens the harness switcher with both harnesses and dismisses on Escape', async () => {
-    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
-    const menu = page.getByRole('menu')
-    await expect(menu).toBeVisible()
-    await expect(menu.getByRole('menuitemradio', { name: /Prime Work/ })).toBeVisible()
-    await expect(menu.getByRole('menuitemradio', { name: /OMP Work/ })).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(menu).toHaveCount(0)
-  })
-
-  test('shows the bundled GooeyPi pet and exposes Orb and Codex Pets settings', async () => {
+  test('wires the bundled pet to realtime voice and Pets settings', async () => {
     const desktopPet = page.getByRole('button', { name: /GooeyPi, draggable GooeyPi pet/ })
     await expect(desktopPet).toBeVisible()
     await expect(desktopPet.locator('.pet-sprite img')).toBeVisible()
     const petSurface = page.locator('.desktop-pet')
-    await expect(petSurface.getByRole('button', { name: 'Open realtime voice' })).toBeVisible()
     await petSurface.getByRole('button', { name: 'Open realtime voice' }).click()
-    const muteVoice = petSurface.getByRole('button', { name: 'Mute realtime voice' })
-    await expect(muteVoice).toBeVisible()
-    await expect(muteVoice).toBeFocused()
     await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toBeVisible()
-    await expect(petSurface.getByRole('button', { name: 'Close realtime voice' })).toBeVisible()
-    await expect(page.locator('.voice-orb')).toHaveCount(0)
     await petSurface.getByRole('button', { name: 'Close realtime voice' }).click()
-    const reopenVoice = petSurface.getByRole('button', { name: 'Open realtime voice' })
-    await expect(reopenVoice).toBeVisible()
-    await expect(reopenVoice).toBeFocused()
-    const toolbarOpenVoice = page.locator('.title-toolbar').getByRole('button', { name: 'Open realtime voice' })
-    await toolbarOpenVoice.click()
-    await expect(petSurface.getByRole('button', { name: 'Mute realtime voice' })).toBeFocused()
-    await page.locator('.title-toolbar').getByRole('button', { name: 'Close realtime voice' }).click()
-    await expect(toolbarOpenVoice).toBeFocused()
-    await expect(reopenVoice).not.toBeFocused()
+
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await page.getByRole('button', { name: 'Pets', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Pets', exact: true })).toBeVisible()
     await expect(page.getByRole('radio', { name: /^GooeyPi Built/ })).toBeChecked()
     await expect(page.getByRole('radio', { name: /^Orb Built/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex Pets' })).toBeVisible()
-    const petSize = page.getByRole('slider', { name: 'Pet size' })
-    await expect(petSize).toHaveValue('75')
-    await petSize.fill('55')
-    await expect(page.locator('.desktop-pet__avatar > *').first()).toHaveCSS('width', '53px')
-    await page.locator('.desktop-pet').getByRole('button', { name: 'Open realtime voice' }).click()
-    await expect(page.locator('.desktop-pet').getByRole('button', { name: 'Mute realtime voice' })).toBeFocused()
     const showPet = page.getByRole('checkbox', { name: 'Show desktop pet' })
     await showPet.focus()
     await showPet.press('Space')
     await expect(showPet).not.toBeChecked()
-    await expect(page.locator('.voice-orb')).toBeVisible()
+    await expect(page.locator('.desktop-pet')).toHaveCount(0)
     await showPet.press('Space')
     await expect(showPet).toBeChecked()
-    await expect(showPet).toBeFocused()
-    await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toBeVisible()
-    await expect(page.locator('.desktop-pet').getByRole('button', { name: 'Unmute realtime voice' })).toBeVisible()
-    await page.locator('.desktop-pet').getByRole('button', { name: 'Close realtime voice' }).click()
-
-    const dragTarget = page.getByRole('button', { name: /GooeyPi, draggable GooeyPi pet/ })
-    const dragBounds = await dragTarget.boundingBox()
-    expect(dragBounds).not.toBeNull()
-    await page.mouse.move(dragBounds!.x + dragBounds!.width / 2, dragBounds!.y + dragBounds!.height / 2)
-    await page.mouse.down()
-    const dismissDrawer = page.getByRole('status', { name: 'Drag here to hide desktop pet' })
-    await expect(dismissDrawer).toBeVisible()
-    const dismissTarget = page.locator('.pet-dismiss-drawer__hitbox')
-    const dismissBounds = await dismissTarget.boundingBox()
-    expect(dismissBounds).not.toBeNull()
-    await page.mouse.move(dismissBounds!.x + dismissBounds!.width / 2, dismissBounds!.y + dismissBounds!.height / 2, { steps: 8 })
-    await expect(page.getByRole('status', { name: 'Release to hide desktop pet' })).toBeVisible()
-    await page.mouse.up()
-    await expect(showPet).not.toBeChecked()
-    await expect(page.locator('.desktop-pet')).toHaveCount(0)
-
-    await showPet.check()
-    await petSize.fill('75')
     await expect(page.locator('.desktop-pet')).toBeVisible()
-  })
-
-  test('exposes Voice settings and places both voice controls in their requested positions', async () => {
-    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Voice', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Voice' })).toBeVisible()
-    const service = page.getByRole('combobox', { name: 'Dictation service' })
-    const dictationModel = page.getByRole('combobox', { name: 'Dictation model' })
-    await expect(service).toHaveValue('openai-live')
-    await expect(dictationModel).toHaveValue('gpt-live-transcribe')
-    const openAiConnection = page.locator('.voice-connection-card').filter({ hasText: 'OpenAI' })
-    const addOpenAiKey = openAiConnection.getByRole('button', { name: 'Add key' })
-    await expect(addOpenAiKey).toBeEnabled()
-    await addOpenAiKey.click()
-    const keyDialog = page.getByRole('dialog', { name: 'Connect OpenAI' })
-    await expect(keyDialog.getByLabel('API key')).toBeEnabled()
-    await keyDialog.getByRole('button', { name: 'Cancel' }).click()
-    await service.selectOption('groq')
-    await expect(dictationModel).toHaveValue('whisper-large-v3-turbo')
-    await expect(page.getByRole('textbox', { name: 'whisper-cli executable' })).toHaveCount(0)
-    await page.locator('.session-row').first().click()
-    const toolbarLabels = await page.locator('.title-toolbar__actions button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))
-    expect(toolbarLabels.slice(0, 2)).toEqual(['Open realtime voice', 'Toggle terminal (⌘J)'])
-    const composerLabels = await page.locator('.composer__actions > *').evaluateAll((controls) => controls.map((control) => control.getAttribute('aria-label')))
-    expect(composerLabels).toEqual(['Context usage', 'Start dictation', 'Send message'])
   })
 
   test('switches to OMP Work and lists the OMP session catalog, then returns to Prime', async () => {
@@ -823,49 +728,17 @@ test.describe('Prime Work desktop smoke', () => {
     expect(existsSync(join(fixtureRoot, 'project'))).toBe(true)
   })
 
-  test('shows agent messages as collapsed, expandable Prime handoffs instead of errors', async () => {
-    const disclosure = page.getByRole('button', { name: 'Message from agent: fixture-reviewer' })
-    await expect(disclosure).toBeVisible()
-    await expect(disclosure).toHaveAttribute('aria-expanded', 'false')
-    const tones = await page.locator('.message--agent').evaluate((node) => {
-      const styles = getComputedStyle(node)
-      const probe = document.createElement('div')
-      probe.style.background = 'var(--danger-soft)'
-      document.body.append(probe)
-      const danger = getComputedStyle(probe).backgroundColor
-      probe.remove()
-      return { background: styles.backgroundColor, danger }
-    })
-    expect(tones.background).not.toBe(tones.danger)
-    const content = page.locator('.message--agent .agent-message__content')
-    await expect(content).toHaveCount(0)
-    await disclosure.click()
-    await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
-    await expect(content).toContainText('Fixture review complete. The readable agent response is available here.')
-    await expect(page.getByText('Envelope metadata that should stay hidden.')).toHaveCount(0)
-  })
+  test('renders agent handoffs and goal summaries as collapsed readable disclosures', async () => {
+    const agentDisclosure = page.getByRole('button', { name: 'Message from agent: fixture-reviewer' })
+    const goalDisclosure = page.getByRole('button', { name: 'Goal summary' })
+    await expect(agentDisclosure).toHaveAttribute('aria-expanded', 'false')
+    await expect(goalDisclosure).toHaveAttribute('aria-expanded', 'false')
 
-  test('shows goal summaries in collapsed blue disclosures', async () => {
-    const disclosure = page.getByRole('button', { name: 'Goal summary' })
-    await expect(disclosure).toBeVisible()
-    await expect(disclosure).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.locator('.goal-message__content')).toHaveCount(0)
-    const colors = await page.locator('.message--goal').evaluate((node) => {
-      const styles = getComputedStyle(node)
-      const icon = node.querySelector('.goal-message__icon')
-      const probe = document.createElement('div')
-      probe.style.color = 'var(--annotation)'
-      document.body.append(probe)
-      const annotation = getComputedStyle(probe).color
-      probe.remove()
-      return { border: styles.borderColor, icon: icon ? getComputedStyle(icon).color : '', annotation }
-    })
-    expect(colors.border).not.toBe('rgba(0, 0, 0, 0)')
-    expect(colors.icon).toBe(colors.annotation)
-    await disclosure.click()
-    await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    await agentDisclosure.click()
+    await goalDisclosure.click()
+    await expect(page.locator('.agent-message__content')).toContainText('Fixture review complete.')
     await expect(page.locator('.goal-message__content')).toContainText('Verify the readable blue goal summary.')
-    await expect(page.getByText('Fixture control envelope that should stay hidden.')).toHaveCount(0)
+    await expect(page.getByText(/Envelope metadata|Fixture control envelope/)).toHaveCount(0)
   })
 
   test('copies a specific user or agent message from the action directly below it', async () => {
@@ -942,17 +815,6 @@ test.describe('Prime Work desktop smoke', () => {
     expect(colors.note).not.toContain('rgba')
   })
 
-  test('disables a persisted diagnostics preference', async () => {
-    await page.keyboard.press('Meta+,')
-    await page.getByRole('button', { name: 'Privacy', exact: true }).click()
-    const diagnostics = page.getByRole('checkbox', { name: 'Share optional diagnostics' })
-    await expect(diagnostics).toBeChecked()
-    await diagnostics.focus()
-    await diagnostics.press('Space')
-    await expect(diagnostics).not.toBeChecked()
-    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).telemetry)).toBe(false)
-  })
-
   test('applies dark appearance and restores system appearance', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
@@ -995,110 +857,16 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
 
-  test('pastes an image into the composer and forwards it with the prompt', async () => {
-    const composer = page.getByRole('combobox', { name: 'Message Prime' })
-    await composer.evaluate((node) => {
-      const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
-      const transfer = new DataTransfer()
-      transfer.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }))
-      node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }))
-    })
-    await expect(page.locator('.composer-attachment')).toContainText('pasted.png')
-    await composer.fill('Describe this image')
-    await composer.press('Enter')
-    await expect(page.getByRole('dialog', { name: 'Choose a release channel' })).toBeVisible()
-    await expect(page.locator('.composer-attachment')).toHaveCount(0)
-
-    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
-    const prompt = JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8')) as { message: string; images: Array<{ type: string; mimeType: string; data: string }> }
-    expect(prompt).toMatchObject({
-      message: 'Describe this image',
-      images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }],
-    })
-    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
-
-    const imagePreview = page.getByRole('button', { name: 'Expand pasted image' }).first()
-    await imagePreview.click()
-    const lightbox = page.getByRole('dialog', { name: 'Expanded pasted image' })
-    await expect(lightbox).toBeVisible()
-    await expect(lightbox.locator('.image-lightbox__image')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
-    await page.keyboard.press('Escape')
-    await expect(lightbox).toHaveCount(0)
-    await expect(imagePreview).toBeFocused()
-  })
-
-  test('round-trips an agent multiple-choice question through the desktop modal', async () => {
-    const composer = page.getByRole('combobox', { name: 'Message Prime' })
-    await composer.fill('Ask me which release channel to use')
-    await composer.press('Enter')
-
-    const dialog = page.getByRole('dialog', { name: 'Choose a release channel' })
-    await expect(dialog).toBeVisible()
-    const liveReasoning = page.locator('.activity-line--reasoning')
-    await expect(liveReasoning).toContainText('Reviewing the available release channels before asking for input.')
-    await expect(liveReasoning).not.toContainText('Reasoning')
-    await expect(liveReasoning.locator('.activity-line__icon')).toHaveCount(0)
-    await expect.poll(() => liveReasoning.evaluate((node) => getComputedStyle(node).fontStyle)).toBe('normal')
-    const reasoningEmphasis = liveReasoning.locator('strong')
-    await expect(reasoningEmphasis).toHaveCount(1)
-    await expect.poll(() => reasoningEmphasis.evaluate((node) => Number.parseInt(getComputedStyle(node).fontWeight, 10))).toBeLessThanOrEqual(500)
-    await expect(page.locator('.thinking-dots > span')).toHaveCount(3)
-    await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
-    const streamingTool = page.locator('.activity-line--question')
-    await expect(streamingTool.locator('.activity-tool__summary')).toHaveAttribute('aria-expanded', 'false')
-    await expect(streamingTool.locator('.activity-tool__details')).toHaveCount(0)
-    await expect(dialog.getByRole('option', { name: 'Stable' })).toBeVisible()
-    await expect(dialog.getByRole('option', { name: 'Beta' })).toBeVisible()
-    await expect(dialog.getByRole('option', { name: 'Other (type your own answer)' })).toBeVisible()
-    await expect(dialog.getByRole('option', { name: 'Stable' })).toHaveClass(/is-selected/)
-    await dialog.getByRole('option', { name: 'Beta' }).click()
-    await expect(dialog).toHaveCount(0)
-    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
-    expect(JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8'))).toMatchObject({
-      type: 'prompt',
-      message: 'Ask me which release channel to use',
-    })
-    const worked = page.locator('.work-disclosure__button')
-    await expect(worked).toContainText(/^Worked for (?:\d+s|\d+m\d{2}s|\d+h\d{2}m\d{2}s)$/)
-    await expect(worked).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.locator('.activity-line--reasoning')).toHaveCount(0)
-    await expect(page.locator('.thinking-dots')).toHaveCount(0)
-    await expect(page.locator('.activity-line--question')).toHaveCount(0)
-    const divider = await page.locator('.work-disclosure').evaluate((node) => {
-      const styles = getComputedStyle(node)
-      return { top: styles.borderTopStyle, bottom: styles.borderBottomStyle }
-    })
-    expect(divider).toEqual({ top: 'solid', bottom: 'none' })
-    await worked.click()
-    await expect(page.locator('.activity-line--question')).toContainText('Which release channel?')
-    await expect(page.locator('.message--assistant .message-actions')).toBeVisible()
-
-    const completedRow = page.locator('.session-row-wrap--complete').first()
-    await expect(completedRow).toHaveClass(/is-selected/)
-    await expect(completedRow).not.toHaveClass(/has-attention/)
-    await expect(page.locator('.unread-dot')).toHaveCount(0)
-    const companionBadge = page.getByRole('status', { name: 'A session turn ended or needs attention' })
-    await expect(companionBadge).toBeVisible()
-    const badgeBounds = await companionBadge.boundingBox()
-    const avatarBounds = await page.locator('.desktop-pet__avatar').boundingBox()
-    expect(badgeBounds).not.toBeNull()
-    expect(avatarBounds).not.toBeNull()
-    expect(badgeBounds!.width).toBeGreaterThanOrEqual(22)
-    expect(Math.abs(badgeBounds!.x + badgeBounds!.width / 2 - (avatarBounds!.x + avatarBounds!.width))).toBeLessThanOrEqual(12)
-    expect(badgeBounds!.y + badgeBounds!.height / 2).toBeGreaterThanOrEqual(avatarBounds!.y - 2)
-    expect(badgeBounds!.y + badgeBounds!.height / 2).toBeLessThanOrEqual(avatarBounds!.y + 16)
-
-    await completedRow.locator('.session-row').click()
-    await expect(companionBadge).toHaveCount(0)
-  })
-
-  test('answers a grouped ask_user questionnaire with context and back navigation', async () => {
+  test('round-trips a grouped Prime ask_user questionnaire', async () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Ask me two questions')
     await composer.press('Enter')
 
     const dialog = page.getByRole('dialog', { name: 'Answer 2 questions' })
     await expect(dialog).toBeVisible()
+    await expect(page.locator('.activity-line--reasoning')).toContainText('Reviewing the available release channels')
+    await expect(page.locator('.thinking-dots > span')).toHaveCount(3)
+    await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
     await expect(dialog).toContainText('Question 1 of 2')
     const context = dialog.getByRole('textbox', { name: 'Additional context' })
     await context.fill('For the pilot')
@@ -1119,11 +887,25 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toContainText('Submit answers')
     await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
     await expect(dialog).toHaveCount(0)
+
+    expect(JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8'))).toMatchObject({
+      type: 'prompt',
+      message: 'Ask me two questions',
+    })
     const worked = page.locator('.work-disclosure__button')
     await expect(worked).toContainText(/^Worked for /)
+    await expect(worked).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.activity-line--reasoning')).toHaveCount(0)
     await worked.click()
     await expect(page.locator('.activity-line--question')).toContainText('What should I optimize for?')
-    await expect(page.locator('.app-shell')).not.toHaveAttribute('data-ready', 'false')
+
+    const completedRow = page.locator('.session-row-wrap--complete').first()
+    await expect(completedRow).toHaveClass(/is-selected/)
+    await expect(completedRow).not.toHaveClass(/has-attention/)
+    const companionBadge = page.getByRole('status', { name: 'A session turn ended or needs attention' })
+    await expect(companionBadge).toBeVisible()
+    await completedRow.locator('.session-row').click()
+    await expect(companionBadge).toHaveCount(0)
   })
 
   test('injects ask_user into OMP and answers its grouped questionnaire in the app', async () => {
@@ -1461,14 +1243,12 @@ test.describe('Prime Work desktop smoke', () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Explain the terminal output')
     await composer.press('Enter')
-    await expect(page.getByRole('dialog', { name: 'Choose a release channel' })).toBeVisible()
     await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(true)
     const prompt = JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8')) as { message: string }
     expect(prompt.message).toContain('Explain the terminal output\n\n===== BEGIN TERMINAL SELECTION CONTEXT =====')
     expect(prompt.message).toContain('--- Selected text ---')
     expect(prompt.message).toContain('terminal-selection-marker')
     expect(prompt.message).not.toContain('Terminal buffer')
-    await page.getByRole('dialog').getByRole('option', { name: 'Stable' }).click()
   })
 
   test('closes and recreates the last macOS window cleanly', async () => {

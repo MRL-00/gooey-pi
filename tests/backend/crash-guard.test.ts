@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installCrashGuards, type CrashGuard } from '../../electron/main/crash-guard'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 const guards: CrashGuard[] = []
@@ -16,14 +17,6 @@ const temp = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-crash-'))
   dirs.push(dir)
   return dir
-}
-
-const waitUntil = async (predicate: () => boolean, timeoutMs = 5_000): Promise<void> => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
-  }
 }
 
 function install(options: Partial<Parameters<typeof installCrashGuards>[0]> & { logPath?: () => string | null } = {}) {

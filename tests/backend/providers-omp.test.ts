@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ModelCatalogProvider } from '../../electron/main/model-catalog'
 import { OMP_NOT_INSTALLED_WARNING, OmpModelCatalogService, MAX_CATALOG_PROVIDERS } from '../../electron/main/providers-omp'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -36,14 +37,6 @@ const sampleCatalog = {
     { provider: 'anthropic', id: 'claude-3-5-sonnet-20240620', selector: 'anthropic/claude-3-5-sonnet-20240620', name: 'Claude Sonnet 3.5', contextWindow: 200_000, maxTokens: 8_192, reasoning: false, thinking: null, input: ['text', 'image'], cost: {} },
     { provider: 'openai-codex', id: 'gpt-5.6-luna', selector: 'openai-codex/gpt-5.6-luna', name: 'Luna GPT-5.6', contextWindow: 400_000, maxTokens: 128_000, reasoning: true, thinking: ['low', 'medium', 'high', 'xhigh'], input: ['text'], cost: {} },
   ],
-}
-
-const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
-  }
 }
 
 const processExists = (pid: number): boolean => {

@@ -8,19 +8,12 @@ import { PluginService } from '../../electron/main/plugins'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 import type { SessionRecord } from '../../src/types/api'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); dirs.push(dir); return dir }
 const identities = (...paths: string[]) => Object.fromEntries(paths.map((path) => { const info = lstatSync(path, { bigint: true }); return [realpathSync(path), { dev: info.dev.toString(), ino: info.ino.toString() }] }))
-const waitUntil = async (predicate: () => boolean, timeoutMs = 2_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
-  }
-}
-
 describe('security boundaries', () => {
   it('does not expose project-configured files outside the project root', async () => {
     const project = temp('prime-work-plugin-')

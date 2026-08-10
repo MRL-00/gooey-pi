@@ -13,6 +13,7 @@ import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
 import type { RpcObject } from '../../electron/main/agent-rpc/types'
 import { PrimeProviderService } from '../../electron/main/providers'
 import type { RuntimeInfo } from '../../src/types/api'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 const managers: AgentRpcManager[] = []
@@ -53,14 +54,6 @@ function managerFor(executable: string): AgentRpcManager {
   const manager = new AgentRpcManager(executable, async (cwd) => cwd, async (path) => path)
   managers.push(manager)
   return manager
-}
-
-const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
-  }
 }
 
 const processExists = (pid: number): boolean => {

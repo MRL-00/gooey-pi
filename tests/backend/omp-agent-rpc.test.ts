@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AgentRpcManager, OMP_RPC_ADAPTER } from '../../electron/main/agent-rpc'
 import type { ProviderCatalog } from '../../electron/main/agent-rpc'
 import type { PrimeModelDescriptor } from '../../src/types/api'
+import { waitUntil } from '../helpers/wait'
 
 const dirs: string[] = []
 const managers: AgentRpcManager[] = []
@@ -100,14 +101,6 @@ function ompManager(executable: string, options: { providers?: ProviderCatalog; 
   )
   managers.push(manager)
   return manager
-}
-
-const waitUntil = async (predicate: () => boolean, timeoutMs = 7_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
-  }
 }
 
 describe('OMP RPC adapter argv', () => {

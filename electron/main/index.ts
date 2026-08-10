@@ -48,6 +48,7 @@ let agentBrowserBridge: AgentBrowserBridge | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
+const keepTestWindowsHidden = process.env.PRIME_WORK_E2E_HIDE_WINDOWS === '1'
 
 installCrashGuards({
   logPath: () => {
@@ -237,7 +238,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
   let readyToShow = false
   window.once('ready-to-show', () => {
     readyToShow = true
-    if (rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
+    if (!keepTestWindowsHidden && rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
   })
   window.on('closed', () => {
     ipc?.revoke(rendererId)
@@ -257,7 +258,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     return null
   }
   rendererLoaded = true
-  if (readyToShow) window.show()
+  if (!keepTestWindowsHidden && readyToShow) window.show()
   return window
 }
 
@@ -306,6 +307,7 @@ export async function settleShutdown(
 function requestWindow(reason: 'activation' | 'second instance' | 'tray'): void {
   void ensureWindow().then((window) => {
     if (!window || shutdownStarted || window.isDestroyed()) return
+    if (keepTestWindowsHidden) return
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
