@@ -35,6 +35,10 @@
 .voice-bridge-notice > span { display: flex; min-width: 0; flex-direction: column; }
 .voice-bridge-notice strong { color: var(--text); font-size: 11.5px; }
 .voice-bridge-notice small { margin-top: 2px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
+.voice-storage-notice { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; margin: 0 0 11px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border)); border-radius: 9px; color: var(--warning); background: var(--warning-soft); }
+.voice-storage-notice > span { display: flex; min-width: 0; flex-direction: column; }
+.voice-storage-notice strong { color: var(--text); font-size: 11.5px; }
+.voice-storage-notice small { margin-top: 2px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
 .voice-section { margin: 0 0 28px; }
 .voice-section__heading { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 11px; }
 .voice-section__heading > span { width: 27px; height: 27px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); }
@@ -61,6 +65,7 @@
 .voice-choice-control select:focus-visible, .voice-path-field input:focus-visible { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 24%, transparent); }
 .voice-choice-control > small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .voice-local-setup { padding: 4px 13px 12px; border-bottom: 1px solid var(--border); }
+.voice-self-hosted-setup { padding: 4px 13px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--prime) 2.5%, transparent); }
 .voice-local-setup__intro { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0 8px; color: var(--text-secondary); }
 .voice-local-setup__intro > span { display: flex; flex-direction: column; }
 .voice-local-setup__intro strong { font-size: 10.5px; }
@@ -69,6 +74,16 @@
 .voice-path-field > span { display: flex; flex-direction: column; }
 .voice-path-field input { min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 7px; outline: 0; color: var(--text); background: var(--surface-raised); font: 10px/1 "SFMono-Regular", Menlo, monospace; }
 .voice-path-field input::placeholder { color: var(--text-tertiary); }
+.voice-self-hosted-auth, .voice-self-hosted-connect { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-top: 1px solid var(--border); }
+.voice-self-hosted-auth > span:first-child, .voice-self-hosted-connect > span:first-child { min-width: 0; display: flex; flex-direction: column; }
+.voice-self-hosted-auth strong, .voice-self-hosted-connect strong { font-size: 11.5px; font-weight: 550; }
+.voice-self-hosted-auth small, .voice-self-hosted-connect small { margin-top: 3px; color: var(--text-tertiary); font-size: 9.5px; line-height: 1.35; }
+.voice-self-hosted-auth__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.voice-self-hosted-auth__actions i { padding: 3px 6px; border-radius: 999px; color: var(--text-tertiary); background: var(--surface-selected); font-size: 8.5px; font-style: normal; }
+.voice-self-hosted-result { min-height: 34px; display: flex; align-items: center; gap: 7px; margin: 8px 0 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 9.5px; line-height: 1.4; }
+.voice-self-hosted-result.is-connected { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); color: var(--success); background: color-mix(in srgb, var(--success) 5%, transparent); }
+.voice-self-hosted-result.is-error { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); color: var(--danger); background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.voice-self-hosted-note { margin: 8px 0 0; color: var(--text-tertiary); font-size: 9px; line-height: 1.45; }
 .voice-requirement { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 13px; color: var(--warning); background: color-mix(in srgb, var(--warning) 5%, transparent); font-size: 9.5px; }
 .voice-requirement > span { display: flex; align-items: center; gap: 6px; }
 .voice-requirement button { color: var(--text); font-size: 9.5px; text-decoration: underline; text-underline-offset: 2px; }
