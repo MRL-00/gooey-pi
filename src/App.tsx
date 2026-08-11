@@ -25,6 +25,7 @@ import { usePluginSkills } from '@/hooks/usePluginSkills'
 import { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import { useSidebarActions } from '@/hooks/useSidebarActions'
 import { useStableCallback } from '@/hooks/useStableCallback'
+import { useToast } from '@/hooks/useToast'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
 import type { GitStatus, GitWorktree, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, VoiceTaskStarted, WorkspaceView } from '@/types/api'
@@ -82,7 +83,7 @@ export default function App() {
   const [focusPetVoiceControl, setFocusPetVoiceControl] = useState(false)
   const [restorePetVoiceFocus, setRestorePetVoiceFocus] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const { toast, setToast } = useToast()
   const [changesCardDismissed, setChangesCardDismissed] = useState(false)
   const submissionAdmissionRef = useRef(createSingleFlightAdmission())
   const queuedFlushRef = useRef(false)
@@ -90,19 +91,9 @@ export default function App() {
   const worktreeRequestRef = useRef(0)
   const scheduleRequestRef = useRef(0)
   const demoTimerRef = useRef<number[]>([])
-  const toastTimerRef = useRef<number | null>(null)
 
   const reportError = useCallback((error: unknown) => {
-    const message = errorMessage(error)
-    setToast(message)
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => {
-      toastTimerRef.current = null
-      setToast((current) => current === message ? null : current)
-    }, 4_800)
-  }, [])
-  useEffect(() => () => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    setToast(errorMessage(error))
   }, [])
   useEffect(() => {
     window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
