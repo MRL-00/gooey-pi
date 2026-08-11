@@ -48,6 +48,7 @@ export function defaultSettings(): AppSettings {
     telemetry: false,
     disabledProviders: [],
     ompDisabledProviders: [],
+    piDisabledProviders: [],
     activeHarness: 'omp',
     ompApprovalMode: 'inherit',
     petEnabled: true,
@@ -71,7 +72,7 @@ function defaultState(): DesktopState {
 
 /** Version <= 2 states predate harness scoping; every hostile or absent value falls back to 'prime'. */
 function parseHarness(value: unknown): HarnessId {
-  return value === 'omp' ? 'omp' : 'prime'
+  return value === 'omp' || value === 'pi' ? value : 'prime'
 }
 
 function validDate(value: unknown): value is string {
@@ -137,7 +138,10 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     ompDisabledProviders: Array.isArray(value.ompDisabledProviders)
       ? [...new Set(value.ompDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.ompDisabledProviders,
-    activeHarness: value.activeHarness === 'prime' || value.activeHarness === 'omp'
+    piDisabledProviders: Array.isArray(value.piDisabledProviders)
+      ? [...new Set(value.piDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
+      : defaults.piDisabledProviders,
+    activeHarness: value.activeHarness === 'prime' || value.activeHarness === 'omp' || value.activeHarness === 'pi'
       ? value.activeHarness
       : legacyState ? 'prime' : defaults.activeHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,

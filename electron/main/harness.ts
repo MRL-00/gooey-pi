@@ -48,4 +48,16 @@ export const HARNESSES: Record<HarnessId, HarnessDescriptor> = {
     agentDir: (home) => join(home, '.omp', 'agent'),
     sessionRoot: (home) => join(home, '.omp', 'agent', 'sessions'),
   },
+  pi: {
+    id: 'pi',
+    productName: 'Pi Work',
+    agentName: 'Pi',
+    executableName: (platform) => platform === 'win32' ? 'pi.exe' : 'pi',
+    binaryEnvVar: 'PI_BINARY',
+    bundledResourceDirs: [],
+    posixCandidateDirs: (home) => [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'],
+    windowsCandidateDirs: () => [],
+    agentDir: (home) => join(home, '.pi', 'agent'),
+    sessionRoot: (home) => join(home, '.pi', 'agent', 'sessions'),
+  },
 }

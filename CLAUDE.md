@@ -2,7 +2,7 @@
 
 @AGENTS.md
 
-The file above is the authoritative project guide: dual-harness architecture (Prime Agent + OMP), code map, non-negotiable security boundaries, and commands. Keep the two files in sync by editing AGENTS.md only — this file is a pointer so both Claude Code and other agent tooling read the same instructions.
+The file above is the authoritative project guide: multi-harness architecture (Prime Agent + OMP + Pi), code map, non-negotiable security boundaries, and commands. Keep the two files in sync by editing AGENTS.md only — this file is a pointer so both Claude Code and other agent tooling read the same instructions.
 
 Quick orientation for a new session:
 

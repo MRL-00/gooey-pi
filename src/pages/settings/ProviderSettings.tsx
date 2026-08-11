@@ -6,7 +6,7 @@ import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { Modal } from '@/components/ui'
 
 interface ProviderSettingsProps {
-  /** Active harness. OMP credentials stay CLI-owned; visibility toggles only affect GooeyPi. */
+  /** Active harness. OMP and Pi credentials stay CLI-owned; visibility toggles only affect GooeyPi. */
   harness?: HarnessId
   catalog: PrimeModelCatalog | null
   onRefresh(): Promise<void>
@@ -30,7 +30,8 @@ function authDescription(provider: PrimeProviderDescriptor): string {
 }
 
 export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
-  const externalAuth = harness === 'omp'
+  // OMP and Pi own their credentials in their CLIs; GooeyPi only toggles visibility.
+  const externalAuth = harness !== 'prime'
   const agentName = HARNESS_AGENT_NAMES[harness]
   const [view, setView] = useState<'providers' | 'models'>('providers')
   const [query, setQuery] = useState('')
@@ -85,7 +86,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   return (
     <section className="settings-group provider-settings">
       <div className="settings-group__heading"><h2>{agentName} catalogue</h2><div className="provider-heading-actions">{catalog && disabledCount < providerCount ? <button type="button" className="button button--danger" disabled={Boolean(busyProvider)} onClick={() => void disableAll()}>{externalAuth ? 'Hide all' : 'Disable all'}</button> : null}{disabledCount ? <button type="button" className="button" disabled={Boolean(busyProvider)} onClick={() => void enableAll()}>{externalAuth ? 'Show all' : 'Enable all'}</button> : null}<button type="button" className="button button--icon" aria-label="Refresh providers" disabled={Boolean(busyProvider)} onClick={() => void run('refresh', onRefresh)}><RefreshCw size={13} /></button></div></div>
-      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{externalAuth ? `${availableModelCount.toLocaleString()} models are shown in GooeyPi; OMP checks credentials when you launch one` : `${availableModelCount.toLocaleString()} models are available with your current ${agentName} credentials`}</small> : null}</div>
+      <div className="provider-catalog-summary"><strong>{catalog ? `${providerCount.toLocaleString()} providers · ${modelCount.toLocaleString()} models` : 'Loading provider catalogue…'}</strong>{catalog ? <small>{externalAuth ? `${availableModelCount.toLocaleString()} models are shown in GooeyPi; ${agentName} checks credentials when you launch one` : `${availableModelCount.toLocaleString()} models are available with your current ${agentName} credentials`}</small> : null}</div>
       {catalog?.warning ? <p className="provider-catalog-warning" role="status">{catalog.warning}</p> : null}
       <div className="provider-catalog-tabs" role="tablist" aria-label="Provider catalogue view">
         <button type="button" role="tab" aria-selected={view === 'providers'} className={view === 'providers' ? 'is-active' : ''} onClick={() => { setView('providers'); setQuery('') }}>Providers <span>{providerCount.toLocaleString()}</span></button>
@@ -98,7 +99,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
           const busy = busyProvider === provider.id
           return <div className="provider-row" key={provider.id}>
             <label className="provider-row__toggle" title={provider.enabled ? `Hide provider in ${agentName}` : `Show provider in ${agentName}`}><input type="checkbox" aria-label={`Show ${provider.name} provider`} checked={provider.enabled} disabled={busy} onChange={(event) => void run(provider.id, () => onSetEnabled(provider.id, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
-            <div className="provider-row__identity"><strong>{provider.name}</strong><small>{externalAuth ? `${provider.authLabel ?? 'Credentials managed by the omp CLI'} · ${provider.availableModelCount.toLocaleString()} models` : authDescription(provider)}</small></div>
+            <div className="provider-row__identity"><strong>{provider.name}</strong><small>{externalAuth ? `${provider.authLabel ?? `Credentials managed by the ${harness} CLI`} · ${provider.availableModelCount.toLocaleString()} models` : authDescription(provider)}</small></div>
             {externalAuth ? <div className="provider-row__actions"><button type="button" className="button" onClick={onOpenDocs}><ExternalLink size={13} /> Credential setup</button></div> : <div className="provider-row__actions">
               {provider.authMethod === 'oauth' ? <button type="button" className="button" disabled={busy} onClick={() => void run(provider.id, () => onStartOAuth(provider.id))}><LogIn size={13} /> {provider.configured ? 'Reconnect' : 'Connect'}</button> : null}
               {provider.authMethod === 'api_key' ? <button type="button" className="button" disabled={busy} onClick={() => { setError(''); setApiKeyError(''); setApiKey(''); setApiKeyProvider(provider) }}><KeyRound size={13} /> {provider.configured ? 'Replace key' : 'Add key'}</button> : null}
@@ -124,13 +125,17 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   )
 }
 
+const PROVIDERS_PAGE_INTROS: Record<HarnessId, string> = {
+  omp: 'Choose which OMP providers and models appear in GooeyPi. These visibility settings do not change OMP itself; credentials remain managed by OMP.',
+  pi: 'Choose which Pi providers and models appear in GooeyPi. These visibility settings do not change Pi itself; Pi provider authentication is managed by the pi CLI.',
+  prime: 'Connect accounts, choose which providers and their models appear in GooeyPi, and browse every model Prime Agent supports.',
+}
+
 /** The Providers settings page: heading plus the provider/model catalog section. */
 export function ProvidersSettings(props: ProviderSettingsProps) {
   return (
     <>
-      <header><h1>Providers</h1><p>{props.harness === 'omp'
-        ? 'Choose which OMP providers and models appear in GooeyPi. These visibility settings do not change OMP itself; credentials remain managed by OMP.'
-        : 'Connect accounts, choose which providers and their models appear in GooeyPi, and browse every model Prime Agent supports.'}</p></header>
+      <header><h1>Providers</h1><p>{PROVIDERS_PAGE_INTROS[props.harness ?? 'prime']}</p></header>
       <ProviderSettings {...props} />
     </>
   )

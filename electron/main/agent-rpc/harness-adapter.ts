@@ -37,13 +37,19 @@ export interface HarnessRpcAdapter {
   readonly negotiateProtocolVersion?: number
   /** Whether v2 base64 rpc_chunk frames may arrive and must be reassembled. */
   readonly chunkedFrames: boolean
+  /**
+   * True when the harness has no --cwd flag and derives its working directory
+   * (and session bucket) from the process it was spawned as: the runtime must
+   * spawn the child with the authorized cwd as its working directory.
+   */
+  readonly spawnsInCwd?: boolean
   buildStartArgs(input: HarnessStartArgsInput): string[]
   /** Renderer command vocabulary → harness wire vocabulary. Throws for commands the harness does not support. */
   translateCommand(command: RpcObject): RpcObject
   /** Harness event → Prime event vocabulary; null swallows the event entirely. */
   normalizeEvent(event: RpcObject): RpcObject | null
-  /** The wire command that applies a service-tier preference. */
-  buildServiceTierCommand(serviceTier: 'default' | 'priority'): RpcObject
+  /** The wire command that applies a service-tier preference; absent when the harness has no service tier, which the runtime reports as unsupported. */
+  buildServiceTierCommand?(serviceTier: 'default' | 'priority'): RpcObject
   /** Reads harness-specific state fields out of get_state data. */
   readState(data: RpcObject): HarnessStateReading
 }
@@ -146,4 +152,54 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     if (usage) reading.contextUsage = usage
     return reading
   },
+}
+
+/**
+ * Base pi speaks Prime's request/response envelope, command vocabulary, and
+ * event names with no handshake extras: no ready frame, no protocol
+ * negotiation, no chunked frames. Only the Prime-only daemon/heartbeat family
+ * and the service tier are missing.
+ */
+export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
+  id: 'pi',
+  agentName: HARNESSES.pi.agentName,
+  chunkedFrames: false,
+  // pi has no --cwd flag: the session bucket derives from the child process
+  // working directory, which the runtime sets to the authorized cwd.
+  spawnsInCwd: true,
+  buildStartArgs: (input) => {
+    const args = ['--mode', 'rpc']
+    // pi's --resume is an interactive selector; an exact session file rides --session.
+    if (input.sessionPath) args.push('--session', input.sessionPath)
+    if (input.modelId !== undefined) {
+      if (unsafeArgValue(input.modelId)) throw new TypeError('Invalid model')
+      if (input.providerId) args.push('--provider', input.providerId)
+      args.push('--model', input.modelId)
+    }
+    if (input.thinking) args.push('--thinking', input.thinking)
+    // App capabilities are injected as explicit, self-contained extensions
+    // (the same decision as OMP); pi's --skill flag stays unused.
+    for (const extensionPath of [
+      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
+      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
+      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
+    ]) {
+      if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
+    }
+    return args
+  },
+  translateCommand: (command) => {
+    const type = String(command.type)
+    // pi keeps Prime's vocabulary (fork/get_fork_messages pass through
+    // untranslated) but lacks the same Prime-only daemon/heartbeat family OMP
+    // rejects, clone included.
+    if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the Pi harness`)
+    return command
+  },
+  normalizeEvent: (event) => event,
+  // No buildServiceTierCommand: pi has no fast mode, so applying a service
+  // tier fails in the runtime without sending a wire command.
+  // pi's get_state carries no serviceTier, fastModeEnabled, or contextUsage;
+  // context usage flows through the shared get_session_stats path.
+  readState: () => ({}),
 }

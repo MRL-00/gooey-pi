@@ -160,6 +160,7 @@ describe('settings field ownership', () => {
       telemetry: 'privacy',
       disabledProviders: 'providers',
       ompDisabledProviders: 'providers',
+      piDisabledProviders: 'providers',
       activeHarness: 'agent',
       ompApprovalMode: 'agent',
       petEnabled: 'pets',

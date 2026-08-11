@@ -95,6 +95,9 @@ export class RpcRuntime {
     this.watchdogTimings = { ...DEFAULT_COMPACTION_WATCHDOG_TIMINGS, ...watchdogTimings }
     this.info = { runtimeId: this.runtimeId, harness: this.adapter.id, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
     this.eventForwarder = new AgentEventForwarder(this.runtimeId, onEvent)
+    // Every harness child is spawned with the authorized cwd as its working
+    // directory. Adapters that declare spawnsInCwd (pi has no --cwd flag and
+    // buckets its sessions by the process working directory) depend on this.
     this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
       this.child,
@@ -151,13 +154,23 @@ export class RpcRuntime {
   }
 
   async setServiceTier(serviceTier: 'default' | 'priority', probe = false): Promise<boolean> {
+    const buildServiceTierCommand = this.adapter.buildServiceTierCommand
+    if (!buildServiceTierCommand) {
+      // The harness has no service-tier command at all; nothing goes on the
+      // wire, and a direct request fails with a per-harness error.
+      this.requestedServiceTier = 'default'
+      this.info.serviceTier = 'default'
+      this.info.fastModeAvailable = false
+      if (probe) return false
+      throw new Error(`Service tier is not supported by the ${this.adapter.agentName} harness`)
+    }
     if (serviceTier === 'priority' && !this.info.fastModeSupported) {
       this.requestedServiceTier = 'default'
       this.info.serviceTier = 'default'
       return false
     }
     try {
-      await this.request(this.adapter.buildServiceTierCommand(serviceTier), 10_000)
+      await this.request(buildServiceTierCommand(serviceTier), 10_000)
       this.requestedServiceTier = serviceTier
       this.info.serviceTier = serviceTier
       this.info.fastModeAvailable = true

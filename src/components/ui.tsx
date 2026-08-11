@@ -195,6 +195,21 @@ export function PrimeMark({ size = 24 }: { size?: number }) {
   )
 }
 
+export function PiMark({ size = 24 }: { size?: number }) {
+  // A plain geometric π: overhanging crossbar with two inset legs, drawn in
+  // currentColor so the tile styling matches the other harness marks.
+  return (
+    <span className="pi-mark" style={{ width: size, height: size }} role="img" aria-label="Pi">
+      <svg viewBox="0 0 120 90" fill="none" focusable="false" aria-hidden="true">
+        <rect x="12" y="12" width="96" height="13" rx="2.5" fill="currentColor" />
+        <rect x="31" y="25" width="13" height="53" rx="2.5" fill="currentColor" />
+        <rect x="76" y="25" width="13" height="43" rx="2.5" fill="currentColor" />
+        <path d="M76 68 h13 v4 a6 6 0 0 1 -6 6 h-1 a6 6 0 0 1 -6 -6 z" fill="currentColor" />
+      </svg>
+    </span>
+  )
+}
+
 export function GooeyPiMark({ size = 24 }: { size?: number }) {
   return (
     <span className="gooeypi-mark" style={{ width: size, height: size }} role="img" aria-label="GooeyPi">

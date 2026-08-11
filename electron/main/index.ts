@@ -3,8 +3,8 @@ import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { BROWSER_PARTITION, type AppMeta, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
-import { AgentRpcManager, OMP_RPC_ADAPTER } from './agent-rpc'
+import { BROWSER_PARTITION, type AppMeta, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
+import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
@@ -14,6 +14,7 @@ import { beginProcessShutdown, findHarnessExecutable, runProcess, stopChildProce
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { OmpModelCatalogService } from './providers-omp'
+import { PiModelCatalogService } from './providers-pi'
 import { PetService } from './pets'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
@@ -25,6 +26,7 @@ import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
 import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
+import { piSessionServiceOptions } from './sessions/pi'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
 import { VoiceService } from './voice'
@@ -36,6 +38,7 @@ let mainWindow: BrowserWindow | null = null
 let ipc: IpcRegistration | null = null
 let agents: AgentRpcManager | null = null
 let ompAgents: AgentRpcManager | null = null
+let piAgents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
@@ -56,8 +59,9 @@ installCrashGuards({
   cleanup: async () => {
     agents?.beginShutdown()
     ompAgents?.beginShutdown()
+    piAgents?.beginShutdown()
     beginProcessShutdown()
-    await Promise.allSettled([agents?.stopAll() ?? Promise.resolve(), ompAgents?.stopAll() ?? Promise.resolve(), stopChildProcesses()])
+    await Promise.allSettled([agents?.stopAll() ?? Promise.resolve(), ompAgents?.stopAll() ?? Promise.resolve(), piAgents?.stopAll() ?? Promise.resolve(), stopChildProcesses()])
   },
 })
 
@@ -281,6 +285,36 @@ function boundedErrorMessage(error: unknown): string {
   return message.replace(/[\r\n\t]+/g, ' ').slice(0, 512) || 'Unknown error'
 }
 
+/** Filesystem locations of the three shared capability extensions injected into extension-based harnesses. */
+export interface CapabilityExtensionPaths {
+  schedule: string
+  browser: string
+  askUser: string
+}
+
+/**
+ * Runtime environment for the extension-injected harnesses (OMP and pi, which
+ * share pi's ancestral extension API): the capability-broker variables from
+ * the schedule and browser bridges minus the Prime-only --skill paths, plus
+ * the three PRIME_WORK_*_EXTENSION_PATH variables the harness adapters turn
+ * into --extension argv. Both harnesses must receive the identical surface.
+ */
+export function extensionRuntimeEnvironment(
+  scheduleBridgeEnvironment: NodeJS.ProcessEnv,
+  browserBridgeEnvironment: NodeJS.ProcessEnv,
+  extensionPaths: CapabilityExtensionPaths,
+): NodeJS.ProcessEnv {
+  const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = scheduleBridgeEnvironment
+  const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridgeEnvironment
+  return {
+    ...scheduleEnvironment,
+    ...browserEnvironment,
+    PRIME_WORK_SCHEDULE_EXTENSION_PATH: extensionPaths.schedule,
+    PRIME_WORK_BROWSER_EXTENSION_PATH: extensionPaths.browser,
+    PRIME_WORK_ASK_USER_EXTENSION_PATH: extensionPaths.askUser,
+  }
+}
+
 export async function settleShutdown(
   steps: ReadonlyArray<PromiseLike<unknown>>,
   options: { watchdogMs?: number; log?: (message: string) => void } = {},
@@ -320,9 +354,10 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 }
 
 async function bootstrap(): Promise<void> {
-  const [executable, ompExecutable] = await Promise.all([
+  const [executable, ompExecutable, piExecutable] = await Promise.all([
     findHarnessExecutable(HARNESSES.prime),
     findHarnessExecutable(HARNESSES.omp),
+    findHarnessExecutable(HARNESSES.pi),
   ])
   if (shutdownStarted) return
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
@@ -331,19 +366,28 @@ async function bootstrap(): Promise<void> {
   // OMP has no live-CLI overlay (`omp list --json` does not exist), so the OMP
   // catalog is constructed with a null executable and JSONL-only metadata.
   const ompSessions = new SessionService(stateStore, null, undefined, ompSessionServiceOptions())
+  // Pi likewise has no live-CLI overlay; its catalog is JSONL-only.
+  const piSessions = new SessionService(stateStore, null, undefined, piSessionServiceOptions())
   const projects = new ProjectService(stateStore, () => mainWindow)
   const ompProjects = new ProjectService(stateStore, () => mainWindow, 'omp')
+  const piProjects = new ProjectService(stateStore, () => mainWindow, 'pi')
   // Git and terminals are harness-agnostic: a cwd (or bound session) is valid
-  // when either harness's own grants authorize it. Prime is consulted first so
+  // when any harness's own grants authorize it. Prime is consulted first so
   // Prime-only setups keep their exact behavior and error text.
   const authorizeEitherCwd = async (cwd: string): Promise<string> => {
     try { return await projects.authorizeCwd(cwd) } catch (error) {
-      try { return await ompProjects.authorizeCwd(cwd) } catch { throw error }
+      for (const fallback of [ompProjects, piProjects]) {
+        try { return await fallback.authorizeCwd(cwd) } catch { /* try the next harness; the Prime error is rethrown */ }
+      }
+      throw error
     }
   }
   const requireEitherSessionPath = async (path: string): Promise<string> => {
     try { return await sessions.requireSessionPath(path) } catch (error) {
-      try { return await ompSessions.requireSessionPath(path) } catch { throw error }
+      for (const fallback of [ompSessions, piSessions]) {
+        try { return await fallback.requireSessionPath(path) } catch { /* try the next harness; the Prime error is rethrown */ }
+      }
+      throw error
     }
   }
   const git = new GitService(authorizeEitherCwd)
@@ -354,7 +398,9 @@ async function bootstrap(): Promise<void> {
   providerService = providers
   const disabledProviders = () => new Set(stateStore.getSettings().disabledProviders)
   const ompDisabledProviders = () => new Set(stateStore.getSettings().ompDisabledProviders)
+  const piDisabledProviders = () => new Set(stateStore.getSettings().piDisabledProviders)
   const ompCatalog = new OmpModelCatalogService(ompExecutable)
+  const piCatalog = new PiModelCatalogService(piExecutable)
   agents = new AgentRpcManager(
     executable,
     (cwd) => projects.authorizeCwd(cwd),
@@ -379,6 +425,17 @@ async function bootstrap(): Promise<void> {
     },
   )
   ompAgents = ompManager
+  // Pi mirrors the OMP construction, minus the approval-mode getter: pi has no
+  // permission system, so the manager keeps its default (undefined) override.
+  const piManager = new AgentRpcManager(
+    piExecutable,
+    (cwd) => piProjects.authorizeCwd(cwd),
+    (path) => piSessions.requireSessionPath(path),
+    piCatalog,
+    piDisabledProviders,
+    PI_RPC_ADAPTER,
+  )
+  piAgents = piManager
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
     all: () => agents?.list() ?? [],
@@ -390,6 +447,12 @@ async function bootstrap(): Promise<void> {
     all: () => ompAgents?.list() ?? [],
     stop: async (path) => { await ompAgents?.stopForSession(path) },
     rename: async (path, title) => ompAgents?.renameForSession(path, title) ?? false,
+  })
+  piSessions.bindRuntimeHooks({
+    get: (path) => piAgents?.getForSession(path),
+    all: () => piAgents?.list() ?? [],
+    stop: async (path) => { await piAgents?.stopForSession(path) },
+    rename: async (path, title) => piAgents?.renameForSession(path, title) ?? false,
   })
   terminals = new TerminalService(
     authorizeEitherCwd,
@@ -412,6 +475,14 @@ async function bootstrap(): Promise<void> {
       await Promise.all([ompManager.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
     },
   })
+  piProjects.bindProviders({
+    sessions: () => piSessions.list(undefined, true),
+    branch: (cwd) => git.branch(cwd),
+    stopProjectProcesses: async (roots) => {
+      piPlugins.evictProjects(roots)
+      await Promise.all([piManager.stopForProjectRoots(roots), terminals!.killForProjectRoots(roots)])
+    },
+  })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
   const voice = new VoiceService({
@@ -422,9 +493,9 @@ async function bootstrap(): Promise<void> {
       decrypt: (value) => safeStorage.decryptString(value),
     },
     settings: () => stateStore.getSettings(),
-    projects: { prime: projects, omp: ompProjects },
-    agents: { prime: agents, omp: ompManager },
-    catalogs: { prime: providers, omp: ompCatalog },
+    projects: { prime: projects, omp: ompProjects, pi: piProjects },
+    agents: { prime: agents, omp: ompManager, pi: piManager },
+    catalogs: { prime: providers, omp: ompCatalog, pi: piCatalog },
     runProcess,
   })
   const pets = new PetService({
@@ -475,6 +546,24 @@ async function bootstrap(): Promise<void> {
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
     }],
   })
+  // Pi's extension API is the ancestor of OMP's, so pi runtimes inject the
+  // same omp-work-* extension files (accepted naming drift; never forked).
+  const piPlugins = new PluginService(piExecutable, (path) => piProjects.authorizeProjectRoot(path), {
+    harness: 'pi',
+    builtInSkills: [{
+      id: 'omp-work-schedules', name: 'Scheduled tasks',
+      description: 'Pi extension for durable project and thread schedules managed by GooeyPi.',
+      kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
+    }, {
+      id: 'omp-work-browser', name: 'Browser',
+      description: 'Pi extension for driving this thread\'s in-app browser.',
+      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
+    }, {
+      id: 'omp-work-ask-user', name: 'Ask user',
+      description: 'Pi extension for asking focused multiple-choice questions in the GooeyPi app.',
+      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
+    }],
+  })
   const heartbeats = new HeartbeatService(agents, executable)
   const primeScheduledRuns = new ScheduledRunExecutor(
     projects,
@@ -490,11 +579,18 @@ async function bootstrap(): Promise<void> {
     ompCatalog,
     () => new Set(stateStore.getSettings().ompDisabledProviders),
   )
-  const scheduledRunsFor = (harness: 'prime' | 'omp') => harness === 'omp' ? ompScheduledRuns : primeScheduledRuns
+  const piScheduledRuns = new ScheduledRunExecutor(
+    piProjects,
+    piSessions,
+    piManager,
+    piCatalog,
+    () => new Set(stateStore.getSettings().piDisabledProviders),
+  )
+  const scheduledRuns: Record<HarnessId, ScheduledRunExecutor> = { prime: primeScheduledRuns, omp: ompScheduledRuns, pi: piScheduledRuns }
   const schedules = new AutomationService(stateStore, {
-    validateTarget: (target, harness) => scheduledRunsFor(harness).validateTarget(target),
-    validateExecution: (execution, harness) => scheduledRunsFor(harness).validateExecution(execution),
-    run: (task) => scheduledRunsFor(task.harness).run(task),
+    validateTarget: (target, harness) => scheduledRuns[harness].validateTarget(target),
+    validateExecution: (execution, harness) => scheduledRuns[harness].validateExecution(execution),
+    run: (task) => scheduledRuns[task.harness].run(task),
   })
   automation = schedules
   await schedules.start()
@@ -532,8 +628,25 @@ async function bootstrap(): Promise<void> {
       return { projectId: project.id, sessionId: scheduledSession?.id }
     },
   })
-  await Promise.all([scheduleBridge.start(), ompScheduleBridge.start()])
-  agentScheduleBridges = [scheduleBridge, ompScheduleBridge]
+  const piScheduleBridge = new AgentScheduleBridge({
+    service: schedules,
+    harness: 'pi',
+    skillPath: scheduleSkillPath,
+    resolveScope: async ({ cwd, sessionPath }) => {
+      const catalog = await piProjects.list()
+      const canonicalCwd = resolve(cwd)
+      const project = catalog.find((candidate) => !candidate.inferred && candidate.folders.some((folder) => {
+        const root = resolve(folder)
+        return canonicalCwd === root || canonicalCwd.startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`)
+      }))
+      if (!project) throw new Error('The agent is not running in an explicitly granted Pi Work project')
+      if (!sessionPath) return { projectId: project.id }
+      const scheduledSession = (await piSessions.list(undefined, true)).find((candidate) => resolve(candidate.filePath) === resolve(sessionPath))
+      return { projectId: project.id, sessionId: scheduledSession?.id }
+    },
+  })
+  await Promise.all([scheduleBridge.start(), ompScheduleBridge.start(), piScheduleBridge.start()])
+  agentScheduleBridges = [scheduleBridge, ompScheduleBridge, piScheduleBridge]
   const browserService = new AgentBrowserService({
     getGuest: (webContentsId) => {
       const contents = webContents.fromId(webContentsId)
@@ -552,21 +665,23 @@ async function bootstrap(): Promise<void> {
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
   // app-specific usage guidance while OMP's own skills stay discovery-based.
-  ompManager.setRuntimeEnvironmentProvider((scope) => {
-    const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = ompScheduleBridge.environmentFor(scope)
-    const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridge.environmentFor(scope)
-    return {
-      ...scheduleEnvironment,
-      ...browserEnvironment,
-      PRIME_WORK_SCHEDULE_EXTENSION_PATH: ompScheduleExtensionPath,
-      PRIME_WORK_BROWSER_EXTENSION_PATH: ompBrowserExtensionPath,
-      PRIME_WORK_ASK_USER_EXTENSION_PATH: ompAskUserExtensionPath,
-    }
-  })
+  const capabilityExtensionPaths: CapabilityExtensionPaths = {
+    schedule: ompScheduleExtensionPath,
+    browser: ompBrowserExtensionPath,
+    askUser: ompAskUserExtensionPath,
+  }
+  ompManager.setRuntimeEnvironmentProvider((scope) =>
+    extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths))
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
-  const [detectedPrimeVersion, detectedOmpVersion] = await Promise.all([
+  // Pi runtimes receive the identical capability surface: pi's extension API
+  // is the ancestor of OMP's, so the omp-work-* files are shared by design.
+  piManager.setRuntimeEnvironmentProvider((scope) =>
+    extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths))
+  piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
+  const [detectedPrimeVersion, detectedOmpVersion, detectedPiVersion] = await Promise.all([
     harnessVersion(executable),
     harnessVersion(ompExecutable),
+    harnessVersion(piExecutable),
   ])
   if (shutdownStarted) return
   const meta: AppMeta = {
@@ -576,12 +691,14 @@ async function bootstrap(): Promise<void> {
     harnesses: {
       prime: { path: executable, version: detectedPrimeVersion },
       omp: { path: ompExecutable, version: detectedOmpVersion },
+      pi: { path: piExecutable, version: detectedPiVersion },
     },
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
     meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
+    pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
   }, trustedRendererUrl)
   // Both managers share the one renderer forwarding path: envelopes carry the
   // runtimeId and RuntimeInfo carries the harness, so the renderer can route.
@@ -595,6 +712,7 @@ async function bootstrap(): Promise<void> {
   }
   agents.setEventSink(forwardAgentEvent)
   ompManager.setEventSink(forwardAgentEvent)
+  piManager.setEventSink(forwardAgentEvent)
   providers.setEventSink((event: ProviderAuthEvent) => {
     const renderer = mainWindow?.webContents
     if (!shutdownStarted && renderer && !renderer.isDestroyed()
@@ -657,6 +775,7 @@ app.on('before-quit', (event) => {
   registration?.dispose()
   agents?.beginShutdown()
   ompAgents?.beginShutdown()
+  piAgents?.beginShutdown()
   beginProcessShutdown()
   beginPluginDiscoveryShutdown()
   downloads?.cancelAll()
@@ -669,6 +788,7 @@ app.on('before-quit', (event) => {
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),
     ompAgents?.stopAll() ?? Promise.resolve(),
+    piAgents?.stopAll() ?? Promise.resolve(),
     stopChildProcesses(),
   ]).then(async () => {
     // Await the drain so the final persist lands before the process exits.

@@ -47,6 +47,11 @@ const hasBridge = () => typeof window !== 'undefined' && typeof window.prime !==
 // Stable fallback identities keep memoized children from re-rendering while the catalog loads.
 const EMPTY_MODELS: PrimeModelDescriptor[] = []
 const EMPTY_PROVIDERS: PrimeProviderDescriptor[] = []
+const HARNESS_PROVIDER_DOCS: Record<HarnessId, string> = {
+  omp: 'https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md',
+  prime: 'https://github.com/PrimeIntellect-ai/prime-agent',
+  pi: 'https://pi.dev',
+}
 const LoadingPanel = ({ label }: { label: string }) => <div className="empty-state" role="status">Loading {label}…</div>
 
 interface TerminalSessionMount {
@@ -309,7 +314,7 @@ export default function App() {
       workspace.activateWorkspace(project, session, runtime)
       setView('session')
       setPaletteOpen(false)
-      setToast(`Started “${session.title}” in ${project.name} with ${task.harness === 'omp' ? 'OMP' : 'Prime'}.`)
+      setToast(`Started “${session.title}” in ${project.name} with ${HARNESS_SHORT_NAMES[task.harness]}.`)
     } catch (error) { reportError(error); throw error }
   }, [activeHarness, bridge, projects, reportError, settingsState.updateSettings, workspace.activateWorkspace])
   const addOrReplaceProject = useCallback((project: ProjectRecord) => {
@@ -432,7 +437,7 @@ export default function App() {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('GooeyPi could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
-      }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(activeHarness === 'omp' ? 'https://github.com/can1357/oh-my-pi/blob/main/docs/providers.md' : 'https://github.com/PrimeIntellect-ai/prime-agent') }} /> : null
+      }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(HARNESS_PROVIDER_DOCS[activeHarness]) }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
     {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}

@@ -264,7 +264,9 @@ async function writeSettingsAtomically(
 export function validateMcpConnection(value: unknown, harness: HarnessId = 'prime'): McpConnectionInput {
   if (!isRecord(value)) throw new TypeError('MCP connection must be an object')
   const name = requireString(value.name, 'MCP server name', { min: 1, max: 64, trim: true })
-  const validName = harness === 'omp' ? /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(name) : /^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name)
+  // Prime keeps its historical looser charset; OMP and pi mcp.json share the
+  // stricter native map-key charset.
+  const validName = harness === 'prime' ? /^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name) : /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(name)
   if (!validName || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
   const scope = value.scope
   if (scope !== 'user' && scope !== 'project') throw new TypeError('MCP scope must be user or project')
@@ -347,7 +349,7 @@ export async function updateMcpSettings(
   target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
-  options: { agentName?: string; schema?: string } = {},
+  options: { agentName?: string; schema?: string; successMessage?: string } = {},
 ): Promise<ProcessOutcome> {
   const agentName = options.agentName ?? 'Prime Agent'
   const settingsPath = typeof target === 'string' ? target : target.path
@@ -370,9 +372,9 @@ export async function updateMcpSettings(
       settings.mcpServers = { ...currentServers, [input.name]: config }
       if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
       if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
-        return { ok: true, output: agentName === 'OMP'
+        return { ok: true, output: options.successMessage ?? (agentName === 'OMP'
           ? `Saved MCP server definition “${input.name}”. Start a new OMP session to load it.`
-          : `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.` }
+          : `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.`) }
       }
     }
     throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)

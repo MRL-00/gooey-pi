@@ -35,7 +35,7 @@ async function closeHermeticApp(target: ElectronApplication | undefined): Promis
   await closeEvent
 }
 
-function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; sessionFile: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; piExecutable: string; sessionFile: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
@@ -75,6 +75,16 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
     JSON.stringify({ type: 'session', version: 3, id: '019fdf24-aaaa-7000-8000-000000000001', timestamp: '2026-02-01T00:00:00.000Z', cwd: canonicalProject }),
     JSON.stringify({ type: 'message', id: 'omp-user', parentId: null, timestamp: '2026-02-01T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'OMP hermetic fixture' }], timestamp: 1774915201000 } }),
     JSON.stringify({ type: 'message', id: 'omp-assistant', parentId: 'omp-user', timestamp: '2026-02-01T00:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'OMP fixture reply.' }] } }),
+    '',
+  ].join('\n'))
+  const piSessions = join(home, '.pi', 'agent', 'sessions', '--pi-project--')
+  mkdirSync(piSessions, { recursive: true })
+  const piSessionFile = join(piSessions, '2026-03-01T00-00-00-000Z_019fdf24-bbbb-7000-8000-000000000002.jsonl')
+  writeFileSync(piSessionFile, [
+    JSON.stringify({ type: 'session', version: 3, id: '019fdf24-bbbb-7000-8000-000000000002', timestamp: '2026-03-01T00:00:00.000Z', cwd: canonicalProject }),
+    JSON.stringify({ type: 'session_info', id: 'pi-info', parentId: null, timestamp: '2026-03-01T00:00:00.500Z', name: 'Pi hermetic fixture' }),
+    JSON.stringify({ type: 'message', id: 'pi-user', parentId: 'pi-info', timestamp: '2026-03-01T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'Pi hermetic fixture' }], timestamp: 1777341601000 } }),
+    JSON.stringify({ type: 'message', id: 'pi-assistant', parentId: 'pi-user', timestamp: '2026-03-01T00:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Pi fixture reply.' }] } }),
     '',
   ].join('\n'))
   const sessionFile = join(sessions, 'fixture.jsonl')
@@ -312,10 +322,49 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 })
 `)
   chmodSync(ompExecutable, 0o755)
-  return { userData, home, project, executable, ompExecutable, sessionFile: realpathSync(sessionFile) }
+  const piExecutable = join(fixtureRoot, 'pi-fixture.cjs')
+  writeFileSync(piExecutable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const readline = require('node:readline')
+const args = process.argv.slice(2)
+if (args.includes('--version')) { process.stdout.write('0.84.1\\n'); process.exit(0) }
+if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') process.exit(2)
+if (!args.includes('--no-session')) fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'pi-runtime-args.json'))}, JSON.stringify({ args, cwd: process.cwd() }))
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+const sessionIndex = args.indexOf('--session')
+const sessionFile = sessionIndex >= 0 ? args[sessionIndex + 1] : ${JSON.stringify(piSessionFile)}
+// Base pi pushes no ready frame and negotiates nothing: answer Prime-shaped
+// request/response envelopes immediately.
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_available_models') {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { models: [
+      { provider: 'anthropic', id: 'claude-fixture', name: 'Claude Fixture', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+      { provider: 'openai-codex', id: 'gpt-fixture', name: 'GPT Fixture', api: 'openai-responses', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+    ] } })
+  } else if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: {
+      sessionId: '019fdf24-bbbb-7000-8000-000000000002', sessionFile, isStreaming: false, thinkingLevel: 'medium',
+      model: { provider: 'openai-codex', id: 'gpt-fixture', name: 'GPT Fixture' },
+    } })
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { contextUsage: { tokens: 1000, contextWindow: 200000, percent: 0.5 } } })
+  } else if (command.type === 'prompt' || command.type === 'follow_up') {
+    fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'pi-prompt-args.json'))}, JSON.stringify(command))
+    send({ type: 'agent_start' })
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: { agentInvoked: true } })
+    send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Pi fixture response.' } })
+    send({ type: 'agent_end' })
+  } else if (command.id) {
+    send({ id: command.id, type: 'response', command: command.type, success: true, data: {} })
+  }
+})
+`)
+  chmodSync(piExecutable, 0o755)
+  return { userData, home, project, executable, ompExecutable, piExecutable, sessionFile: realpathSync(sessionFile) }
 }
 
-function hermeticEnvironment(home: string, executable: string, ompExecutable: string): NodeJS.ProcessEnv {
+function hermeticEnvironment(home: string, executable: string, ompExecutable: string, piExecutable: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: home,
     PATH: process.env.PATH,
@@ -327,6 +376,7 @@ function hermeticEnvironment(home: string, executable: string, ompExecutable: st
     PRIME_WORK_E2E_HIDE_WINDOWS: '1',
     PRIME_AGENT_BINARY: executable,
     OMP_BINARY: ompExecutable,
+    PI_BINARY: piExecutable,
   }
   for (const key of ['USER', 'LOGNAME', '__CF_USER_TEXT_ENCODING']) if (process.env[key]) env[key] = process.env[key]
   return env
@@ -348,7 +398,7 @@ test.describe('Prime Work desktop smoke', () => {
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable) as Record<string, string>,
+          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable) as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
@@ -531,6 +581,24 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
+  })
+
+  test('switches to Pi Work and lists the pi session catalog, then returns to Prime', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
+    const piBrand = page.getByRole('button', { name: 'Pi Work — switch harness' })
+    await expect(piBrand).toBeVisible()
+    await expect(page.locator('.sidebar__brand .pi-mark')).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' })).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Plugins & skills' })).toBeVisible()
+    await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()
+    await expect(page.getByRole('main').getByText('Pi fixture reply.')).toBeVisible()
+    await piBrand.click()
+    await page.getByRole('menuitemradio', { name: /Prime Work/ }).click()
+    await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
+    await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toBeVisible()
   })
 
   test('closes realtime voice before switching harnesses', async () => {

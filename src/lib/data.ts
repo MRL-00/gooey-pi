@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telemetry: false,
   disabledProviders: [],
   ompDisabledProviders: [],
+  piDisabledProviders: [],
   voiceTranscriptionProvider: 'openai-live',
   voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
   voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',

@@ -54,7 +54,7 @@ describe('AutomationService', () => {
     expect(service.list()).toEqual([])
   })
 
-  it('keeps OMP schedules isolated and routes validation and runs by harness', async () => {
+  it('keeps OMP and pi schedules isolated and routes validation and runs by harness', async () => {
     const validateTarget = vi.fn(async () => undefined)
     const validateExecution = vi.fn(async () => undefined)
     const run = vi.fn(async () => ({}))
@@ -67,12 +67,18 @@ describe('AutomationService', () => {
     await service.start()
     const prime = await service.create({ prompt: 'Prime run', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
     const omp = await service.create({ prompt: 'OMP run', target, timing: onceAt('2030-01-02T00:00:00Z'), execution }, 'user', 'omp')
+    const pi = await service.create({ prompt: 'Pi run', target, timing: onceAt('2030-01-02T00:00:00Z'), execution }, 'user', 'pi')
     expect(service.list('prime').map((task) => task.id)).toEqual([prime.id])
     expect(service.list('omp').map((task) => task.id)).toEqual([omp.id])
+    expect(service.list('pi').map((task) => task.id)).toEqual([pi.id])
     expect(validateTarget).toHaveBeenCalledWith(target, 'omp')
     expect(validateExecution).toHaveBeenCalledWith(execution, 'omp')
+    expect(validateTarget).toHaveBeenCalledWith(target, 'pi')
+    expect(validateExecution).toHaveBeenCalledWith(execution, 'pi')
     await service.runNow(omp.id)
     await eventually(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: omp.id, harness: 'omp' })))
+    await service.runNow(pi.id)
+    await eventually(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: pi.id, harness: 'pi' })))
     await service.stop()
   })
 

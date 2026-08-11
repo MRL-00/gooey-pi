@@ -372,6 +372,64 @@ describe('JsonStateStore', () => {
     expect(reset.settings.ompApprovalMode).toBe('inherit')
   })
 
+  it('accepts the pi harness for projects and the active workspace', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [
+        { id: 'pi-project', harness: 'pi', name: 'Pi', path: '/pi', folders: ['/pi'], primaryFolder: '/pi' },
+        { id: 'hostile', harness: 'PI', name: 'Hostile', path: '/hostile', folders: ['/hostile'], primaryFolder: '/hostile' },
+      ],
+      settings: { ...defaultSettings(), activeHarness: 'pi' },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const state = new JsonStateStore(path).snapshot()
+    expect(state.version).toBe(3)
+    expect(state.projects.map((project) => project.harness)).toEqual(['pi', 'prime'])
+    expect(state.settings.activeHarness).toBe('pi')
+  })
+
+  it('bounds piDisabledProviders and defaults the field when absent', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
+      settings: { ...defaultSettings(), piDisabledProviders: ['openai', 'openai', '../evil', 42, 'anthropic'] },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    expect(new JsonStateStore(path).snapshot().settings.piDisabledProviders).toEqual(['openai', 'anthropic'])
+
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
+      settings: { ...defaultSettings(), piDisabledProviders: Array.from({ length: 400 }, (_, index) => `provider-${index}`) },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    expect(new JsonStateStore(path).snapshot().settings.piDisabledProviders).toHaveLength(256)
+
+    // A version-3 state written before pi support keeps its version and gains the default.
+    const { piDisabledProviders: _piDisabledProviders, ...prePiSettings } = defaultSettings()
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
+      settings: prePiSettings,
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const state = new JsonStateStore(path).snapshot()
+    expect(state.version).toBe(3)
+    expect(state.settings.piDisabledProviders).toEqual([])
+  })
+
   it('refuses to parse an oversized state file and backs it up instead', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')

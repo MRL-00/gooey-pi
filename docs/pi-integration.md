@@ -1,0 +1,66 @@
+# Pi (pi.dev) integration design
+
+This document is the working spec for adding base Pi (`pi`, [pi.dev](https://pi.dev/), the pi-mono coding agent both Prime Agent and OMP descend from) as a third agent harness alongside Prime Agent and OMP. It follows the architecture established by `docs/omp-integration.md`: the shared transport, event, and UI machinery is reused wherever the protocols agree, and a per-harness adapter covers what differs. Read that document first; this one records only pi-specific facts and decisions.
+
+## Product behavior
+
+- The sidebar brand switcher gains a third entry: **Pi Work** (π mark, `PiMark` in `src/components/ui.tsx`).
+- Each harness keeps its own granted projects, session catalog, model catalog, and runtimes; `settings.activeHarness` accepts `'pi'`.
+- All existing features work on pi where the harness supports them: streaming transcripts, steering/follow-ups, abort, model + thinking selection, compaction, session resume/switch/rename/fork, extension-UI dialogs, browser capability bridge, scheduled tasks (injected extension, same as OMP), git/terminal.
+- Not applicable on pi: service tier / fast mode (no such RPC command — the settings toggle and tier UI are hidden for pi), approval mode (pi has no permission system; tool calls run unprompted, like a permanently-yolo OMP — the settings select is not shown), provider OAuth management (pi auth is CLI-owned; `~/.pi/agent/auth.json` is never read or written), daemon-socket follow-up (Prime-only).
+- Pi credentials: `~/.pi/agent/auth.json` and `trust.json` are never touched. A `piDisabledProviders` desktop-state list controls picker visibility only, mirroring `ompDisabledProviders`.
+
+## Pi facts (verified on this machine, pi 0.84.1)
+
+- Binary: `pi` (searched: `$PI_BINARY`, PATH, `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`). Installed here at `/opt/homebrew/bin/pi`.
+- Spawn for embedding: `pi --mode rpc` plus:
+  - **no `--cwd` flag exists** — the session bucket derives from the child's working directory, so the manager must spawn pi with the authorized cwd as the child process cwd.
+  - resume: `--session <path>` (exact file path; `--resume` is an *interactive selector* and must not be used).
+  - model: `--provider <name> --model <id>` (split flags, same shape as Prime; `--model` also accepts `provider/id` but we pass split flags for parity with the Prime adapter).
+  - thinking: `--thinking <off|minimal|low|medium|high|xhigh|max>`.
+  - extensions: `--extension/-e <path>` per injected capability extension; `--skill <path>` also exists but capability injection uses extensions for self-containment (same decision as OMP).
+  - `--no-session` exists (used by the model-catalog probe, never for user runtimes).
+- Paths: agent dir `~/.pi/agent/`; sessions `~/.pi/agent/sessions/--<cwd-with-slashes-as-dashes>--/<ISO-timestamp-dashes>_<uuidv7>.jsonl` (e.g. `--Users-am.will-Applications-prime--/2026-08-10T22-41-20-246Z_019fedd6….jsonl`); settings `~/.pi/agent/settings.json`; extensions `~/.pi/agent/extensions/`; skills `~/.pi/agent/skills/`; model catalog cache `models-store.json`; credentials `auth.json` + `trust.json` (never touched).
+- Sessions are **version 3** JSONL: header `{"type":"session","version":3,"id":"<uuidv7>","timestamp":"<ISO>","cwd":"<abs path>"}` then tree entries with short hex `id`/`parentId` (`parentId: null` roots). Entry types include `message`, `model_change` (split `provider` + `modelId` fields, unlike OMP's single string), `thinking_level_change`, `compaction`, `branch_summary`, `custom`, `custom_message`, `label`, `session_info` (carries the display `name`; the latest one wins). No 256-byte title slot (that is an OMP addition); offline rename stays disabled like OMP.
+- Model catalog: **no CLI JSON list** (`--list-models` prints a table even under `--mode json`). The catalog service does a short-lived RPC probe: spawn `pi --mode rpc --no-session --offline`, send `{"id":"1","type":"get_available_models"}`, read the single bounded response, terminate. Response shape: `{ models: [{ id, name, api, provider, baseUrl, reasoning, input, cost{input,output,cacheRead,cacheWrite}, contextWindow, maxTokens, thinkingLevelMap? }] }`. All output is untrusted input.
+- Target model for validation: `openai-codex/gpt-5.6-luna` (GPT-5.6 Luna, authenticated on this machine, 272K context).
+
+## Protocol: Prime-shaped JSONL, no handshake extras
+
+Verified against pi 0.84.1 in `--mode rpc`:
+
+- Same request/response envelope as Prime (`id`, `{type:'response', id, command, success, data|error}`). **No `ready` frame is pushed at startup, no protocol negotiation, no chunked frames** — the Prime-style handshake (`get_state` → `updateFromState` → `get_session_stats`) applies unchanged.
+- `get_state` data: `model` (full descriptor), `thinkingLevel`, `isStreaming`, `isCompacting`, `steeringMode`, `followUpMode`, `sessionId`, `autoCompactionEnabled`, `messageCount`, `pendingMessageCount`. **No `serviceTier`, no `fastModeEnabled`, no `contextUsage`** — `readState` returns `{}`.
+- `get_session_stats` includes `contextUsage: {tokens, contextWindow, percent}` in the exact shape `parseContextUsage` expects — context usage flows through the shared stats path.
+- Verified commands: `get_state`, `get_available_models`, `get_session_stats`, `set_session_name` (also emits a `session_info_changed` event), `get_commands`. Unknown commands return clean `success:false` error responses.
+- Command vocabulary is Prime's: `fork`/`get_fork_messages` pass through untranslated (no `branch` rename). Events use the Prime names (`agent_start`, `turn_*`, `message_*`, `tool_execution_*`, `extension_ui_request`, `compaction_start/end`, …); `normalizeEvent` passes events through, and unknown types (`session_info_changed`, …) are forwarded for the reducer to ignore.
+- Unsupported by pi and rejected with a per-harness error: `set_service_tier` (no fast mode), `send_message`, `clone` semantics differ — treat the Prime-only daemon/heartbeat family (`send_message`, `set_heartbeat`, `update_heartbeat`, `manage_heartbeat`, `observe`, `unobserve`, `list_heartbeats`, `get_heartbeat`, `agent_messages_*`) as unsupported, mirroring the OMP list.
+- `HarnessRpcAdapter.buildServiceTierCommand` becomes optional; a harness without it reports service tier as unsupported and the manager never sends a tier command.
+
+## Architecture deltas
+
+- `HARNESS_IDS` gains `'pi'`; `requireHarness`, `parseHarness`, store validation, and every `Record<HarnessId, …>` widen accordingly. The ~47 binary `harness === 'omp' ? a : b` branches become record lookups.
+- `HARNESSES.pi` descriptor: productName `Pi Work`, agentName `Pi`, executable `pi`/`pi.exe`, env `PI_BINARY`, no bundled resource dirs, posix candidates `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, agent dir `~/.pi/agent`, session root `~/.pi/agent/sessions`.
+- `PI_RPC_ADAPTER` in `agent-rpc/harness-adapter.ts`: argv per the facts above; identity `translateCommand` except the unsupported set; identity `normalizeEvent`; `readState` returns `{}`; no `buildServiceTierCommand`. Because pi has no `--cwd`, the adapter declares that the runtime must set the child working directory (`spawnsInCwd`), and the manager honors it without changing how Prime or OMP spawn.
+- `sessions/pi.ts` mirrors `sessions/omp.ts`: one bucket level deep, ordering from the filename ISO-timestamp prefix, v3 tree walk on `id`/`parentId`, title from the latest `session_info` entry, `model_change` from split `provider`/`modelId`. JSONL is read-only; catalog constructed with a null executable (no live-CLI overlay).
+- `providers-pi.ts`: `PiModelCatalogService` satisfies `ModelCatalogProvider` via the RPC probe (single-flight, TTL, byte-bounded stdout, kill-on-timeout, sanitized env), mapping to the existing `PrimeModelCatalog` types.
+- Plugins: a pi `PluginService` scopes discovery to `~/.pi/agent/extensions`, `~/.pi/agent/skills`, project `.pi/` roots, and shared `.agents/skills`; installs go through `pi install <source>` (project scope `-l`). MCP: pi core has no native MCP, but the `pi-mcp-adapter` extension (`pi install npm:pi-mcp-adapter`, listed on pi.dev's package registry) reads the standard `mcpServers` schema from `~/.pi/agent/mcp.json` (global) and project `.pi/mcp.json` (its highest-precedence override). Prime Work writes those two locations through the same hardened writer used for OMP, discovers records from them, and appends an advisory to write results when `~/.pi/agent/settings.json` does not list the adapter (never auto-installing it).
+- Capability extensions: pi's extension API is the ancestor of OMP's (`(pi) => void`, `pi.registerTool`), so the existing `assets/extensions/omp-work-browser.ts`, `omp-work-schedules.ts`, and `omp-work-ask-user.ts` are injected as-is for pi runtimes via the same `PRIME_WORK_*_EXTENSION_PATH` env contract. Any API drift found during live validation is fixed in the shared extension, not forked.
+- Schedules: records already carry their harness; `'pi'` routes to the pi RPC manager and catalog through the same executor.
+- Renderer: third switcher entry, `HARNESS_*_NAMES.pi`, pi settings card without the service-tier or approval-mode controls.
+
+## Security invariants (unchanged)
+
+Same rules as `docs/security.md`, applied to the third harness: argv arrays only, sanitized child env, path canonicalization + containment for the pi session root, session JSONL read-only, all transport/event limits identical, `~/.pi/agent/auth.json` and `trust.json` never read, IPC allowlist fixed with `harness` validated as the strict three-value enum, Prime byte-for-byte parity preserved when settings are untouched.
+
+## Phase plan
+
+1. Design doc (this file).
+2. Foundation: `HARNESS_IDS`/store/descriptor/`PI_RPC_ADAPTER`/manager cwd support + adapter tests.
+3. Parallel: pi session reader + tests; pi model catalog + tests; renderer switcher/settings + tests; pi plugin surface.
+4. Wiring: third service set in `index.ts`, `ipc.ts` record lookups, schedules/voice routing, preload/api threading.
+5. Live validation against pi 0.84.1 with `openai-codex/gpt-5.6-luna`; fixes.
+
+## Non-goals (v1)
+
+- Pi auth flows in-app; auto-installing `pi-mcp-adapter`; offline session rename; importing sessions across harnesses; host tools/collab surfaces.

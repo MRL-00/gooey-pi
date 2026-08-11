@@ -1,10 +1,15 @@
 /**
  * OMP Work questionnaire tool.
  *
- * Loaded explicitly for every OMP runtime started by the desktop app. The
- * extension is self-contained because packaged OMP imports it directly from
- * app resources. In RPC mode, the marker option lets Prime Work combine the
- * individual OMP select requests into one multi-question modal.
+ * Loaded explicitly for every OMP and base pi runtime started by the desktop
+ * app. The extension is self-contained because packaged OMP imports it
+ * directly from app resources. In RPC mode, the marker option lets Prime Work
+ * combine the individual select requests into one multi-question modal.
+ *
+ * Schema builders come from the injected `pi.typebox` shim when the host
+ * provides one (OMP); base pi injects no shim, so builders resolve from the
+ * `typebox` package via the host's extension loader. The import uses a
+ * runtime specifier inside try/catch so neither host hard-fails at load.
  */
 
 interface OmpSchemaOptions {
@@ -60,8 +65,33 @@ interface OmpToolDefinition<Params> {
 }
 
 export interface OmpExtensionApi {
-  typebox: { Type: OmpTypebox }
+  typebox?: { Type: OmpTypebox }
   registerTool<Params>(tool: OmpToolDefinition<Params>): void
+}
+
+async function importHostModule(specifier: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    return (await import(specifier)) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+async function resolveHostTypebox(): Promise<OmpTypebox> {
+  const hostType = (await importHostModule('typebox'))?.Type as OmpTypebox | undefined
+  if (hostType) {
+    return {
+      Object: (properties, options) => hostType.Object(properties, options),
+      String: (options) => hostType.String(options),
+      Array: (items, options) => hostType.Array(items, options),
+    }
+  }
+  // Last resort: plain JSON Schema builders covering exactly this file's usage.
+  return {
+    Object: (properties, options) => ({ type: 'object', properties, required: Object.keys(properties), ...(options ?? {}) }),
+    String: (options) => ({ type: 'string', ...(options ?? {}) }),
+    Array: (items, options) => ({ type: 'array', items, ...(options ?? {}) }),
+  }
 }
 
 const ASK_USER_RPC_MARKER = '__prime_ask_user__'
@@ -141,8 +171,19 @@ function groupId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
 }
 
-export default function (pi: OmpExtensionApi) {
-  const Type = pi.typebox.Type
+export default function (pi: OmpExtensionApi): void | Promise<void> {
+  // OMP injects a TypeBox shim and calls the factory without awaiting it, so
+  // that path must stay fully synchronous; base pi awaits the factory, so the
+  // fallback may resolve builders asynchronously before registering.
+  const injected = pi.typebox?.Type
+  if (injected) {
+    registerTools(pi, injected)
+    return
+  }
+  return resolveHostTypebox().then((hostType) => { registerTools(pi, hostType) })
+}
+
+function registerTools(pi: OmpExtensionApi, Type: OmpTypebox): void {
   const question = Type.Object({
     question: Type.String({ description: 'The question to ask the user', minLength: 1, maxLength: MAX_QUESTION_LENGTH }),
     options: Type.Array(Type.String({ minLength: 1, maxLength: MAX_OPTION_LENGTH }), {

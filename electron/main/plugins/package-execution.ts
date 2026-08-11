@@ -51,3 +51,11 @@ export async function executeOmpPluginInstall(ompPath: string, source: string): 
   const result = await runProcess(ompPath, ['plugin', 'install', target, '--json'], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
+
+// Pi has no --json output for install/remove; stdout is untrusted, bounded by
+// maxBytes, and ANSI-stripped before it reaches the renderer. The source is
+// passed verbatim like Prime's `package install` (pi is Prime's ancestor CLI).
+export async function executePiPluginInstall(piPath: string, source: string): Promise<ProcessOutcome> {
+  const result = await runProcess(piPath, ['install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
+}
