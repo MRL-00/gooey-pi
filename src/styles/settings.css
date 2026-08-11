@@ -97,6 +97,8 @@
 .shortcut-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
 .shortcut-row span { display: flex; align-items: center; gap: 7px; }
 .shortcut-row kbd { padding: 4px 7px; border: 1px solid var(--border); border-bottom-color: var(--border-strong); border-radius: 5px; background: var(--surface-subtle); }
+.shortcut-choice { display: flex !important; flex-direction: row !important; gap: 4px; flex: 0 0 auto; }
+.shortcut-choice .button.is-active { color: var(--text); border-color: var(--prime); background: var(--surface-selected); }
 .about-card { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
 .about-card .prime-mark { box-shadow: 0 3px 10px rgba(0,0,0,.18), inset 0 0 0 1px rgba(255,255,255,.03); }
 .gooeypi-mark { display: inline-grid; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 24%; }

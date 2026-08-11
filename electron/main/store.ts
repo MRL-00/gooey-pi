@@ -45,6 +45,8 @@ export function defaultSettings(): AppSettings {
     showReasoningSummaries: true,
     showToolCalls: true,
     messageEnterAction: 'queue',
+    runtimePaths: { prime: '', omp: '', pi: '' },
+    enabledHarnesses: ['omp', 'prime', 'pi'],
     telemetry: false,
     disabledProviders: [],
     ompDisabledProviders: [],
@@ -114,6 +116,23 @@ function parseProject(value: unknown): PersistedProject | null {
 function parseSettings(value: unknown, legacyState = false): AppSettings {
   const defaults = defaultSettings()
   if (!isRecord(value)) return defaults
+  const runtimePaths = isRecord(value.runtimePaths)
+    ? {
+        prime: typeof value.runtimePaths.prime === 'string' ? value.runtimePaths.prime : defaults.runtimePaths.prime,
+        omp: typeof value.runtimePaths.omp === 'string' ? value.runtimePaths.omp : defaults.runtimePaths.omp,
+        pi: typeof value.runtimePaths.pi === 'string' ? value.runtimePaths.pi : defaults.runtimePaths.pi,
+      }
+    : defaults.runtimePaths
+  const enabledHarnesses = Array.isArray(value.enabledHarnesses)
+    ? [...new Set(value.enabledHarnesses.filter((item): item is HarnessId => item === 'prime' || item === 'omp' || item === 'pi'))]
+    : defaults.enabledHarnesses
+  const usableHarnesses = enabledHarnesses.length ? enabledHarnesses : defaults.enabledHarnesses
+  const activeHarness = value.activeHarness === 'prime' || value.activeHarness === 'omp' || value.activeHarness === 'pi'
+    ? value.activeHarness as HarnessId
+    : legacyState ? 'prime' : defaults.activeHarness
+  const normalizedActiveHarness = usableHarnesses.length === 1
+    ? usableHarnesses[0]
+    : usableHarnesses.includes(activeHarness) ? activeHarness : usableHarnesses[0]
   return {
     theme: value.theme === 'light' || value.theme === 'dark' || value.theme === 'system' ? value.theme : defaults.theme,
     interfaceFontScale: INTERFACE_FONT_SCALES.includes(value.interfaceFontScale as AppSettings['interfaceFontScale'])
@@ -131,6 +150,8 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     showReasoningSummaries: typeof value.showReasoningSummaries === 'boolean' ? value.showReasoningSummaries : defaults.showReasoningSummaries,
     showToolCalls: typeof value.showToolCalls === 'boolean' ? value.showToolCalls : defaults.showToolCalls,
     messageEnterAction: value.messageEnterAction === 'queue' || value.messageEnterAction === 'steer' ? value.messageEnterAction : defaults.messageEnterAction,
+    runtimePaths,
+    enabledHarnesses: usableHarnesses,
     telemetry: typeof value.telemetry === 'boolean' ? value.telemetry : defaults.telemetry,
     disabledProviders: Array.isArray(value.disabledProviders)
       ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
@@ -141,9 +162,7 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     piDisabledProviders: Array.isArray(value.piDisabledProviders)
       ? [...new Set(value.piDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.piDisabledProviders,
-    activeHarness: value.activeHarness === 'prime' || value.activeHarness === 'omp' || value.activeHarness === 'pi'
-      ? value.activeHarness
-      : legacyState ? 'prime' : defaults.activeHarness,
+    activeHarness: normalizedActiveHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
     petEnabled: typeof value.petEnabled === 'boolean' ? value.petEnabled : defaults.petEnabled,
     petId: boundedString(value.petId, 128) && /^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(value.petId) ? value.petId : defaults.petId,

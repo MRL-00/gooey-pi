@@ -35,6 +35,7 @@ export interface SidebarProps {
   activeView: WorkspaceView
   activeHarness?: HarnessId
   harnesses?: AppMeta['harnesses'] | null
+  enabledHarnesses?: HarnessId[]
   clearedAttention?: Record<string, string>
   onSelectHarness?(harness: HarnessId): void
   onSelectProject(project: ProjectRecord): void
@@ -109,7 +110,7 @@ function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
   return <Mark size={size} />
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, enabledHarnesses = [...HARNESS_IDS], clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -179,8 +180,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
             <ChevronDown size={12} aria-hidden="true" />
           </button>
           {harnessMenuOpen ? (
-            <div className="brand-switcher__menu" role="menu" aria-label="Agent harness">
-              {HARNESS_IDS.map((harness) => {
+            <div className="brand-switcher__menu" role="menu" aria-label="Harness">
+              {HARNESS_IDS.filter((harness) => enabledHarnesses.includes(harness)).map((harness) => {
                 const detected = Boolean(harnesses?.[harness]?.path)
                 return (
                   <button
@@ -296,6 +297,7 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.activeView === next.activeView
     && previous.activeHarness === next.activeHarness
     && previous.harnesses === next.harnesses
+    && previous.enabledHarnesses === next.enabledHarnesses
     && previous.clearedAttention === next.clearedAttention
     && previous.onSelectHarness === next.onSelectHarness
     && previous.onSelectProject === next.onSelectProject

@@ -28,6 +28,8 @@ export const SETTINGS_FIELD_SECTIONS = {
   showReasoningSummaries: 'agent',
   showToolCalls: 'agent',
   messageEnterAction: 'agent',
+  runtimePaths: 'agent',
+  enabledHarnesses: 'agent',
   telemetry: 'privacy',
   disabledProviders: 'providers',
   ompDisabledProviders: 'providers',

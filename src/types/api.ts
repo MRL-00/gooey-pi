@@ -357,6 +357,10 @@ export interface AppSettings {
   showReasoningSummaries: boolean
   showToolCalls: boolean
   messageEnterAction: MessageEnterAction
+  /** Optional absolute executable overrides; blank keeps automatic discovery. */
+  runtimePaths: Record<HarnessId, string>
+  /** Harnesses exposed in the switcher. At least one must remain enabled. */
+  enabledHarnesses: HarnessId[]
   telemetry: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]

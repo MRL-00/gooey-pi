@@ -228,10 +228,12 @@ export function harnessExecutableCandidates(
   descriptor: HarnessDescriptor,
   env: NodeJS.ProcessEnv = process.env,
   platform = process.platform,
+  configuredPath?: string,
 ): string[] {
   const pathApi = platform === 'win32' ? win32 : posix
   const executable = descriptor.executableName(platform)
   const candidates: string[] = []
+  if (configuredPath && isAbsolutePathForPlatform(configuredPath, platform)) candidates.push(configuredPath)
   const configured = env[descriptor.binaryEnvVar]
   if (configured && isAbsolutePathForPlatform(configured, platform)) candidates.push(configured)
   if (typeof process.resourcesPath === 'string') {
@@ -247,8 +249,8 @@ export function harnessExecutableCandidates(
   return [...new Set(candidates)]
 }
 
-export async function findHarnessExecutable(descriptor: HarnessDescriptor): Promise<string | null> {
-  for (const candidate of harnessExecutableCandidates(descriptor)) {
+export async function findHarnessExecutable(descriptor: HarnessDescriptor, configuredPath?: string): Promise<string | null> {
+  for (const candidate of harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath)) {
     try { await access(candidate, fsConstants.X_OK); return candidate } catch { /* continue */ }
   }
   return null

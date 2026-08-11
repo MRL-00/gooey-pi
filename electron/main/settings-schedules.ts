@@ -1,5 +1,6 @@
 import { session } from 'electron'
-import { BROWSER_PARTITION, INTERFACE_FONT_SCALES, type AppSettings } from '../../src/types/api'
+import { isAbsolute } from 'node:path'
+import { BROWSER_PARTITION, HARNESS_IDS, INTERFACE_FONT_SCALES, type AppSettings } from '../../src/types/api'
 import type { JsonStateStore } from './store'
 import { isRecord, rejectUnknownKeys, requireBoolean, requireInteger, requireString, requireWebUrl } from './validation'
 
@@ -38,6 +39,26 @@ export class SettingsService {
       messageEnterAction: (value) => {
         if (value !== 'queue' && value !== 'steer') throw new TypeError('Invalid message Enter action')
         return value
+      },
+      runtimePaths: (value) => {
+        if (!isRecord(value)) throw new TypeError('runtimePaths must be an object')
+        rejectUnknownKeys(value, HARNESS_IDS, 'runtimePaths')
+        const paths = {} as AppSettings['runtimePaths']
+        for (const harness of HARNESS_IDS) {
+          const path = requireString(value[harness], `runtimePaths.${harness}`, { max: 4_096 })
+          if (path && !isAbsolute(path)) throw new TypeError(`runtimePaths.${harness} must be absolute`)
+          paths[harness] = path
+        }
+        return paths
+      },
+      enabledHarnesses: (value) => {
+        if (!Array.isArray(value) || value.length > HARNESS_IDS.length) throw new TypeError('enabledHarnesses must be a bounded array')
+        const enabled = [...new Set(value.map((entry, index) => {
+          if (entry !== 'prime' && entry !== 'omp' && entry !== 'pi') throw new TypeError(`enabledHarnesses[${index}] is invalid`)
+          return entry
+        }))]
+        if (!enabled.length) throw new TypeError('At least one harness must be enabled')
+        return enabled
       },
       browserHome: (value) => requireWebUrl(value),
       terminalShell: (value) => this.validateShell(value),
@@ -100,7 +121,13 @@ export class SettingsService {
       if (raw[key] !== undefined) patch[key] = validators[key](raw[key])
     }
     for (const key of keys) applyField(key)
-    return this.store.update((state) => Object.assign(state.settings, patch))
+    return this.store.update((state) => {
+      const next = { ...state.settings, ...patch }
+      if (next.enabledHarnesses.length === 1) next.activeHarness = next.enabledHarnesses[0]
+      else if (!next.enabledHarnesses.includes(next.activeHarness)) next.activeHarness = next.enabledHarnesses[0]
+      Object.assign(state.settings, next)
+      return state.settings
+    })
   }
 
   private voiceModel(value: unknown, label: string): string {

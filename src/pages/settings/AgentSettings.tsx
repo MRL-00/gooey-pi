@@ -2,6 +2,7 @@ import { Bot, Keyboard, ShieldCheck } from 'lucide-react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
 import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import type { SettingsMetaSectionProps } from './contracts'
+import { DraftSettingField } from './DraftSettingField'
 import { SettingsToggle } from './SettingsToggle'
 
 const APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
@@ -13,17 +14,32 @@ const APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
 
 export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionProps) {
   const activeHarness = settings.activeHarness
-  const agentName = HARNESS_AGENT_NAMES[activeHarness]
   const shortName = HARNESS_SHORT_NAMES[activeHarness]
+  const toggleHarness = (harness: HarnessId, enabled: boolean) => {
+    const next = enabled
+      ? [...new Set([...settings.enabledHarnesses, harness])]
+      : settings.enabledHarnesses.filter((candidate) => candidate !== harness)
+    if (!next.length) return
+    const nextDefault = next.length === 1
+      ? next[0]
+      : next.includes(settings.activeHarness) ? settings.activeHarness : next[0]
+    void onUpdate({ enabledHarnesses: next, activeHarness: nextDefault })
+  }
+  const runtimePathValidation = (value: string, harness: HarnessId): string => {
+    if (!value) return ''
+    const absolute = meta?.platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') : value.startsWith('/')
+    return absolute ? '' : `${HARNESS_AGENT_NAMES[harness]} path must be absolute (or blank for automatic discovery)`
+  }
   return (
     <>
-      <header><h1>{agentName}</h1><p>Runtime discovery, model providers, and workspace permissions.</p></header>
+      <header><h1>Harness</h1><p>Runtime discovery, model providers, and workspace permissions.</p></header>
       <section className="settings-group">
         <h2>Harness</h2>
+        {HARNESS_IDS.map((harness) => <SettingsToggle key={harness} checked={settings.enabledHarnesses.includes(harness)} onChange={(enabled) => toggleHarness(harness, enabled)} label={`Enable ${HARNESS_PRODUCT_NAMES[harness]}`} description="Show this harness in the Harness menu and allow it to be the default." />)}
         <label className="settings-row">
-          <span><strong>Active harness</strong><small>The agent that powers the workspace; mirrors the switcher in the sidebar.</small></span>
+          <span><strong>Active harness / default</strong><small>The harness opened by default; mirrors the current choice in the Harness menu.</small></span>
           <select value={activeHarness} onChange={(event) => { void onUpdate({ activeHarness: event.target.value as HarnessId }) }}>
-            {HARNESS_IDS.map((harness) => <option key={harness} value={harness}>{HARNESS_PRODUCT_NAMES[harness]}</option>)}
+            {HARNESS_IDS.filter((harness) => settings.enabledHarnesses.includes(harness)).map((harness) => <option key={harness} value={harness}>{HARNESS_PRODUCT_NAMES[harness]}</option>)}
           </select>
         </label>
         {activeHarness === 'omp' ? (
@@ -51,6 +67,17 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
             </div>
           )
         })}
+        <p className="settings-group__description">Discovery checks a saved override first, then the harness environment variable, bundled files, PATH, and standard install directories. Changes apply after restarting GooeyPi.</p>
+        {HARNESS_IDS.map((harness) => <DraftSettingField
+          key={harness}
+          id={`runtime-path-${harness}`}
+          label={`${HARNESS_AGENT_NAMES[harness]} executable override`}
+          description="Optional absolute path. Leave blank to keep automatic discovery."
+          committedValue={settings.runtimePaths[harness]}
+          validate={(value) => runtimePathValidation(value.trim(), harness)}
+          normalize={(value) => value.trim()}
+          onCommit={(value) => onUpdate({ runtimePaths: { ...settings.runtimePaths, [harness]: value } })}
+        />)}
       </section>
       <section className="settings-group">
         <h2>Transcript</h2>
@@ -59,11 +86,14 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       </section>
       <section className="settings-group">
         <h2>Message shortcuts</h2>
-        <div className="settings-row">
-          <span><strong>Enter while {shortName} is working</strong><small>Enter queues a message. Ctrl+Enter or ⌘+Enter steers the current turn. Shift+Enter adds a new line.</small></span>
-        </div>
-        <div className="shortcut-row"><span><Keyboard size={14} />Queue message</span><kbd>Enter</kbd></div>
-        <div className="shortcut-row"><span><Keyboard size={14} />Steer current turn</span><kbd>Ctrl Enter / ⌘ Enter</kbd></div>
+        <label className="settings-row">
+          <span><strong>Primary Enter action while {shortName} is working</strong><small>Ctrl+Enter or ⌘+Enter always uses the opposite action. Shift+Enter adds a new line.</small></span>
+          <span className="shortcut-choice" role="radiogroup" aria-label="Primary Enter action">
+            {(['queue', 'steer'] as const).map((action) => <button key={action} type="button" className={`button button--compact ${settings.messageEnterAction === action ? 'is-active' : ''}`} role="radio" aria-checked={settings.messageEnterAction === action} onClick={() => { void onUpdate({ messageEnterAction: action }) }}>{action === 'queue' ? 'Queue' : 'Steer'}</button>)}
+          </span>
+        </label>
+        <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Queue message' : 'Steer current turn'}</span><kbd>Enter</kbd></div>
+        <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Steer current turn' : 'Queue message'}</span><kbd>Ctrl Enter / ⌘ Enter</kbd></div>
       </section>
       <section className="settings-group">
         <h2>Permissions</h2>

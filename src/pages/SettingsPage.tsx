@@ -2,7 +2,6 @@ import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, PawPrint, Sett
 import { useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
-import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import type { AppMeta, AppSettings, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
 import { AgentSettings } from './settings/AgentSettings'
@@ -86,7 +85,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
       <nav className="settings-nav" aria-label="Settings sections">
         {sections.map((item) => {
           const Icon = item.icon
-          const label = item.id === 'agent' ? HARNESS_AGENT_NAMES[settings.activeHarness] : item.label
+          const label = item.id === 'agent' ? 'Harness' : item.label
           return (
             <button type="button" key={item.id} className={section === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
               <Icon size={14} /><span>{label}</span><ChevronRight size={12} />

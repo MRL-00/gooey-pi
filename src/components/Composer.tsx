@@ -44,7 +44,7 @@ interface ComposerProps {
   /** Active harness short name for inline copy ("Prime" / "OMP"). */
   shortName?: string
   imageInputSupported: boolean
-  /** @deprecated Shortcuts are fixed: Enter queues and Ctrl/Cmd+Enter steers. */
+  /** Primary action for Enter; Ctrl/Cmd+Enter selects the opposite action. */
   messageEnterAction?: MessageEnterAction
   contextUsage?: PrimeContextUsage
   voice?: PrimeWorkApi['voice'] | null
@@ -134,6 +134,7 @@ export const Composer = memo(function Composer({
   agentName = 'Prime Agent',
   shortName = 'Prime',
   imageInputSupported,
+  messageEnterAction = 'queue',
   contextUsage,
   voice,
   transcriptionProvider = 'openai-live',
@@ -523,6 +524,7 @@ export const Composer = memo(function Composer({
                   shiftKey: event.shiftKey,
                   isComposing: event.nativeEvent.isComposing,
                 },
+                messageEnterAction,
               )
               if (intent) {
                 event.preventDefault()

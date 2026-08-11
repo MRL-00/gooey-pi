@@ -354,14 +354,15 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 }
 
 async function bootstrap(): Promise<void> {
-  const [executable, ompExecutable, piExecutable] = await Promise.all([
-    findHarnessExecutable(HARNESSES.prime),
-    findHarnessExecutable(HARNESSES.omp),
-    findHarnessExecutable(HARNESSES.pi),
-  ])
-  if (shutdownStarted) return
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
   store = stateStore
+  const runtimePaths = stateStore.getSettings().runtimePaths
+  const [executable, ompExecutable, piExecutable] = await Promise.all([
+    findHarnessExecutable(HARNESSES.prime, runtimePaths.prime),
+    findHarnessExecutable(HARNESSES.omp, runtimePaths.omp),
+    findHarnessExecutable(HARNESSES.pi, runtimePaths.pi),
+  ])
+  if (shutdownStarted) return
   const sessions = new SessionService(stateStore, executable)
   // OMP has no live-CLI overlay (`omp list --json` does not exist), so the OMP
   // catalog is constructed with a null executable and JSONL-only metadata.

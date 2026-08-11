@@ -28,6 +28,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showReasoningSummaries: true,
   showToolCalls: true,
   messageEnterAction: 'queue',
+  runtimePaths: { prime: '', omp: '', pi: '' },
+  enabledHarnesses: ['omp', 'prime', 'pi'],
   telemetry: false,
   disabledProviders: [],
   ompDisabledProviders: [],
