@@ -59,8 +59,3 @@ export async function executePiPluginInstall(piPath: string, source: string): Pr
   const result = await runProcess(piPath, ['install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
-
-export async function executePiPluginRemove(piPath: string, source: string): Promise<ProcessOutcome> {
-  const result = await runProcess(piPath, ['remove', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
-  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
-}

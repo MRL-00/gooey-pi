@@ -258,7 +258,7 @@ class VoiceSecretStore {
 function orchestrationInstructions(harness: HarnessId): string {
   const harnessName = HARNESSES[harness].agentName
   return [
-    'You are the voice orchestrator inside GooeyPi, a desktop client for OMP and Prime Agent.',
+    'You are the voice orchestrator inside GooeyPi, a desktop client for the Prime Agent, OMP, and Pi harnesses.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
     'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels.',
@@ -287,7 +287,7 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
     tools: [
       {
         type: 'function', name: 'list_projects',
-        description: `Find explicitly granted projects in the currently selected ${harnessName} harness. Projects from the other harness are never returned.`,
+        description: `Find explicitly granted projects in the currently selected ${harnessName} harness. Projects from other harnesses are never returned.`,
         parameters: {
           type: 'object', additionalProperties: false,
           properties: {

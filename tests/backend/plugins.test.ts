@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
-import { executePiPluginInstall, executePiPluginRemove } from '../../electron/main/plugins/package-execution'
+import { executePiPluginInstall } from '../../electron/main/plugins/package-execution'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
@@ -857,19 +857,6 @@ describe('PluginService Pi parity', () => {
     const missing = new PluginService(null, async (path) => resolve(path), { agentDir, harness: 'pi' })
     expect(await missing.install('npm:@scope/example-plugin')).toEqual({ ok: false, reason: 'blocked', output: 'Pi executable was not found' })
     await expect(service.install('--registry=https://evil.test')).rejects.toThrow(/Invalid package source/)
-  })
-
-  it('constructs remove argv without shell interpolation', async () => {
-    const root = temp()
-    const executable = join(root, 'pi.cjs')
-    const capture = join(root, 'argv.json')
-    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)))\n`)
-    chmodSync(executable, 0o755)
-
-    const result = await executePiPluginRemove(executable, 'npm:@scope/example-plugin')
-
-    expect(result.ok).toBe(true)
-    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['remove', 'npm:@scope/example-plugin'])
   })
 
   it('bounds and sanitizes untrusted pi CLI output', async () => {
