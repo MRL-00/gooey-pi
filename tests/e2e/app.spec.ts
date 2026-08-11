@@ -528,10 +528,20 @@ test.describe('Prime Work desktop smoke', () => {
   test('loads the sandboxed preload bridge and hermetic service data', async () => {
     const bridge = await page.evaluate(() => {
       const prime = (window as typeof window & { prime?: Record<string, unknown> }).prime
-      return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [] }
+      const voice = prime?.voice
+      return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [], voiceMethods: voice && typeof voice === 'object' ? Object.keys(voice).sort() : [] }
     })
     expect(bridge.type).toBe('object')
     expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
+    expect(bridge.voiceMethods).toContain('testSelfHosted')
+    const credentialStatus = await page.evaluate(() => window.prime.voice.credentialStatus())
+    expect(typeof credentialStatus.storage.available).toBe('boolean')
+    if (!credentialStatus.storage.available) expect(credentialStatus.storage.message).toMatch(/secure|credential|keyring|kwallet/i)
+    const invalidSelfHostedTest = await page.evaluate(async () => {
+      try { await window.prime.voice.testSelfHosted({ url: '', model: '' }); return '' }
+      catch (error) { return String(error) }
+    })
+    expect(invalidSelfHostedTest).toMatch(/too short|Invalid URL/)
     await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => !window.isVisible()))).toBe(true)
     await expect(page.getByRole('button', { name: 'Prime Work — switch harness' })).toBeVisible()
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
