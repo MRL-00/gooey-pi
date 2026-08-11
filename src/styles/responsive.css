@@ -109,6 +109,8 @@
   .voice-choice-row, .voice-path-field { grid-template-columns: 1fr; gap: 8px; }
   .voice-choice-row { padding-block: 13px; }
   .voice-path-field { padding-block: 10px; }
+  .voice-self-hosted-auth, .voice-self-hosted-connect { align-items: flex-start; flex-direction: column; }
+  .voice-self-hosted-auth__actions { width: 100%; flex-wrap: wrap; }
   .modal-backdrop, .palette-backdrop { padding: 10px; }
   .command-palette { margin-top: 7vh; }
 }

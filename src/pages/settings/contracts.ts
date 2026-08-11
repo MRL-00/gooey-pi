@@ -48,6 +48,8 @@ export const SETTINGS_FIELD_SECTIONS = {
   voiceOpenAiTranscriptionModel: 'voice',
   voiceGroqTranscriptionModel: 'voice',
   voiceDeepgramTranscriptionModel: 'voice',
+  voiceSelfHostedUrl: 'voice',
+  voiceSelfHostedModel: 'voice',
   voiceLocalWhisperExecutable: 'voice',
   voiceLocalWhisperModel: 'voice',
   voiceRealtimeModel: 'voice',

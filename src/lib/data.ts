@@ -42,6 +42,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   voiceOpenAiTranscriptionModel: 'gpt-4o-transcribe',
   voiceGroqTranscriptionModel: 'whisper-large-v3-turbo',
   voiceDeepgramTranscriptionModel: 'nova-3',
+  voiceSelfHostedUrl: '',
+  voiceSelfHostedModel: '',
   voiceLocalWhisperExecutable: '',
   voiceLocalWhisperModel: '',
   voiceRealtimeModel: 'gpt-realtime-2.1',
