@@ -176,6 +176,8 @@ describe('settings field ownership', () => {
       voiceOpenAiTranscriptionModel: 'voice',
       voiceGroqTranscriptionModel: 'voice',
       voiceDeepgramTranscriptionModel: 'voice',
+      voiceSelfHostedUrl: 'voice',
+      voiceSelfHostedModel: 'voice',
       voiceLocalWhisperExecutable: 'voice',
       voiceLocalWhisperModel: 'voice',
       voiceRealtimeModel: 'voice',

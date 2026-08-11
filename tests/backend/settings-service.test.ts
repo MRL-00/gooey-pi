@@ -50,6 +50,8 @@ describe('SettingsService.update', () => {
       voiceOpenAiTranscriptionModel: 'gpt-4o-mini-transcribe',
       voiceGroqTranscriptionModel: 'whisper-large-v3',
       voiceDeepgramTranscriptionModel: 'nova-3-general',
+      voiceSelfHostedUrl: 'https://speech.example.test/v1',
+      voiceSelfHostedModel: 'nvidia/parakeet-tdt-0.6b-v3',
       voiceLocalWhisperExecutable: '/opt/whisper-cli',
       voiceLocalWhisperModel: '/opt/ggml-model.bin',
       voiceRealtimeModel: 'gpt-realtime-2.1',
@@ -63,7 +65,7 @@ describe('SettingsService.update', () => {
       runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' }, enabledHarnesses: ['prime', 'omp'],
       telemetry: false, askUserEnabled: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky', petSize: 65,
-      voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
+      voiceTranscriptionProvider: 'groq', voiceSelfHostedUrl: 'https://speech.example.test/v1', voiceSelfHostedModel: 'nvidia/parakeet-tdt-0.6b-v3', voiceRealtimeVoice: 'cedar',
     })
     expect(service.get()).toEqual(next)
   })
@@ -105,7 +107,22 @@ describe('SettingsService.update', () => {
     await expect(service.update({ petSize: 49 })).rejects.toThrow(/integer from 50 to 125/)
     await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)
     await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
+    await expect(service.update({ voiceSelfHostedUrl: 'ftp://speech.example.test' })).rejects.toThrow(/scheme/)
+    await expect(service.update({ voiceSelfHostedUrl: 'http://192.168.1.20:9000' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
+    await expect(service.update({ voiceSelfHostedUrl: 'https://user:secret@speech.example.test' })).rejects.toThrow(/credentials/)
+    await expect(service.update({ voiceSelfHostedUrl: 'https://speech.example.test/#secret' })).rejects.toThrow(/query or fragment/)
+    await expect(service.update({ voiceSelfHostedModel: '../bad model' })).rejects.toThrow(/not valid/)
     expect(service.get()).toEqual(before)
+  })
+
+  it('accepts loopback HTTP and remote HTTPS self-hosted transcription servers', async () => {
+    const service = makeService()
+    await expect(service.update({ voiceTranscriptionProvider: 'self-hosted', voiceSelfHostedUrl: 'http://127.0.0.1:9000', voiceSelfHostedModel: 'mlx-community/whisper-large-v3' })).resolves.toMatchObject({
+      voiceTranscriptionProvider: 'self-hosted',
+      voiceSelfHostedUrl: 'http://127.0.0.1:9000/',
+      voiceSelfHostedModel: 'mlx-community/whisper-large-v3',
+    })
+    await expect(service.update({ voiceSelfHostedUrl: 'https://speech.example.test/v1' })).resolves.toMatchObject({ voiceSelfHostedUrl: 'https://speech.example.test/v1' })
   })
 
   it('accepts the pi harness and dedupes piDisabledProviders', async () => {
