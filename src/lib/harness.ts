@@ -1,5 +1,7 @@
 import type { HarnessId } from '@/types/api'
 
+export const HARNESS_SELECTOR_ORDER: readonly HarnessId[] = ['pi', 'omp', 'prime']
+
 /** Product name shown in window chrome and the brand switcher. */
 export const HARNESS_PRODUCT_NAMES: Record<HarnessId, string> = { prime: 'Prime Work', omp: 'OMP Work', pi: 'Pi Work' }
 

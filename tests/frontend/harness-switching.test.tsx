@@ -349,13 +349,13 @@ describe('sidebar brand switcher', () => {
     const menu = container.querySelector('[role="menu"]')
     expect(menu).not.toBeNull()
     const options = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
-    expect(options.map((option) => option.textContent)).toEqual(['OMP WorkNot detected', 'Prime Work', 'Pi WorkNot detected'])
+    expect(options.map((option) => option.textContent)).toEqual(['Pi WorkNot detected', 'OMP WorkNot detected', 'Prime Work'])
     expect(options[0].getAttribute('aria-checked')).toBe('false')
-    expect(options[1].getAttribute('aria-checked')).toBe('true')
-    expect(options[2].getAttribute('aria-checked')).toBe('false')
+    expect(options[1].getAttribute('aria-checked')).toBe('false')
+    expect(options[2].getAttribute('aria-checked')).toBe('true')
 
     await click(options[0])
-    expect(onSelectHarness).toHaveBeenCalledWith('omp')
+    expect(onSelectHarness).toHaveBeenCalledWith('pi')
     expect(container.querySelector('[role="menu"]')).toBeNull()
   })
 
@@ -365,7 +365,7 @@ describe('sidebar brand switcher', () => {
 
     await click(container.querySelector('.brand-switcher__trigger')!)
     const options = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
-    await click(options[2])
+    await click(options[0])
     expect(onSelectHarness).toHaveBeenCalledWith('pi')
     expect(container.querySelector('[role="menu"]')).toBeNull()
   })

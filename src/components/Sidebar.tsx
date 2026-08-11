@@ -23,7 +23,7 @@ import {
 import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { HARNESS_IDS, type AppMeta, type HarnessId, type ProjectRecord, type SessionRecord, type WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
-import { HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
+import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { sessionAttentionSignature } from '@/app/session-attention'
 import { IconButton, Modal, OmpMark, PiMark, PrimeMark, useFocusTrap } from './ui'
 
@@ -181,7 +181,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
           </button>
           {harnessMenuOpen ? (
             <div className="brand-switcher__menu" role="menu" aria-label="Harness">
-              {HARNESS_IDS.filter((harness) => enabledHarnesses.includes(harness)).map((harness) => {
+              {HARNESS_SELECTOR_ORDER.filter((harness) => enabledHarnesses.includes(harness)).map((harness) => {
                 const detected = Boolean(harnesses?.[harness]?.path)
                 return (
                   <button
