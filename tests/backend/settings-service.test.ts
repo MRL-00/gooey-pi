@@ -34,6 +34,8 @@ describe('SettingsService.update', () => {
       showReasoningSummaries: false,
       showToolCalls: false,
       messageEnterAction: 'steer',
+      runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' },
+      enabledHarnesses: ['prime', 'omp', 'prime'],
       telemetry: false,
       disabledProviders: ['openai', 'openai', 'google'],
       ompDisabledProviders: ['anthropic', 'anthropic'],
@@ -57,6 +59,7 @@ describe('SettingsService.update', () => {
       defaultInspectorTab: 'changes', browserHome: 'https://example.test/',
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
+      runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' }, enabledHarnesses: ['prime', 'omp'],
       telemetry: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky', petSize: 65,
       voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
@@ -82,6 +85,10 @@ describe('SettingsService.update', () => {
     await expect(service.update({ interfaceFontScale: 111 })).rejects.toThrow(/Invalid interface font scale/)
     await expect(service.update({ defaultInspectorTab: 'tools' })).rejects.toThrow(/Invalid inspector tab/)
     await expect(service.update({ messageEnterAction: 'send' })).rejects.toThrow(/Invalid message Enter action/)
+    await expect(service.update({ runtimePaths: { prime: 'relative/prime-agent', omp: '', pi: '' } })).rejects.toThrow(/must be absolute/)
+    await expect(service.update({ runtimePaths: { prime: '/opt/prime-agent', omp: '', pi: '', extra: '/tmp/evil' } })).rejects.toThrow(/not supported/)
+    await expect(service.update({ enabledHarnesses: [] })).rejects.toThrow(/At least one harness/)
+    await expect(service.update({ enabledHarnesses: ['prime', 'codex'] })).rejects.toThrow(/is invalid/)
     await expect(service.update({ sidebarOpen: 'yes' })).rejects.toThrow(/must be a boolean/)
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
@@ -104,6 +111,19 @@ describe('SettingsService.update', () => {
     const next = await service.update({ activeHarness: 'pi', piDisabledProviders: ['openai', 'openai', 'anthropic'] })
     expect(next.activeHarness).toBe('pi')
     expect(next.piDisabledProviders).toEqual(['openai', 'anthropic'])
+  })
+
+  it('normalizes the default harness when its enabled set changes', async () => {
+    const service = makeService()
+    const onlyPi = await service.update({ enabledHarnesses: ['pi'] })
+    expect(onlyPi.enabledHarnesses).toEqual(['pi'])
+    expect(onlyPi.activeHarness).toBe('pi')
+
+    const stillPi = await service.update({ enabledHarnesses: ['prime', 'pi'] })
+    expect(stillPi.activeHarness).toBe('pi')
+
+    const fallback = await service.update({ enabledHarnesses: ['prime'] })
+    expect(fallback.activeHarness).toBe('prime')
   })
 
   it('routes terminalShell through the injected shell validator', async () => {

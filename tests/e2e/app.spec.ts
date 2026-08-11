@@ -634,6 +634,23 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(0)
   })
 
+  test('keeps Harness settings shared when changing the default while providers follow the active harness', async () => {
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Harness', exact: true }).click()
+    await expect(page.getByText('OMP approval mode', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Prime Agent executable override')).toBeVisible()
+    await expect(page.getByLabel('OMP executable override')).toBeVisible()
+    await expect(page.getByLabel('Pi executable override')).toBeVisible()
+
+    const selects = page.locator('.settings-content select')
+    await selects.nth(0).selectOption('pi')
+    await expect(page.getByRole('button', { name: 'Pi Work — switch harness' })).toBeVisible()
+    await expect(page.getByText('OMP approval mode', { exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Providers', exact: true }).click()
+    await expect(page.getByText('Pi catalogue', { exact: true })).toBeVisible()
+  })
+
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
     const titles = page.locator('.session-row__title')
     await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
@@ -860,7 +877,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('tab', { name: /Models/ }).click()
     await expect(page.getByLabel('Search models')).toBeVisible()
     await expect(page.locator('.provider-model-row')).not.toHaveCount(0)
-    await page.getByRole('button', { name: 'Prime Agent', exact: true }).click()
+    await page.getByRole('button', { name: 'Harness', exact: true }).click()
     await expect(page.getByRole('checkbox', { name: /Show reasoning summaries/ })).toBeChecked()
     await expect(page.getByRole('checkbox', { name: /Show tool calls/ })).toBeChecked()
     await page.keyboard.press('Meta+K')

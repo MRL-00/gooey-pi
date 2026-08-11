@@ -246,6 +246,12 @@ describe('OMP discovery candidates', () => {
     expect(absolute[0]).toBe('/opt/tools/omp')
   })
 
+  it('prefers a saved absolute override before the environment override', () => {
+    const candidates = harnessExecutableCandidates(HARNESSES.omp, { OMP_BINARY: '/env/omp', PATH: '/usr/bin' }, 'linux', '/settings/omp')
+    expect(candidates.slice(0, 2)).toEqual(['/settings/omp', '/env/omp'])
+    expect(harnessExecutableCandidates(HARNESSES.omp, { OMP_BINARY: '/env/omp', PATH: '/usr/bin' }, 'linux', 'relative/omp')[0]).toBe('/env/omp')
+  })
+
   it('searches the OMP posix fallback directories without Prime-only locations', () => {
     const candidates = harnessExecutableCandidates(HARNESSES.omp, { PATH: '/usr/bin' }, 'darwin')
     expect(candidates).toContain(join(homedir(), '.local', 'bin', 'omp'))

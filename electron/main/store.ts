@@ -116,11 +116,14 @@ function parseProject(value: unknown): PersistedProject | null {
 function parseSettings(value: unknown, legacyState = false): AppSettings {
   const defaults = defaultSettings()
   if (!isRecord(value)) return defaults
+  const parseRuntimePath = (path: unknown, fallback: string): string => (
+    typeof path === 'string' && path.length <= 4_096 && (!path || isAbsolute(path)) ? path : fallback
+  )
   const runtimePaths = isRecord(value.runtimePaths)
     ? {
-        prime: typeof value.runtimePaths.prime === 'string' ? value.runtimePaths.prime : defaults.runtimePaths.prime,
-        omp: typeof value.runtimePaths.omp === 'string' ? value.runtimePaths.omp : defaults.runtimePaths.omp,
-        pi: typeof value.runtimePaths.pi === 'string' ? value.runtimePaths.pi : defaults.runtimePaths.pi,
+        prime: parseRuntimePath(value.runtimePaths.prime, defaults.runtimePaths.prime),
+        omp: parseRuntimePath(value.runtimePaths.omp, defaults.runtimePaths.omp),
+        pi: parseRuntimePath(value.runtimePaths.pi, defaults.runtimePaths.pi),
       }
     : defaults.runtimePaths
   const enabledHarnesses = Array.isArray(value.enabledHarnesses)

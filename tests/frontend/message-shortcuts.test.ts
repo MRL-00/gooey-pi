@@ -17,6 +17,12 @@ describe('message shortcuts', () => {
     expect(messageActionForKey(event({ metaKey: true, shiftKey: true }))).toBeNull()
   })
 
+  it('swaps queue and steer for every harness when Enter is configured to steer', () => {
+    expect(messageActionForKey(event(), 'steer')).toBe('steer')
+    expect(messageActionForKey(event({ ctrlKey: true }), 'steer')).toBe('queue')
+    expect(messageActionForKey(event({ metaKey: true }), 'steer')).toBe('queue')
+  })
+
   it('leaves newlines, composition, and unsupported modifiers alone', () => {
     expect(messageActionForKey(event({ shiftKey: true }))).toBeNull()
     expect(messageActionForKey(event({ isComposing: true }))).toBeNull()

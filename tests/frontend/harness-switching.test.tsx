@@ -434,22 +434,22 @@ describe('provider catalog per harness', () => {
 })
 
 describe('harness settings surfaces', () => {
-  it('shows the harness select everywhere and the approval mode select only for OMP', async () => {
+  it('keeps Harness settings universal while leaving only providers harness-specific', async () => {
     const onUpdate = vi.fn()
     const primeSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'prime' }
     await act(async () => { root.render(<AgentSettings settings={primeSettings} meta={meta} onUpdate={onUpdate} />) })
-    expect(container.textContent).toContain('Active harness')
-    expect(container.textContent).not.toContain('Approval mode')
+    expect(container.textContent).toContain('Default harness')
+    expect(container.textContent).toContain('OMP approval mode')
     expect(container.textContent).toContain('Prime Agent is ready')
     expect(container.textContent).toContain('OMP not detected')
 
-    const harnessSelect = container.querySelector<HTMLSelectElement>('select')
+    const harnessSelect = container.querySelector<HTMLSelectElement>('select')!
     await select(harnessSelect!, 'omp')
     expect(onUpdate).toHaveBeenCalledWith({ activeHarness: 'omp' })
 
-    const ompSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'omp' }
-    await act(async () => { root.render(<AgentSettings settings={ompSettings} meta={meta} onUpdate={onUpdate} />) })
-    expect(container.textContent).toContain('Approval mode')
+    const piSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'pi' }
+    await act(async () => { root.render(<AgentSettings settings={piSettings} meta={meta} onUpdate={onUpdate} />) })
+    expect(container.textContent).toContain('OMP approval mode')
     const selects = [...container.querySelectorAll<HTMLSelectElement>('select')]
     expect(selects).toHaveLength(2)
     const approvalSelect = selects[1]
@@ -461,22 +461,8 @@ describe('harness settings surfaces', () => {
     ])
     await select(approvalSelect, 'write')
     expect(onUpdate).toHaveBeenCalledWith({ ompApprovalMode: 'write' })
-  })
-
-  it('hides the approval-mode and service-tier controls for Pi while keeping its runtime card', async () => {
-    const onUpdate = vi.fn()
-    const piSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'pi' }
-    await act(async () => { root.render(<AgentSettings settings={piSettings} meta={meta} onUpdate={onUpdate} />) })
-    expect(container.textContent).toContain('Active harness')
-    expect(container.textContent).not.toContain('Approval mode')
     expect(container.textContent).toContain('Pi not detected')
-    // Only the harness select renders: Pi has no approval mode and no fast-mode/service-tier control.
-    const selects = [...container.querySelectorAll<HTMLSelectElement>('select')]
-    expect(selects).toHaveLength(1)
     expect([...selects[0].options].map((option) => option.textContent)).toEqual(['OMP Work', 'Prime Work', 'Pi Work'])
-
-    await select(selects[0], 'prime')
-    expect(onUpdate).toHaveBeenCalledWith({ activeHarness: 'prime' })
   })
 
   it('renders OMP provider toggles while keeping credentials CLI-owned', async () => {

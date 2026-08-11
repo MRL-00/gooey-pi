@@ -1,6 +1,6 @@
 import { Bot, Keyboard, ShieldCheck } from 'lucide-react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
-import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES, HARNESS_SHORT_NAMES } from '@/lib/harness'
+import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES } from '@/lib/harness'
 import type { SettingsMetaSectionProps } from './contracts'
 import { DraftSettingField } from './DraftSettingField'
 import { SettingsToggle } from './SettingsToggle'
@@ -14,7 +14,6 @@ const APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
 
 export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionProps) {
   const activeHarness = settings.activeHarness
-  const shortName = HARNESS_SHORT_NAMES[activeHarness]
   const toggleHarness = (harness: HarnessId, enabled: boolean) => {
     const next = enabled
       ? [...new Set([...settings.enabledHarnesses, harness])]
@@ -37,19 +36,17 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
         <h2>Harness</h2>
         {HARNESS_IDS.map((harness) => <SettingsToggle key={harness} checked={settings.enabledHarnesses.includes(harness)} onChange={(enabled) => toggleHarness(harness, enabled)} label={`Enable ${HARNESS_PRODUCT_NAMES[harness]}`} description="Show this harness in the Harness menu and allow it to be the default." />)}
         <label className="settings-row">
-          <span><strong>Active harness / default</strong><small>The harness opened by default; mirrors the current choice in the Harness menu.</small></span>
+          <span><strong>Default harness</strong><small>The harness opened by default; mirrors the current choice in the Harness menu.</small></span>
           <select value={activeHarness} onChange={(event) => { void onUpdate({ activeHarness: event.target.value as HarnessId }) }}>
             {HARNESS_IDS.filter((harness) => settings.enabledHarnesses.includes(harness)).map((harness) => <option key={harness} value={harness}>{HARNESS_PRODUCT_NAMES[harness]}</option>)}
           </select>
         </label>
-        {activeHarness === 'omp' ? (
-          <label className="settings-row">
-            <span><strong>Approval mode</strong><small>How OMP asks before running tools; Inherit leaves your omp configuration in charge.</small></span>
-            <select value={settings.ompApprovalMode} onChange={(event) => { void onUpdate({ ompApprovalMode: event.target.value as OmpApprovalMode }) }}>
-              {OMP_APPROVAL_MODES.map((mode) => <option key={mode} value={mode}>{APPROVAL_MODE_LABELS[mode]}</option>)}
-            </select>
-          </label>
-        ) : null}
+        <label className="settings-row">
+          <span><strong>OMP approval mode</strong><small>How OMP asks before running tools; Inherit leaves your omp configuration in charge.</small></span>
+          <select value={settings.ompApprovalMode} onChange={(event) => { void onUpdate({ ompApprovalMode: event.target.value as OmpApprovalMode }) }}>
+            {OMP_APPROVAL_MODES.map((mode) => <option key={mode} value={mode}>{APPROVAL_MODE_LABELS[mode]}</option>)}
+          </select>
+        </label>
       </section>
       <section className="settings-group">
         <h2>Runtime</h2>
@@ -81,13 +78,13 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       </section>
       <section className="settings-group">
         <h2>Transcript</h2>
-        <SettingsToggle checked={settings.showReasoningSummaries} onChange={(showReasoningSummaries) => { void onUpdate({ showReasoningSummaries }) }} label="Show reasoning summaries" description={`Display reasoning summaries and traces while ${shortName} works. Completed work stays collapsed.`} />
+        <SettingsToggle checked={settings.showReasoningSummaries} onChange={(showReasoningSummaries) => { void onUpdate({ showReasoningSummaries }) }} label="Show reasoning summaries" description="Display reasoning summaries and traces while an agent works. Completed work stays collapsed." />
         <SettingsToggle checked={settings.showToolCalls} onChange={(showToolCalls) => { void onUpdate({ showToolCalls }) }} label="Show tool calls" description="Display compact tool activity, arguments, and expandable results." />
       </section>
       <section className="settings-group">
         <h2>Message shortcuts</h2>
         <label className="settings-row">
-          <span><strong>Primary Enter action while {shortName} is working</strong><small>Ctrl+Enter or ⌘+Enter always uses the opposite action. Shift+Enter adds a new line.</small></span>
+          <span><strong>Primary Enter action while an agent is working</strong><small>Ctrl+Enter or ⌘+Enter always uses the opposite action. Shift+Enter adds a new line.</small></span>
           <span className="shortcut-choice" role="radiogroup" aria-label="Primary Enter action">
             {(['queue', 'steer'] as const).map((action) => <button key={action} type="button" className={`button button--compact ${settings.messageEnterAction === action ? 'is-active' : ''}`} role="radio" aria-checked={settings.messageEnterAction === action} onClick={() => { void onUpdate({ messageEnterAction: action }) }}>{action === 'queue' ? 'Queue' : 'Steer'}</button>)}
           </span>
@@ -97,7 +94,7 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       </section>
       <section className="settings-group">
         <h2>Permissions</h2>
-        <div className="info-row"><ShieldCheck size={15} /><div><strong>Workspace access</strong><small>{shortName} only receives the project folders attached to a session.</small></div></div>
+        <div className="info-row"><ShieldCheck size={15} /><div><strong>Workspace access</strong><small>The active agent only receives the project folders attached to a session.</small></div></div>
       </section>
     </>
   )

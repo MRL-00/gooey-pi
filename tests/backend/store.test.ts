@@ -430,6 +430,28 @@ describe('JsonStateStore', () => {
     expect(state.settings.piDisabledProviders).toEqual([])
   })
 
+  it('keeps only bounded absolute runtime path overrides and enabled harnesses', () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    writeFileSync(path, JSON.stringify({
+      version: 3,
+      projects: [],
+      settings: {
+        ...defaultSettings(),
+        runtimePaths: { prime: '/opt/prime-agent', omp: 'relative/omp', pi: 'x'.repeat(4_097) },
+        enabledHarnesses: ['pi', 'pi', 'invalid'],
+        activeHarness: 'omp',
+      },
+      archivedSessions: [],
+      dismissedProjectPaths: [],
+      schedules: [],
+    }))
+    const state = new JsonStateStore(path).snapshot()
+    expect(state.settings.runtimePaths).toEqual({ prime: '/opt/prime-agent', omp: '', pi: '' })
+    expect(state.settings.enabledHarnesses).toEqual(['pi'])
+    expect(state.settings.activeHarness).toBe('pi')
+  })
+
   it('refuses to parse an oversized state file and backs it up instead', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')

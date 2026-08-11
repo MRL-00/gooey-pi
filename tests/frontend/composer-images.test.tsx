@@ -226,14 +226,14 @@ describe('Composer message delivery shortcuts', () => {
     await act(async () => { release?.(); await pending })
   })
 
-  it('keeps Enter queued and Ctrl+Enter steering regardless of the legacy persisted setting', async () => {
+  it('uses the shared persisted Enter action regardless of the active harness', async () => {
     const onSend = renderComposer(vi.fn(async () => undefined), true, true, 'steer')
-    await enterDraft('Queue this')
-    await enterDraft('Steer this', { ctrlKey: true })
+    await enterDraft('Steer this')
+    await enterDraft('Queue this', { ctrlKey: true })
     await enterDraft('Keep editing', { shiftKey: true })
 
-    expect(onSend).toHaveBeenNthCalledWith(1, 'Queue this', [], 'queue')
-    expect(onSend).toHaveBeenNthCalledWith(2, 'Steer this', [], 'steer')
+    expect(onSend).toHaveBeenNthCalledWith(1, 'Steer this', [], 'steer')
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Queue this', [], 'queue')
     expect(onSend).toHaveBeenCalledTimes(2)
   })
 })
