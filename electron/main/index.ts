@@ -29,7 +29,7 @@ import { ompSessionServiceOptions } from './sessions/omp'
 import { piSessionServiceOptions } from './sessions/pi'
 import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
-import { VoiceService } from './voice'
+import { VoiceService, voiceSecretStorageStatus } from './voice'
 import { isAllowedRendererAudioPermission } from './voice-permissions'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
@@ -489,7 +489,11 @@ async function bootstrap(): Promise<void> {
   const voice = new VoiceService({
     secretPath: join(app.getPath('userData'), 'voice-secrets.json'),
     secretCodec: {
-      available: () => safeStorage.isEncryptionAvailable(),
+      status: () => voiceSecretStorageStatus(
+        process.platform,
+        safeStorage.isEncryptionAvailable(),
+        process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : undefined,
+      ),
       encrypt: (value) => safeStorage.encryptString(value),
       decrypt: (value) => safeStorage.decryptString(value),
     },

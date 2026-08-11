@@ -2,7 +2,7 @@ import { session } from 'electron'
 import { isAbsolute } from 'node:path'
 import { BROWSER_PARTITION, HARNESS_IDS, INTERFACE_FONT_SCALES, type AppSettings } from '../../src/types/api'
 import type { JsonStateStore } from './store'
-import { isRecord, rejectUnknownKeys, requireBoolean, requireInteger, requireString, requireWebUrl } from './validation'
+import { isRecord, rejectUnknownKeys, requireBoolean, requireInteger, requireSelfHostedVoiceUrl, requireString, requireWebUrl } from './validation'
 
 export class SettingsService {
   constructor(private readonly store: JsonStateStore, private readonly validateShell: (shell: unknown) => string, private readonly cancelBrowserDownloads: () => void = () => undefined) {}
@@ -78,13 +78,22 @@ export class SettingsService {
       },
       petSize: (value) => requireInteger(value, 'petSize', 50, 125),
       voiceTranscriptionProvider: (value) => {
-        if (value !== 'openai-live' && value !== 'openai' && value !== 'groq' && value !== 'deepgram' && value !== 'local-whisper') throw new TypeError('Invalid voice transcription provider')
+        if (value !== 'openai-live' && value !== 'openai' && value !== 'groq' && value !== 'deepgram' && value !== 'self-hosted' && value !== 'local-whisper') throw new TypeError('Invalid voice transcription provider')
         return value
       },
       voiceOpenAiLiveTranscriptionModel: (value) => this.voiceModel(value, 'voiceOpenAiLiveTranscriptionModel'),
       voiceOpenAiTranscriptionModel: (value) => this.voiceModel(value, 'voiceOpenAiTranscriptionModel'),
       voiceGroqTranscriptionModel: (value) => this.voiceModel(value, 'voiceGroqTranscriptionModel'),
       voiceDeepgramTranscriptionModel: (value) => this.voiceModel(value, 'voiceDeepgramTranscriptionModel'),
+      voiceSelfHostedUrl: (value) => {
+        const url = requireString(value, 'voiceSelfHostedUrl', { max: 2_048, trim: true })
+        return url ? requireSelfHostedVoiceUrl(url) : ''
+      },
+      voiceSelfHostedModel: (value) => {
+        const model = requireString(value, 'voiceSelfHostedModel', { max: 128, trim: true })
+        if (model && !/^[a-z0-9][a-z0-9._:\/-]{0,127}$/i.test(model)) throw new TypeError('voiceSelfHostedModel is not valid')
+        return model
+      },
       voiceLocalWhisperExecutable: (value) => requireString(value, 'voiceLocalWhisperExecutable', { max: 4_096, trim: true }),
       voiceLocalWhisperModel: (value) => requireString(value, 'voiceLocalWhisperModel', { max: 4_096, trim: true }),
       voiceRealtimeModel: (value) => this.voiceModel(value, 'voiceRealtimeModel'),

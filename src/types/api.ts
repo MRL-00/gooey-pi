@@ -385,6 +385,9 @@ export interface AppSettings {
   voiceOpenAiTranscriptionModel: string
   voiceGroqTranscriptionModel: string
   voiceDeepgramTranscriptionModel: string
+  /** User-managed OpenAI-compatible Parakeet or Whisper transcription server. */
+  voiceSelfHostedUrl: string
+  voiceSelfHostedModel: string
   /** User-managed whisper.cpp installation for offline transcription. */
   voiceLocalWhisperExecutable: string
   voiceLocalWhisperModel: string
@@ -393,14 +396,20 @@ export interface AppSettings {
   voiceRealtimeVoice: string
 }
 
-export const VOICE_TRANSCRIPTION_PROVIDERS = ['openai-live', 'openai', 'groq', 'deepgram', 'local-whisper'] as const
+export const VOICE_TRANSCRIPTION_PROVIDERS = ['openai-live', 'openai', 'groq', 'deepgram', 'self-hosted', 'local-whisper'] as const
 export type VoiceTranscriptionProvider = typeof VOICE_TRANSCRIPTION_PROVIDERS[number]
-export const VOICE_CREDENTIAL_PROVIDERS = ['openai', 'groq', 'deepgram'] as const
+export const VOICE_CREDENTIAL_PROVIDERS = ['openai', 'groq', 'deepgram', 'self-hosted'] as const
 export type VoiceCredentialProvider = typeof VOICE_CREDENTIAL_PROVIDERS[number]
+
+export interface VoiceCredentialStorageStatus {
+  available: boolean
+  message?: string
+}
 
 export interface VoiceCredentialStatus {
   configured: Record<VoiceCredentialProvider, boolean>
-  source: Partial<Record<VoiceCredentialProvider, 'saved' | 'environment'>>
+  source: Partial<Record<VoiceCredentialProvider, 'saved' | 'environment' | 'session'>>
+  storage: VoiceCredentialStorageStatus
 }
 
 export type VoiceRealtimeCallRequest =
@@ -410,6 +419,11 @@ export type VoiceRealtimeCallRequest =
 export interface VoiceTranscriptionRequest {
   provider: Exclude<VoiceTranscriptionProvider, 'openai-live'>
   audio: Uint8Array
+}
+
+export interface VoiceSelfHostedTestRequest {
+  url: string
+  model: string
 }
 
 export interface VoiceProjectSummary {
@@ -623,6 +637,7 @@ export interface PrimeWorkApi {
     deleteApiKey(provider: VoiceCredentialProvider): Promise<VoiceCredentialStatus>
     createRealtimeCall(request: VoiceRealtimeCallRequest): Promise<string>
     transcribe(request: VoiceTranscriptionRequest): Promise<string>
+    testSelfHosted(request: VoiceSelfHostedTestRequest): Promise<boolean>
     executeTool(request: VoiceToolRequest, harness: HarnessId): Promise<VoiceToolResult>
   }
   pets: {
