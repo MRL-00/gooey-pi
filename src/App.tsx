@@ -173,7 +173,9 @@ export default function App() {
     const result = await refreshHarnesses()
     if (!result) return
     settingsState.applyExternalSettings(result.settings)
-    if (result.settings.activeHarness === activeHarness) await provider.refresh(true)
+    if (result.settings.activeHarness === activeHarness && result.meta.harnesses[activeHarness].path) {
+      await provider.refresh(true)
+    }
   }, [activeHarness, provider.refresh, refreshHarnesses, settingsState.applyExternalSettings])
   useEffect(() => {
     if (detectedHarnesses.length) setNoHarnessPromptDismissed(false)

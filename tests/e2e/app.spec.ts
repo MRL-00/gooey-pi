@@ -712,8 +712,12 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByText('Install one to get started.', { exact: false })).toBeVisible()
     await page.getByRole('button', { name: 'Take me there' }).click()
     await expect(page.getByRole('heading', { name: 'Harness', exact: true, level: 1 })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Refresh harnesses' })).toBeVisible()
+    const refresh = page.getByRole('button', { name: 'Refresh harnesses' })
+    await expect(refresh).toBeVisible()
     await expect(page.getByLabel('Pi executable override')).toBeVisible()
+    await refresh.click()
+    await expect(refresh).toBeEnabled()
+    await expect(page.getByRole('alert')).toHaveCount(0)
   })
 
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
