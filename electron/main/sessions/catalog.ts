@@ -61,7 +61,7 @@ export class SessionMetadataCatalog {
   private readonly catalogRequests = createSingleFlight<string, Map<string, JsonRecord>>()
   private catalogRevision = 0
   private lastCatalogSpawn: { executable: string; at: number } | null = null
-  private readonly sessionScanRequests = createSingleFlight<number, SessionMetadata[]>()
+  private readonly sessionScanRequests = createSingleFlight<string, SessionMetadata[]>()
   private readonly metadataCache = new Map<string, SessionMetadata>()
   private readonly metadataRequests = createSingleFlight<string, SessionMetadata>()
   private readonly canonicalByName = new Map<string, { canonical: string; dev: number; ino: number }>()
@@ -91,10 +91,11 @@ export class SessionMetadataCatalog {
 
   async all(): Promise<SessionMetadata[]> {
     const revision = this.catalogRevision
-    return this.sessionScanRequests.run(revision, () => this.scan(revision))
+    const executable = resolveExecutable(this.primeAgentPath)
+    return this.sessionScanRequests.run(`${revision}\0${executable ?? ''}`, () => this.scan(revision, executable))
   }
 
-  private async scan(revision: number): Promise<SessionMetadata[]> {
+  private async scan(revision: number, executable: string | null): Promise<SessionMetadata[]> {
     let entries: readonly SessionCatalogEntry[]
     let root: string
     try {
@@ -154,7 +155,7 @@ export class SessionMetadataCatalog {
       }
     }
 
-    const catalogPromise = this.liveCatalog()
+    const catalogPromise = this.liveCatalog(executable)
     const metadata = await mapLimit(selected, 6, async (candidate) => {
       try { return await this.cachedMetadata(candidate, revision) } catch { return null }
     })
@@ -182,8 +183,8 @@ export class SessionMetadataCatalog {
     return { ...metadata }
   }
 
-  private async liveCatalog(): Promise<Map<string, JsonRecord>> {
-    const primeAgentPath = resolveExecutable(this.primeAgentPath)
+  private async liveCatalog(executable = resolveExecutable(this.primeAgentPath)): Promise<Map<string, JsonRecord>> {
+    const primeAgentPath = executable
     if (!primeAgentPath) return new Map()
     const revision = this.catalogRevision
     const cache = this.catalogCache

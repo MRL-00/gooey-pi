@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, createReadStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
+import { appendFileSync, chmodSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, type Stats } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -379,6 +379,45 @@ describe('SessionService user-message ordering', () => {
 })
 
 describe('SessionMetadataCatalog live synchronization', () => {
+  it('does not join an in-flight scan owned by the previous executable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-scan-executable-race-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const file = join(root, 'scan.jsonl')
+    writeSession(file, project, 'scan')
+    const firstStarted = join(dir, 'first-started')
+    const firstRelease = join(dir, 'first-release')
+    const makeExecutable = (name: string, streaming: boolean, wait = false) => {
+      const executable = join(dir, name)
+      writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs')
+${wait ? `fs.writeFileSync(${JSON.stringify(firstStarted)}, '')
+const deadline = Date.now() + 5000
+while (!fs.existsSync(${JSON.stringify(firstRelease)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)` : ''}
+process.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(file)}, isStreaming: ${JSON.stringify(streaming)} }] }))
+`)
+      chmodSync(executable, 0o755)
+      return executable
+    }
+    const firstExecutable = makeExecutable('first-agent.cjs', false, true)
+    const secondExecutable = makeExecutable('second-agent.cjs', true)
+    let executable = firstExecutable
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      () => executable,
+      20,
+      async (filePath) => metadata(filePath, project, 'scan'),
+    )
+
+    const stale = catalog.all()
+    await waitUntil(() => existsSync(firstStarted))
+    executable = secondExecutable
+    const current = catalog.all()
+    await expect(current).resolves.toMatchObject([{ status: 'running' }])
+    writeFileSync(firstRelease, '')
+    await expect(stale).resolves.toMatchObject([{ status: 'idle' }])
+  })
+
   it('does not reuse the previous executable cache after runtime discovery changes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-catalog-executable-')); dirs.push(dir)
     const root = join(dir, 'sessions'); mkdirSync(root)
