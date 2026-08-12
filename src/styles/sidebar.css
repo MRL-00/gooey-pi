@@ -74,6 +74,5 @@
 .project-working, .session-status-mark--running { color: var(--prime); }
 .session-status-mark--waiting, .session-status-mark--complete { color: var(--text-tertiary); }
 .session-status-mark--idle > span, .session-status-mark--unknown > span, .session-status-mark--failed > span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); }
-.session-status-mark--failed > span { background: var(--danger); }
+.session-row-wrap.has-attention .session-status-mark--failed > span { background: var(--danger); }
 .sidebar__footer { flex: 0 0 auto; padding: 7px 8px 9px; border-top: 1px solid var(--border); }
-

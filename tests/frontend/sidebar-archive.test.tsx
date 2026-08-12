@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../../src/components/Sidebar'
+import { sessionAttentionSignature } from '../../src/app/session-attention'
 import type { ProjectRecord, SessionRecord } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -154,5 +155,34 @@ describe('sidebar archive confirmation', () => {
     await press(confirm!)
     expect(onArchiveSession).toHaveBeenCalledOnce()
     expect(onArchiveSession).toHaveBeenCalledWith(session)
+  })
+})
+
+describe('sidebar session notifications', () => {
+  it('mutes an acknowledged failed session without changing its failed status', async () => {
+    const failedSession = { ...session, status: 'failed' as const }
+    const props = {
+      projects: [project],
+      sessions: [failedSession],
+      activeView: 'session' as const,
+      onSelectProject: noop,
+      onSelectSession: noop,
+      onNavigate: noop,
+      onNewSession: noop,
+      onAddProject: noop,
+      onRemoveProject: noop,
+      onClose: noop,
+      onOpenPalette: noop,
+      onRenameSession: async () => undefined,
+      onArchiveSession: async () => undefined,
+    }
+    await act(async () => { root.render(<Sidebar {...props} />) })
+
+    expect(container.querySelector('.session-row-wrap')?.classList.contains('has-attention')).toBe(true)
+
+    const signature = sessionAttentionSignature(failedSession)!
+    await act(async () => { root.render(<Sidebar {...props} clearedAttention={{ [failedSession.id]: signature }} />) })
+    expect(container.querySelector('.session-row-wrap')?.classList.contains('has-attention')).toBe(false)
+    expect(container.querySelector('.session-status-mark--failed')?.getAttribute('title')).toBe('Failed — notification cleared')
   })
 })

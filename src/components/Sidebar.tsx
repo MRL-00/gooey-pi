@@ -95,11 +95,12 @@ export function boundedSidebarSessions(sessions: SessionRecord[]): SessionRecord
 }
 
 
-function SessionStatusMark({ status }: { status: SessionRecord['status'] }) {
+function SessionStatusMark({ status, attention }: { status: SessionRecord['status']; attention: boolean }) {
+  const title = status === 'failed' && !attention ? 'Failed — notification cleared' : statusLabel[status]
   if (status === 'running') return <span className="session-status-mark session-status-mark--running" title={statusLabel[status]}><LoaderCircle className="spin" size={13} /></span>
   if (status === 'waiting') return <span className="session-status-mark session-status-mark--waiting" title={statusLabel[status]}><MessageCircleQuestion size={12} /></span>
   if (status === 'complete') return <span className="session-status-mark session-status-mark--complete" title={statusLabel[status]}><CheckCircle2 size={12} /></span>
-  return <span className={`session-status-mark session-status-mark--${status}`} title={statusLabel[status]}><span /></span>
+  return <span className={`session-status-mark session-status-mark--${status}`} title={title}><span /></span>
 }
 
 const HARNESS_MARKS: Record<HarnessId, (props: { size?: number }) => ReactElement> = { omp: OmpMark, prime: PrimeMark, pi: PiMark }
@@ -248,7 +249,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                   {boundedSidebarSessions(projectSessions).map((session) => (
                     <div key={session.id} className={`session-row-wrap session-row-wrap--${session.status} ${needsAttention(session) ? 'has-attention' : ''} ${activeSessionId === session.id && activeView === 'session' ? 'is-selected' : ''}`}>
                       <button type="button" title={session.title} className="session-row" onClick={() => { setSessionMenu(null); onSelectSession(session) }} onContextMenu={(event) => { event.preventDefault(); setSessionMenu(session.id) }}>
-                        <SessionStatusMark status={session.status} />
+                        <SessionStatusMark status={session.status} attention={needsAttention(session)} />
                         <span className="session-row__text"><span className="session-row__title">{session.title}</span><span className="session-row__meta">{session.status === 'running' ? 'Working' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : formatRelative(session.updatedAt)}</span></span>
                       </button>
                       <IconButton

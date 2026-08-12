@@ -778,14 +778,14 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('alert')).toHaveCount(0)
   })
 
-  test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
+  test('keeps thread order stable and mutes acknowledged failure indicators', async () => {
     const titles = page.locator('.session-row__title')
     await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
     await expect(titles.nth(1)).toHaveText('Primary workspace fixture')
     const primaryFile = join(fixtureSessionFile, '..', 'primary.jsonl')
     appendFileSync(primaryFile, `${JSON.stringify({
       type: 'message', id: 'primary-background-assistant', parentId: 'primary-message', timestamp: '2027-01-01T00:00:00.000Z',
-      message: { role: 'assistant', content: 'Background work finished.' },
+      message: { role: 'assistant', content: 'Background work failed.', stopReason: 'error' },
     })}\n`)
 
     const primaryRow = page.locator('.session-row-wrap').filter({ hasText: 'Primary workspace fixture' })
@@ -796,8 +796,14 @@ test.describe('Prime Work desktop smoke', () => {
     expect(attentionColor.length).toBeGreaterThanOrEqual(3)
     expect(attentionColor[2]).toBeGreaterThan(attentionColor[1])
 
+    const failureMark = primaryRow.locator('.session-status-mark--failed')
+    const activeFailureColor = await failureMark.locator('> span').evaluate((node) => getComputedStyle(node).backgroundColor)
+
     await primaryRow.locator('.session-row').click()
     await expect(primaryRow).not.toHaveClass(/has-attention/)
+    await expect(primaryRow).toHaveClass(/session-row-wrap--failed/)
+    await expect(failureMark).toHaveAttribute('title', 'Failed — notification cleared')
+    await expect.poll(() => failureMark.locator('> span').evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(activeFailureColor)
     await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
     appendFileSync(primaryFile, `${JSON.stringify({
       type: 'message', id: 'primary-new-user', parentId: 'primary-background-assistant', timestamp: '2028-01-01T00:00:00.000Z',
