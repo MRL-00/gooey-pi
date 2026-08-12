@@ -70,6 +70,44 @@ function setDocumentVisibility(state: 'visible' | 'hidden') {
 function Probe({ children }: { children?: ReactNode }) { return <>{children}</> }
 
 describe('settings queue reconciliation', () => {
+  it('runs external settings reconciliation after queued local mutations', async () => {
+    const first = deferred<AppSettings>()
+    const second = deferred<AppSettings>()
+    const update = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const bridge = {
+      settings: { get: async () => DEFAULT_SETTINGS, update },
+    } as unknown as PrimeWorkApi
+    const external = vi.fn(async () => ({ settings: { ...DEFAULT_SETTINGS, sidebarOpen: false, terminalOpen: true, activeHarness: 'pi' as const } }))
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useAppSettings>
+    function SettingsProbe() {
+      state = useAppSettings({ bridge, reportError })
+      return <Probe />
+    }
+    await act(async () => { root.render(<SettingsProbe />); await Promise.resolve() })
+
+    let firstMutation!: Promise<void>
+    let secondMutation!: Promise<void>
+    let reconciliation!: ReturnType<typeof state.reconcileExternalSettings>
+    await act(async () => {
+      firstMutation = state.updateSettings({ sidebarOpen: false })
+      secondMutation = state.updateSettings({ terminalOpen: true })
+      reconciliation = state.reconcileExternalSettings(external)
+      await Promise.resolve()
+    })
+    expect(external).not.toHaveBeenCalled()
+
+    const afterFirst = { ...DEFAULT_SETTINGS, sidebarOpen: false }
+    await act(async () => { first.resolve(afterFirst); await firstMutation; await Promise.resolve() })
+    expect(external).not.toHaveBeenCalled()
+    const afterSecond = { ...afterFirst, terminalOpen: true }
+    await act(async () => { second.resolve(afterSecond); await secondMutation; await reconciliation })
+    expect(external).toHaveBeenCalledTimes(1)
+    expect(state.settings).toMatchObject({ sidebarOpen: false, terminalOpen: true, activeHarness: 'pi' })
+  })
+
   it('does not initialize until persisted settings finish loading', async () => {
     const persisted = deferred<AppSettings>()
     const bridge = {

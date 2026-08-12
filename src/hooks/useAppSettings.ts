@@ -78,11 +78,23 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     }
   }, [applySettings, bridge, reportError, takeConfirmedPanelPatch])
 
-  const applyExternalSettings = useCallback((next: AppSettings) => {
-    settingsMutationRef.current += 1
-    confirmedSettingsRef.current = next
-    transientPanelKeysRef.current.clear()
-    applySettings(next, next)
+  const reconcileExternalSettings = useCallback(async <T extends { settings: AppSettings }>(
+    operation: () => Promise<T | null>,
+  ): Promise<T | null> => {
+    // Start the external transaction only after locally queued settings have
+    // persisted, so its returned snapshot cannot predate them.
+    await settingsQueueRef.current
+    const revision = settingsMutationRef.current
+    const result = await operation()
+    if (!result) return null
+    confirmedSettingsRef.current = result.settings
+    // A new optimistic mutation started while the external operation ran.
+    // Keep it visible; its queued result will become the next authority.
+    if (settingsMutationRef.current === revision) {
+      transientPanelKeysRef.current.clear()
+      applySettings(result.settings, result.settings)
+    }
+    return result
   }, [applySettings])
 
   useEffect(() => {
@@ -135,6 +147,6 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     inspectorTab,
     selectInspectorTab,
     updateSettings,
-    applyExternalSettings,
+    reconcileExternalSettings,
   }
 }

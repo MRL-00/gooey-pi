@@ -170,13 +170,12 @@ export default function App() {
     [meta],
   )
   const refreshDetectedHarnesses = useCallback(async () => {
-    const result = await refreshHarnesses()
+    const result = await settingsState.reconcileExternalSettings(refreshHarnesses)
     if (!result) return
-    settingsState.applyExternalSettings(result.settings)
     if (result.settings.activeHarness === activeHarness && result.meta.harnesses[activeHarness].path) {
       await provider.refresh(true)
     }
-  }, [activeHarness, provider.refresh, refreshHarnesses, settingsState.applyExternalSettings])
+  }, [activeHarness, provider.refresh, refreshHarnesses, settingsState.reconcileExternalSettings])
   useEffect(() => {
     if (detectedHarnesses.length) setNoHarnessPromptDismissed(false)
   }, [detectedHarnesses.length])
