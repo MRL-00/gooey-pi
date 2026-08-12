@@ -295,6 +295,19 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     await waitUntil(() => manager.list().length === 0)
   })
 
+  it('retires a runtime whose launch overlapped a capability environment change', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    manager.setRuntimeEnvironmentProvider(() => {
+      void manager.requestRuntimeEnvironmentRefresh()
+      return {}
+    })
+
+    await manager.start({ cwd: fake.cwd })
+
+    await waitUntil(() => manager.list().length === 0)
+  })
+
   it('admits more than four runtimes when every existing session is active', async () => {
     const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'busy', isStreaming: true, isCompacting: false } }"
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)

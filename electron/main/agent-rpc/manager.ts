@@ -87,6 +87,7 @@ export class AgentRpcManager {
     }
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
+    const runtimeEnvironmentRevision = this.runtimeEnvironmentRevision
     const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath, interactive })
     const args = this.adapter.buildStartArgs({
       cwd,
@@ -97,21 +98,27 @@ export class AgentRpcManager {
       approvalMode: this.approvalMode(),
       environment: runtimeEnvironment,
     })
-    const runtime = await this.admitRuntime(() => new RpcRuntime(
-      executable,
-      args,
-      cwd,
-      (event) => this.eventSink(event),
-      (closed) => {
-        this.startingRuntimes.delete(closed.runtimeId)
-        this.runtimes.delete(closed.runtimeId)
-        this.runtimeEnvironmentRevisions.delete(closed.runtimeId)
-      },
-      runtimeEnvironment,
-      {},
-      this.adapter,
-    ))
-    this.runtimeEnvironmentRevisions.set(runtime.runtimeId, this.runtimeEnvironmentRevision)
+    const runtime = await this.admitRuntime(() => {
+      const created = new RpcRuntime(
+        executable,
+        args,
+        cwd,
+        (event) => this.eventSink(event),
+        (closed) => {
+          this.startingRuntimes.delete(closed.runtimeId)
+          this.runtimes.delete(closed.runtimeId)
+          this.runtimeEnvironmentRevisions.delete(closed.runtimeId)
+        },
+        runtimeEnvironment,
+        {},
+        this.adapter,
+      )
+      // Record the environment generation before admission resolves so a
+      // concurrent settings refresh cannot mistake this child for a new one.
+      this.runtimeEnvironmentRevisions.set(created.runtimeId, runtimeEnvironmentRevision)
+      return created
+    })
+    if (runtimeEnvironmentRevision < this.runtimeEnvironmentRevision) void this.retireWhenIdle(runtime)
     try {
       await runtime.handshake()
       await this.decorate(runtime)
@@ -258,7 +265,8 @@ export class AgentRpcManager {
 
   private async retireWhenIdle(runtime: RpcRuntime): Promise<void> {
     const wantedRevision = this.runtimeEnvironmentRevision
-    if ((this.runtimeEnvironmentRevisions.get(runtime.runtimeId) ?? wantedRevision) >= wantedRevision) return
+    if (!this.runtimes.has(runtime.runtimeId)
+      || (this.runtimeEnvironmentRevisions.get(runtime.runtimeId) ?? wantedRevision) >= wantedRevision) return
     if (this.isIdle(runtime)) {
       await runtime.stop()
       return
