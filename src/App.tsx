@@ -6,6 +6,7 @@ import { ChangesCard } from '@/components/ChangesCard'
 import { Composer } from '@/components/Composer'
 import type { TerminalDrawerHandle } from '@/components/TerminalDrawer'
 import { ResizeHandle } from '@/components/ResizeHandle'
+import { NoHarnessPrompt } from '@/components/NoHarnessPrompt'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
 import { readClearedAttention, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '@/app/session-attention'
 import { errorMessage } from '@/lib/errors'
@@ -28,7 +29,7 @@ import { useStableCallback } from '@/hooks/useStableCallback'
 import { useToast } from '@/hooks/useToast'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import type { GitStatus, GitWorktree, HarnessId, NativeHeartbeatRecord, PrimeModelDescriptor, PrimeProviderDescriptor, ProjectRecord, AutomationScheduleRecord, QueuedPrompt, ScheduleTiming, SessionRecord, TerminalSelectionContext, VoiceTaskStarted, WorkspaceView } from '@/types/api'
+import { HARNESS_IDS, type GitStatus, type GitWorktree, type HarnessId, type NativeHeartbeatRecord, type PrimeModelDescriptor, type PrimeProviderDescriptor, type ProjectRecord, type AutomationScheduleRecord, type QueuedPrompt, type ScheduleTiming, type SessionRecord, type TerminalSelectionContext, type VoiceTaskStarted, type WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
 const Inspector = lazy(() => import('@/components/Inspector').then((module) => ({ default: module.Inspector })))
@@ -77,6 +78,8 @@ export default function App() {
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [worktreesLoading, setWorktreesLoading] = useState(false)
   const [view, setView] = useState<WorkspaceView>('session')
+  const [settingsInitialSection, setSettingsInitialSection] = useState<'general' | 'agent'>('general')
+  const [noHarnessPromptDismissed, setNoHarnessPromptDismissed] = useState(false)
   const [browserGeneration, setBrowserGeneration] = useState(0)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [voiceOrbOpen, setVoiceOrbOpen] = useState(false)
@@ -156,12 +159,28 @@ export default function App() {
   const onHarnessSwitch = useCallback(() => {
     setScheduleFocusId(null)
   }, [])
-  const { meta, initialized } = useBootstrap({
+  const { meta, initialized, refreshHarnesses } = useBootstrap({
     bridge, harness: activeHarness, setProjects, setSessions, setSchedules, setScheduleError,
     runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
     activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime,
     sessionHasOpenExtensionUi: extension.hasOpenRequestForSession, onHarnessSwitch, reportError,
   })
+  const detectedHarnesses = useMemo(
+    () => meta ? HARNESS_IDS.filter((harness) => Boolean(meta.harnesses[harness].path)) : [],
+    [meta],
+  )
+  const refreshDetectedHarnesses = useCallback(async () => {
+    const result = await refreshHarnesses()
+    if (!result) return
+    settingsState.applyExternalSettings(result.settings)
+    if (result.settings.activeHarness === activeHarness) await provider.refresh(true)
+  }, [activeHarness, provider.refresh, refreshHarnesses, settingsState.applyExternalSettings])
+  useEffect(() => {
+    if (detectedHarnesses.length) setNoHarnessPromptDismissed(false)
+  }, [detectedHarnesses.length])
+  useEffect(() => {
+    if (view !== 'settings') setSettingsInitialSection('general')
+  }, [view])
 
   const refreshGit = useCallback(async () => {
     const requestId = ++gitRequestRef.current
@@ -424,14 +443,14 @@ export default function App() {
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} onRestore={(session) => void setSessionArchived(session, false)} />
     : view === 'scheduled' ? <ScheduledPage harness={activeHarness} schedules={schedules} nativeHeartbeats={activeHarness === 'prime' ? heartbeats : []} projects={projects} sessions={sessions} models={provider.catalog?.models ?? EMPTY_MODELS} error={scheduleError} initialProjectId={activeProject?.id} initialSessionId={activeSession?.id} selectedScheduleId={scheduleFocusId} onCreate={createSchedule} onUpdate={updateSchedule} onPause={(id: string) => mutateSchedule(() => bridge!.schedules.pause(id))} onResume={(id: string) => mutateSchedule(() => bridge!.schedules.resume(id))} onDelete={(id: string) => mutateSchedule(() => bridge!.schedules.delete(id))} onRunNow={(id: string) => mutateSchedule(() => bridge!.schedules.runNow(id))} onPreview={async (timing: ScheduleTiming) => bridge ? bridge.schedules.preview(timing, 3) : { timing, occurrences: [] }} onOpenSession={openScheduledSession} onManageHeartbeat={manageHeartbeat} />
     : view === 'plugins' ? <PluginsPage harness={activeHarness} skills={pluginSkills.skills} warnings={pluginSkills.warnings} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} onRefresh={pluginSkills.refresh} onInstall={installSkill} onConnectMcp={connectMcp} />
-    : view === 'settings' ? <SettingsPage settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} voice={bridge?.voice ?? null} pets={bridge?.pets ?? null} onUpdate={settingsState.updateSettings} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
+    : view === 'settings' ? <SettingsPage initialSection={settingsInitialSection} settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} voice={bridge?.voice ?? null} pets={bridge?.pets ?? null} onUpdate={settingsState.updateSettings} onRefreshHarnesses={refreshDetectedHarnesses} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {
         if (!bridge) throw new Error('Browser data can only be cleared in the desktop app.')
         if (!await bridge.settings.resetBrowserData()) { const error = new Error('GooeyPi could not clear all browser data. Close active downloads and try again.'); reportError(error); throw error }
         setBrowserGeneration((value) => value + 1)
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(HARNESS_PROVIDER_DOCS[activeHarness]) }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
-    {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} enabledHarnesses={settingsState.settings.enabledHarnesses} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
+    {settingsState.sidebarOpen && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {settingsState.sidebarOpen && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && settingsState.sidebarOpen ? true : undefined}>
       <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={settingsState.sidebarOpen} inspectorOpen={settingsState.inspectorOpen} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={toggleVoice} onOpenBrowser={openBrowser} />
@@ -456,6 +475,12 @@ export default function App() {
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open harness={activeHarness} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}
     {provider.authEvent ? <Suspense fallback={<LoadingPanel label="provider login" />}><ProviderAuthModal event={provider.authEvent} onOpen={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRespond={provider.respondOAuth} onCancel={provider.cancelOAuth} /></Suspense> : null}
+    {meta && !detectedHarnesses.length && !noHarnessPromptDismissed ? (
+      <NoHarnessPrompt
+        onClose={() => setNoHarnessPromptDismissed(true)}
+        onOpenHarnessSettings={() => { setNoHarnessPromptDismissed(true); setSettingsInitialSection('agent'); setView('settings') }}
+      />
+    ) : null}
     {toast ? <div className="toast" role="status">{toast}<button type="button" aria-label="Dismiss" onClick={() => setToast(null)}>×</button></div> : null}
     {bridge ? <AgentBrowserLayer tabs={agentBrowser.tabs} visibleTabId={agentTabVisible ? activeAgentTabId : null} rect={agentTabVisible ? agentSlotRect : null} pointerEvent={agentBrowser.pointerEvent} onAttach={agentBrowser.attach} /> : null}
   </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { findRuntimeForWorkspace, selectStartupWorkspace } from '@/lib/workspace'
 import type { WorkspaceSnapshot } from '@/app/workspace'
@@ -110,6 +110,13 @@ export function useBootstrap({
   const [meta, setMeta] = useState<AppMeta | null>(null)
   const [initialized, setInitialized] = useState(!bridge)
   const previousHarnessRef = useRef(harness)
+
+  const refreshHarnesses = useCallback(async () => {
+    if (!bridge) return null
+    const result = await bridge.app.refreshHarnesses()
+    setMeta(result.meta)
+    return result
+  }, [bridge])
 
   useEffect(() => {
     if (!bridge) return
@@ -251,5 +258,5 @@ export function useBootstrap({
     }
   }, [bridge, harness, initialized, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
 
-  return { meta, initialized }
+  return { meta, initialized, refreshHarnesses }
 }

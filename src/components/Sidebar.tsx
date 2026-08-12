@@ -21,7 +21,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
-import { HARNESS_IDS, type AppMeta, type HarnessId, type ProjectRecord, type SessionRecord, type WorkspaceView } from '@/types/api'
+import type { AppMeta, HarnessId, ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { sessionAttentionSignature } from '@/app/session-attention'
@@ -35,7 +35,6 @@ export interface SidebarProps {
   activeView: WorkspaceView
   activeHarness?: HarnessId
   harnesses?: AppMeta['harnesses'] | null
-  enabledHarnesses?: HarnessId[]
   clearedAttention?: Record<string, string>
   onSelectHarness?(harness: HarnessId): void
   onSelectProject(project: ProjectRecord): void
@@ -110,7 +109,7 @@ function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
   return <Mark size={size} />
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, enabledHarnesses = [...HARNESS_IDS], clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -181,9 +180,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
           </button>
           {harnessMenuOpen ? (
             <div className="brand-switcher__menu" role="menu" aria-label="Harness">
-              {HARNESS_SELECTOR_ORDER.filter((harness) => enabledHarnesses.includes(harness)).map((harness) => {
-                const detected = Boolean(harnesses?.[harness]?.path)
-                return (
+              {HARNESS_SELECTOR_ORDER.filter((harness) => Boolean(harnesses?.[harness]?.path)).map((harness) => (
                   <button
                     type="button"
                     key={harness}
@@ -193,11 +190,10 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                     onClick={() => { setHarnessMenuOpen(false); if (harness !== activeHarness) onSelectHarness?.(harness) }}
                   >
                     <HarnessMark harness={harness} size={20} />
-                    <span className="brand-switcher__option"><strong>{HARNESS_PRODUCT_NAMES[harness]}</strong>{detected ? null : <small>Not detected</small>}</span>
+                    <span className="brand-switcher__option"><strong>{HARNESS_PRODUCT_NAMES[harness]}</strong></span>
                     {harness === activeHarness ? <Check size={13} aria-hidden="true" /> : null}
                   </button>
-                )
-              })}
+              ))}
             </div>
           ) : null}
         </div>
@@ -297,7 +293,6 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.activeView === next.activeView
     && previous.activeHarness === next.activeHarness
     && previous.harnesses === next.harnesses
-    && previous.enabledHarnesses === next.enabledHarnesses
     && previous.clearedAttention === next.clearedAttention
     && previous.onSelectHarness === next.onSelectHarness
     && previous.onSelectProject === next.onSelectProject

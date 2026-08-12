@@ -1,5 +1,7 @@
-import { Bot, Keyboard, ShieldCheck } from 'lucide-react'
+import { Bot, Keyboard, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
+import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES } from '@/lib/harness'
 import type { SettingsMetaSectionProps } from './contracts'
 import { DraftSettingField } from './DraftSettingField'
@@ -12,17 +14,17 @@ const APPROVAL_MODE_LABELS: Record<OmpApprovalMode, string> = {
   'yolo': 'YOLO (never prompt)',
 }
 
-export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionProps) {
+export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: SettingsMetaSectionProps) {
   const activeHarness = settings.activeHarness
-  const toggleHarness = (harness: HarnessId, enabled: boolean) => {
-    const next = enabled
-      ? [...new Set([...settings.enabledHarnesses, harness])]
-      : settings.enabledHarnesses.filter((candidate) => candidate !== harness)
-    if (!next.length) return
-    const nextDefault = next.length === 1
-      ? next[0]
-      : next.includes(settings.activeHarness) ? settings.activeHarness : next[0]
-    void onUpdate({ enabledHarnesses: next, activeHarness: nextDefault })
+  const detectedHarnesses = HARNESS_IDS.filter((harness) => Boolean(meta?.harnesses[harness].path))
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  const refreshHarnesses = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    setRefreshError('')
+    try { await onRefreshHarnesses() } catch (error) { setRefreshError(errorMessage(error)) }
+    finally { setRefreshing(false) }
   }
   const runtimePathValidation = (value: string, harness: HarnessId): string => {
     if (!value) return ''
@@ -34,11 +36,11 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
       <header><h1>Harness</h1><p>Runtime discovery, model providers, and workspace permissions.</p></header>
       <section className="settings-group">
         <h2>Harness</h2>
-        {HARNESS_IDS.map((harness) => <SettingsToggle key={harness} checked={settings.enabledHarnesses.includes(harness)} onChange={(enabled) => toggleHarness(harness, enabled)} label={`Enable ${HARNESS_PRODUCT_NAMES[harness]}`} description="Show this harness in the Harness menu and allow it to be the default." />)}
         <label className="settings-row">
           <span><strong>Default harness</strong><small>The harness opened by default; mirrors the current choice in the Harness menu.</small></span>
-          <select value={activeHarness} onChange={(event) => { void onUpdate({ activeHarness: event.target.value as HarnessId }) }}>
-            {HARNESS_IDS.filter((harness) => settings.enabledHarnesses.includes(harness)).map((harness) => <option key={harness} value={harness}>{HARNESS_PRODUCT_NAMES[harness]}</option>)}
+          <select value={detectedHarnesses.includes(activeHarness) ? activeHarness : ''} disabled={!detectedHarnesses.length} onChange={(event) => { void onUpdate({ activeHarness: event.target.value as HarnessId }) }}>
+            {!detectedHarnesses.length ? <option value="">No harness detected</option> : null}
+            {detectedHarnesses.map((harness) => <option key={harness} value={harness}>{HARNESS_PRODUCT_NAMES[harness]}</option>)}
           </select>
         </label>
         <label className="settings-row">
@@ -49,7 +51,13 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
         </label>
       </section>
       <section className="settings-group">
-        <h2>Runtime</h2>
+        <div className="settings-group__heading">
+          <h2>Runtime</h2>
+          <button type="button" className="button button--compact" disabled={refreshing} onClick={() => { void refreshHarnesses() }}>
+            <RefreshCw className={refreshing ? 'spin' : ''} size={13} />{refreshing ? 'Refreshing…' : 'Refresh harnesses'}
+          </button>
+        </div>
+        {refreshError ? <p className="settings-error" role="alert">{refreshError}</p> : null}
         {HARNESS_IDS.map((harness) => {
           const name = HARNESS_AGENT_NAMES[harness]
           const status = meta?.harnesses[harness]
@@ -58,13 +66,13 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
               <span className={status?.path ? 'is-online' : ''}><Bot size={17} /></span>
               <div>
                 <strong>{status?.path ? `${name} is ready` : `${name} not detected`}</strong>
-                <small>{status?.path ?? `Install ${name} and restart the app.`}</small>
+                <small>{status?.path ?? `Install ${name}, then refresh harnesses.`}</small>
               </div>
               {status?.version ? <code>v{status.version}</code> : null}
             </div>
           )
         })}
-        <p className="settings-group__description">Discovery checks a saved override first, then the harness environment variable, bundled files, PATH, and standard install directories. Changes apply after restarting GooeyPi.</p>
+        <p className="settings-group__description">Discovery checks a saved override first, then the harness environment variable, bundled files, PATH, and standard install directories. Refreshing updates future sessions without restarting GooeyPi.</p>
         {HARNESS_IDS.map((harness) => <DraftSettingField
           key={harness}
           id={`runtime-path-${harness}`}
@@ -73,7 +81,10 @@ export function AgentSettings({ settings, meta, onUpdate }: SettingsMetaSectionP
           committedValue={settings.runtimePaths[harness]}
           validate={(value) => runtimePathValidation(value.trim(), harness)}
           normalize={(value) => value.trim()}
-          onCommit={(value) => onUpdate({ runtimePaths: { ...settings.runtimePaths, [harness]: value } })}
+          onCommit={async (value) => {
+            await onUpdate({ runtimePaths: { ...settings.runtimePaths, [harness]: value } })
+            await refreshHarnesses()
+          }}
         />)}
       </section>
       <section className="settings-group">

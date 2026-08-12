@@ -77,6 +77,13 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     }
   }, [applySettings, bridge, reportError, takeConfirmedPanelPatch])
 
+  const applyExternalSettings = useCallback((next: AppSettings) => {
+    settingsMutationRef.current += 1
+    confirmedSettingsRef.current = next
+    transientPanelKeysRef.current.clear()
+    applySettings(next, next)
+  }, [applySettings])
+
   useEffect(() => {
     if (!bridge) return
     let cancelled = false
@@ -120,5 +127,6 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     inspectorTab,
     selectInspectorTab,
     updateSettings,
+    applyExternalSettings,
   }
 }

@@ -38,16 +38,18 @@ interface SettingsPageProps {
   onResetBrowser(): Promise<void> | void
   onOpenDocs(): void
   onRefreshProviders(): Promise<void>
+  onRefreshHarnesses(): Promise<void>
   onSaveProviderApiKey(providerId: string, apiKey: string): Promise<void>
   onLogoutProvider(providerId: string): Promise<void>
   onSetProviderEnabled(providerId: string, enabled: boolean): Promise<void>
   onSetAllProvidersEnabled(): Promise<void>
   onSetAllProvidersDisabled(): Promise<void>
   onStartProviderOAuth(providerId: string): Promise<void>
+  initialSection?: SettingsSection
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth }: SettingsPageProps) {
-  const [section, setSection] = useState<SettingsSection>('general')
+export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onRefreshHarnesses, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth, initialSection = 'general' }: SettingsPageProps) {
+  const [section, setSection] = useState<SettingsSection>(initialSection)
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
@@ -69,7 +71,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
     switch (section) {
       case 'general': return <GeneralSettings settings={settings} onUpdate={onUpdate} />
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
-      case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} />
+      case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />
       case 'providers': return <ProvidersSettings harness={settings.activeHarness} catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
       case 'voice': return <VoiceSettings settings={settings} onUpdate={onUpdate} voice={voice} />
       case 'pets': return <PetsSettings settings={settings} onUpdate={onUpdate} pets={pets} />

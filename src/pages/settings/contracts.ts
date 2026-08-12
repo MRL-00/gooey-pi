@@ -11,6 +11,7 @@ export interface SettingsSectionProps {
 
 export interface SettingsMetaSectionProps extends SettingsSectionProps {
   meta?: AppMeta | null
+  onRefreshHarnesses(): Promise<void>
 }
 
 export const SETTINGS_FIELD_SECTIONS = {

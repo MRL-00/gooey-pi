@@ -47,6 +47,14 @@ const meta: AppMeta = {
   version: '1', platform: 'darwin', homeDir: '/Users/you',
   harnesses: { prime: { path: '/usr/local/bin/prime-agent', version: '0.7.0' }, omp: { path: null, version: null }, pi: { path: null, version: null } },
 }
+const allDetectedMeta: AppMeta = {
+  ...meta,
+  harnesses: {
+    prime: meta.harnesses.prime,
+    omp: { path: '/usr/local/bin/omp', version: '17.2.11' },
+    pi: { path: '/usr/local/bin/pi', version: '0.84.1' },
+  },
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -310,7 +318,7 @@ describe('inactive harness event isolation', () => {
 
 describe('sidebar brand switcher', () => {
   const noop = () => undefined
-  function renderSidebar(onSelectHarness: (harness: HarnessId) => void, activeHarness: HarnessId = 'prime') {
+  function renderSidebar(onSelectHarness: (harness: HarnessId) => void, activeHarness: HarnessId = 'prime', appMeta = meta) {
     return act(async () => {
       root.render(
         <Sidebar
@@ -318,7 +326,7 @@ describe('sidebar brand switcher', () => {
           sessions={[primeSession]}
           activeView="session"
           activeHarness={activeHarness}
-          harnesses={meta.harnesses}
+          harnesses={appMeta.harnesses}
           onSelectHarness={onSelectHarness}
           onSelectProject={noop}
           onSelectSession={noop}
@@ -335,7 +343,7 @@ describe('sidebar brand switcher', () => {
     })
   }
 
-  it('lists all three harnesses with detection state and fires the settings update', async () => {
+  it('lists only harnesses with a detected executable', async () => {
     const onSelectHarness = vi.fn()
     await renderSidebar(onSelectHarness)
 
@@ -349,19 +357,17 @@ describe('sidebar brand switcher', () => {
     const menu = container.querySelector('[role="menu"]')
     expect(menu).not.toBeNull()
     const options = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
-    expect(options.map((option) => option.textContent)).toEqual(['Pi WorkNot detected', 'OMP WorkNot detected', 'Prime Work'])
-    expect(options[0].getAttribute('aria-checked')).toBe('false')
-    expect(options[1].getAttribute('aria-checked')).toBe('false')
-    expect(options[2].getAttribute('aria-checked')).toBe('true')
+    expect(options.map((option) => option.textContent)).toEqual(['Prime Work'])
+    expect(options[0].getAttribute('aria-checked')).toBe('true')
 
     await click(options[0])
-    expect(onSelectHarness).toHaveBeenCalledWith('pi')
+    expect(onSelectHarness).not.toHaveBeenCalled()
     expect(container.querySelector('[role="menu"]')).toBeNull()
   })
 
   it('switches to Pi from the brand switcher', async () => {
     const onSelectHarness = vi.fn()
-    await renderSidebar(onSelectHarness)
+    await renderSidebar(onSelectHarness, 'prime', allDetectedMeta)
 
     await click(container.querySelector('.brand-switcher__trigger')!)
     const options = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
@@ -372,7 +378,7 @@ describe('sidebar brand switcher', () => {
 
   it('closes on Escape without selecting and shows shared navigation for OMP', async () => {
     const onSelectHarness = vi.fn()
-    await renderSidebar(onSelectHarness, 'omp')
+    await renderSidebar(onSelectHarness, 'omp', allDetectedMeta)
 
     expect([...container.querySelectorAll('nav.sidebar__primary button span')].map((item) => item.textContent)).toContain('Scheduled')
     expect(container.textContent).toContain('Plugins & skills')
@@ -436,19 +442,26 @@ describe('provider catalog per harness', () => {
 describe('harness settings surfaces', () => {
   it('keeps Harness settings universal while leaving only providers harness-specific', async () => {
     const onUpdate = vi.fn()
+    const onRefreshHarnesses = vi.fn(async () => undefined)
     const primeSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'prime' }
-    await act(async () => { root.render(<AgentSettings settings={primeSettings} meta={meta} onUpdate={onUpdate} />) })
+    await act(async () => { root.render(<AgentSettings settings={primeSettings} meta={meta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />) })
     expect(container.textContent).toContain('Default harness')
     expect(container.textContent).toContain('OMP approval mode')
     expect(container.textContent).toContain('Prime Agent is ready')
     expect(container.textContent).toContain('OMP not detected')
+    expect([...container.querySelectorAll<HTMLSelectElement>('select')[0].options].map((option) => option.textContent)).toEqual(['Prime Work'])
 
+    const refresh = [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Refresh harnesses'))!
+    await click(refresh)
+    expect(onRefreshHarnesses).toHaveBeenCalledTimes(1)
+
+    await act(async () => { root.render(<AgentSettings settings={primeSettings} meta={allDetectedMeta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />) })
     const harnessSelect = container.querySelector<HTMLSelectElement>('select')!
     await select(harnessSelect!, 'omp')
     expect(onUpdate).toHaveBeenCalledWith({ activeHarness: 'omp' })
 
     const piSettings: AppSettings = { ...DEFAULT_SETTINGS, activeHarness: 'pi' }
-    await act(async () => { root.render(<AgentSettings settings={piSettings} meta={meta} onUpdate={onUpdate} />) })
+    await act(async () => { root.render(<AgentSettings settings={piSettings} meta={allDetectedMeta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />) })
     expect(container.textContent).toContain('OMP approval mode')
     const selects = [...container.querySelectorAll<HTMLSelectElement>('select')]
     expect(selects).toHaveLength(2)
@@ -461,7 +474,6 @@ describe('harness settings surfaces', () => {
     ])
     await select(approvalSelect, 'write')
     expect(onUpdate).toHaveBeenCalledWith({ ompApprovalMode: 'write' })
-    expect(container.textContent).toContain('Pi not detected')
     expect([...selects[0].options].map((option) => option.textContent)).toEqual(['OMP Work', 'Prime Work', 'Pi Work'])
   })
 
