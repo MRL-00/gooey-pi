@@ -180,7 +180,7 @@ process.stdout.write(JSON.stringify({ type: 'response', id: '1', command: 'get_a
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toMatch(/rejected the model catalog request: boom/)
     // The bell and ANSI escape control characters were stripped.
-    expect((error as Error).message).not.toMatch(/[\u0000-\u001f]/)
+    expect([...(error as Error).message].some((character) => character.charCodeAt(0) <= 0x1f)).toBe(false)
     expect((error as Error).message).toContain('hostile')
   })
 

@@ -18,6 +18,14 @@ interface RegisteredTool {
   parameters: unknown
 }
 
+interface TestSchema {
+  type?: string
+  enum?: unknown[]
+  required?: string[]
+  properties: Record<string, TestSchema>
+  items: TestSchema
+}
+
 function piHost() {
   const tools: RegisteredTool[] = []
   return {
@@ -26,8 +34,8 @@ function piHost() {
   }
 }
 
-function schemaOf(tool: RegisteredTool): Record<string, any> {
-  return tool.parameters as Record<string, any>
+function schemaOf(tool: RegisteredTool): TestSchema {
+  return tool.parameters as TestSchema
 }
 
 afterEach(() => {

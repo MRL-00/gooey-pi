@@ -1,4 +1,4 @@
-import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, RotateCcw, Sparkles, Undo2 } from 'lucide-react'
+import { ArrowDownToLine, File, FileCode2, GitBranch, LoaderCircle, RefreshCw, Sparkles, Undo2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
 import type { GitStatus } from '@/types/api'

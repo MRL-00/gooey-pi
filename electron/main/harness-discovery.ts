@@ -13,6 +13,13 @@ export interface HarnessDiscoveryOptions {
   probeExecutable?: ExecutableProbe
 }
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+}
+
 const emptyStatuses = (): Record<HarnessId, HarnessStatus> => ({
   omp: { path: null, version: null },
   prime: { path: null, version: null },
@@ -24,7 +31,7 @@ export async function probeHarnessExecutable(executable: string): Promise<Harnes
     const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 16 * 1024 })
     if (result.code !== 0 || result.timedOut || result.outputExceeded) return { runnable: false, version: null }
     const token = result.stdout.trim().split(/\s+/).at(-1) ?? ''
-    const version = token && token.length <= 128 && !/[\u0000-\u001f\u007f]/.test(token) ? token : null
+    const version = token && token.length <= 128 && !hasControlCharacter(token) ? token : null
     return { runnable: true, version }
   } catch { return { runnable: false, version: null } }
 }

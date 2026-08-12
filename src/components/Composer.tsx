@@ -629,7 +629,7 @@ export const Composer = memo(function Composer({
                 >
                   <SquareTerminal size={13} />
                   <span>{terminalSelection.label}</span>
-                  <><small>selected</small><ChevronDown size={11} className={terminalSelectionOpen ? 'is-open' : ''} /></>
+                  <small>selected</small><ChevronDown size={11} className={terminalSelectionOpen ? 'is-open' : ''} />
                 </button>
                 <button type="button" className="composer-attachment__clear" aria-label="Clear terminal selection" onClick={onClearTerminalSelection}><X size={12} /></button>
               </div>

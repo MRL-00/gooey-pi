@@ -42,7 +42,7 @@ function boundedInteger(value: unknown): number {
 function toThinkingLevels(reasoning: boolean, rawMap: Record<string, unknown> | undefined): PrimeThinkingLevel[] {
   if (!reasoning) return ['off']
   return PRIME_THINKING_LEVELS.filter((level) => {
-    const mapped = rawMap && Object.prototype.hasOwnProperty.call(rawMap, level) ? rawMap[level] : undefined
+    const mapped = rawMap && Object.hasOwn(rawMap, level) ? rawMap[level] : undefined
     if (mapped === null) return false
     if (level === 'xhigh' || level === 'max') return typeof mapped === 'string'
     return true
@@ -175,7 +175,7 @@ function runModelProbe(executable: string, options: { timeoutMs: number; maxOutp
     child.once('close', (code, signal) => {
       if (settled) return
       // A clean EOF may leave the response as a final unterminated line.
-      scan(decoder.end() + '\n')
+      scan(`${decoder.end()}\n`)
       if (settled) return
       settle(() => reject(new Error(signal
         ? `pi was terminated by ${signal} without answering the model catalog probe`

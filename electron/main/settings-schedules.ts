@@ -74,7 +74,7 @@ export class SettingsService {
       petEnabled: (value) => requireBoolean(value, 'petEnabled'),
       petId: (value) => {
         const id = requireString(value, 'petId', { min: 1, max: 128, trim: true })
-        if (!/^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(id)) throw new TypeError('Invalid pet id')
+        if (!/^[a-z0-9][a-z0-9._/-]{0,127}$/i.test(id)) throw new TypeError('Invalid pet id')
         return id
       },
       petSize: (value) => requireInteger(value, 'petSize', 50, 125),
