@@ -39,11 +39,13 @@ interface PluginsPageProps {
   loading: boolean
   activeProjectPath?: string
   onRefresh(): Promise<void>
+  askUserEnabled: boolean
+  onSetAskUserEnabled(enabled: boolean): Promise<void>
   onInstall(source: string): Promise<{ ok: boolean; output: string }>
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
 }
 
-export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -58,12 +60,13 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [mcpScope, setMcpScope] = useState<McpScope>('user')
   const [result, setResult] = useState('')
   const [adding, setAdding] = useState(false)
+  const [askUserUpdating, setAskUserUpdating] = useState(false)
 
-  const visible = useMemo(() => skills.filter((skill) =>
+  const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user' ? { ...skill, enabled: askUserEnabled } : skill).filter((skill) =>
     (tab === 'skills' ? skill.kind === 'skill' || skill.kind === 'prompt' : skill.kind !== 'skill' && skill.kind !== 'prompt')
     && (filter === 'all' || filter === 'installed' && skill.enabled || filter === skill.location)
     && `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase())
-  ), [skills, tab, filter, query])
+  ), [askUserEnabled, skills, tab, filter, query])
 
   const canAdd = addKind === 'repository'
     ? Boolean(source.trim())
@@ -95,6 +98,16 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
 
   const selectAddKind = (value: AddKind) => { setAddKind(value); setResult('') }
   const openAdd = () => { setResult(''); setAddOpen(true) }
+  const toggleAskUser = async () => {
+    if (askUserUpdating) return
+    setAskUserUpdating(true)
+    try {
+      await onSetAskUserEnabled(!askUserEnabled)
+      await onRefresh()
+    } finally {
+      setAskUserUpdating(false)
+    }
+  }
 
   return (
     <div className="page plugin-page scroll-area">
@@ -128,7 +141,18 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             <article key={skill.id}>
               <span className={`directory-icon directory-icon--${skill.kind}`}><SkillIcon skill={skill}/></span>
               <div><div><h3>{skill.name}</h3><span>{skill.location}</span></div><p>{skill.description}</p></div>
-              <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>
+              {skill.id === 'gooeypi-ask-user' ? (
+                <button
+                  type="button"
+                  className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
+                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Ask user`}
+                  aria-pressed={skill.enabled}
+                  disabled={askUserUpdating}
+                  onClick={() => void toggleAskUser()}
+                >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
+              ) : (
+                <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>
+              )}
             </article>
           ))}</div>
         ) : <EmptyState icon={<Sparkles size={23}/>} title="Nothing here yet">Try another filter, connect an MCP server, or add a repository package.</EmptyState>}

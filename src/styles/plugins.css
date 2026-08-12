@@ -24,7 +24,9 @@
 .directory-list h3 { margin: 0; font-size: 12px; font-weight: 560; }
 .directory-list article > div > div span { padding: 1px 4px; border-radius: 3px; color: var(--text-tertiary); background: var(--surface-hover); font-size: 8.5px; text-transform: capitalize; }
 .directory-list p { margin: 3px 0 0; display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 10.5px; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.plugin-toggle { width: 27px; height: 27px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text-secondary); background: var(--surface-raised); }
+.plugin-toggle { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text-secondary); background: var(--surface-raised); }
+button.plugin-toggle { cursor: pointer; }
+button.plugin-toggle:disabled { cursor: wait; opacity: .65; }
 .plugin-toggle:hover { background: var(--surface-hover); }
 .plugin-toggle.is-enabled { color: var(--success); border-color: transparent; background: var(--success-soft); }
 .install-output { max-height: 140px; overflow: auto; margin: 12px 0 0; padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); font-size: 10.5px; white-space: pre-wrap; }
@@ -37,4 +39,3 @@
 .field > span small { color: var(--text-tertiary); font-size: 9.5px; font-weight: 400; }
 .connection-warning { display: flex; align-items: flex-start; gap: 6px; margin: 14px 0 0; padding: 9px; border-radius: 7px; color: var(--text-secondary); background: var(--surface-subtle); font-size: 10px; line-height: 1.45; }
 .connection-warning svg { flex: 0 0 auto; margin-top: 1px; color: var(--warning); }
-

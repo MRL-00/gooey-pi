@@ -201,6 +201,7 @@ if (args[0] === 'status') {
   process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))} }]) + '\\n')
   process.exit(0)
 }
+fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prime-runtime-args.json'))}, JSON.stringify(args))
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -334,6 +335,8 @@ if (!args.includes('--no-session')) fs.writeFileSync(${JSON.stringify(join(fixtu
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 const sessionIndex = args.indexOf('--session')
 const sessionFile = sessionIndex >= 0 ? args[sessionIndex + 1] : ${JSON.stringify(piSessionFile)}
+let pendingPrompt
+let answers = {}
 // Base pi pushes no ready frame and negotiates nothing: answer Prime-shaped
 // request/response envelopes immediately.
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -354,8 +357,28 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'pi-prompt-args.json'))}, JSON.stringify(command))
     send({ type: 'agent_start' })
     send({ id: command.id, type: 'response', command: command.type, success: true, data: { agentInvoked: true } })
+    if (typeof command.message === 'string' && command.message.includes('two Pi questions')) {
+      pendingPrompt = command
+      answers = {}
+      send({ type: 'tool_execution_start', toolCallId: 'pi-ask-2', toolName: 'ask_user', args: { questions: [
+        { question: 'Which Pi release channel?', options: ['Stable', 'Beta'] },
+        { question: 'What should Pi optimize for?', options: ['Speed', 'Safety'] },
+      ] } })
+      send({ type: 'extension_ui_request', id: 'pi-fixture-question-1', method: 'select', title: 'Which Pi release channel?', options: ['__prime_ask_user__pi-fixture-group:0:2', 'Stable', 'Beta', 'Other (type your own answer)'] })
+      send({ type: 'extension_ui_request', id: 'pi-fixture-question-2', method: 'select', title: 'What should Pi optimize for?', options: ['__prime_ask_user__pi-fixture-group:1:2', 'Speed', 'Safety', 'Other (type your own answer)'] })
+      return
+    }
     send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Pi fixture response.' } })
     send({ type: 'agent_end' })
+  } else if (command.type === 'extension_ui_response') {
+    answers[command.id] = command.value
+    if (pendingPrompt && Object.keys(answers).length === 2) {
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'pi-questionnaire-values.json'))}, JSON.stringify(answers))
+      pendingPrompt = undefined
+      send({ type: 'tool_execution_end', toolCallId: 'pi-ask-2', toolName: 'ask_user', result: { values: answers } })
+      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'The Pi questionnaire answers are ready.' } })
+      send({ type: 'agent_end' })
+    }
   } else if (command.id) {
     send({ id: command.id, type: 'response', command: command.type, success: true, data: {} })
   }
@@ -967,6 +990,12 @@ test.describe('Prime Work desktop smoke', () => {
       if (destination === 'Plugins & skills') {
         await expect(page.locator('.feature-strip')).toHaveCount(0)
         await expect(page.locator('.directory-tools')).toBeVisible()
+        const askUserToggle = page.getByRole('button', { name: 'Disable Ask user' })
+        await expect(askUserToggle).toHaveAttribute('aria-pressed', 'true')
+        await askUserToggle.click()
+        await expect(page.getByRole('button', { name: 'Enable Ask user' })).toHaveAttribute('aria-pressed', 'false')
+        await page.getByRole('button', { name: 'Enable Ask user' }).click()
+        await expect(page.getByRole('button', { name: 'Disable Ask user' })).toHaveAttribute('aria-pressed', 'true')
       }
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
@@ -1096,6 +1125,8 @@ test.describe('Prime Work desktop smoke', () => {
       type: 'prompt',
       message: 'Ask me two questions',
     })
+    const runtimeArgs = JSON.parse(readFileSync(join(fixtureRoot, 'prime-runtime-args.json'), 'utf8')) as string[]
+    expect(runtimeArgs).toContain(join(process.cwd(), 'assets', 'extensions', 'omp-work-ask-user.ts'))
     const worked = page.locator('.work-disclosure__button')
     await expect(worked).toContainText(/^Worked for /)
     await expect(worked).toHaveAttribute('aria-expanded', 'false')
@@ -1144,6 +1175,43 @@ test.describe('Prime Work desktop smoke', () => {
     expect(injectedExtensions).toContain(join(process.cwd(), 'assets', 'extensions', 'omp-work-ask-user.ts'))
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
     await expect(page.getByText(/OMP RPC exited|Request failed/)).toHaveCount(0)
+  })
+
+  test('injects ask_user into Pi and answers its grouped questionnaire in the app', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
+    await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()
+
+    const composer = page.getByRole('combobox', { name: 'Message Pi' })
+    await composer.fill('Ask me two Pi questions')
+    await composer.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Answer 2 questions' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('Which Pi release channel?')
+    await dialog.getByRole('option', { name: 'Beta' }).click()
+    await page.keyboard.press('Enter')
+    await expect(dialog).toContainText('What should Pi optimize for?')
+    await dialog.getByRole('textbox', { name: 'Additional context' }).fill('Pi app verification')
+    await dialog.getByRole('option', { name: 'Safety' }).click()
+    await page.keyboard.press('Enter')
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await expect(dialog).toHaveCount(0)
+
+    const valuesPath = join(fixtureRoot, 'pi-questionnaire-values.json')
+    await expect.poll(() => existsSync(valuesPath)).toBe(true)
+    expect(JSON.parse(readFileSync(valuesPath, 'utf8'))).toEqual({
+      'pi-fixture-question-1': JSON.stringify({ answer: 'Beta', answerSource: 'option' }),
+      'pi-fixture-question-2': JSON.stringify({ answer: 'Safety', answerSource: 'option', context: 'Pi app verification' }),
+    })
+    const runtime = JSON.parse(readFileSync(join(fixtureRoot, 'pi-runtime-args.json'), 'utf8')) as { args: string[]; cwd: string }
+    const injectedExtensions = runtime.args.flatMap((value, index) => value === '--extension' ? [runtime.args[index + 1]] : [])
+    expect(injectedExtensions).toContain(join(process.cwd(), 'assets', 'extensions', 'omp-work-ask-user.ts'))
+    expect(runtime.args).not.toContain('--cwd')
+    if (!currentFixture) throw new Error('Missing hermetic fixture')
+    expect(runtime.cwd).toBe(realpathSync(currentFixture.project))
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
+    await expect(page.getByText(/Pi RPC exited|Request failed/)).toHaveCount(0)
   })
 
   test('preserves a rejected shell draft while rolling back the committed setting', async () => {

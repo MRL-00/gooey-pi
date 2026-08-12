@@ -15,7 +15,7 @@ GooeyPi is a macOS, Linux, and Windows desktop workspace for [OMP](https://githu
 - Isolated in-app browser with navigation, history, annotations, and external-browser handoff
 - Project-scoped `node-pty` terminal with clear, maximize/restore, resize, and clean shutdown
 - Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
-- Extension-driven question dialogs through the separately installable [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins) package
+- Bundled, toggleable `ask_user` question dialogs across Prime, OMP, and Pi
 - Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
 - Native keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
 
@@ -23,7 +23,7 @@ GooeyPi is a macOS, Linux, and Windows desktop workspace for [OMP](https://githu
 
 - macOS (Apple Silicon or Intel), a supported Linux distribution, or Windows 10/11 x64
 - Node.js 22.12.0 or newer and npm 10.9.0 or newer
-- OMP and/or Prime Agent installed on `PATH` (`omp.exe` or `prime-agent.exe` on Windows). If Prime Agent lives elsewhere, set the absolute `PRIME_AGENT_BINARY` path before launching GooeyPi.
+- OMP, Pi, and/or Prime Agent installed on `PATH` (`omp.exe`, `pi.exe`, or `prime-agent.exe` on Windows). Custom executable paths can be set in GooeyPi's harness settings.
 - A configured Prime Agent provider/login
 
 Verify the harness before launching:
@@ -39,13 +39,21 @@ GooeyPi never stores provider API keys. Authentication remains owned by the acti
 
 ### Ask the user from an agent turn
 
-The `ask_user` tool is distributed separately in [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins), so it can be installed for Prime Agent with or without GooeyPi. Install the collection (or configure an individual package entry) once:
+GooeyPi includes `ask_user` in every installation and injects it into interactive Prime, OMP, and Pi runtimes by default. Use the **Plugins → Ask user** control to disable or re-enable it universally. GooeyPi restarts idle runtime children immediately; a busy child finishes its current turn before the new setting takes effect. Scheduled tasks never receive this UI-blocking tool.
+
+The standalone [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins) collection remains available for direct CLI use:
 
 ```bash
 prime-agent package install https://github.com/am-will/prime-agent-plugins
 ```
 
-There is no project-local copy of `ask_user`; the standalone package is the only source, so it cannot conflict with a legacy workspace extension. The package supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Restart an already-running Prime Agent daemon after installing or updating the package. Non-interactive modes such as print/JSON do not have a question UI.
+The same collection works with base Pi outside GooeyPi:
+
+```bash
+pi install https://github.com/am-will/prime-agent-plugins
+```
+
+When GooeyPi launches a runtime, an installed standalone copy automatically defers to GooeyPi's bundled copy, preventing duplicate tool registration. The tool supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
 
 ## Develop
 
