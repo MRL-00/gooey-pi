@@ -288,6 +288,12 @@ describe('OMP discovery candidates', () => {
     expect(candidates.some((candidate) => candidate.endsWith('pi.cmd'))).toBe(false)
   })
 
+  it('keeps E2E discovery hermetic when a fixture executable disappears', async () => {
+    const env = { PRIME_WORK_E2E_HIDE_WINDOWS: '1', PATH: '/fixture/bin' }
+    expect(harnessExecutableCandidates(HARNESSES.pi, env, 'darwin', undefined, '/fixture/home')).toEqual(['/fixture/bin/pi'])
+    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, env, 'darwin', '/fixture/home')).resolves.toEqual([])
+  })
+
   it('adds official standalone-node locations for Pi and Prime on Linux', () => {
     const env = { PATH: '/usr/bin', XDG_DATA_HOME: '/data' }
     expect(harnessExecutableCandidates(HARNESSES.pi, env, 'linux', undefined, '/home/ada')).toContain('/data/pi-node/current/bin/pi')

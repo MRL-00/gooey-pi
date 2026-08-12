@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -364,10 +364,17 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   return { userData, home, project, executable, ompExecutable, piExecutable, sessionFile: realpathSync(sessionFile) }
 }
 
-function hermeticEnvironment(home: string, executable: string, ompExecutable: string, piExecutable: string): NodeJS.ProcessEnv {
+function hermeticEnvironment(home: string, executable: string, ompExecutable: string, piExecutable: string, restrictPath = false): NodeJS.ProcessEnv {
+  let path = process.env.PATH
+  if (restrictPath) {
+    const bin = join(fixtureRoot, 'bin')
+    mkdirSync(bin, { recursive: true })
+    symlinkSync(process.execPath, join(bin, 'node'))
+    path = bin
+  }
   const env: NodeJS.ProcessEnv = {
     HOME: home,
-    PATH: process.env.PATH,
+    PATH: path,
     TMPDIR: fixtureRoot,
     SHELL: '/bin/zsh',
     LANG: 'C',
@@ -390,15 +397,21 @@ test.describe('Prime Work desktop smoke', () => {
     app = undefined
     const activeSession = testInfo.title === 'defers a reply to a session that is active outside Prime Work'
       || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
+    const liveInstall = testInfo.title === 'adds and connects to a harness installed while the app is open'
+    const noHarnesses = testInfo.title === 'opens Harness settings from the no-harness recovery prompt'
     let startupError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const fixture = createHermeticFixture(activeSession)
       fixtureSessionFile = fixture.sessionFile
+      if (liveInstall) renameSync(fixture.ompExecutable, `${fixture.ompExecutable}.pending`)
+      if (noHarnesses) {
+        for (const executable of [fixture.executable, fixture.ompExecutable, fixture.piExecutable]) renameSync(executable, `${executable}.pending`)
+      }
       try {
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable) as Record<string, string>,
+          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable, liveInstall || noHarnesses) as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
@@ -670,6 +683,37 @@ test.describe('Prime Work desktop smoke', () => {
 
     await page.getByRole('button', { name: /Work — switch harness/ }).click()
     await expect(page.getByRole('menuitemradio')).toHaveCount(3)
+  })
+
+  test('adds and connects to a harness installed while the app is open', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await expect(page.getByRole('menuitemradio', { name: /OMP Work/ })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    const ompExecutable = join(fixtureRoot, 'omp-fixture.cjs')
+    renameSync(`${ompExecutable}.pending`, ompExecutable)
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Harness', exact: true }).click()
+    await expect(page.getByText('OMP not detected', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Refresh harnesses' }).click()
+    await expect(page.getByText('OMP is ready', { exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+    const composer = page.getByRole('combobox', { name: 'Message OMP' })
+    await composer.fill('Connect to the newly installed harness')
+    await composer.press('Enter')
+    await expect.poll(() => existsSync(join(fixtureRoot, 'omp-runtime-args.json'))).toBe(true)
+  })
+
+  test('opens Harness settings from the no-harness recovery prompt', async () => {
+    await expect(page.getByRole('heading', { name: 'No Pi family harness detected' })).toBeVisible()
+    await expect(page.getByText('Install one to get started.', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Take me there' }).click()
+    await expect(page.getByRole('heading', { name: 'Harness', exact: true, level: 1 })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Refresh harnesses' })).toBeVisible()
+    await expect(page.getByLabel('Pi executable override')).toBeVisible()
   })
 
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
