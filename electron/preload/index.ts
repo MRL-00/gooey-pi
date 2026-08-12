@@ -13,6 +13,7 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 const api: PrimeWorkApi = {
   app: {
     getMeta: () => ipcRenderer.invoke('app:get-meta'),
+    refreshHarnesses: () => ipcRenderer.invoke('app:refresh-harnesses'),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     revealPath: (path) => ipcRenderer.invoke('app:reveal-path', path),
   },

@@ -359,7 +359,7 @@ export interface AppSettings {
   messageEnterAction: MessageEnterAction
   /** Optional absolute executable overrides; blank keeps automatic discovery. */
   runtimePaths: Record<HarnessId, string>
-  /** Harnesses exposed in the switcher. At least one must remain enabled. */
+  /** Legacy visibility preference retained for state compatibility; executable detection is authoritative. */
   enabledHarnesses: HarnessId[]
   telemetry: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
@@ -579,7 +579,7 @@ export interface AgentBrowserPointerEvent {
 }
 
 export interface PrimeWorkApi {
-  app: { getMeta(): Promise<AppMeta>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
+  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
   projects: {
     list(harness?: HarnessId): Promise<ProjectRecord[]>
     listFiles(root: string, harness?: HarnessId): Promise<ProjectFileListing>

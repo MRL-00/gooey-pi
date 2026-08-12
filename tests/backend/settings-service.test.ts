@@ -113,17 +113,17 @@ describe('SettingsService.update', () => {
     expect(next.piDisabledProviders).toEqual(['openai', 'anthropic'])
   })
 
-  it('normalizes the default harness when its enabled set changes', async () => {
+  it('keeps the active harness independent from the legacy enabled set', async () => {
     const service = makeService()
     const onlyPi = await service.update({ enabledHarnesses: ['pi'] })
     expect(onlyPi.enabledHarnesses).toEqual(['pi'])
-    expect(onlyPi.activeHarness).toBe('pi')
+    expect(onlyPi.activeHarness).toBe('omp')
 
     const stillPi = await service.update({ enabledHarnesses: ['prime', 'pi'] })
-    expect(stillPi.activeHarness).toBe('pi')
+    expect(stillPi.activeHarness).toBe('omp')
 
     const fallback = await service.update({ enabledHarnesses: ['prime'] })
-    expect(fallback.activeHarness).toBe('prime')
+    expect(fallback.activeHarness).toBe('omp')
   })
 
   it('routes terminalShell through the injected shell validator', async () => {

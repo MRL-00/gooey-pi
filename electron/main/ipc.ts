@@ -18,6 +18,7 @@ import { requireExistingPath, requireRecord, requireString, requireWebUrl } from
 
 interface Services {
   meta: AppMeta
+  refreshHarnesses(): Promise<{ meta: AppMeta; settings: ReturnType<SettingsService['get']> }>
   projects: ProjectService
   sessions: SessionService
   agents: AgentRpcManager
@@ -149,6 +150,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   }
 
   handle('app:get-meta', () => services.meta)
+  handle('app:refresh-harnesses', () => services.refreshHarnesses())
   handle('app:open-external', async (_event, url) => {
     try { await shell.openExternal(requireWebUrl(url, { mailto: true }), { activate: true }); return true } catch { return false }
   })

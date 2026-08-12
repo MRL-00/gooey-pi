@@ -54,6 +54,7 @@ function buildServices() {
   })
   return {
     meta: { version: '0.0.0-test' },
+    refreshHarnesses: vi.fn(async () => ({ meta: { version: '0.0.0-refreshed' }, settings: settingsState })),
     projects: { ...serviceStub(), list: vi.fn(async () => ['prime-projects']), listWorktrees: vi.fn(async () => ['prime-worktrees']), openWorktree: vi.fn(async () => 'prime-open'), createWorktree: vi.fn(async () => 'prime-create'), grantInferred: vi.fn(async () => 'prime-grant') },
     sessions: {
       ...serviceStub(),
@@ -162,6 +163,11 @@ describe('harness-aware IPC routing', () => {
   })
 
   afterEach(() => { harness.registration.dispose() })
+
+  it('exposes harness refresh through the fixed authorized app channel', async () => {
+    await expect(harness.invoke('app:refresh-harnesses')).resolves.toMatchObject({ meta: { version: '0.0.0-refreshed' } })
+    expect(harness.services.refreshHarnesses).toHaveBeenCalledTimes(1)
+  })
 
   it('rejects harness values outside the strict enum on every routed channel', async () => {
     for (const channel of ['projects:list', 'projects:add']) {

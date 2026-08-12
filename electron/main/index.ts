@@ -9,8 +9,8 @@ import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
-import { HARNESSES } from './harness'
-import { beginProcessShutdown, findHarnessExecutable, runProcess, stopChildProcesses } from './process-utils'
+import { HarnessDiscoveryService, detectedHarnesses } from './harness-discovery'
+import { beginProcessShutdown, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { OmpModelCatalogService } from './providers-omp'
@@ -108,14 +108,6 @@ function resolveRendererUrl(): string {
     throw new Error('ELECTRON_RENDERER_URL must use an uncredentialed loopback HTTP(S) origin')
   }
   return parsed.href
-}
-
-async function harnessVersion(executable: string | null): Promise<string | null> {
-  if (!executable) return null
-  try {
-    const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 64 * 1024 })
-    return result.code === 0 ? result.stdout.trim().split(/\s+/).at(-1) ?? null : null
-  } catch { return null }
 }
 
 function isAllowedBrowserUrl(raw: string): boolean {
@@ -356,14 +348,20 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 async function bootstrap(): Promise<void> {
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
   store = stateStore
-  const runtimePaths = stateStore.getSettings().runtimePaths
-  const [executable, ompExecutable, piExecutable] = await Promise.all([
-    findHarnessExecutable(HARNESSES.prime, runtimePaths.prime),
-    findHarnessExecutable(HARNESSES.omp, runtimePaths.omp),
-    findHarnessExecutable(HARNESSES.pi, runtimePaths.pi),
-  ])
+  const discovery = new HarnessDiscoveryService(() => stateStore.getSettings().runtimePaths)
+  const normalizeActiveHarness = async (harnesses: AppMeta['harnesses']): Promise<void> => {
+    const detected = detectedHarnesses(harnesses)
+    const current = stateStore.getSettings().activeHarness
+    if (!detected.length || detected.includes(current)) return
+    await stateStore.update((state) => { state.settings.activeHarness = detected[0] })
+  }
+  const initialHarnesses = await discovery.refresh()
+  await normalizeActiveHarness(initialHarnesses)
   if (shutdownStarted) return
-  const sessions = new SessionService(stateStore, executable)
+  const primeExecutable = () => discovery.executable('prime')
+  const ompExecutable = () => discovery.executable('omp')
+  const piExecutable = () => discovery.executable('pi')
+  const sessions = new SessionService(stateStore, primeExecutable)
   // OMP has no live-CLI overlay (`omp list --json` does not exist), so the OMP
   // catalog is constructed with a null executable and JSONL-only metadata.
   const ompSessions = new SessionService(stateStore, null, undefined, ompSessionServiceOptions())
@@ -403,7 +401,7 @@ async function bootstrap(): Promise<void> {
   const ompCatalog = new OmpModelCatalogService(ompExecutable)
   const piCatalog = new PiModelCatalogService(piExecutable)
   agents = new AgentRpcManager(
-    executable,
+    primeExecutable,
     (cwd) => projects.authorizeCwd(cwd),
     (path) => sessions.requireSessionPath(path),
     providers,
@@ -520,7 +518,7 @@ async function bootstrap(): Promise<void> {
   const ompAskUserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
-  const plugins = new PluginService(executable, (path) => projects.authorizeProjectRoot(path), {
+  const plugins = new PluginService(primeExecutable, (path) => projects.authorizeProjectRoot(path), {
     builtInSkills: [{
       id: 'prime-work-schedules', name: 'Scheduled tasks',
       description: 'Create and manage durable project and thread schedules from an agent.',
@@ -565,7 +563,7 @@ async function bootstrap(): Promise<void> {
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
     }],
   })
-  const heartbeats = new HeartbeatService(agents, executable)
+  const heartbeats = new HeartbeatService(agents, primeExecutable)
   const primeScheduledRuns = new ScheduledRunExecutor(
     projects,
     sessions,
@@ -679,25 +677,22 @@ async function bootstrap(): Promise<void> {
   piManager.setRuntimeEnvironmentProvider((scope) =>
     extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths))
   piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
-  const [detectedPrimeVersion, detectedOmpVersion, detectedPiVersion] = await Promise.all([
-    harnessVersion(executable),
-    harnessVersion(ompExecutable),
-    harnessVersion(piExecutable),
-  ])
   if (shutdownStarted) return
   const meta: AppMeta = {
     version: app.getVersion(),
     platform: process.platform,
     homeDir: homedir(),
-    harnesses: {
-      prime: { path: executable, version: detectedPrimeVersion },
-      omp: { path: ompExecutable, version: detectedOmpVersion },
-      pi: { path: piExecutable, version: detectedPiVersion },
-    },
+    harnesses: initialHarnesses,
+  }
+  const refreshHarnesses = async () => {
+    const harnesses = await discovery.refresh()
+    await normalizeActiveHarness(harnesses)
+    meta.harnesses = harnesses
+    return { meta: structuredClone(meta), settings: stateStore.getSettings() }
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
+    meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
     pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
   }, trustedRendererUrl)

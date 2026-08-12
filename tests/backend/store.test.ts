@@ -430,7 +430,7 @@ describe('JsonStateStore', () => {
     expect(state.settings.piDisabledProviders).toEqual([])
   })
 
-  it('keeps only bounded absolute runtime path overrides and enabled harnesses', () => {
+  it('keeps only bounded absolute runtime path overrides without changing the active harness', () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')
     writeFileSync(path, JSON.stringify({
@@ -449,7 +449,7 @@ describe('JsonStateStore', () => {
     const state = new JsonStateStore(path).snapshot()
     expect(state.settings.runtimePaths).toEqual({ prime: '/opt/prime-agent', omp: '', pi: '' })
     expect(state.settings.enabledHarnesses).toEqual(['pi'])
-    expect(state.settings.activeHarness).toBe('pi')
+    expect(state.settings.activeHarness).toBe('omp')
   })
 
   it('refuses to parse an oversized state file and backs it up instead', async () => {

@@ -123,8 +123,6 @@ export class SettingsService {
     for (const key of keys) applyField(key)
     return this.store.update((state) => {
       const next = { ...state.settings, ...patch }
-      if (next.enabledHarnesses.length === 1) next.activeHarness = next.enabledHarnesses[0]
-      else if (!next.enabledHarnesses.includes(next.activeHarness)) next.activeHarness = next.enabledHarnesses[0]
       Object.assign(state.settings, next)
       return state.settings
     })

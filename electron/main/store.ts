@@ -133,9 +133,6 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
   const activeHarness = value.activeHarness === 'prime' || value.activeHarness === 'omp' || value.activeHarness === 'pi'
     ? value.activeHarness as HarnessId
     : legacyState ? 'prime' : defaults.activeHarness
-  const normalizedActiveHarness = usableHarnesses.length === 1
-    ? usableHarnesses[0]
-    : usableHarnesses.includes(activeHarness) ? activeHarness : usableHarnesses[0]
   return {
     theme: value.theme === 'light' || value.theme === 'dark' || value.theme === 'system' ? value.theme : defaults.theme,
     interfaceFontScale: INTERFACE_FONT_SCALES.includes(value.interfaceFontScale as AppSettings['interfaceFontScale'])
@@ -165,7 +162,7 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     piDisabledProviders: Array.isArray(value.piDisabledProviders)
       ? [...new Set(value.piDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.piDisabledProviders,
-    activeHarness: normalizedActiveHarness,
+    activeHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
     petEnabled: typeof value.petEnabled === 'boolean' ? value.petEnabled : defaults.petEnabled,
     petId: boundedString(value.petId, 128) && /^[a-z0-9][a-z0-9._\/-]{0,127}$/i.test(value.petId) ? value.petId : defaults.petId,
