@@ -491,7 +491,7 @@ describe('harness settings surfaces', () => {
   it('follows a changed initial section while the settings page stays mounted', async () => {
     const noop = () => undefined
     const noopAsync = async () => undefined
-    const renderSettings = (initialSection: 'general' | 'agent') => (
+    const renderSettings = (initialSection: 'general' | 'agent', initialSectionRequestId = 0) => (
       <SettingsPage
         settings={DEFAULT_SETTINGS}
         meta={meta}
@@ -499,6 +499,7 @@ describe('harness settings surfaces', () => {
         voice={null}
         pets={null}
         initialSection={initialSection}
+        initialSectionRequestId={initialSectionRequestId}
         onUpdate={noop}
         onResetBrowser={noop}
         onOpenDocs={noop}
@@ -518,6 +519,11 @@ describe('harness settings surfaces', () => {
     await act(async () => { root.render(renderSettings('agent')); await Promise.resolve() })
     expect(container.querySelector('h1')?.textContent).toBe('Harness')
     expect(container.querySelector('.settings-nav .is-active')?.textContent).toContain('Harness')
+
+    await click([...container.querySelectorAll<HTMLButtonElement>('.settings-nav button')].find((button) => button.textContent?.includes('General'))!)
+    expect(container.querySelector('h1')?.textContent).toBe('General')
+    await act(async () => { root.render(renderSettings('agent', 1)); await Promise.resolve() })
+    expect(container.querySelector('h1')?.textContent).toBe('Harness')
   })
 
   it('keeps Harness settings universal while leaving only providers harness-specific', async () => {

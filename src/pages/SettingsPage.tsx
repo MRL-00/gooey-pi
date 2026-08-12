@@ -46,15 +46,17 @@ interface SettingsPageProps {
   onSetAllProvidersDisabled(): Promise<void>
   onStartProviderOAuth(providerId: string): Promise<void>
   initialSection?: SettingsSection
+  /** Re-applies initialSection for repeated navigation requests to the same section. */
+  initialSectionRequestId?: number
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onRefreshHarnesses, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth, initialSection = 'general' }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onRefreshHarnesses, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onStartProviderOAuth, initialSection = 'general', initialSectionRequestId = 0 }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
 
-  useEffect(() => { setSection(initialSection) }, [initialSection])
+  useEffect(() => { setSection(initialSection) }, [initialSection, initialSectionRequestId])
 
   const resetBrowser = async () => {
     setResetting(true)
