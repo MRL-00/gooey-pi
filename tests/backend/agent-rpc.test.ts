@@ -273,6 +273,28 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     expect(manager.list().some((runtime) => runtime.runtimeId === second.runtimeId)).toBe(true)
   })
 
+  it('distinguishes interactive and unattended runtime environments', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    const modes: boolean[] = []
+    manager.setRuntimeEnvironmentProvider((scope) => { modes.push(scope.interactive); return {} })
+
+    await manager.start({ cwd: fake.cwd })
+    await manager.startUnattended({ cwd: fake.cwd })
+
+    expect(modes).toEqual([true, false])
+  })
+
+  it('retires idle runtimes after a capability environment change', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    await manager.start({ cwd: fake.cwd })
+
+    await manager.requestRuntimeEnvironmentRefresh()
+
+    await waitUntil(() => manager.list().length === 0)
+  })
+
   it('admits more than four runtimes when every existing session is active', async () => {
     const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'busy', isStreaming: true, isCompacting: false } }"
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)

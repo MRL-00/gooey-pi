@@ -13,6 +13,24 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-')); dirs.push(dir); return dir }
 
 describe('PluginService discovery', () => {
+  it('reads dynamic bundled capability state on each refreshed catalog', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    let enabled = true
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      builtInSkills: () => [{
+        id: 'gooeypi-ask-user', name: 'Ask user', description: '', kind: 'extension',
+        location: 'system', enabled,
+      }],
+    })
+
+    expect((await service.list()).skills[0].enabled).toBe(true)
+    enabled = false
+    expect((await service.refresh()).skills[0].enabled).toBe(false)
+  })
+
   it('coalesces duplicate refreshes while discovery is in flight', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')

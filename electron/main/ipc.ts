@@ -298,8 +298,16 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('settings:get', () => services.settings.get())
   handle('settings:update', async (event, patch) => {
+    const askUserEnabled = services.settings.get().askUserEnabled
     const settings = await services.settings.update(patch)
     event.sender.setZoomFactor(settings.interfaceFontScale / 100)
+    if (settings.askUserEnabled !== askUserEnabled) {
+      await Promise.all([
+        services.agents.requestRuntimeEnvironmentRefresh(),
+        services.omp.agents.requestRuntimeEnvironmentRefresh(),
+        services.pi.agents.requestRuntimeEnvironmentRefresh(),
+      ])
+    }
     return settings
   })
   handle('settings:reset-browser-data', () => services.settings.resetBrowserData())

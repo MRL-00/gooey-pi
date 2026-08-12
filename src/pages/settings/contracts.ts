@@ -32,6 +32,7 @@ export const SETTINGS_FIELD_SECTIONS = {
   runtimePaths: 'agent',
   enabledHarnesses: 'agent',
   telemetry: 'privacy',
+  askUserEnabled: 'agent',
   disabledProviders: 'providers',
   ompDisabledProviders: 'providers',
   piDisabledProviders: 'providers',

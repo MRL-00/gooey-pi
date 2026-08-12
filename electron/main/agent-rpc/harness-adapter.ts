@@ -80,8 +80,12 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
     for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
-    const extensionPath = input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH
-    if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
+    for (const extensionPath of [
+      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
+      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
+    ]) {
+      if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
+    }
     return args
   },
   translateCommand: (command) => command,

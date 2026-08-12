@@ -362,6 +362,8 @@ export interface AppSettings {
   /** Legacy visibility preference retained for state compatibility; executable detection is authoritative. */
   enabledHarnesses: HarnessId[]
   telemetry: boolean
+  /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
+  askUserEnabled: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]
   /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */

@@ -111,11 +111,11 @@ describe('registerIpc verify gate', () => {
 
   it('applies a validated interface scale only after the settings update succeeds', async () => {
     const event = fakeEvent()
-    const update = vi.fn(async () => ({ interfaceFontScale: 115 }))
-    stubs.settings = { update }
+    const update = vi.fn(async () => ({ interfaceFontScale: 115, askUserEnabled: true }))
+    stubs.settings = { get: () => ({ askUserEnabled: true }), update }
     registration.authorize(event.sender as never)
 
-    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 115 })).resolves.toEqual({ interfaceFontScale: 115 })
+    await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 115 })).resolves.toEqual({ interfaceFontScale: 115, askUserEnabled: true })
     expect(update).toHaveBeenCalledWith({ interfaceFontScale: 115 })
     expect(event.sender.setZoomFactor).toHaveBeenCalledWith(1.15)
 
@@ -123,6 +123,28 @@ describe('registerIpc verify gate', () => {
     update.mockRejectedValueOnce(new TypeError('Invalid interface font scale'))
     await expect(handlers.get('settings:update')!(event, { interfaceFontScale: 125 })).rejects.toThrow('Invalid interface font scale')
     expect(event.sender.setZoomFactor).not.toHaveBeenCalled()
+    registration.dispose()
+  })
+
+  it('recycles all harness runtimes when the universal ask_user toggle changes', async () => {
+    const event = fakeEvent()
+    const refreshPrime = vi.fn(async () => undefined)
+    const refreshOmp = vi.fn(async () => undefined)
+    const refreshPi = vi.fn(async () => undefined)
+    stubs.settings = {
+      get: () => ({ askUserEnabled: true }),
+      update: vi.fn(async () => ({ interfaceFontScale: 110, askUserEnabled: false })),
+    }
+    stubs.agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshPrime }
+    ;(stubs.omp as { agents: unknown }).agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshOmp }
+    ;(stubs.pi as { agents: unknown }).agents = { ...serviceStub(), requestRuntimeEnvironmentRefresh: refreshPi }
+    registration.authorize(event.sender as never)
+
+    await handlers.get('settings:update')!(event, { askUserEnabled: false })
+
+    expect(refreshPrime).toHaveBeenCalledOnce()
+    expect(refreshOmp).toHaveBeenCalledOnce()
+    expect(refreshPi).toHaveBeenCalledOnce()
     registration.dispose()
   })
 

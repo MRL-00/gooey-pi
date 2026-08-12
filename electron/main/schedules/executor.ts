@@ -90,7 +90,7 @@ export class ScheduledRunExecutor {
   private async runInNewSession(task: AutomationScheduleRecord, cwd: string): Promise<ScheduleRunResult> {
     let runtime: RuntimeInfo | undefined
     try {
-      runtime = await this.agents.start(this.startOptions(cwd, task.execution))
+      runtime = await this.agents.startUnattended(this.startOptions(cwd, task.execution))
       this.requireStrictExecution(runtime, task.execution)
       const title = `${task.title} · ${new Date().toLocaleDateString()}`.slice(0, 200)
       try { await this.agents.command(runtime.runtimeId, { type: 'set_session_name', name: title }) } catch { /* the run can still proceed with the default title */ }
@@ -108,23 +108,14 @@ export class ScheduledRunExecutor {
     const existing = this.agents.getForSession(sessionPath)
     if (!existing) return this.runWithResumedSession(task, cwd, sessionPath)
     await this.waitUntilIdle(existing.runtimeId)
-    const before = this.agents.list().find((candidate) => candidate.runtimeId === existing.runtimeId)
-    if (!before) return this.runWithResumedSession(task, cwd, sessionPath)
-    try {
-      await this.applyExecution(existing.runtimeId, task.execution)
-      const configured = this.agents.list().find((candidate) => candidate.runtimeId === existing.runtimeId)
-      if (configured) this.requireStrictExecution(configured, task.execution)
-      const completed = await this.agents.runPromptToCompletion(existing.runtimeId, task.prompt)
-      return { sessionId: completed.sessionId, sessionFile: completed.sessionFile }
-    } finally {
-      await this.restoreExecution(existing.runtimeId, before)
-    }
+    await this.agents.stop(existing.runtimeId)
+    return this.runWithResumedSession(task, cwd, sessionPath)
   }
 
   private async runWithResumedSession(task: AutomationScheduleRecord, cwd: string, sessionPath: string): Promise<ScheduleRunResult> {
     let runtime: RuntimeInfo | undefined
     try {
-      runtime = await this.agents.start(this.startOptions(cwd, task.execution, sessionPath))
+      runtime = await this.agents.startUnattended(this.startOptions(cwd, task.execution, sessionPath))
       this.requireStrictExecution(runtime, task.execution)
       const completed = await this.agents.runPromptToCompletion(runtime.runtimeId, task.prompt)
       return { sessionId: completed.sessionId, sessionFile: completed.sessionFile }
@@ -150,27 +141,6 @@ export class ScheduledRunExecutor {
       })
     }
     throw new Error('The scheduled thread remained busy for 15 minutes')
-  }
-
-  private async applyExecution(runtimeId: string, execution: ScheduleExecution): Promise<void> {
-    if (execution.model !== 'auto') {
-      const model = await this.providers.requireAvailableModel(execution.model, this.disabledProviders())
-      await this.agents.command(runtimeId, { type: 'set_model', provider: model.provider, modelId: model.id })
-    }
-    if (execution.thinking !== 'auto') await this.agents.command(runtimeId, { type: 'set_thinking_level', level: execution.thinking })
-    await this.agents.command(runtimeId, { type: 'set_service_tier', serviceTier: execution.speed === 'fast' ? 'priority' : 'default' })
-  }
-
-  private async restoreExecution(runtimeId: string, before: RuntimeInfo): Promise<void> {
-    try {
-      if (before.model?.provider && before.model.id) {
-        await this.agents.command(runtimeId, { type: 'set_model', provider: before.model.provider, modelId: before.model.id })
-      }
-      if (before.thinkingLevel) await this.agents.command(runtimeId, { type: 'set_thinking_level', level: before.thinkingLevel })
-      if (before.serviceTier === 'priority' || before.serviceTier === 'default') {
-        await this.agents.command(runtimeId, { type: 'set_service_tier', serviceTier: before.serviceTier })
-      }
-    } catch { /* a user/runtime change wins over best-effort restoration */ }
   }
 
   private requireStrictExecution(runtime: RuntimeInfo, execution: ScheduleExecution): void {

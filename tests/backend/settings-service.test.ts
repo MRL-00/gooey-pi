@@ -37,6 +37,7 @@ describe('SettingsService.update', () => {
       runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' },
       enabledHarnesses: ['prime', 'omp', 'prime'],
       telemetry: false,
+      askUserEnabled: false,
       disabledProviders: ['openai', 'openai', 'google'],
       ompDisabledProviders: ['anthropic', 'anthropic'],
       activeHarness: 'omp',
@@ -60,7 +61,7 @@ describe('SettingsService.update', () => {
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
       runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' }, enabledHarnesses: ['prime', 'omp'],
-      telemetry: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
+      telemetry: false, askUserEnabled: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky', petSize: 65,
       voiceTranscriptionProvider: 'groq', voiceRealtimeVoice: 'cedar',
     })
@@ -90,6 +91,7 @@ describe('SettingsService.update', () => {
     await expect(service.update({ enabledHarnesses: [] })).rejects.toThrow(/At least one harness/)
     await expect(service.update({ enabledHarnesses: ['prime', 'codex'] })).rejects.toThrow(/is invalid/)
     await expect(service.update({ sidebarOpen: 'yes' })).rejects.toThrow(/must be a boolean/)
+    await expect(service.update({ askUserEnabled: 'yes' })).rejects.toThrow(/must be a boolean/)
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)

@@ -295,6 +295,7 @@ export function extensionRuntimeEnvironment(
   scheduleBridgeEnvironment: NodeJS.ProcessEnv,
   browserBridgeEnvironment: NodeJS.ProcessEnv,
   extensionPaths: CapabilityExtensionPaths,
+  askUserEnabled = true,
 ): NodeJS.ProcessEnv {
   const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = scheduleBridgeEnvironment
   const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridgeEnvironment
@@ -303,7 +304,8 @@ export function extensionRuntimeEnvironment(
     ...browserEnvironment,
     PRIME_WORK_SCHEDULE_EXTENSION_PATH: extensionPaths.schedule,
     PRIME_WORK_BROWSER_EXTENSION_PATH: extensionPaths.browser,
-    PRIME_WORK_ASK_USER_EXTENSION_PATH: extensionPaths.askUser,
+    PRIME_WORK_ASK_USER_EXTENSION_PATH: askUserEnabled ? extensionPaths.askUser : undefined,
+    GOOEYPI_MANAGES_ASK_USER: '1',
   }
 }
 
@@ -513,10 +515,14 @@ async function bootstrap(): Promise<void> {
     ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
   const plugins = new PluginService(primeExecutable, (path) => projects.authorizeProjectRoot(path), {
-    builtInSkills: [{
+    builtInSkills: () => [{
       id: 'prime-work-schedules', name: 'Scheduled tasks',
       description: 'Create and manage durable project and thread schedules from an agent.',
       kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
+    }, {
+      id: 'gooeypi-ask-user', name: 'Ask user',
+      description: 'Ask focused multiple-choice questions in the GooeyPi app across Prime, OMP, and Pi.',
+      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
     }, {
       id: 'prime-work-browser', name: 'Browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
@@ -525,7 +531,7 @@ async function bootstrap(): Promise<void> {
   })
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
     harness: 'omp',
-    builtInSkills: [{
+    builtInSkills: () => [{
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'OMP extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
@@ -534,16 +540,16 @@ async function bootstrap(): Promise<void> {
       description: 'OMP extension for driving this thread\'s in-app browser.',
       kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
     }, {
-      id: 'omp-work-ask-user', name: 'Ask user',
+      id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'OMP extension for asking focused multiple-choice questions in the GooeyPi app.',
-      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
+      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
     }],
   })
   // Pi's extension API is the ancestor of OMP's, so pi runtimes inject the
   // same omp-work-* extension files (accepted naming drift; never forked).
   const piPlugins = new PluginService(piExecutable, (path) => piProjects.authorizeProjectRoot(path), {
     harness: 'pi',
-    builtInSkills: [{
+    builtInSkills: () => [{
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'Pi extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
@@ -552,9 +558,9 @@ async function bootstrap(): Promise<void> {
       description: 'Pi extension for driving this thread\'s in-app browser.',
       kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
     }, {
-      id: 'omp-work-ask-user', name: 'Ask user',
+      id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'Pi extension for asking focused multiple-choice questions in the GooeyPi app.',
-      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: true,
+      kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
     }],
   })
   const heartbeats = new HeartbeatService(agents, primeExecutable)
@@ -653,7 +659,12 @@ async function bootstrap(): Promise<void> {
   const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
   await browserBridge.start()
   agentBrowserBridge = browserBridge
-  agents.setRuntimeEnvironmentProvider((scope) => ({ ...scheduleBridge.environmentFor(scope), ...browserBridge.environmentFor(scope) }))
+  agents.setRuntimeEnvironmentProvider((scope) => ({
+    ...scheduleBridge.environmentFor(scope),
+    ...browserBridge.environmentFor(scope),
+    PRIME_WORK_ASK_USER_EXTENSION_PATH: stateStore.getSettings().askUserEnabled && scope.interactive ? ompAskUserExtensionPath : undefined,
+    GOOEYPI_MANAGES_ASK_USER: '1',
+  }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
@@ -664,12 +675,12 @@ async function bootstrap(): Promise<void> {
     askUser: ompAskUserExtensionPath,
   }
   ompManager.setRuntimeEnvironmentProvider((scope) =>
-    extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths))
+    extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) =>
-    extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths))
+    extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
   piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   if (shutdownStarted) return
   const meta: AppMeta = {

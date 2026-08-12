@@ -160,6 +160,7 @@ describe('settings field ownership', () => {
       runtimePaths: 'agent',
       enabledHarnesses: 'agent',
       telemetry: 'privacy',
+      askUserEnabled: 'agent',
       disabledProviders: 'providers',
       ompDisabledProviders: 'providers',
       piDisabledProviders: 'providers',

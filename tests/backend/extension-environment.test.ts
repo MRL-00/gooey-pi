@@ -18,7 +18,7 @@ const electron = vi.hoisted(() => ({
 vi.mock('electron', () => electron)
 
 import { extensionRuntimeEnvironment, type CapabilityExtensionPaths } from '../../electron/main/index'
-import { OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from '../../electron/main/agent-rpc'
+import { OMP_RPC_ADAPTER, PI_RPC_ADAPTER, PRIME_RPC_ADAPTER } from '../../electron/main/agent-rpc'
 
 const extensionPaths: CapabilityExtensionPaths = {
   schedule: '/app/extensions/omp-work-schedules.ts',
@@ -46,6 +46,7 @@ describe('capability extension environment parity (OMP and pi)', () => {
     expect(environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH).toBe('/app/extensions/omp-work-schedules.ts')
     expect(environment.PRIME_WORK_BROWSER_EXTENSION_PATH).toBe('/app/extensions/omp-work-browser.ts')
     expect(environment.PRIME_WORK_ASK_USER_EXTENSION_PATH).toBe('/app/extensions/omp-work-ask-user.ts')
+    expect(environment.GOOEYPI_MANAGES_ASK_USER).toBe('1')
     // The Prime-only --skill inputs never reach an extension-based harness.
     expect(environment.PRIME_WORK_SCHEDULE_SKILL_PATH).toBeUndefined()
     expect(environment.PRIME_WORK_BROWSER_SKILL_PATH).toBeUndefined()
@@ -74,5 +75,22 @@ describe('capability extension environment parity (OMP and pi)', () => {
     ])
     // Neither extension-based harness receives Prime's --skill injections.
     expect(args).not.toContain('--skill')
+  })
+
+  it('keeps standalone copies suppressed while omitting the bundled tool when disabled', () => {
+    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, browserBridgeEnvironment, extensionPaths, false)
+    expect(environment.GOOEYPI_MANAGES_ASK_USER).toBe('1')
+    expect(environment.PRIME_WORK_ASK_USER_EXTENSION_PATH).toBeUndefined()
+    for (const adapter of [OMP_RPC_ADAPTER, PI_RPC_ADAPTER]) {
+      expect(adapter.buildStartArgs({ cwd: '/work', environment })).not.toContain(extensionPaths.askUser)
+    }
+  })
+
+  it('injects the bundled ask_user extension into Prime interactive runtimes', () => {
+    const args = PRIME_RPC_ADAPTER.buildStartArgs({
+      cwd: '/work',
+      environment: { PRIME_WORK_ASK_USER_EXTENSION_PATH: extensionPaths.askUser },
+    })
+    expect(args.slice(-2)).toEqual(['--extension', extensionPaths.askUser])
   })
 })

@@ -19,8 +19,10 @@ export interface ProviderCatalog {
 export class AgentRpcManager {
   private readonly runtimes = new Map<string, RpcRuntime>()
   private readonly startingRuntimes = new Set<string>()
+  private readonly runtimeEnvironmentRevisions = new Map<string, number>()
+  private runtimeEnvironmentRevision = 0
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
-  private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv = () => ({})
+  private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string; interactive: boolean }) => NodeJS.ProcessEnv = () => ({})
   private runtimeStartListener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void = () => undefined
   private runtimeAdmission: Promise<void> = Promise.resolve()
   private closed = false
@@ -38,7 +40,7 @@ export class AgentRpcManager {
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
 
-  setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string }) => NodeJS.ProcessEnv): void {
+  setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string; interactive: boolean }) => NodeJS.ProcessEnv): void {
     this.runtimeEnvironmentProvider = provider
   }
 
@@ -50,6 +52,15 @@ export class AgentRpcManager {
   beginShutdown(): void { this.closed = true }
 
   async start(raw: unknown): Promise<RuntimeInfo> {
+    return this.startWithMode(raw, true)
+  }
+
+  /** Internal scheduler entrypoint: unattended children must never expose UI-blocking tools. */
+  async startUnattended(raw: unknown): Promise<RuntimeInfo> {
+    return this.startWithMode(raw, false)
+  }
+
+  private async startWithMode(raw: unknown, interactive: boolean): Promise<RuntimeInfo> {
     this.requireOpen()
     const executable = resolveExecutable(this.executable)
     if (!executable) throw new Error(`${this.adapter.agentName} executable was not found`)
@@ -76,7 +87,7 @@ export class AgentRpcManager {
     }
     if (options.fast !== undefined && typeof options.fast !== 'boolean') throw new TypeError('fast must be a boolean')
     this.requireOpen()
-    const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath })
+    const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath, interactive })
     const args = this.adapter.buildStartArgs({
       cwd,
       sessionPath,
@@ -94,11 +105,13 @@ export class AgentRpcManager {
       (closed) => {
         this.startingRuntimes.delete(closed.runtimeId)
         this.runtimes.delete(closed.runtimeId)
+        this.runtimeEnvironmentRevisions.delete(closed.runtimeId)
       },
       runtimeEnvironment,
       {},
       this.adapter,
     ))
+    this.runtimeEnvironmentRevisions.set(runtime.runtimeId, this.runtimeEnvironmentRevision)
     try {
       await runtime.handshake()
       await this.decorate(runtime)
@@ -112,9 +125,19 @@ export class AgentRpcManager {
       // in the resident-process catalog.
       this.startingRuntimes.delete(runtime.runtimeId)
       this.runtimes.delete(runtime.runtimeId)
+      this.runtimeEnvironmentRevisions.delete(runtime.runtimeId)
       await runtime.stop()
       throw error
     }
+  }
+
+  /**
+   * Retire children launched with stale capability settings. Idle runtimes are
+   * stopped now; busy runtimes are polled until their current turn settles.
+   */
+  async requestRuntimeEnvironmentRefresh(): Promise<void> {
+    this.runtimeEnvironmentRevision += 1
+    await Promise.all([...this.runtimes.values()].map((runtime) => this.retireWhenIdle(runtime)))
   }
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
@@ -233,6 +256,25 @@ export class AgentRpcManager {
     await Promise.all(runtimes.map((runtime) => runtime.stop()))
   }
 
+  private async retireWhenIdle(runtime: RpcRuntime): Promise<void> {
+    const wantedRevision = this.runtimeEnvironmentRevision
+    if ((this.runtimeEnvironmentRevisions.get(runtime.runtimeId) ?? wantedRevision) >= wantedRevision) return
+    if (this.isIdle(runtime)) {
+      await runtime.stop()
+      return
+    }
+    const timer = setTimeout(() => { void this.retireWhenIdle(runtime) }, 250)
+    timer.unref()
+  }
+
+  private isIdle(runtime: RpcRuntime): boolean {
+    if (this.startingRuntimes.has(runtime.runtimeId)) return false
+    const snapshot = runtime.snapshot()
+    const actions = snapshot.sessionActions
+    return !snapshot.isStreaming && !snapshot.isCompacting && !actions?.active
+      && (actions?.queuedCount ?? 0) === 0
+  }
+
   private requireOpen(): void {
     if (this.closed) throw new Error(`${this.adapter.agentName} manager is shutting down`)
   }
@@ -247,13 +289,7 @@ export class AgentRpcManager {
       // A new session replaces the oldest safely idle child instead of
       // accumulating resident processes. Busy, queued, compacting, and
       // still-starting runtimes remain alive, with no numeric concurrency cap.
-      const idle = [...this.runtimes.values()].find((runtime) => {
-        if (this.startingRuntimes.has(runtime.runtimeId)) return false
-        const snapshot = runtime.snapshot()
-        const actions = snapshot.sessionActions
-        return !snapshot.isStreaming && !snapshot.isCompacting && !actions?.active
-          && (actions?.queuedCount ?? 0) === 0
-      })
+      const idle = [...this.runtimes.values()].find((runtime) => this.isIdle(runtime))
       if (idle) {
         const stopped = await idle.stop()
         if (stopped && this.runtimes.get(idle.runtimeId) === idle) this.runtimes.delete(idle.runtimeId)

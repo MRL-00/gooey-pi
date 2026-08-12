@@ -340,6 +340,7 @@ describe('JsonStateStore', () => {
     expect(state.projects.map((project) => project.harness)).toEqual(['prime'])
     expect(state.settings.activeHarness).toBe('prime')
     expect(state.settings.ompApprovalMode).toBe('inherit')
+    expect(state.settings.askUserEnabled).toBe(true)
   })
 
   it('keeps valid harness fields and resets hostile ones to defaults', () => {

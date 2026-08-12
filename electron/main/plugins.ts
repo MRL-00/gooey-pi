@@ -18,7 +18,7 @@ interface PluginServiceOptions {
   harness?: HarnessId
   agentDir?: string
   discover?: PluginDiscovery
-  builtInSkills?: SkillRecord[]
+  builtInSkills?: SkillRecord[] | (() => SkillRecord[])
 }
 
 const MAX_ADAPTER_SETTINGS_BYTES = 4 * 1024 * 1024
@@ -50,7 +50,7 @@ export class PluginService {
   private readonly discoveryInFlight = createSingleFlight<string, PluginCatalog>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
-  private readonly builtInSkills: SkillRecord[]
+  private readonly builtInSkills: () => SkillRecord[]
   private readonly harness: HarnessId
 
   constructor(
@@ -61,7 +61,10 @@ export class PluginService {
     this.harness = options.harness ?? 'prime'
     this.agentDir = options.agentDir ?? HARNESSES[this.harness].agentDir(homedir())
     this.discoverCatalog = options.discover ?? discoverPlugins
-    this.builtInSkills = options.builtInSkills ?? []
+    const builtInSkills = options.builtInSkills
+    this.builtInSkills = typeof builtInSkills === 'function'
+      ? builtInSkills
+      : () => builtInSkills ?? []
   }
 
   list(projectPath?: unknown): Promise<PluginCatalog> {
@@ -78,7 +81,8 @@ export class PluginService {
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, resolveExecutable(this.agentPath), this.harness)
-    const combined = [...this.builtInSkills, ...result.skills.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
+    const builtInSkills = this.builtInSkills()
+    const combined = [...builtInSkills, ...result.skills.filter((item) => !builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
     this.knownPathsByOwner.delete(ownerKey)

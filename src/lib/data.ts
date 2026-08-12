@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runtimePaths: { prime: '', omp: '', pi: '' },
   enabledHarnesses: ['omp', 'prime', 'pi'],
   telemetry: false,
+  askUserEnabled: true,
   disabledProviders: [],
   ompDisabledProviders: [],
   piDisabledProviders: [],
