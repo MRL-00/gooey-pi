@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { HarnessDiscoveryService, detectedHarnesses } from '../../electron/main/harness-discovery'
+import { HarnessDiscoveryService, detectedHarnesses, reconcileActiveHarness } from '../../electron/main/harness-discovery'
+import { defaultSettings, type DesktopState } from '../../electron/main/store'
 import type { HarnessDescriptor } from '../../electron/main/harness'
 
 function deferred<T>() {
@@ -9,6 +10,35 @@ function deferred<T>() {
 }
 
 describe('HarnessDiscoveryService', () => {
+  it('reconciles against the settings state inside the serialized transaction', async () => {
+    const state = { settings: defaultSettings() } as DesktopState
+    state.settings.activeHarness = 'prime'
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    let queue = Promise.resolve()
+    const store = {
+      update<T>(mutator: (draft: DesktopState) => T): Promise<T> {
+        const operation = queue.then(async () => {
+          if (state.settings.activeHarness === 'prime') await firstGate
+          return mutator(state)
+        })
+        queue = operation.then(() => undefined, () => undefined)
+        return operation
+      },
+    }
+    const userSelection = store.update((draft) => { draft.settings.activeHarness = 'omp' })
+    const reconciliation = reconcileActiveHarness(store, {
+      omp: { path: '/bin/omp', version: '1' },
+      prime: { path: '/bin/prime-agent', version: '1' },
+      pi: { path: null, version: null },
+    })
+    releaseFirst()
+
+    await userSelection
+    await expect(reconciliation).resolves.toMatchObject({ activeHarness: 'omp' })
+    expect(state.settings.activeHarness).toBe('omp')
+  })
+
   it('publishes one atomic status snapshot using the current runtime overrides', async () => {
     const runtimePaths = { omp: '/configured/omp', prime: '', pi: '' }
     const findExecutable = vi.fn(async (descriptor: HarnessDescriptor, configured?: string) =>

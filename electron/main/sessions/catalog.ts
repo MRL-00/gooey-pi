@@ -55,12 +55,12 @@ export function boundedSessionDiscoveryNames(names: readonly string[], maxSessio
 }
 
 export class SessionMetadataCatalog {
-  private catalogCache: { fetchedAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
-  // The CLI spawn is deduplicated across revisions (one flight at a time), so
-  // the single-flight key is constant; the revision is captured per request.
-  private readonly catalogRequests = createSingleFlight<0, Map<string, JsonRecord>>()
+  private catalogCache: { executable: string; fetchedAt: number; revision: number; sessions: Map<string, JsonRecord> } | null = null
+  // Deduplicate only calls to the same executable. A refreshed runtime path
+  // must never inherit the previous executable's cache or in-flight request.
+  private readonly catalogRequests = createSingleFlight<string, Map<string, JsonRecord>>()
   private catalogRevision = 0
-  private lastCatalogSpawnAt = 0
+  private lastCatalogSpawn: { executable: string; at: number } | null = null
   private readonly sessionScanRequests = createSingleFlight<number, SessionMetadata[]>()
   private readonly metadataCache = new Map<string, SessionMetadata>()
   private readonly metadataRequests = createSingleFlight<string, SessionMetadata>()
@@ -188,14 +188,16 @@ export class SessionMetadataCatalog {
     const revision = this.catalogRevision
     const cache = this.catalogCache
     const now = Date.now()
-    if (cache && cache.revision === revision && now - cache.fetchedAt < LIVE_CATALOG_TTL_MS) return cache.sessions
-    const inFlight = this.catalogRequests.get(0)
+    if (cache && cache.executable === primeAgentPath && cache.revision === revision
+      && now - cache.fetchedAt < LIVE_CATALOG_TTL_MS) return cache.sessions
+    const inFlight = this.catalogRequests.get(primeAgentPath)
     if (inFlight) return inFlight
     // Invalidation marks content stale; the CLI spawn is throttled on its own
     // clock so change-event bursts reuse the last snapshot.
-    if (cache && now - this.lastCatalogSpawnAt < LIVE_CATALOG_MIN_SPAWN_INTERVAL_MS) return cache.sessions
-    this.lastCatalogSpawnAt = now
-    return this.catalogRequests.run(0, async () => {
+    if (cache && cache.executable === primeAgentPath && this.lastCatalogSpawn?.executable === primeAgentPath
+      && now - this.lastCatalogSpawn.at < LIVE_CATALOG_MIN_SPAWN_INTERVAL_MS) return cache.sessions
+    this.lastCatalogSpawn = { executable: primeAgentPath, at: now }
+    return this.catalogRequests.run(primeAgentPath, async () => {
       const sessions = new Map<string, JsonRecord>()
       try {
         const result = await runProcess(primeAgentPath, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
@@ -214,7 +216,9 @@ export class SessionMetadataCatalog {
           }
         }
       } catch { /* JSONL remains authoritative when the live catalog is unavailable. */ }
-      this.catalogCache = { fetchedAt: Date.now(), revision, sessions }
+      if (resolveExecutable(this.primeAgentPath) === primeAgentPath && this.catalogRevision === revision) {
+        this.catalogCache = { executable: primeAgentPath, fetchedAt: Date.now(), revision, sessions }
+      }
       return sessions
     })
   }

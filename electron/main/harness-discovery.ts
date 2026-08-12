@@ -1,6 +1,7 @@
-import { HARNESS_IDS, type HarnessId, type HarnessStatus } from '../../src/types/api'
+import { HARNESS_IDS, type AppSettings, type HarnessId, type HarnessStatus } from '../../src/types/api'
 import { HARNESSES, type HarnessDescriptor } from './harness'
 import { findHarnessExecutable, runProcess } from './process-utils'
+import type { JsonStateStore } from './store'
 
 type RuntimePaths = Record<HarnessId, string>
 type ExecutableFinder = (descriptor: HarnessDescriptor, configuredPath?: string) => Promise<string | null>
@@ -27,6 +28,20 @@ export async function readHarnessVersion(executable: string | null): Promise<str
 
 export function detectedHarnesses(statuses: Record<HarnessId, HarnessStatus>): HarnessId[] {
   return HARNESS_IDS.filter((harness) => Boolean(statuses[harness].path))
+}
+
+/** Serializes active-harness reconciliation with every other persisted setting mutation. */
+export function reconcileActiveHarness(
+  store: Pick<JsonStateStore, 'update'>,
+  statuses: Record<HarnessId, HarnessStatus>,
+): Promise<AppSettings> {
+  const detected = detectedHarnesses(statuses)
+  return store.update((state) => {
+    if (detected.length && !detected.includes(state.settings.activeHarness)) {
+      state.settings.activeHarness = detected[0]
+    }
+    return structuredClone(state.settings)
+  })
 }
 
 /**

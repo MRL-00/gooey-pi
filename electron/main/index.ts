@@ -9,7 +9,7 @@ import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
-import { HarnessDiscoveryService, detectedHarnesses } from './harness-discovery'
+import { HarnessDiscoveryService, reconcileActiveHarness } from './harness-discovery'
 import { beginProcessShutdown, runProcess, stopChildProcesses } from './process-utils'
 import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
@@ -349,14 +349,8 @@ async function bootstrap(): Promise<void> {
   const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
   store = stateStore
   const discovery = new HarnessDiscoveryService(() => stateStore.getSettings().runtimePaths)
-  const normalizeActiveHarness = async (harnesses: AppMeta['harnesses']): Promise<void> => {
-    const detected = detectedHarnesses(harnesses)
-    const current = stateStore.getSettings().activeHarness
-    if (!detected.length || detected.includes(current)) return
-    await stateStore.update((state) => { state.settings.activeHarness = detected[0] })
-  }
   const initialHarnesses = await discovery.refresh()
-  await normalizeActiveHarness(initialHarnesses)
+  await reconcileActiveHarness(stateStore, initialHarnesses)
   if (shutdownStarted) return
   const primeExecutable = () => discovery.executable('prime')
   const ompExecutable = () => discovery.executable('omp')
@@ -686,9 +680,9 @@ async function bootstrap(): Promise<void> {
   }
   const refreshHarnesses = async () => {
     const harnesses = await discovery.refresh()
-    await normalizeActiveHarness(harnesses)
+    const currentSettings = await reconcileActiveHarness(stateStore, harnesses)
     meta.harnesses = harnesses
-    return { meta: structuredClone(meta), settings: stateStore.getSettings() }
+    return { meta: structuredClone(meta), settings: currentSettings }
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({

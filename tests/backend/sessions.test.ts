@@ -379,6 +379,37 @@ describe('SessionService user-message ordering', () => {
 })
 
 describe('SessionMetadataCatalog live synchronization', () => {
+  it('does not reuse the previous executable cache after runtime discovery changes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-catalog-executable-')); dirs.push(dir)
+    const root = join(dir, 'sessions'); mkdirSync(root)
+    const project = join(dir, 'project'); mkdirSync(project)
+    const firstFile = join(root, 'first.jsonl')
+    const secondFile = join(root, 'second.jsonl')
+    writeSession(firstFile, project, 'first')
+    writeSession(secondFile, project, 'second')
+    const makeExecutable = (name: string, sessionFile: string) => {
+      const executable = join(dir, name)
+      writeFileSync(executable, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ sessions: [{ sessionFile: ${JSON.stringify(sessionFile)}, isStreaming: true }] }))\n`)
+      chmodSync(executable, 0o755)
+      return executable
+    }
+    const firstExecutable = makeExecutable('first-agent.cjs', firstFile)
+    const secondExecutable = makeExecutable('second-agent.cjs', secondFile)
+    let executable = firstExecutable
+    const catalog = new SessionMetadataCatalog(
+      () => root,
+      () => executable,
+      20,
+      async (filePath) => metadata(filePath, project, filePath === firstFile ? 'first' : 'second'),
+    )
+
+    expect((await catalog.liveSessions()).has(realpathSync(firstFile))).toBe(true)
+    executable = secondExecutable
+    const refreshed = await catalog.liveSessions()
+    expect(refreshed.has(realpathSync(firstFile))).toBe(false)
+    expect(refreshed.has(realpathSync(secondFile))).toBe(true)
+  })
+
   it('canonicalizes daemon session paths and never regresses the JSONL update time', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-live-catalog-')); dirs.push(dir)
     const root = join(dir, 'sessions'); mkdirSync(root)
@@ -438,8 +469,8 @@ process.exit(0)
     expect(spawnCount()).toBe(1)
 
     // Once the minimum spawn interval elapses, the next stale read respawns.
-    const throttleHarness = catalog as unknown as { lastCatalogSpawnAt: number }
-    throttleHarness.lastCatalogSpawnAt = Date.now() - 60_000
+    const throttleHarness = catalog as unknown as { lastCatalogSpawn: { executable: string; at: number } }
+    throttleHarness.lastCatalogSpawn.at = Date.now() - 60_000
     catalog.invalidateLiveCatalog()
     await catalog.all()
     expect(spawnCount()).toBe(2)
