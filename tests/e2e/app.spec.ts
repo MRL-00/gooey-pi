@@ -651,6 +651,27 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByText('Pi catalogue', { exact: true })).toBeVisible()
   })
 
+  test('refreshes harness discovery through the live settings and preload path', async () => {
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Harness', exact: true }).click()
+
+    const refresh = page.getByRole('button', { name: 'Refresh harnesses' })
+    await expect(refresh).toBeVisible()
+    await refresh.click()
+    await expect(refresh).toBeEnabled()
+    await expect(page.getByText('Prime Agent is ready', { exact: true })).toBeVisible()
+    await expect(page.getByText('OMP is ready', { exact: true })).toBeVisible()
+    await expect(page.getByText('Pi is ready', { exact: true })).toBeVisible()
+
+    const result = await page.evaluate(() => window.prime.app.refreshHarnesses())
+    expect(result.meta.harnesses.prime.path).toBeTruthy()
+    expect(result.meta.harnesses.omp.path).toBeTruthy()
+    expect(result.meta.harnesses.pi.path).toBeTruthy()
+
+    await page.getByRole('button', { name: /Work — switch harness/ }).click()
+    await expect(page.getByRole('menuitemradio')).toHaveCount(3)
+  })
+
   test('keeps thread order stable through agent activity and highlights background attention in purple', async () => {
     const titles = page.locator('.session-row__title')
     await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
