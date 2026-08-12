@@ -382,3 +382,61 @@ export async function updateMcpSettings(
     await release()
   }
 }
+
+export interface ManagedStdioMcpServer {
+  type: 'stdio'
+  command: string
+  args: string[]
+  env: Record<string, string>
+  enabled: true
+}
+
+/**
+ * Adds, refreshes, or removes one app-owned MCP definition without touching a
+ * user-owned entry with the same name. This uses the same bounded parser,
+ * lock, conflict retry, atomic replace, and rollback path as manual MCP adds.
+ */
+export async function updateManagedMcpServer(
+  settingsPath: string,
+  name: string,
+  config: ManagedStdioMcpServer | null,
+  marker: { key: string; value: string },
+  options: { agentName?: string; schema?: string } = {},
+): Promise<ProcessOutcome> {
+  const agentName = options.agentName ?? 'Prime Agent'
+  const release = await acquireSettingsLock(settingsPath)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      const snapshot = await readSettingsForUpdate(settingsPath, agentName)
+      const settings = snapshot.settings
+      if (settings.mcpServers !== undefined && !isRecord(settings.mcpServers)) throw new TypeError(`${agentName} mcpServers setting must contain a JSON object`)
+      const currentServers = isRecord(settings.mcpServers) ? settings.mcpServers : {}
+      const current = currentServers[name]
+      const owned = isRecord(current) && isRecord(current.env) && current.env[marker.key] === marker.value
+      if (config && current !== undefined && !owned) {
+        return { ok: false, reason: 'blocked', output: `An MCP server named “${name}” already exists and is not managed by GooeyPi.` }
+      }
+
+      if (config) {
+        settings.mcpServers = { ...currentServers, [name]: config }
+        if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
+      } else if (owned) {
+        const nextServers = { ...currentServers }
+        delete nextServers[name]
+        if (Object.keys(nextServers).length) settings.mcpServers = nextServers
+        else delete settings.mcpServers
+      } else {
+        return { ok: true, output: `No GooeyPi-managed MCP server named “${name}” was changed.` }
+      }
+
+      if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, settingsFingerprint)) {
+        return { ok: true, output: config
+          ? `Enabled GooeyPi-managed MCP server “${name}”.`
+          : `Disabled GooeyPi-managed MCP server “${name}”.` }
+      }
+    }
+    throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)
+  } finally {
+    await release()
+  }
+}

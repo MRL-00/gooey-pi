@@ -93,4 +93,13 @@ describe('capability extension environment parity (OMP and pi)', () => {
     })
     expect(args.slice(-2)).toEqual(['--extension', extensionPaths.askUser])
   })
+
+  it('injects the CUA MCP adapter only when its scoped Prime skill path is present', () => {
+    const args = PRIME_RPC_ADAPTER.buildStartArgs({
+      cwd: '/work',
+      environment: { GOOEYPI_CUA_DRIVER_SKILL_PATH: '/app/skills/gooeypi-cua-driver' },
+    })
+    expect(args.slice(-2)).toEqual(['--skill', '/app/skills/gooeypi-cua-driver'])
+    expect(PRIME_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment: {} })).not.toContain('/app/skills/gooeypi-cua-driver')
+  })
 })

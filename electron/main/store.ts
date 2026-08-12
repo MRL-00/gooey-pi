@@ -49,6 +49,8 @@ export function defaultSettings(): AppSettings {
     enabledHarnesses: ['omp', 'prime', 'pi'],
     telemetry: false,
     askUserEnabled: true,
+    cuaDriverMcpEnabled: false,
+    computerUseEnabled: false,
     disabledProviders: [],
     ompDisabledProviders: [],
     piDisabledProviders: [],
@@ -155,6 +157,8 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     enabledHarnesses: usableHarnesses,
     telemetry: typeof value.telemetry === 'boolean' ? value.telemetry : defaults.telemetry,
     askUserEnabled: typeof value.askUserEnabled === 'boolean' ? value.askUserEnabled : defaults.askUserEnabled,
+    cuaDriverMcpEnabled: typeof value.cuaDriverMcpEnabled === 'boolean' ? value.cuaDriverMcpEnabled : defaults.cuaDriverMcpEnabled,
+    computerUseEnabled: typeof value.computerUseEnabled === 'boolean' ? value.computerUseEnabled : defaults.computerUseEnabled,
     disabledProviders: Array.isArray(value.disabledProviders)
       ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
       : defaults.disabledProviders,

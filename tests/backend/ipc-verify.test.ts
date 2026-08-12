@@ -25,7 +25,7 @@ function harnessStub(): Record<string, unknown> {
   return {
     projects: { ...serviceStub(), authorizePath: vi.fn(async () => { throw new Error('denied') }) },
     sessions: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined), requireSessionPath: vi.fn(async () => { throw new Error('denied') }) },
-    agents: { ...serviceStub(), has: vi.fn(() => false) },
+    agents: { ...serviceStub(), has: vi.fn(() => false), requestRuntimeEnvironmentRefresh: vi.fn(async () => undefined) },
     catalog: serviceStub(),
   }
 }
@@ -41,6 +41,7 @@ function services(): Record<string, unknown> {
     plugins: serviceStub(),
     providers: serviceStub(),
     settings: serviceStub(),
+    cuaDriver: serviceStub(),
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
@@ -145,6 +146,64 @@ describe('registerIpc verify gate', () => {
     expect(refreshPrime).toHaveBeenCalledOnce()
     expect(refreshOmp).toHaveBeenCalledOnce()
     expect(refreshPi).toHaveBeenCalledOnce()
+    registration.dispose()
+  })
+
+  it('requires the CUA runtime and activates Computer Use only behind the MCP toggle', async () => {
+    const event = fakeEvent()
+    const update = vi.fn(async (patch) => ({
+      interfaceFontScale: 110, askUserEnabled: true,
+      cuaDriverMcpEnabled: true, computerUseEnabled: patch.computerUseEnabled === true,
+    }))
+    stubs.settings = {
+      get: () => ({ askUserEnabled: true, cuaDriverMcpEnabled: true, computerUseEnabled: false }),
+      update,
+    }
+    const requireAvailable = vi.fn(async () => ({ installed: true }))
+    const setEnabled = vi.fn(async () => ({ enabled: true }))
+    stubs.cuaDriver = { requireAvailable, setEnabled }
+    registration.authorize(event.sender as never)
+
+    await handlers.get('settings:update')!(event, { computerUseEnabled: true })
+
+    expect(requireAvailable).toHaveBeenCalledOnce()
+    expect(setEnabled).toHaveBeenCalledWith(true)
+    expect(update).toHaveBeenCalledWith({ computerUseEnabled: true })
+    registration.dispose()
+  })
+
+  it('turns Computer Use off when its CUA Driver MCP dependency is disabled', async () => {
+    const event = fakeEvent()
+    const update = vi.fn(async () => ({
+      interfaceFontScale: 110, askUserEnabled: true, cuaDriverMcpEnabled: false, computerUseEnabled: false,
+    }))
+    stubs.settings = {
+      get: () => ({ askUserEnabled: true, cuaDriverMcpEnabled: true, computerUseEnabled: true }),
+      update,
+    }
+    const setEnabled = vi.fn(async () => ({ enabled: false }))
+    stubs.cuaDriver = { requireAvailable: vi.fn(), setEnabled }
+    registration.authorize(event.sender as never)
+
+    await handlers.get('settings:update')!(event, { cuaDriverMcpEnabled: false })
+
+    expect(setEnabled).toHaveBeenCalledWith(false)
+    expect(update).toHaveBeenCalledWith({ cuaDriverMcpEnabled: false, computerUseEnabled: false })
+    registration.dispose()
+  })
+
+  it('does not persist a CUA toggle when the runtime is unavailable', async () => {
+    const event = fakeEvent()
+    const update = vi.fn()
+    stubs.settings = {
+      get: () => ({ askUserEnabled: true, cuaDriverMcpEnabled: false, computerUseEnabled: false }),
+      update,
+    }
+    stubs.cuaDriver = { requireAvailable: vi.fn(async () => { throw new Error('Cua Driver was not detected') }), setEnabled: vi.fn() }
+    registration.authorize(event.sender as never)
+
+    await expect(handlers.get('settings:update')!(event, { cuaDriverMcpEnabled: true })).rejects.toThrow('not detected')
+    expect(update).not.toHaveBeenCalled()
     registration.dispose()
   })
 

@@ -238,6 +238,12 @@ export interface SkillRecord {
   enabled: boolean
   icon?: string
   source?: string
+  /** Optional live runtime availability for bundled capabilities. */
+  availability?: {
+    available: boolean
+    detail: string
+    actionUrl?: string
+  }
 }
 
 export interface PluginWarning {
@@ -364,6 +370,10 @@ export interface AppSettings {
   telemetry: boolean
   /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
   askUserEnabled: boolean
+  /** Bundled CUA Driver MCP adapter selection, shared by every harness and disabled by default. */
+  cuaDriverMcpEnabled: boolean
+  /** Permission to expose GooeyPi-managed native computer-control tools. */
+  computerUseEnabled: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]
   /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */
