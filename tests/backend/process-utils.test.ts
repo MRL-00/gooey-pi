@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -217,7 +217,7 @@ describe('Prime Agent discovery candidates', () => {
     expect(isAbsolutePathForPlatform('prime-agent.exe', 'win32')).toBe(false)
   })
 
-  it('accepts explicit Windows binaries and searches the Windows PATH without shell execution', () => {
+  it('accepts explicit Windows binaries and searches the Windows PATH without speculative install locations', () => {
     const candidates = primeAgentCandidates({
       PRIME_AGENT_BINARY: 'C:\\Tools\\prime-agent.exe',
       Path: 'C:\\Program Files\\Prime Agent;D:\\bin',
@@ -226,7 +226,7 @@ describe('Prime Agent discovery candidates', () => {
     expect(candidates).toContain('C:\\Tools\\prime-agent.exe')
     expect(candidates).toContain('C:\\Program Files\\Prime Agent\\prime-agent.exe')
     expect(candidates).toContain('D:\\bin\\prime-agent.exe')
-    expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\Programs\\Prime Agent\\prime-agent.exe')
+    expect(candidates).not.toContain('C:\\Users\\Ada\\AppData\\Local\\Programs\\Prime Agent\\prime-agent.exe')
   })
 })
 
@@ -252,19 +252,60 @@ describe('OMP discovery candidates', () => {
     expect(harnessExecutableCandidates(HARNESSES.omp, { OMP_BINARY: '/env/omp', PATH: '/usr/bin' }, 'linux', 'relative/omp')[0]).toBe('/env/omp')
   })
 
-  it('searches the OMP posix fallback directories without Prime-only locations', () => {
-    const candidates = harnessExecutableCandidates(HARNESSES.omp, { PATH: '/usr/bin' }, 'darwin')
-    expect(candidates).toContain(join(homedir(), '.local', 'bin', 'omp'))
+  it('searches shared package-manager and system locations independently of the configured shell', () => {
+    const home = '/Users/Ada'
+    for (const shell of ['/bin/bash', '/bin/zsh', '/opt/homebrew/bin/fish', undefined]) {
+      const candidates = harnessExecutableCandidates(HARNESSES.omp, {
+        PATH: '/usr/bin', SHELL: shell, BUN_INSTALL: '/Users/Ada/.bun', PNPM_HOME: '/Users/Ada/Library/pnpm', VOLTA_HOME: '/Users/Ada/.volta',
+      }, 'darwin', undefined, home)
+      expect(candidates).toContain('/Users/Ada/.local/bin/omp')
+      expect(candidates).toContain('/Users/Ada/.bun/bin/omp')
+      expect(candidates).toContain('/Users/Ada/Library/pnpm/omp')
+      expect(candidates).toContain('/Users/Ada/.volta/bin/omp')
+      expect(candidates).toContain('/Users/Ada/.local/share/mise/shims/omp')
+    }
+    const candidates = harnessExecutableCandidates(HARNESSES.omp, { PATH: '/usr/bin' }, 'darwin', undefined, home)
     expect(candidates).toContain('/opt/homebrew/bin/omp')
     expect(candidates).toContain('/usr/local/bin/omp')
     expect(candidates.every((candidate) => isAbsolutePathForPlatform(candidate, 'darwin'))).toBe(true)
   })
 
-  it('adds no bundled-resources or Windows Programs candidates for OMP', () => {
-    const candidates = harnessExecutableCandidates(HARNESSES.omp, { Path: 'C:\\bin', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local' }, 'win32')
+  it('finds the official Windows OMP install despite a stale process Path', () => {
+    const candidates = harnessExecutableCandidates(HARNESSES.omp, {
+      Path: 'C:\\bin', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local', USERPROFILE: 'C:\\Users\\Ada', APPDATA: 'C:\\Users\\Ada\\AppData\\Roaming',
+    }, 'win32', undefined, 'C:\\Users\\Ada')
     expect(candidates).toContain('C:\\bin\\omp.exe')
-    expect(candidates.some((candidate) => candidate.includes('Programs'))).toBe(false)
+    expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\omp\\omp.exe')
+    expect(candidates).toContain('C:\\Users\\Ada\\.bun\\bin\\omp.exe')
     expect(candidates.some((candidate) => candidate.includes('resources'))).toBe(false)
+  })
+
+  it('does not mistake Windows npm command shims for directly runnable Pi executables', () => {
+    const candidates = harnessExecutableCandidates(HARNESSES.pi, {
+      Path: 'C:\\Windows', APPDATA: 'C:\\Users\\Ada\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local',
+    }, 'win32', undefined, 'C:\\Users\\Ada')
+    expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Roaming\\npm\\pi.exe')
+    expect(candidates.some((candidate) => candidate.endsWith('pi.cmd'))).toBe(false)
+  })
+
+  it('adds official standalone-node locations for Pi and Prime on Linux', () => {
+    const env = { PATH: '/usr/bin', XDG_DATA_HOME: '/data' }
+    expect(harnessExecutableCandidates(HARNESSES.pi, env, 'linux', undefined, '/home/ada')).toContain('/data/pi-node/current/bin/pi')
+    expect(harnessExecutableCandidates(HARNESSES.prime, env, 'linux', undefined, '/home/ada')).toContain('/data/prime-agent-node/current/bin/prime-agent')
+    expect(harnessExecutableCandidates(HARNESSES.omp, env, 'linux', undefined, '/home/ada')).toContain('/home/linuxbrew/.linuxbrew/bin/omp')
+  })
+
+  it('boundedly discovers nvm installs without evaluating shell startup files', async () => {
+    const home = temp()
+    const versions = join(home, '.nvm', 'versions', 'node')
+    for (const version of ['v20.1.0', 'v22.12.0', 'v23.0.0']) {
+      mkdirSync(join(versions, version), { recursive: true })
+    }
+    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, {}, 'linux', home)).resolves.toEqual([
+      join(versions, 'v23.0.0', 'bin', 'pi'),
+      join(versions, 'v22.12.0', 'bin', 'pi'),
+      join(versions, 'v20.1.0', 'bin', 'pi'),
+    ])
   })
 })
 

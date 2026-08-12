@@ -41,10 +41,12 @@ describe('HarnessDiscoveryService', () => {
 
   it('publishes one atomic status snapshot using the current runtime overrides', async () => {
     const runtimePaths = { omp: '/configured/omp', prime: '', pi: '' }
-    const findExecutable = vi.fn(async (descriptor: HarnessDescriptor, configured?: string) =>
-      descriptor.id === 'omp' ? configured ?? null : descriptor.id === 'pi' ? '/usr/bin/pi' : null)
-    const readVersion = vi.fn(async (path: string | null) => path ? `${path}-version` : null)
-    const discovery = new HarnessDiscoveryService(() => runtimePaths, { findExecutable, readVersion })
+    const findExecutable = vi.fn(async (descriptor: HarnessDescriptor, configured?: string, accept?: (candidate: string) => Promise<boolean>) => {
+      const candidate = descriptor.id === 'omp' ? configured ?? null : descriptor.id === 'pi' ? '/usr/bin/pi' : null
+      return candidate && await accept?.(candidate) ? candidate : null
+    })
+    const probeExecutable = vi.fn(async (path: string) => ({ runnable: true, version: `${path}-version` }))
+    const discovery = new HarnessDiscoveryService(() => runtimePaths, { findExecutable, probeExecutable })
 
     const statuses = await discovery.refresh()
 
@@ -55,7 +57,27 @@ describe('HarnessDiscoveryService', () => {
     })
     expect(discovery.executable('omp')).toBe('/configured/omp')
     expect(detectedHarnesses(statuses)).toEqual(['omp', 'pi'])
-    expect(findExecutable).toHaveBeenCalledWith(expect.objectContaining({ id: 'omp' }), '/configured/omp')
+    expect(findExecutable).toHaveBeenCalledWith(expect.objectContaining({ id: 'omp' }), '/configured/omp', expect.any(Function))
+  })
+
+  it('excludes existing but non-runnable candidates and continues discovery', async () => {
+    const discovery = new HarnessDiscoveryService(
+      () => ({ omp: '/broken/omp', prime: '', pi: '' }),
+      {
+        findExecutable: async (descriptor, _configured, accept) => {
+          if (descriptor.id !== 'omp' || !accept) return null
+          for (const candidate of ['/broken/omp', '/working/omp']) if (await accept(candidate)) return candidate
+          return null
+        },
+        probeExecutable: async (path) => path.includes('working')
+          ? { runnable: true, version: '2.0.0' }
+          : { runnable: false, version: null },
+      },
+    )
+
+    await expect(discovery.refresh()).resolves.toMatchObject({
+      omp: { path: '/working/omp', version: '2.0.0' },
+    })
   })
 
   it('prevents an older overlapping refresh from replacing newer results', async () => {
@@ -64,12 +86,13 @@ describe('HarnessDiscoveryService', () => {
     const discovery = new HarnessDiscoveryService(
       () => ({ omp: '', prime: '', pi: '' }),
       {
-        findExecutable: async (descriptor) => {
+        findExecutable: async (descriptor, _configured, accept) => {
           if (descriptor.id !== 'omp') return null
           generation += 1
-          return generation === 1 ? firstOmp.promise : '/new/omp'
+          const candidate = generation === 1 ? await firstOmp.promise : '/new/omp'
+          return candidate && await accept?.(candidate) ? candidate : null
         },
-        readVersion: async () => null,
+        probeExecutable: async () => ({ runnable: true, version: null }),
       },
     )
 

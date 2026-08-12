@@ -17,8 +17,8 @@ export interface HarnessDescriptor {
   binaryEnvVar: string
   /** Directories under process.resourcesPath (as path segments) that may bundle the executable. */
   bundledResourceDirs: readonly (readonly string[])[]
-  posixCandidateDirs: (home: string) => string[]
-  windowsCandidateDirs: (env: NodeJS.ProcessEnv) => string[]
+  /** Harness-specific locations beyond the shared package-manager and system directories. */
+  candidateDirs: (platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv) => string[]
   agentDir: (home: string) => string
   sessionRoot: (home: string) => string
 }
@@ -31,8 +31,9 @@ export const HARNESSES: Record<HarnessId, HarnessDescriptor> = {
     executableName: (platform) => platform === 'win32' ? 'prime-agent.exe' : 'prime-agent',
     binaryEnvVar: 'PRIME_AGENT_BINARY',
     bundledResourceDirs: [['agent'], ['agent', 'bin']],
-    posixCandidateDirs: (home) => ['/opt/homebrew/bin', '/usr/local/bin', join(home, '.local', 'bin')],
-    windowsCandidateDirs: (env) => env.LOCALAPPDATA ? [win32.join(env.LOCALAPPDATA, 'Programs', 'Prime Agent')] : [],
+    candidateDirs: (platform, home, env) => platform === 'win32' ? [] : [
+      join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), 'prime-agent-node', 'current', 'bin'),
+    ],
     agentDir: (home) => join(home, '.prime', 'agent'),
     sessionRoot: (home) => join(home, '.prime', 'agent', 'sessions'),
   },
@@ -43,8 +44,10 @@ export const HARNESSES: Record<HarnessId, HarnessDescriptor> = {
     executableName: (platform) => platform === 'win32' ? 'omp.exe' : 'omp',
     binaryEnvVar: 'OMP_BINARY',
     bundledResourceDirs: [],
-    posixCandidateDirs: (home) => [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'],
-    windowsCandidateDirs: () => [],
+    candidateDirs: (platform, _home, env) => {
+      if (platform === 'win32') return env.LOCALAPPDATA ? [win32.join(env.LOCALAPPDATA, 'omp')] : []
+      return env.PI_INSTALL_DIR ? [env.PI_INSTALL_DIR] : []
+    },
     agentDir: (home) => join(home, '.omp', 'agent'),
     sessionRoot: (home) => join(home, '.omp', 'agent', 'sessions'),
   },
@@ -55,8 +58,9 @@ export const HARNESSES: Record<HarnessId, HarnessDescriptor> = {
     executableName: (platform) => platform === 'win32' ? 'pi.exe' : 'pi',
     binaryEnvVar: 'PI_BINARY',
     bundledResourceDirs: [],
-    posixCandidateDirs: (home) => [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'],
-    windowsCandidateDirs: () => [],
+    candidateDirs: (platform, home, env) => platform === 'win32' ? [] : [
+      join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), 'pi-node', 'current', 'bin'),
+    ],
     agentDir: (home) => join(home, '.pi', 'agent'),
     sessionRoot: (home) => join(home, '.pi', 'agent', 'sessions'),
   },

@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, readdir } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -224,11 +224,57 @@ export function isAbsolutePathForPlatform(value: string, platform = process.plat
   return platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value)
 }
 
+function sharedHarnessCandidateDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  home: string,
+): string[] {
+  const pathApi = platform === 'win32' ? win32 : posix
+  const fromRoot = (root: string | undefined, ...segments: string[]) => root ? pathApi.join(root, ...segments) : ''
+  const compact = (values: Array<string | undefined>): string[] => values.filter((value): value is string => Boolean(value))
+  const environmentDirs = [
+    env.NVM_BIN,
+    fromRoot(env.NPM_CONFIG_PREFIX, 'bin'),
+    fromRoot(env.BUN_INSTALL, 'bin'),
+    fromRoot(env.VOLTA_HOME, 'bin'),
+    env.PNPM_HOME,
+    fromRoot(env.PNPM_HOME, 'bin'),
+  ]
+  if (platform === 'win32') {
+    return compact([
+      ...environmentDirs,
+      fromRoot(env.APPDATA, 'npm'),
+      fromRoot(env.LOCALAPPDATA, 'pnpm'),
+      fromRoot(env.LOCALAPPDATA, 'pnpm', 'bin'),
+      fromRoot(env.LOCALAPPDATA, 'mise', 'shims'),
+      win32.join(home, '.bun', 'bin'),
+      win32.join(home, '.volta', 'bin'),
+    ])
+  }
+  const dataHome = env.XDG_DATA_HOME ?? posix.join(home, '.local', 'share')
+  return compact([
+    ...environmentDirs,
+    posix.join(home, '.local', 'bin'),
+    posix.join(home, '.bun', 'bin'),
+    posix.join(home, '.volta', 'bin'),
+    posix.join(dataHome, 'pnpm'),
+    posix.join(dataHome, 'pnpm', 'bin'),
+    posix.join(dataHome, 'mise', 'shims'),
+    ...(platform === 'darwin'
+      ? [posix.join(home, 'Library', 'pnpm'), posix.join(home, 'Library', 'pnpm', 'bin')]
+      : ['/home/linuxbrew/.linuxbrew/bin']),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+  ])
+}
+
 export function harnessExecutableCandidates(
   descriptor: HarnessDescriptor,
   env: NodeJS.ProcessEnv = process.env,
   platform = process.platform,
   configuredPath?: string,
+  home = homedir(),
 ): string[] {
   const pathApi = platform === 'win32' ? win32 : posix
   const executable = descriptor.executableName(platform)
@@ -239,19 +285,61 @@ export function harnessExecutableCandidates(
   if (typeof process.resourcesPath === 'string') {
     for (const segments of descriptor.bundledResourceDirs) candidates.push(pathApi.join(process.resourcesPath, ...segments, executable))
   }
-  for (const directory of (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter)) {
+  const pathValues = platform === 'win32' ? [env.Path, env.PATH] : [env.PATH]
+  for (const directory of pathValues.flatMap((value) => (value ?? '').split(platform === 'win32' ? ';' : delimiter))) {
     if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
   }
-  const fallbackDirs = platform === 'win32' ? descriptor.windowsCandidateDirs(env) : descriptor.posixCandidateDirs(homedir())
+  const fallbackDirs = [
+    ...descriptor.candidateDirs(platform, home, env),
+    ...sharedHarnessCandidateDirs(env, platform, home),
+  ]
   for (const directory of fallbackDirs) {
     if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
   }
-  return [...new Set(candidates)]
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    const key = platform === 'win32' ? candidate.toLowerCase() : candidate
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
-export async function findHarnessExecutable(descriptor: HarnessDescriptor, configuredPath?: string): Promise<string | null> {
-  for (const candidate of harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath)) {
-    try { await access(candidate, fsConstants.X_OK); return candidate } catch { /* continue */ }
+/** Bounded, shell-free discovery for nvm installs that a desktop app's PATH does not inherit. */
+export async function nvmHarnessExecutableCandidates(
+  descriptor: HarnessDescriptor,
+  env: NodeJS.ProcessEnv = process.env,
+  platform = process.platform,
+  home = homedir(),
+): Promise<string[]> {
+  if (platform === 'win32') return []
+  const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
+  const versionsRoot = posix.join(root, 'versions', 'node')
+  try {
+    const entries = await readdir(versionsRoot, { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
+      .slice(0, 64)
+      .map((version) => posix.join(versionsRoot, version, 'bin', descriptor.executableName(platform)))
+  } catch { return [] }
+}
+
+export async function findHarnessExecutable(
+  descriptor: HarnessDescriptor,
+  configuredPath?: string,
+  accept: (candidate: string) => Promise<boolean> = async () => true,
+): Promise<string | null> {
+  const candidates = [
+    ...harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath),
+    ...await nvmHarnessExecutableCandidates(descriptor),
+  ]
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, fsConstants.X_OK)
+      if (await accept(candidate)) return candidate
+    } catch { /* continue */ }
   }
   return null
 }
