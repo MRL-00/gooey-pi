@@ -27,7 +27,7 @@ export function PetsSettings({ settings, onUpdate, pets }: SettingsSectionProps 
     } finally { setLoading(false) }
   }, [pets])
   useEffect(() => { void refresh() }, [refresh])
-  const selected = useMemo(() => available.find((item) => item.id === settings.petId) ?? available.find((item) => item.id === 'gooey-pi') ?? BUILT_INS[0], [available, settings.petId])
+  const selected = useMemo(() => available.find((item) => item.id === settings.petId) ?? available.find((item) => item.id === 'orb') ?? BUILT_INS[0], [available, settings.petId])
   const codexCount = available.filter((item) => item.source === 'codex').length
 
   return (

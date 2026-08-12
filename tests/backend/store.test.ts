@@ -42,6 +42,18 @@ describe('JsonStateStore', () => {
     expect(JSON.parse(readFileSync(path, 'utf8')).archivedSessions).toHaveLength(20)
   })
 
+  it('defaults to Orb and preserves the selected pet across a full store restart', async () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    const store = new JsonStateStore(path)
+    expect(store.getSettings().petId).toBe('orb')
+
+    await store.update((state) => { state.settings.petId = 'codex/rocky' })
+    await store.beginShutdown()
+
+    expect(new JsonStateStore(path).getSettings().petId).toBe('codex/rocky')
+  })
+
   it('defaults and validates the configurable message Enter action', () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')

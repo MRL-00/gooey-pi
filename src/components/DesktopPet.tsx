@@ -52,7 +52,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   const normalizedPetSize = Math.max(50, Math.min(125, Math.round(petSize)))
   const avatarSize = Math.round(96 * normalizedPetSize / 100)
   const surfaceWidth = Math.max(112, avatarSize + 24)
-  const initialSurfaceHeight = avatarSize + 58
+  const initialSurfaceHeight = avatarSize + 34
   const [available, setAvailable] = useState<PetDefinition[]>(BUILT_INS)
   const [position, setPosition] = useState(() => constrained(initialPosition(), initialSurfaceHeight, surfaceWidth))
   const [surfaceHeight, setSurfaceHeight] = useState(initialSurfaceHeight)
@@ -115,7 +115,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
     return () => window.clearTimeout(timer)
   }, [jumping, reduceMotion])
 
-  const pet = useMemo(() => available.find((item) => item.id === petId) ?? available.find((item) => item.id === 'gooey-pi') ?? BUILT_INS[0], [available, petId])
+  const pet = useMemo(() => available.find((item) => item.id === petId) ?? available.find((item) => item.id === 'orb') ?? BUILT_INS[0], [available, petId])
   const activity: PetActivity = dragging
     ? direction === 'left' ? 'running-left' : 'running-right'
     : jumping ? 'jumping'
@@ -192,7 +192,7 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
   return (
     <div
       ref={surfaceRef}
-      className={`desktop-pet desktop-pet--${activity}${dismissArmed ? ' is-dismiss-armed' : ''}`}
+      className={`desktop-pet desktop-pet--${activity}${voiceActive ? ' is-voice-active' : ''}${dismissArmed ? ' is-dismiss-armed' : ''}`}
       style={{ left: position.x, top: position.y, '--pet-avatar-size': `${avatarSize}px`, '--pet-surface-width': `${surfaceWidth}px`, '--pet-surface-min-height': `${initialSurfaceHeight - 8}px` } as React.CSSProperties}
       role={voiceActive ? 'complementary' : undefined}
       aria-label={voiceActive ? 'Realtime voice session' : undefined}
@@ -204,7 +204,6 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
         tabIndex={0}
         aria-label={`${pet.displayName}, draggable GooeyPi pet`}
         aria-keyshortcuts={onDismiss ? 'Delete Backspace' : undefined}
-        title={`${pet.displayName} · drag to move${onDismiss ? ' · Delete to hide' : ''}`}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={finishDrag}
@@ -215,7 +214,6 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
           <PetAvatar pet={pet} pets={pets} activity={activity} size={avatarSize} reduceMotion={reduceMotion} />
           {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
         </span>
-        <span className="desktop-pet__name">{pet.displayName}</span>
       </div>
       {voiceActive && voiceStatus ? <span className="desktop-pet__voice-status" role="status">{voiceStatus}</span> : null}
       <div className="desktop-pet__voice-controls" aria-label="Realtime voice controls">

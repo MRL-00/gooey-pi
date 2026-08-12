@@ -15,19 +15,18 @@
 
 .desktop-pet { position: fixed; z-index: 120; width: var(--pet-surface-width, 96px); min-height: var(--pet-surface-min-height, 122px); display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
 .session-attention-badge { position: absolute; z-index: 4; width: 22px; height: 22px; display: grid; place-items: center; border: 3px solid var(--canvas); border-radius: 50%; color: #fff; background: var(--danger); box-shadow: 0 2px 5px color-mix(in srgb, #000 28%, transparent), 0 0 12px color-mix(in srgb, var(--danger) 68%, transparent); font-size: 12px; font-weight: 800; line-height: 1; pointer-events: none; }
-.desktop-pet__drag-target { width: calc(var(--pet-avatar-size, 72px) + 16px); min-height: calc(var(--pet-avatar-size, 72px) + 22px); display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px 7px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
+.desktop-pet__drag-target { width: calc(var(--pet-avatar-size, 72px) + 16px); min-height: var(--pet-avatar-size, 72px); display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
 .desktop-pet__avatar { position: relative; display: inline-flex; }
 .desktop-pet__avatar > .session-attention-badge { top: -5px; right: -5px; }
 .voice-orb__drag > .session-attention-badge { top: 14px; right: 9px; }
 .desktop-pet__drag-target:active { cursor: grabbing; }
 .desktop-pet__drag-target:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; background: color-mix(in srgb, var(--surface-raised) 52%, transparent); }
-.desktop-pet__name { max-width: 100%; margin-top: -6px; padding: 2px 6px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 72%, transparent); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 82%, transparent); backdrop-filter: blur(8px); font-size: 8.5px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transform: translateY(-2px); transition: opacity 140ms ease, transform 140ms ease; }
-.desktop-pet:hover .desktop-pet__name, .desktop-pet__drag-target:focus-visible .desktop-pet__name { opacity: 1; transform: translateY(0); }
 .desktop-pet--running-left .desktop-pet__drag-target { transform: rotate(-3deg); }
 .desktop-pet--running-right .desktop-pet__drag-target { transform: rotate(3deg); }
 .desktop-pet.is-dismiss-armed .desktop-pet__drag-target { opacity: .7; filter: saturate(.58); transform: scale(.9); transition: opacity 130ms ease, filter 130ms ease, transform 180ms cubic-bezier(.2,.9,.2,1.15); }
 .desktop-pet__voice-status { max-width: 112px; margin-top: -5px; padding: 3px 8px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--prime) 34%, var(--border)); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 91%, transparent); backdrop-filter: blur(10px); font-size: 9px; font-weight: 650; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-pet__voice-controls { min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 3px; }
+.desktop-pet:not(.is-voice-active) .desktop-pet__voice-controls { margin-top: -5px; }
 .desktop-pet__voice-controls button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 4px 12px color-mix(in srgb, #000 18%, transparent); backdrop-filter: blur(10px); }
 .desktop-pet__voice-controls button:hover, .desktop-pet__voice-controls button:focus-visible { color: var(--text); border-color: color-mix(in srgb, var(--prime) 52%, var(--border-strong)); background: var(--surface-hover); }
 .desktop-pet__voice-controls button[aria-label="Open realtime voice"] { color: var(--prime); }

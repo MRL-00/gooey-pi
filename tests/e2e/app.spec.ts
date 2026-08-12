@@ -8,6 +8,7 @@ let app: ElectronApplication | undefined
 let page: Page
 let fixtureRoot = ''
 let fixtureSessionFile = ''
+let currentFixture: ReturnType<typeof createHermeticFixture> | undefined
 let actionableErrors: string[] = []
 
 const instrumentedPages = new WeakSet<Page>()
@@ -402,6 +403,7 @@ test.describe('Prime Work desktop smoke', () => {
     let startupError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const fixture = createHermeticFixture(activeSession)
+      currentFixture = fixture
       fixtureSessionFile = fixture.sessionFile
       if (liveInstall) renameSync(fixture.ompExecutable, `${fixture.ompExecutable}.pending`)
       if (noHarnesses) {
@@ -438,6 +440,7 @@ test.describe('Prime Work desktop smoke', () => {
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
     fixtureRoot = ''
     fixtureSessionFile = ''
+    currentFixture = undefined
   })
 
   test('steers the active turn with Ctrl+Enter', async () => {
@@ -552,29 +555,61 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
   })
 
-  test('wires the bundled pet to realtime voice and Pets settings', async () => {
-    const desktopPet = page.getByRole('button', { name: /GooeyPi, draggable GooeyPi pet/ })
+  test('uses the persisted selected pet for realtime voice after a full restart', async () => {
+    const desktopPet = page.getByRole('button', { name: /Orb, draggable GooeyPi pet/ })
     await expect(desktopPet).toBeVisible()
-    await expect(desktopPet.locator('.pet-sprite img')).toBeVisible()
-    const petSurface = page.locator('.desktop-pet')
-    await petSurface.getByRole('button', { name: 'Open realtime voice' }).click()
+    await desktopPet.hover()
+    await expect(desktopPet).not.toHaveAttribute('title')
+    await expect(page.locator('.desktop-pet__name')).toHaveCount(0)
+    const idlePetGap = await page.locator('.desktop-pet').evaluate((surface) => {
+      const avatar = surface.querySelector<HTMLElement>('.desktop-pet__avatar')!.getBoundingClientRect()
+      const waveform = surface.querySelector<HTMLButtonElement>('[aria-label="Open realtime voice"]')!.getBoundingClientRect()
+      return waveform.top - avatar.bottom
+    })
+    expect(idlePetGap).toBeGreaterThanOrEqual(-8)
+    expect(idlePetGap).toBeLessThanOrEqual(1)
+    await page.locator('.title-toolbar').getByRole('button', { name: 'Open realtime voice' }).click()
     await expect(page.getByRole('complementary', { name: 'Realtime voice session' })).toBeVisible()
-    await petSurface.getByRole('button', { name: 'Close realtime voice' }).click()
+    await expect(page.getByRole('button', { name: /Orb, draggable GooeyPi pet/ })).toBeVisible()
+    await expect(page.locator('.voice-orb')).toHaveCount(0)
+    await page.getByRole('complementary', { name: 'Realtime voice session' }).getByRole('button', { name: 'Close realtime voice' }).click()
 
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await page.getByRole('button', { name: 'Pets', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Pets', exact: true })).toBeVisible()
+    await expect(page.getByRole('radio', { name: /^Orb Built/ })).toBeChecked()
+    await page.getByRole('radio', { name: /^GooeyPi Built/ }).click()
     await expect(page.getByRole('radio', { name: /^GooeyPi Built/ })).toBeChecked()
-    await expect(page.getByRole('radio', { name: /^Orb Built/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex Pets' })).toBeVisible()
     const showPet = page.getByRole('checkbox', { name: 'Show desktop pet' })
     await showPet.focus()
     await showPet.press('Space')
     await expect(showPet).not.toBeChecked()
     await expect(page.locator('.desktop-pet')).toHaveCount(0)
-    await showPet.press('Space')
-    await expect(showPet).toBeChecked()
-    await expect(page.locator('.desktop-pet')).toBeVisible()
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings).toMatchObject({ petEnabled: false, petId: 'gooey-pi' })
+
+    await closeHermeticApp(app)
+    app = undefined
+    if (!currentFixture) throw new Error('Missing hermetic fixture for relaunch')
+    app = await electron.launch({
+      args: ['.', `--user-data-dir=${currentFixture.userData}`],
+      cwd: process.cwd(),
+      env: hermeticEnvironment(currentFixture.home, currentFixture.executable, currentFixture.ompExecutable, currentFixture.piExecutable, false) as Record<string, string>,
+      timeout: 20_000,
+    })
+    app.context().on('page', attachDiagnostics)
+    for (const target of app.windows()) attachDiagnostics(target)
+    page = await app.firstWindow({ timeout: 15_000 })
+    attachDiagnostics(page)
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true', { timeout: 20_000 })
+
+    await expect(page.locator('.desktop-pet')).toHaveCount(0)
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    await page.locator('.title-toolbar').getByRole('button', { name: 'Open realtime voice' }).click()
+    const realtimePet = page.getByRole('complementary', { name: 'Realtime voice session' })
+    await expect(realtimePet.getByRole('button', { name: /GooeyPi, draggable GooeyPi pet/ })).toBeVisible()
+    await expect(realtimePet.locator('.pet-sprite img')).toBeVisible()
+    await expect(page.locator('.voice-orb')).toHaveCount(0)
   })
 
   test('switches to OMP Work and lists the OMP session catalog, then returns to Prime', async () => {

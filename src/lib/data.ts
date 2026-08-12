@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   activeHarness: 'omp',
   ompApprovalMode: 'inherit',
   petEnabled: true,
-  petId: 'gooey-pi',
+  petId: 'orb',
   petSize: 75,
   sidebarOpen: true,
   inspectorOpen: true,

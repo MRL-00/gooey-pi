@@ -38,6 +38,7 @@ describe('PetsSettings', () => {
     expect(container.textContent).toContain('GooeyPi')
     expect(container.textContent).toContain('Rocky')
     expect(container.textContent).toContain('1 Codex pet found')
+    expect(container.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')?.textContent).toContain('Orb')
 
     const rockyChoice = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent?.includes('Rocky'))
     expect(rockyChoice).toBeDefined()

@@ -428,10 +428,10 @@ export default function App() {
   )
   const toggleVoice = useCallback(() => {
     const nextOpen = !voiceOrbOpen
-    setFocusPetVoiceControl(nextOpen && settingsState.settings.petEnabled)
+    setFocusPetVoiceControl(nextOpen)
     setRestorePetVoiceFocus(false)
     setVoiceOrbOpen(nextOpen)
-  }, [settingsState.settings.petEnabled, voiceOrbOpen])
+  }, [voiceOrbOpen])
   useEffect(() => {
     if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || workspace.pendingQueuedPrompts.length === 0) return
     const next = workspace.pendingQueuedPrompts[0]
@@ -473,7 +473,7 @@ export default function App() {
           {settingsState.inspectorOpen ? <button type="button" className="panel-scrim panel-scrim--inspector" aria-label="Close inspector" onClick={toggleInspector} /> : null}
       </div> : <Suspense fallback={<LoadingPanel label={view} />}>{page}</Suspense>}</div>
     </div>
-    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} harness={activeHarness} onClose={() => { setFocusPetVoiceControl(false); setVoiceOrbOpen(false); setRestorePetVoiceFocus(settingsState.settings.petEnabled) }} onTaskStarted={handleVoiceTaskStarted} pet={settingsState.settings.petEnabled ? { pets: bridge.pets, petId: settingsState.settings.petId, petSize: settingsState.settings.petSize, agentBusy: busy, reduceMotion: settingsState.settings.reduceMotion, onDismiss: () => { setFocusPetVoiceControl(false); setRestorePetVoiceFocus(false); void settingsState.updateSettings({ petEnabled: false }) } } : undefined} focusPetControl={focusPetVoiceControl} onPetControlFocused={() => setFocusPetVoiceControl(false)} hasSessionNotification={hasSessionNotification} /></Suspense> : null}
+    {voiceOrbOpen && bridge ? <Suspense fallback={null}><VoiceOrb voice={bridge.voice} harness={activeHarness} onClose={() => { setFocusPetVoiceControl(false); setVoiceOrbOpen(false); setRestorePetVoiceFocus(settingsState.settings.petEnabled) }} onTaskStarted={handleVoiceTaskStarted} pet={{ pets: bridge.pets, petId: settingsState.settings.petId, petSize: settingsState.settings.petSize, agentBusy: busy, reduceMotion: settingsState.settings.reduceMotion }} focusPetControl={focusPetVoiceControl} onPetControlFocused={() => setFocusPetVoiceControl(false)} hasSessionNotification={hasSessionNotification} /></Suspense> : null}
     {settingsState.settings.petEnabled && bridge && !voiceOrbOpen ? <Suspense fallback={null}><DesktopPet pets={bridge.pets} petId={settingsState.settings.petId} petSize={settingsState.settings.petSize} agentBusy={busy} voiceActive={false} reduceMotion={settingsState.settings.reduceMotion} focusVoiceControl={restorePetVoiceFocus} onVoiceControlFocused={() => setRestorePetVoiceFocus(false)} hasSessionNotification={hasSessionNotification} onDismiss={() => { setRestorePetVoiceFocus(false); void settingsState.updateSettings({ petEnabled: false }) }} onOpenVoice={() => { setRestorePetVoiceFocus(false); setFocusPetVoiceControl(true); setVoiceOrbOpen(true) }} /></Suspense> : null}
     {paletteOpen ? <Suspense fallback={null}><CommandPalette open harness={activeHarness} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onNewSession={newSession} onToggleSidebar={toggleSidebar} onToggleTerminal={toggleTerminal} onOpenBrowser={openBrowser} /></Suspense> : null}
     {extension.extensionUi ? <Suspense fallback={<LoadingPanel label="request" />}><ExtensionUiModal request={extension.extensionUi.request} onRespond={(response) => void extension.respondToExtensionUi(response)} /></Suspense> : null}

@@ -100,6 +100,14 @@ describe('DesktopPet', () => {
     expect(onCloseVoice).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the idle waveform tight to the pet without rendering a hover name chip', async () => {
+    await act(async () => { root.render(<DesktopPet pets={pets} petId="gooey-pi" agentBusy={false} reduceMotion={false} voiceActive={false} onOpenVoice={vi.fn()} />); await Promise.resolve() })
+    expect(container.querySelector('.desktop-pet__name')).toBeNull()
+    expect(container.querySelector('.desktop-pet__drag-target')?.hasAttribute('title')).toBe(false)
+    expect(container.querySelector('.desktop-pet')?.classList.contains('is-voice-active')).toBe(false)
+    expect(container.querySelector('[aria-label="Open realtime voice"]')).not.toBeNull()
+  })
+
   it('shows a red session-attention badge above any desktop pet', async () => {
     await act(async () => { root.render(<DesktopPet pets={pets} petId="orb" agentBusy={false} reduceMotion={false} voiceActive={false} hasSessionNotification />); await Promise.resolve() })
     const badge = container.querySelector<HTMLElement>('.session-attention-badge')!

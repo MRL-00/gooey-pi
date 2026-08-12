@@ -54,7 +54,7 @@ export function defaultSettings(): AppSettings {
     activeHarness: 'omp',
     ompApprovalMode: 'inherit',
     petEnabled: true,
-    petId: 'gooey-pi',
+    petId: 'orb',
     petSize: 75,
     voiceTranscriptionProvider: 'openai-live',
     voiceOpenAiLiveTranscriptionModel: 'gpt-live-transcribe',
