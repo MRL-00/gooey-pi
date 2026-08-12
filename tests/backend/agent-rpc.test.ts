@@ -88,6 +88,17 @@ describe('agent RPC command frame bounds', () => {
 })
 
 describe('agent RPC responses', () => {
+  it('uses a newly discovered executable for future runtime starts', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    let executable: string | null = null
+    const manager = new AgentRpcManager(() => executable, async (cwd) => cwd, async (path) => path)
+    managers.push(manager)
+
+    await expect(manager.start({ cwd: fake.cwd })).rejects.toThrow('Prime Agent executable was not found')
+    executable = fake.executable
+    await expect(manager.start({ cwd: fake.cwd })).resolves.toMatchObject({ harness: 'prime', cwd: fake.cwd })
+  })
+
   it('hydrates and refreshes authoritative context-window usage', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-context-'))
     dirs.push(cwd)

@@ -1,4 +1,5 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
+import { resolveExecutable, type ExecutableSource } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
@@ -25,7 +26,7 @@ export class AgentRpcManager {
   private closed = false
 
   constructor(
-    private readonly executable: string | null,
+    private readonly executable: ExecutableSource,
     private readonly authorizeCwd: (cwd: string) => Promise<string>,
     private readonly validateSessionPath: (path: string) => Promise<string>,
     private readonly providers?: ProviderCatalog,
@@ -50,7 +51,8 @@ export class AgentRpcManager {
 
   async start(raw: unknown): Promise<RuntimeInfo> {
     this.requireOpen()
-    if (!this.executable) throw new Error(`${this.adapter.agentName} executable was not found`)
+    const executable = resolveExecutable(this.executable)
+    if (!executable) throw new Error(`${this.adapter.agentName} executable was not found`)
     const options = requireRecord(raw, 'options')
     rejectUnknownKeys(options, ['cwd', 'sessionPath', 'model', 'thinking', 'fast'], 'options')
     const cwd = await this.authorizeCwd(requireString(options.cwd, 'cwd', { min: 1, max: 4096 }))
@@ -85,7 +87,7 @@ export class AgentRpcManager {
       environment: runtimeEnvironment,
     })
     const runtime = await this.admitRuntime(() => new RpcRuntime(
-      this.executable!,
+      executable,
       args,
       cwd,
       (event) => this.eventSink(event),

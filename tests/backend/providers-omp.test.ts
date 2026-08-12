@@ -44,6 +44,15 @@ const processExists = (pid: number): boolean => {
 }
 
 describe('OMP model catalog service', () => {
+  it('invalidates the unavailable cache when discovery finds an executable', async () => {
+    let executable: string | null = null
+    const service = new OmpModelCatalogService(() => executable)
+    await expect(service.catalog()).resolves.toMatchObject({ models: [], warning: OMP_NOT_INSTALLED_WARNING })
+
+    executable = fakeOmpWithCatalog(sampleCatalog)
+    await expect(service.catalog()).resolves.toMatchObject({ primeVersion: '1.2.3', models: expect.any(Array) })
+  })
+
   it('parses the CLI catalog into Prime descriptor shapes', async () => {
     const service: ModelCatalogProvider = new OmpModelCatalogService(fakeOmpWithCatalog(sampleCatalog))
     const catalog = await service.catalog(true)

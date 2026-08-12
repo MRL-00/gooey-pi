@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { HarnessId, PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
 import { HARNESSES } from './harness'
 import { createAdmissionQueue, createSingleFlight } from './lib/async'
+import { resolveExecutable, type ExecutableSource } from './process-utils'
 import { isRecord, requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { readAtMost } from './plugins/file-io'
@@ -53,7 +54,7 @@ export class PluginService {
   private readonly harness: HarnessId
 
   constructor(
-    private readonly agentPath: string | null,
+    private readonly agentPath: ExecutableSource,
     private readonly authorizeProject: (path: string) => Promise<string>,
     options: PluginServiceOptions = {},
   ) {
@@ -76,7 +77,7 @@ export class PluginService {
 
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
-    const result = await this.discoverCatalog(this.agentDir, safeProjectPath, this.agentPath, this.harness)
+    const result = await this.discoverCatalog(this.agentDir, safeProjectPath, resolveExecutable(this.agentPath), this.harness)
     const combined = [...this.builtInSkills, ...result.skills.filter((item) => !this.builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
@@ -101,7 +102,8 @@ export class PluginService {
   }
 
   async install(sourceValue: unknown): Promise<ProcessOutcome> {
-    if (!this.agentPath) return { ok: false, reason: 'blocked', output: `${HARNESSES[this.harness].agentName} executable was not found` }
+    const agentPath = resolveExecutable(this.agentPath)
+    if (!agentPath) return { ok: false, reason: 'blocked', output: `${HARNESSES[this.harness].agentName} executable was not found` }
     const source = validatePackageSource(sourceValue)
     // Pi and Prime record installed sources in the agent settings.json; OMP
     // tracks installs through its plugin lock file.
@@ -113,10 +115,10 @@ export class PluginService {
       const release = await acquireSettingsLock(settingsPath)
       try {
         return this.harness === 'omp'
-          ? await executeOmpPluginInstall(this.agentPath!, source)
+          ? await executeOmpPluginInstall(agentPath, source)
           : this.harness === 'pi'
-            ? await executePiPluginInstall(this.agentPath!, source)
-            : await executePackageInstall(this.agentPath!, source)
+            ? await executePiPluginInstall(agentPath, source)
+            : await executePackageInstall(agentPath, source)
       } finally {
         await release()
       }

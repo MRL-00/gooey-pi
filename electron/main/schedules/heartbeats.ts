@@ -1,6 +1,6 @@
 import type { NativeHeartbeatRecord } from '../../../src/types/api'
 import type { AgentRpcManager } from '../agent-rpc'
-import { runProcess } from '../process-utils'
+import { resolveExecutable, runProcess, type ExecutableSource } from '../process-utils'
 import { isRecord, requireId } from '../validation'
 
 function normalizeHeartbeat(value: unknown, runtimeId?: string): NativeHeartbeatRecord | null {
@@ -30,7 +30,7 @@ function normalizeHeartbeat(value: unknown, runtimeId?: string): NativeHeartbeat
 }
 
 export class HeartbeatService {
-  constructor(private readonly agents: AgentRpcManager, private readonly primeAgentPath: string | null) {}
+  constructor(private readonly agents: AgentRpcManager, private readonly primeAgentPath: ExecutableSource) {}
 
   async list(): Promise<NativeHeartbeatRecord[]> {
     const byId = new Map<string, NativeHeartbeatRecord>()
@@ -45,9 +45,10 @@ export class HeartbeatService {
         }
       } catch { /* CLI fallback below can recover resident-worker jobs */ }
     }))
-    if (this.primeAgentPath) {
+    const primeAgentPath = resolveExecutable(this.primeAgentPath)
+    if (primeAgentPath) {
       try {
-        const result = await runProcess(this.primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
+        const result = await runProcess(primeAgentPath, ['schedule', 'list', '--all', '--json'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
         if (result.code === 0 && !result.timedOut && !result.outputExceeded) {
           const parsed: unknown = JSON.parse(result.stdout)
           if (isRecord(parsed) && Array.isArray(parsed.jobs)) {
@@ -67,6 +68,7 @@ export class HeartbeatService {
     if (actionValue !== 'pause' && actionValue !== 'resume' && actionValue !== 'stop') throw new TypeError('Invalid heartbeat action')
     const heartbeat = (await this.list()).find((candidate) => candidate.id === id)
     if (!heartbeat) throw new Error('Heartbeat was not found')
+    const primeAgentPath = resolveExecutable(this.primeAgentPath)
     const runtime = heartbeat.runtimeId
       ? this.agents.list().find((candidate) => candidate.runtimeId === heartbeat.runtimeId)
       : this.agents.getForSession(heartbeat.sessionFile)
@@ -87,8 +89,8 @@ export class HeartbeatService {
       if (updated) return updated
       return { ...heartbeat, status: actionValue === 'pause' ? 'paused' : 'active' }
     }
-    if (actionValue === 'stop' && this.primeAgentPath) {
-      const result = await runProcess(this.primeAgentPath, ['schedule', 'cancel', heartbeat.id], { timeoutMs: 30_000, maxBytes: 1024 * 1024 })
+    if (actionValue === 'stop' && primeAgentPath) {
+      const result = await runProcess(primeAgentPath, ['schedule', 'cancel', heartbeat.id], { timeoutMs: 30_000, maxBytes: 1024 * 1024 })
       if (result.code === 0 && !result.timedOut && !result.outputExceeded) {
         if ((await this.list()).some((candidate) => candidate.id === id)) throw new Error('Heartbeat stop did not remove the job')
         return null

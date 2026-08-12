@@ -256,6 +256,13 @@ export async function findHarnessExecutable(descriptor: HarnessDescriptor, confi
   return null
 }
 
+export type ExecutableSource = string | null | (() => string | null)
+
+/** Resolves a startup-fixed path or a live discovery-backed executable source. */
+export function resolveExecutable(source: ExecutableSource): string | null {
+  return typeof source === 'function' ? source() : source
+}
+
 export function primeAgentExecutableName(platform = process.platform): string {
   return HARNESSES.prime.executableName(platform)
 }

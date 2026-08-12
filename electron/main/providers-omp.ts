@@ -1,7 +1,7 @@
 import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
-import { runProcess, safeChildEnvironment } from './process-utils'
+import { resolveExecutable, runProcess, safeChildEnvironment, type ExecutableSource } from './process-utils'
 import { requireString } from './validation'
 
 const CATALOG_TTL_MS = 30_000
@@ -106,16 +106,19 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
   private readonly maxOutputBytes: number
   private cachedCatalog: PrimeModelCatalog | null = null
   private cachedAt = 0
-  private catalogRefresh: Promise<PrimeModelCatalog> | null = null
-  private version: string | null = null
+  private cachedExecutable: string | null = null
+  private catalogRefresh: { executable: string; promise: Promise<PrimeModelCatalog> } | null = null
+  private version: { executable: string; value: string } | null = null
 
-  constructor(private readonly executable: string | null, options: OmpModelCatalogOptions = {}) {
+  constructor(private readonly executable: ExecutableSource, options: OmpModelCatalogOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   }
 
   async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
-    if (!this.executable) {
+    const executable = resolveExecutable(this.executable)
+    this.prepareExecutable(executable)
+    if (!executable) {
       return { primeVersion: 'unknown', refreshedAt: new Date().toISOString(), models: [], providers: [], warning: OMP_NOT_INSTALLED_WARNING }
     }
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
@@ -123,11 +126,14 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     }
     // Single-flight: concurrent callers share one CLI run instead of spawning
     // duplicate subprocesses; the in-flight promise is cleared in finally.
-    if (!this.catalogRefresh) {
-      this.catalogRefresh = this.refreshCatalog().finally(() => { this.catalogRefresh = null })
+    if (!this.catalogRefresh || this.catalogRefresh.executable !== executable) {
+      const promise = this.refreshCatalog(executable).finally(() => {
+        if (this.catalogRefresh?.promise === promise) this.catalogRefresh = null
+      })
+      this.catalogRefresh = { executable, promise }
     }
     try {
-      return this.withEnabledState(await this.catalogRefresh, disabledProviders)
+      return this.withEnabledState(await this.catalogRefresh.promise, disabledProviders)
     } catch (error) {
       // A failed refresh degrades to the last good catalog instead of an
       // error; first-ever loads still surface the failure.
@@ -157,14 +163,14 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     return (await this.catalog()).models.find((model) => model.provider === provider && model.id === modelId)
   }
 
-  private async refreshCatalog(): Promise<PrimeModelCatalog> {
+  private async refreshCatalog(executable: string): Promise<PrimeModelCatalog> {
     const [result, version] = await Promise.all([
-      runProcess(this.executable!, ['models', '--json'], {
+      runProcess(executable, ['models', '--json'], {
         timeoutMs: this.timeoutMs,
         maxBytes: this.maxOutputBytes,
         env: safeChildEnvironment(),
       }),
-      this.resolveVersion(),
+      this.resolveVersion(executable),
     ])
     if (result.outputExceeded) throw new Error(`OMP model catalog output exceeded ${this.maxOutputBytes.toLocaleString()} bytes`)
     if (result.timedOut) throw new Error('The OMP model catalog request timed out')
@@ -214,15 +220,18 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
         : undefined,
     ].filter((warning): warning is string => Boolean(warning))
 
-    this.cachedCatalog = {
+    const catalog: PrimeModelCatalog = {
       primeVersion: version,
       refreshedAt: new Date().toISOString(),
       models,
       providers,
       warning: warnings.length ? warnings.join(' ') : undefined,
     }
-    this.cachedAt = Date.now()
-    return this.cachedCatalog
+    if (this.cachedExecutable === executable) {
+      this.cachedCatalog = catalog
+      this.cachedAt = Date.now()
+    }
+    return catalog
   }
 
   /**
@@ -230,10 +239,11 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
    * probe is cached: a transient failure answers 'unknown' for this call and
    * retries on the next catalog refresh.
    */
-  private async resolveVersion(): Promise<string> {
-    if (this.version) return this.version
+  private async resolveVersion(executable: string): Promise<string> {
+    if (this.version?.executable === executable) return this.version.value
+    let version: string | null = null
     try {
-      const result = await runProcess(this.executable!, ['--version'], {
+      const result = await runProcess(executable, ['--version'], {
         timeoutMs: this.timeoutMs,
         maxBytes: VERSION_MAX_OUTPUT_BYTES,
         env: safeChildEnvironment(),
@@ -241,11 +251,18 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
       const match = result.code === 0 && !result.timedOut && !result.outputExceeded
         ? result.stdout.trim().match(/^omp\/([0-9A-Za-z.+-]{1,64})$/)
         : null
-      this.version = match?.[1] ?? null
-    } catch {
-      this.version = null
-    }
-    return this.version ?? 'unknown'
+      version = match?.[1] ?? null
+    } catch { /* Retry on the next catalog refresh. */ }
+    if (version && this.cachedExecutable === executable) this.version = { executable, value: version }
+    return version ?? 'unknown'
+  }
+
+  private prepareExecutable(executable: string | null): void {
+    if (this.cachedExecutable === executable) return
+    this.cachedExecutable = executable
+    this.cachedCatalog = null
+    this.cachedAt = 0
+    this.version = null
   }
 
   private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>): PrimeModelCatalog {

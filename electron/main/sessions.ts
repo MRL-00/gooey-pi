@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import type { HarnessId, SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
 import { queueDaemonFollowUp } from './agent-daemon'
 import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
-import { runProcess } from './process-utils'
+import { resolveExecutable, runProcess, type ExecutableSource } from './process-utils'
 import { SessionMetadataCatalog, type SessionCatalogIo, type SessionNameTimestamp } from './sessions/catalog'
 import { createSessionMetadataReader, type SessionMetadata, type SessionMetadataReader } from './sessions/metadata'
 import { readTranscript } from './sessions/transcript'
@@ -73,7 +73,7 @@ export class SessionService {
 
   constructor(
     private readonly store: JsonStateStore,
-    private readonly primeAgentPath: string | null,
+    private readonly primeAgentPath: ExecutableSource,
     maxSessionFiles = MAX_SESSION_FILES,
     options: SessionServiceOptions = {},
   ) {
@@ -193,7 +193,8 @@ export class SessionService {
   private async queueActiveFollowUp(filePath: unknown, message: unknown, intent: 'queue' | 'steer'): Promise<boolean> {
     const safePath = await this.requireSessionPath(filePath)
     const safeMessage = requireString(message, 'message', { min: 1, max: 64 * 1024 })
-    if (!this.primeAgentPath) throw new Error('Prime Agent executable was not found')
+    const primeAgentPath = resolveExecutable(this.primeAgentPath)
+    if (!primeAgentPath) throw new Error('Prime Agent executable was not found')
 
     // The catalog canonicalizes candidate session files with bounded
     // parallelism and caches the result; reuse it instead of re-listing with
@@ -203,7 +204,7 @@ export class SessionService {
     const activeSessionId = requireId(active.activeSessionId ?? active.id, 'activeSessionId')
     if (activeSessionId.startsWith('-')) throw new Error('Prime Agent returned an invalid active session identifier')
 
-    const status = await runProcess(this.primeAgentPath, ['status', '--json'], { timeoutMs: 15_000, maxBytes: 1024 * 1024 })
+    const status = await runProcess(primeAgentPath, ['status', '--json'], { timeoutMs: 15_000, maxBytes: 1024 * 1024 })
     if (status.code !== 0 || status.timedOut || status.outputExceeded) throw new Error('GooeyPi could not inspect the Prime Agent daemon')
     let statuses: unknown
     try { statuses = JSON.parse(status.stdout) } catch { throw new Error('Prime Agent returned an invalid daemon status') }
@@ -219,9 +220,10 @@ export class SessionService {
     const safeTitle = requireString(title, 'title', { min: 1, max: 200, trim: true })
     if (safeTitle.startsWith('-') || /[\r\n]/.test(safeTitle)) throw new TypeError('title contains invalid characters')
     if (await this.renameRuntimeSession(safePath, safeTitle)) return true
-    if (!this.primeAgentPath) return false
+    const primeAgentPath = resolveExecutable(this.primeAgentPath)
+    if (!primeAgentPath) return false
     const metadata = await this.readMetadata(safePath)
-    const result = await runProcess(this.primeAgentPath, ['rename', metadata.id, safeTitle, '--json'], { timeoutMs: 30_000 })
+    const result = await runProcess(primeAgentPath, ['rename', metadata.id, safeTitle, '--json'], { timeoutMs: 30_000 })
     return result.code === 0
   }
 

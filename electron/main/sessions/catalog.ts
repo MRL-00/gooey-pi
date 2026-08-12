@@ -2,7 +2,7 @@ import type { Stats } from 'node:fs'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { comparePaths, createSingleFlight, mapLimit } from '../lib/async'
-import { runProcess } from '../process-utils'
+import { resolveExecutable, runProcess, type ExecutableSource } from '../process-utils'
 import { isPathWithin, isRecord } from '../validation'
 import { applyLiveMetadata, type JsonRecord, type SessionMetadata } from './metadata'
 
@@ -68,7 +68,7 @@ export class SessionMetadataCatalog {
 
   constructor(
     private readonly sessionRoot: () => string,
-    private readonly primeAgentPath: string | null,
+    private readonly primeAgentPath: ExecutableSource,
     private readonly maxSessionFiles: number,
     private readonly readMetadata: (filePath: string, knownStat?: Stats) => Promise<SessionMetadata>,
     private readonly io: SessionCatalogIo = nodeSessionCatalogIo,
@@ -183,7 +183,8 @@ export class SessionMetadataCatalog {
   }
 
   private async liveCatalog(): Promise<Map<string, JsonRecord>> {
-    if (!this.primeAgentPath) return new Map()
+    const primeAgentPath = resolveExecutable(this.primeAgentPath)
+    if (!primeAgentPath) return new Map()
     const revision = this.catalogRevision
     const cache = this.catalogCache
     const now = Date.now()
@@ -197,7 +198,7 @@ export class SessionMetadataCatalog {
     return this.catalogRequests.run(0, async () => {
       const sessions = new Map<string, JsonRecord>()
       try {
-        const result = await runProcess(this.primeAgentPath!, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
+        const result = await runProcess(primeAgentPath, ['list', '--all', '--json'], { timeoutMs: 15_000, maxBytes: 16 * 1024 * 1024 })
         if (result.code === 0) {
           const parsed: unknown = JSON.parse(result.stdout)
           if (isRecord(parsed) && Array.isArray(parsed.sessions)

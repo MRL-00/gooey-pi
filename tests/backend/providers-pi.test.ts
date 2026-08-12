@@ -70,6 +70,15 @@ const processExists = (pid: number): boolean => {
 }
 
 describe('Pi model catalog service', () => {
+  it('invalidates the unavailable cache when discovery finds an executable', async () => {
+    let executable: string | null = null
+    const service = new PiModelCatalogService(() => executable)
+    await expect(service.catalog()).resolves.toMatchObject({ models: [], warning: PI_NOT_INSTALLED_WARNING })
+
+    executable = fakePiWithCatalog(sampleCatalog)
+    await expect(service.catalog()).resolves.toMatchObject({ primeVersion: '0.84.1', models: expect.any(Array) })
+  })
+
   it('parses the RPC probe response into Prime descriptor shapes, skipping noise lines', async () => {
     const service: ModelCatalogProvider = new PiModelCatalogService(fakePiWithCatalog(sampleCatalog))
     const catalog = await service.catalog(true)
