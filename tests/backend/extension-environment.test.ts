@@ -102,4 +102,10 @@ describe('capability extension environment parity (OMP and pi)', () => {
     expect(args.slice(-2)).toEqual(['--skill', '/app/skills/gooeypi-cua-driver'])
     expect(PRIME_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment: {} })).not.toContain('/app/skills/gooeypi-cua-driver')
   })
+
+  it('injects the bundled CUA MCP proxy into both extension-based harnesses', () => {
+    const environment = { GOOEYPI_CUA_DRIVER_EXTENSION_PATH: '/app/extensions/pi-work-cua-driver.ts' }
+    expect(PI_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment }).slice(-2)).toEqual(['--extension', '/app/extensions/pi-work-cua-driver.ts'])
+    expect(OMP_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment }).slice(-2)).toEqual(['--extension', '/app/extensions/pi-work-cua-driver.ts'])
+  })
 })

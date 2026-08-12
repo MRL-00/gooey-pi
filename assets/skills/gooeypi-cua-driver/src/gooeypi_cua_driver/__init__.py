@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 from contextlib import AsyncExitStack
-from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -18,11 +17,22 @@ _VERSION_RE = re.compile(r"\b(?:cua-driver(?:-rs)?\s+)?v?(\d+)\.(\d+)\.(\d+)\b",
 _MIN_VERSION = tuple(int(part) for part in MIN_CUA_DRIVER_VERSION.split("."))
 _DEFAULT_COMMAND = "cua-driver.exe" if os.name == "nt" else "cua-driver"
 _RESERVED = {"run", "__wrapped__", "__call__"}
+_DRIVER_ENV_KEYS = (
+    "HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+    "TMPDIR", "TMP", "TEMP", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
+    "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "SYSTEMROOT", "WINDIR",
+    "COMSPEC", "PATHEXT", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "USERNAME",
+    "PROGRAMDATA", "__CF_USER_TEXT_ENCODING",
+)
 
 
 def _command() -> str:
     configured = os.environ.get("GOOEYPI_CUA_DRIVER_PATH")
     return configured if configured else _DEFAULT_COMMAND
+
+
+def _driver_environment() -> dict[str, str]:
+    return {key: os.environ[key] for key in _DRIVER_ENV_KEYS if key in os.environ}
 
 
 def _probe_version(command: str) -> tuple[int, int, int] | None:
@@ -31,6 +41,7 @@ def _probe_version(command: str) -> tuple[int, int, int] | None:
             [command, "--version"],
             capture_output=True,
             check=False,
+            env=_driver_environment(),
             text=True,
             timeout=5,
         )
@@ -70,7 +81,7 @@ class GooeyPiCuaDriver(McpIntegration):
     async def _open_session(self, stack: AsyncExitStack):
         command = _command()
         _ensure_supported_driver(command)
-        params = StdioServerParameters(command=command, args=["mcp"], env=None)
+        params = StdioServerParameters(command=command, args=["mcp"], env=_driver_environment())
         read, write, *_ = await stack.enter_async_context(stdio_client(params))
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()

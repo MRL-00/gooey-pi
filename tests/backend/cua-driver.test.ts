@@ -41,7 +41,7 @@ describe('CuaDriverService', () => {
     await expect(service.requireAvailable()).rejects.toThrow('Install Cua Driver')
   })
 
-  it('writes and removes only the managed MCP entry for all three harnesses', async () => {
+  it('writes and removes only the managed Prime MCP entry', async () => {
     const root = makeDirectory()
     const executable = join(root, 'bin', 'cua-driver')
     const agentDirs = { prime: join(root, 'prime'), omp: join(root, 'omp'), pi: join(root, 'pi') }
@@ -55,13 +55,13 @@ describe('CuaDriverService', () => {
     )
 
     await expect(service.setEnabled(true)).resolves.toMatchObject({ enabled: true, path: executable })
-    for (const [harness, file] of [['prime', 'settings.json'], ['omp', 'mcp.json'], ['pi', 'mcp.json']] as const) {
+    for (const [harness, file] of [['prime', 'settings.json']] as const) {
       const settings = JSON.parse(readFileSync(join(agentDirs[harness], file), 'utf8')) as Record<string, unknown>
       expect(settings).toMatchObject({ mcpServers: { 'gooeypi-cua-driver': { type: 'stdio', command: executable, args: ['mcp'], env: { GOOEYPI_MANAGED_CUA_DRIVER: '1' }, enabled: true } } })
     }
 
     await service.setEnabled(false)
-    for (const [harness, file] of [['prime', 'settings.json'], ['omp', 'mcp.json'], ['pi', 'mcp.json']] as const) {
+    for (const [harness, file] of [['prime', 'settings.json']] as const) {
       const settings = JSON.parse(readFileSync(join(agentDirs[harness], file), 'utf8')) as Record<string, unknown>
       expect(settings.mcpServers).toBeUndefined()
     }

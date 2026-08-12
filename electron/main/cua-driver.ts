@@ -10,7 +10,6 @@ export const CUA_DRIVER_INSTALL_URL = 'https://cua.ai/driver'
 export const MIN_CUA_DRIVER_VERSION = '0.19.0'
 const MANAGED_SERVER_NAME = 'gooeypi-cua-driver'
 const MANAGED_MARKER = { key: 'GOOEYPI_MANAGED_CUA_DRIVER', value: '1' } as const
-const OMP_MCP_SCHEMA = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json'
 const VERSION_PATTERN = /\b(?:cua-driver(?:-rs)?\s+)?v?(\d+)\.(\d+)\.(\d+)\b/i
 
 interface DriverProbe {
@@ -199,8 +198,6 @@ export class CuaDriverService {
     } : null
     const targets = [
       { path: (this.platform === 'win32' ? win32 : posix).join(this.agentDirs.prime, 'settings.json'), agentName: 'Prime Agent' },
-      { path: (this.platform === 'win32' ? win32 : posix).join(this.agentDirs.omp, 'mcp.json'), agentName: 'OMP', schema: OMP_MCP_SCHEMA },
-      { path: (this.platform === 'win32' ? win32 : posix).join(this.agentDirs.pi, 'mcp.json'), agentName: 'Pi' },
     ]
     const changed: typeof targets = []
     try {
