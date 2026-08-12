@@ -14,6 +14,8 @@ import type {
 
 interface UseBootstrapOptions {
   bridge: PrimeWorkApi | null
+  /** Wait until persisted settings select the authoritative startup harness. */
+  ready?: boolean
   /** Harness whose projects, sessions, and runtimes populate the workspace. */
   harness?: HarnessId
   setProjects: React.Dispatch<React.SetStateAction<ProjectRecord[]>>
@@ -94,6 +96,7 @@ export function mergeSessionCatalog(
 
 export function useBootstrap({
   bridge,
+  ready = true,
   harness = 'prime',
   setProjects,
   setSessions,
@@ -119,7 +122,10 @@ export function useBootstrap({
   }, [bridge])
 
   useEffect(() => {
-    if (!bridge) return
+    if (!bridge || !ready) {
+      setInitialized(!bridge)
+      return
+    }
     // Switching harness rides the exact workspace-switch path: clear the
     // visible catalog, bump the workspace generation (which resets runtime,
     // transcript, and queued prompts), then bootstrap the new harness. The
@@ -203,6 +209,7 @@ export function useBootstrap({
     harness,
     onHarnessSwitch,
     reportError,
+    ready,
     runtimeSessionsRef,
     setProjects,
     setScheduleError,
@@ -212,7 +219,7 @@ export function useBootstrap({
   ])
 
   useEffect(() => {
-    if (!bridge || !initialized) return
+    if (!bridge || !ready || !initialized) return
     let disposed = false
     let refreshTimer: number | null = null
     let requestId = 0
@@ -256,7 +263,7 @@ export function useBootstrap({
       unsubscribe()
       if (refreshTimer !== null) window.clearTimeout(refreshTimer)
     }
-  }, [bridge, harness, initialized, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
+  }, [bridge, harness, initialized, ready, reportError, sessionHasOpenExtensionUi, setSessions, workspaceRef])
 
   return { meta, initialized, refreshHarnesses }
 }

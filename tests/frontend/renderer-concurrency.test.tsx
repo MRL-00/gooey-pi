@@ -70,6 +70,25 @@ function setDocumentVisibility(state: 'visible' | 'hidden') {
 function Probe({ children }: { children?: ReactNode }) { return <>{children}</> }
 
 describe('settings queue reconciliation', () => {
+  it('does not initialize until persisted settings finish loading', async () => {
+    const persisted = deferred<AppSettings>()
+    const bridge = {
+      settings: { get: () => persisted.promise },
+    } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useAppSettings>
+    function SettingsProbe() {
+      state = useAppSettings({ bridge, reportError })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<SettingsProbe />); await Promise.resolve() })
+    expect(state.initialized).toBe(false)
+    await act(async () => { persisted.resolve({ ...DEFAULT_SETTINGS, activeHarness: 'pi' }); await persisted.promise; await Promise.resolve() })
+    expect(state.initialized).toBe(true)
+    expect(state.settings.activeHarness).toBe('pi')
+  })
+
   it('restores every standalone panel from the latest saved settings after a queued failure', async () => {
     const first = deferred<AppSettings>()
     const second = deferred<AppSettings>()

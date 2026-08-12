@@ -18,6 +18,8 @@ export function groupModelsByProvider(models: readonly PrimeModelDescriptor[] | 
 
 interface UseProviderCatalogOptions {
   bridge: PrimeWorkApi | null
+  /** Prevent startup work before the persisted harness selection is loaded. */
+  ready?: boolean
   /** Harness whose model catalog is shown; catalogs are cached per harness. */
   harness?: HarnessId
   runtime: RuntimeInfo | null
@@ -25,7 +27,7 @@ interface UseProviderCatalogOptions {
   reportError(error: unknown): void
 }
 
-export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRuntime, reportError }: UseProviderCatalogOptions) {
+export function useProviderCatalog({ bridge, ready = true, harness = 'prime', runtime, syncRuntime, reportError }: UseProviderCatalogOptions) {
   const [model, setModel] = useState('auto')
   const [effort, setEffort] = useState<PrimeThinkingLevel>('medium')
   const [fast, setFast] = useState(false)
@@ -78,10 +80,10 @@ export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRun
   }, [])
 
   const refresh = useCallback(async (force = false) => {
-    if (!bridge) return
+    if (!bridge || !ready) return
     const target = harness
     setCatalogFor(target, await bridge.providers.catalog(force, target))
-  }, [bridge, harness, setCatalogFor])
+  }, [bridge, harness, ready, setCatalogFor])
 
   const selectedModel = useMemo<PrimeModelDescriptor | undefined>(() => {
     if (model !== 'auto') return catalog?.models.find((candidate) => candidate.key === model)
@@ -97,12 +99,12 @@ export function useProviderCatalog({ bridge, harness = 'prime', runtime, syncRun
   }, [effort, reasoningLevels, updateEffort])
 
   useEffect(() => {
-    if (!bridge) return
+    if (!bridge || !ready) return
     let cancelled = false
     const target = harness
     void bridge.providers.catalog(false, target).then((next) => { if (!cancelled) setCatalogFor(target, next) }).catch(reportError)
     return () => { cancelled = true }
-  }, [bridge, harness, reportError, setCatalogFor])
+  }, [bridge, harness, ready, reportError, setCatalogFor])
 
   // The composer's selection belongs to one harness's catalog; a switch resets
   // it to auto until the new harness's runtime or the user picks a model.

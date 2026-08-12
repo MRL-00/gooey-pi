@@ -14,6 +14,7 @@ interface UseAppSettingsOptions {
 
 export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [initialized, setInitialized] = useState(!bridge)
   const [sidebarOpen, setSidebarOpenState] = useState(true)
   const [inspectorOpen, setInspectorOpenState] = useState(true)
   const [terminalOpen, setTerminalOpenState] = useState(false)
@@ -85,7 +86,11 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
   }, [applySettings])
 
   useEffect(() => {
-    if (!bridge) return
+    if (!bridge) {
+      setInitialized(true)
+      return
+    }
+    setInitialized(false)
     let cancelled = false
     const startupRevision = settingsMutationRef.current
     void bridge.settings.get().then((value) => {
@@ -93,7 +98,9 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
       confirmedSettingsRef.current = value
       applySettings(value, value)
       if (!inspectorTabTouchedRef.current) setInspectorTab(value.defaultInspectorTab)
-    }).catch((error) => { if (!cancelled) reportError(error) })
+    }).catch((error) => { if (!cancelled) reportError(error) }).finally(() => {
+      if (!cancelled) setInitialized(true)
+    })
     return () => { cancelled = true }
   }, [applySettings, bridge, reportError])
 
@@ -118,6 +125,7 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
 
   return {
     settings,
+    initialized,
     sidebarOpen,
     setSidebarOpen,
     inspectorOpen,

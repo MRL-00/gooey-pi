@@ -10,6 +10,7 @@ import { useProviderCatalog } from '../../src/hooks/useProviderCatalog'
 import { DEFAULT_SETTINGS } from '../../src/lib/data'
 import { AgentSettings } from '../../src/pages/settings/AgentSettings'
 import { ProviderSettings } from '../../src/pages/settings/ProviderSettings'
+import { SettingsPage } from '../../src/pages/SettingsPage'
 import type { AppMeta, AppSettings, HarnessId, PrimeModelCatalog, PrimeWorkApi, ProjectRecord, RuntimeInfo, SessionRecord } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -101,6 +102,36 @@ describe('bootstrap harness switching', () => {
     } as unknown as PrimeWorkApi
     return { bridge, projectsList, sessionsList, agentList }
   }
+
+  it('waits for persisted settings before querying the selected harness', async () => {
+    const { bridge, projectsList, sessionsList, agentList } = makeBridge()
+    const workspace = makeWorkspace()
+    const props = {
+      setProjects: vi.fn(),
+      setSessions: vi.fn(),
+      setSchedules: vi.fn(),
+      setScheduleError: vi.fn(),
+      runtimeSessionsRef: { current: new Map<string, string>() },
+      workspaceRef: workspace.workspaceRef,
+      activateWorkspace: workspace.activateWorkspace,
+      attachRuntime: workspace.attachRuntime,
+      reportError: vi.fn(),
+    }
+    function BootstrapProbe({ ready }: { ready: boolean }) {
+      useBootstrap({ bridge, ready, harness: 'pi', ...props })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<BootstrapProbe ready={false} />); await Promise.resolve() })
+    expect(projectsList).not.toHaveBeenCalled()
+    expect(sessionsList).not.toHaveBeenCalled()
+    expect(agentList).not.toHaveBeenCalled()
+
+    await act(async () => { root.render(<BootstrapProbe ready />); await Promise.resolve(); await Promise.resolve() })
+    expect(projectsList).toHaveBeenCalledWith('pi')
+    expect(sessionsList).toHaveBeenCalledWith(undefined, true, 'pi')
+    expect(agentList).toHaveBeenCalledTimes(1)
+  })
 
   function makeWorkspace() {
     const workspaceRef = { current: { generation: 0 } as { generation: number; project?: ProjectRecord; session?: SessionRecord; cwd?: string; sessionFile?: string } }
@@ -403,6 +434,23 @@ describe('provider catalog per harness', () => {
     providers: [{ id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, authLabel: 'Credentials managed by the omp CLI', modelCount: 1, availableModelCount: 1, enabled: true }],
   }
 
+  it('waits for persisted settings before loading a provider catalog', async () => {
+    const catalog = vi.fn(async () => primeCatalog)
+    const bridge = {
+      providers: { catalog, onAuthEvent: vi.fn().mockReturnValue(() => undefined) },
+    } as unknown as PrimeWorkApi
+    const reportError = vi.fn()
+    function CatalogProbe({ ready }: { ready: boolean }) {
+      useProviderCatalog({ bridge, ready, harness: 'prime', runtime: null, syncRuntime: async () => undefined, reportError })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<CatalogProbe ready={false} />); await Promise.resolve() })
+    expect(catalog).not.toHaveBeenCalled()
+    await act(async () => { root.render(<CatalogProbe ready />); await Promise.resolve() })
+    expect(catalog).toHaveBeenCalledWith(false, 'prime')
+  })
+
   it('fetches per harness, caches catalogs, and resets the model selection on switch', async () => {
     const thirdFetch = deferred<PrimeModelCatalog>()
     const catalogMock = vi.fn()
@@ -440,6 +488,38 @@ describe('provider catalog per harness', () => {
 })
 
 describe('harness settings surfaces', () => {
+  it('follows a changed initial section while the settings page stays mounted', async () => {
+    const noop = () => undefined
+    const noopAsync = async () => undefined
+    const renderSettings = (initialSection: 'general' | 'agent') => (
+      <SettingsPage
+        settings={DEFAULT_SETTINGS}
+        meta={meta}
+        providerCatalog={null}
+        voice={null}
+        pets={null}
+        initialSection={initialSection}
+        onUpdate={noop}
+        onResetBrowser={noop}
+        onOpenDocs={noop}
+        onRefreshProviders={noopAsync}
+        onRefreshHarnesses={noopAsync}
+        onSaveProviderApiKey={noopAsync}
+        onLogoutProvider={noopAsync}
+        onSetProviderEnabled={noopAsync}
+        onSetAllProvidersEnabled={noopAsync}
+        onSetAllProvidersDisabled={noopAsync}
+        onStartProviderOAuth={noopAsync}
+      />
+    )
+
+    await act(async () => { root.render(renderSettings('general')) })
+    expect(container.querySelector('h1')?.textContent).toBe('General')
+    await act(async () => { root.render(renderSettings('agent')); await Promise.resolve() })
+    expect(container.querySelector('h1')?.textContent).toBe('Harness')
+    expect(container.querySelector('.settings-nav .is-active')?.textContent).toContain('Harness')
+  })
+
   it('keeps Harness settings universal while leaving only providers harness-specific', async () => {
     const onUpdate = vi.fn()
     const onRefreshHarnesses = vi.fn(async () => undefined)

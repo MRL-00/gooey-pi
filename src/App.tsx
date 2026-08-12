@@ -125,7 +125,7 @@ export default function App() {
     const next = (await bridge.agent.list()).find((candidate) => candidate.runtimeId === runtimeId)
     if (next && workspace.workspaceRef.current.generation === generation) workspace.attachRuntime(next, generation)
   }, [bridge, workspace.attachRuntime, workspace.workspaceRef])
-  const provider = useProviderCatalog({ bridge, harness: activeHarness, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, reportError })
+  const provider = useProviderCatalog({ bridge, ready: settingsState.initialized, harness: activeHarness, runtime: workspace.runtime, syncRuntime: syncProviderRuntime, reportError })
   const activeSession = useMemo(() => sessions.find((session) => session.id === workspace.activeSessionId), [sessions, workspace.activeSessionId])
   const activeProject = useMemo(() => findProjectForSession(projects, activeSession)
     ?? projects.find((project) => project.id === workspace.activeProjectId)
@@ -160,7 +160,7 @@ export default function App() {
     setScheduleFocusId(null)
   }, [])
   const { meta, initialized, refreshHarnesses } = useBootstrap({
-    bridge, harness: activeHarness, setProjects, setSessions, setSchedules, setScheduleError,
+    bridge, ready: settingsState.initialized, harness: activeHarness, setProjects, setSessions, setSchedules, setScheduleError,
     runtimeSessionsRef: workspace.runtimeSessionsRef, workspaceRef: workspace.workspaceRef,
     activateWorkspace: workspace.activateWorkspace, attachRuntime: workspace.attachRuntime,
     sessionHasOpenExtensionUi: extension.hasOpenRequestForSession, onHarnessSwitch, reportError,

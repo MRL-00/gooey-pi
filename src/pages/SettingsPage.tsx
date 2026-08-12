@@ -1,5 +1,5 @@
 import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, PawPrint, Settings2, Sun, Terminal } from 'lucide-react'
-import { useState, type ComponentType } from 'react'
+import { useEffect, useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
 import { BrowserGlobe, Modal } from '@/components/ui'
 import type { AppMeta, AppSettings, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
@@ -53,6 +53,8 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
+
+  useEffect(() => { setSection(initialSection) }, [initialSection])
 
   const resetBrowser = async () => {
     setResetting(true)
