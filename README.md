@@ -157,3 +157,7 @@ npm run package:win:local-qa
 ```
 
 Build packages on their target operating system so native dependencies match the release.
+
+## License
+
+GooeyPi is released under the permissive [MIT License](LICENSE). See the [license text](LICENSE) for details.
