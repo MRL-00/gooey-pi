@@ -1067,6 +1067,19 @@ test.describe('Prime Work desktop smoke', () => {
     const settingsPath = join(fixtureRoot, 'home', '.pi', 'agent', 'settings.json')
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
 
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    const addDialog = page.getByRole('dialog', { name: 'Add tools to Pi' })
+    await addDialog.getByLabel('Server name').fill('docs')
+    await addDialog.getByLabel('Server URL').fill('https://docs.example/mcp')
+    await addDialog.getByLabel('Authentication').selectOption('oauth')
+    await addDialog.getByRole('button', { name: 'Save server configuration' }).click()
+    await expect(addDialog.getByText(/Saved MCP server definition/)).toBeVisible()
+    await addDialog.getByRole('button', { name: 'Open session and sign in' }).click()
+    const promptPath = join(fixtureRoot, 'pi-prompt-args.json')
+    await expect.poll(() => existsSync(promptPath) ? JSON.parse(readFileSync(promptPath, 'utf8')).message : null).toBe('/mcp-auth docs')
+
+    await page.getByRole('button', { name: 'Plugins & skills' }).click()
+
     await page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' }).click()
     await expect(page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).not.toContain('npm:pi-mcp-adapter')
