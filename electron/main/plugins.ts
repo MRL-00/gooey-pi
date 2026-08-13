@@ -29,6 +29,22 @@ const MAX_QUEUED_PLUGIN_DISCOVERIES = 32
 const MAX_KNOWN_PATH_OWNERS = 64
 const MAX_KNOWN_PATHS_PER_OWNER = 4_096
 
+function normalizedCapabilityIdentity(value: string): string {
+  return value.toLowerCase().replace(/^@[^/]+\//, '').replace(/[^a-z0-9]+/g, '')
+}
+
+function dedupeAssociatedMcpPackages(skills: SkillRecord[]): SkillRecord[] {
+  const mcpByScope = new Set(skills
+    .filter((skill) => skill.kind === 'mcp' && skill.location !== 'bundled' && skill.location !== 'system')
+    .map((skill) => `${skill.location}:${normalizedCapabilityIdentity(skill.name)}`))
+  return skills.filter((skill) => {
+    if (skill.kind !== 'package') return true
+    const identities = skill.associatedMcpServers?.map(normalizedCapabilityIdentity)
+      ?? [normalizedCapabilityIdentity(skill.name)]
+    return !identities.some((identity) => mcpByScope.has(`${skill.location}:${identity}`))
+  })
+}
+
 const createDiscoveryQueue = () => createAdmissionQueue({
   maxConcurrent: MAX_CONCURRENT_PLUGIN_DISCOVERIES,
   maxPending: MAX_QUEUED_PLUGIN_DISCOVERIES,
@@ -99,7 +115,7 @@ export class PluginService {
       ? result.skills.filter((item) => !(item.kind === 'package' && /(?:^|[:/@])pi-mcp-adapter(?:$|[#@])/i.test(`${item.name} ${item.source ?? ''}`)))
       : result.skills
     const fixed = [...builtInSkills, ...harnessCapabilities]
-    const combined = [...fixed, ...discovered.filter((item) => !fixed.some((builtIn) => builtIn.id === item.id))]
+    const combined = dedupeAssociatedMcpPackages([...fixed, ...discovered.filter((item) => !fixed.some((builtIn) => builtIn.id === item.id))])
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
     this.knownPathsByOwner.delete(ownerKey)

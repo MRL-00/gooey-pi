@@ -64,6 +64,44 @@ describe('PluginService discovery', () => {
     expect(mcpRecords[0]).toMatchObject({ location: 'user' })
   })
 
+  it('uses package manifest metadata and collapses an associated MCP bridge row', async () => {
+    const root = temp()
+    const agentDir = join(root, '.prime', 'agent')
+    const packageRoot = join(root, 'supabase-bridge')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(packageRoot)
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'Prime Supabase',
+      description: 'Connect Prime Agent to Supabase.',
+      gooeypi: { mcpServers: ['supabase'] },
+    }))
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({
+      packages: [packageRoot],
+      mcpServers: { supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp' } },
+    }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const catalog = await service.list()
+
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'supabase', kind: 'mcp' }))
+    expect(catalog.skills).not.toContainEqual(expect.objectContaining({ name: 'Prime Supabase', kind: 'package' }))
+  })
+
+  it('uses a normalized slug instead of exposing a package path when metadata is unavailable', async () => {
+    const root = temp()
+    const agentDir = join(root, '.prime', 'agent')
+    const packageRoot = join(root, 'My Package')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(packageRoot)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: [packageRoot] }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const record = (await service.list()).skills.find((skill) => skill.kind === 'package')
+
+    expect(record).toMatchObject({ name: 'my-package', description: 'my-package capability package' })
+    expect(record?.description).not.toContain(root)
+  })
+
   it('coalesces lexical aliases after project authorization canonicalizes them', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
@@ -862,7 +900,7 @@ describe('PluginService Pi parity', () => {
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Shared skill', kind: 'skill', location: 'project' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-tool', kind: 'extension', location: 'user', description: 'Pi extension' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'project-tool', kind: 'extension', location: 'project', description: 'Pi extension' }))
-    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'installed-package', kind: 'package', description: 'Pi capability package from npm:installed-package' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'installed-package', kind: 'package', description: 'installed-package capability package' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', name: 'Pi MCP Adapter', enabled: false }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'docs', kind: 'mcp', location: 'user' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))

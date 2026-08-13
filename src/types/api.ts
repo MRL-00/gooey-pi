@@ -238,6 +238,8 @@ export interface SkillRecord {
   enabled: boolean
   icon?: string
   source?: string
+  /** MCP server ids this package exists to bridge. Used to collapse duplicate capability rows. */
+  associatedMcpServers?: string[]
   availability?: {
     available: boolean
     detail: string

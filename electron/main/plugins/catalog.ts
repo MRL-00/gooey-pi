@@ -74,6 +74,43 @@ function safeSource(source: string): string {
   return source.slice(0, 1_000)
 }
 
+function normalizedPackageSlug(source: string): string {
+  let value = source.trim().replace(/^(?:npm:|git:)/i, '').replace(/[?#].*$/, '').replace(/\.git$/i, '')
+  value = value.replace(/\/+$/, '').slice(value.lastIndexOf('/') + 1).replace(/@[^@/]+$/, '')
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'package'
+}
+
+interface PackageMetadata {
+  name: string
+  description: string
+  associatedMcpServers?: string[]
+}
+
+async function packageMetadata(sourceValue: string, settingsPath: string): Promise<PackageMetadata> {
+  const slug = normalizedPackageSlug(sourceValue)
+  const fallback = { name: slug, description: `${slug} capability package` }
+  const rawSource = sourceValue.replace(/^(?:npm:|git:)/i, '')
+  if (sourceValue.startsWith('npm:') || sourceValue.startsWith('git:') || /^(?:https?|ssh|git):\/\//i.test(rawSource)) return fallback
+  const packageRoot = isAbsolute(rawSource) ? rawSource : resolve(dirname(settingsPath), rawSource)
+  try {
+    const value = JSON.parse(await readSmall(join(packageRoot, 'package.json'))) as unknown
+    if (!isRecord(value)) return fallback
+    const name = typeof value.displayName === 'string' && value.displayName.trim()
+      ? value.displayName.trim().slice(0, 120)
+      : typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 120) : slug
+    const description = typeof value.description === 'string' && value.description.trim()
+      ? value.description.trim().slice(0, 500)
+      : `${name} capability package`
+    const gooeypi = isRecord(value.gooeypi) ? value.gooeypi : undefined
+    const associatedMcpServers = Array.isArray(gooeypi?.mcpServers)
+      ? gooeypi.mcpServers.filter((server): server is string => typeof server === 'string' && /^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(server)).slice(0, 32)
+      : undefined
+    return { name, description, ...(associatedMcpServers?.length ? { associatedMcpServers } : {}) }
+  } catch {
+    return fallback
+  }
+}
+
 interface SettingsReadResult { settings: Record<string, unknown>; warning?: PluginWarning }
 
 /**
@@ -244,8 +281,9 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
   })
 }
 
-function addSettingsMetadata(
+async function addSettingsMetadata(
   settings: Record<string, unknown>,
+  settingsPath: string,
   location: 'user' | 'project',
   output: SkillRecord[],
   harness: HarnessId = 'prime',
@@ -253,14 +291,15 @@ function addSettingsMetadata(
   // mcp.json files, surfaced separately below); a stray mcpServers key there
   // would advertise servers pi never loads.
   includeMcpServers: boolean = harness !== 'pi',
-): void {
+): Promise<void> {
   if (Array.isArray(settings.packages)) {
     for (const raw of settings.packages) {
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       const sourceValue = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : undefined
       if (!sourceValue) continue
       const source = safeSource(sourceValue)
-      output.push({ id: idFor('package', location, sourceValue), name: source.replace(/^(npm:|git:)/, '').slice(0, 120), description: `${HARNESSES[harness].agentName} capability package from ${source}`, kind: 'package', location, enabled: true, source })
+      const metadata = await packageMetadata(sourceValue, settingsPath)
+      output.push({ id: idFor('package', location, sourceValue), ...metadata, kind: 'package', location, enabled: true, source })
     }
   }
   if (includeMcpServers && isRecord(settings.mcpServers)) {
@@ -428,18 +467,18 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
 
   const result = await buildCandidateRecords(candidates, safeProjectPath, harness)
   result.push(...ompPackageRecords)
-  addSettingsMetadata(globalSettings, 'user', result, harness)
-  addSettingsMetadata(projectSettings, 'project', result, harness)
+  await addSettingsMetadata(globalSettings, join(agentDir, 'settings.json'), 'user', result, harness)
+  await addSettingsMetadata(projectSettings, safeProjectPath ? join(safeProjectPath, ...PROJECT_AGENT_SEGMENTS[harness], 'settings.json') : '', 'project', result, harness)
   // OMP reads mcp.json natively; pi reads the same layout through the
   // pi-mcp-adapter extension (~/.pi/agent/mcp.json and project .pi/mcp.json).
   if (harness !== 'prime') {
     const globalMcp = await readSettings(join(agentDir, 'mcp.json'), 'user')
     if (globalMcp.warning) warnings.push(globalMcp.warning)
-    addSettingsMetadata(globalMcp.settings, 'user', result, harness, true)
+    await addSettingsMetadata(globalMcp.settings, join(agentDir, 'mcp.json'), 'user', result, harness, true)
     if (safeProjectPath) {
       const projectMcp = await readSettings(join(safeProjectPath, ...PROJECT_AGENT_SEGMENTS[harness], 'mcp.json'), 'project')
       if (projectMcp.warning) warnings.push(projectMcp.warning)
-      addSettingsMetadata(projectMcp.settings, 'project', result, harness, true)
+      await addSettingsMetadata(projectMcp.settings, join(safeProjectPath, ...PROJECT_AGENT_SEGMENTS[harness], 'mcp.json'), 'project', result, harness, true)
     }
   }
   return { skills: result.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)), warnings }
