@@ -1,7 +1,7 @@
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import type { AppUpdateState } from '../../src/types/api'
 
-const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+export const DEFAULT_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
 const INITIAL_CHECK_DELAY_MS = 8_000
 
 export interface UpdateAdapter {

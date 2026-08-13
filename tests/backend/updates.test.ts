@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UpdateService, type UpdateAdapter } from '../../electron/main/updates'
+import { DEFAULT_CHECK_INTERVAL_MS, UpdateService, type UpdateAdapter } from '../../electron/main/updates'
 
 class FakeUpdater extends EventEmitter {
   autoDownload = false
@@ -26,6 +26,21 @@ describe('automatic update service', () => {
     await vi.advanceTimersByTimeAsync(25)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(100)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    service.dispose()
+  })
+
+  it('checks for a new release every three hours by default', async () => {
+    vi.useFakeTimers()
+    const updater = new FakeUpdater()
+    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true })
+
+    service.start()
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(DEFAULT_CHECK_INTERVAL_MS - 8_001)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
     service.dispose()
   })

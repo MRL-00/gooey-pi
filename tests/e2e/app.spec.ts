@@ -598,6 +598,13 @@ test.describe('Prime Work desktop smoke', () => {
     expect(bridge.type).toBe('object')
     expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'updates', 'voice'])
     expect(bridge.voiceMethods).toContain('testSelfHosted')
+    const updateMenu = await app!.evaluate(({ Menu }) => {
+      const parents = Menu.getApplicationMenu()?.items ?? []
+      const parent = parents.find((item) => item.submenu?.items.some((child) => child.label === 'Check for Updates…'))
+      return { found: Boolean(parent), parent: parent?.label, platform: process.platform }
+    })
+    expect(updateMenu.found).toBe(true)
+    expect(updateMenu.parent).toBe(updateMenu.platform === 'darwin' ? 'GooeyPi' : 'Help')
     await expect(page.evaluate(() => window.prime.updates.getState())).resolves.toMatchObject({ phase: 'unsupported' })
     const credentialStatus = await page.evaluate(() => window.prime.voice.credentialStatus())
     expect(typeof credentialStatus.storage.available).toBe('boolean')
