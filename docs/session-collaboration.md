@@ -7,7 +7,7 @@ Every Prime, OMP, and pi runtime receives six app-owned tools:
 - `session_list`: list accessible peer titles, UUIDs, status, and liveness.
 - `session_models`: list models available to this harness from providers currently active in GooeyPi, including each model's exact key and reasoning levels.
 - `session_create`: create and immediately prompt a new readable top-level session in the caller's same harness and canonical working directory. It accepts an optional model, reasoning level, title, and `fast` request; approximate model/reasoning wording uses the same resolver as voice-created tasks, then the runtime manager revalidates the exact selection and enables fast/priority mode only when the selected model and harness support it. The result contains the new session UUID and the applied fast-mode state.
-- `session_read`: read a bounded recent snapshot and cursor without modifying the peer.
+- `session_read`: read a bounded recent conversational snapshot and cursor without modifying the peer. It retains user, assistant, agent, and thinking text while omitting tool calls, tool results, and compaction internals.
 - `session_send`: deliver an attributed prompt or follow-up. Incoming messages carry the sender's exact `from_session_id` and a signed `reply_with: "session_send"` hint, so the recipient can answer directly without listing sessions. If the saved peer is idle/offline, GooeyPi starts its normal RPC runtime first; the runtime manager revalidates its project and session paths.
 - `session_wait`: wait up to 30 seconds for a peer to become idle and produce context after a cursor. Sends are non-blocking, and tool guidance prohibits mutual waits.
 
@@ -31,7 +31,7 @@ Using Prime's daemon transport only for Prime would create three different seman
 - Target UUIDs are exact and validated. Titles are display-only; `@title` resolution happens in the renderer against the visible sidebar catalog.
 - Session creation cannot select another harness or working directory. Model discovery excludes hidden, disabled, and unavailable providers/models, and creation goes through the owning manager's normal cwd, model, and reasoning validation before a prompt is accepted.
 - Session JSONL remains read-only. Reads go through the owning `SessionService`; sends go through the owning live RPC manager.
-- Read snapshots are limited to 40 recent messages and 96 KiB of text. Sends are limited to 64 KiB. Waits are capped at 30 seconds, broker calls are body-bounded and rate-limited, and cached catalogs prevent wait polling from rescanning all session files.
+- Read snapshots are limited to 40 recent conversational messages and 30,000 estimated tokens using the same portable four-characters-per-token convention as upstream compaction. The result reports its estimate and whether it was truncated. Tool-only transcript records do not consume the message or token budget. Sends are limited to 64 KiB. Waits are capped at 30 seconds, broker calls are body-bounded and rate-limited, and cached catalogs prevent wait polling from rescanning all session files.
 - An offline send may start a normal runtime only after the existing manager reauthorizes both cwd and canonical session path. Concurrent wake requests share one in-flight start, and each source token may have only one session creation in flight.
 - Routing blocks are stripped from the rendered user transcript. User-supplied routing delimiters are neutralized before GooeyPi adds its own block.
 

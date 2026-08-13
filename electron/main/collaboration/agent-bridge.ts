@@ -10,7 +10,9 @@ import { encodeGooeyPiAgentMessage } from './message-envelope'
 
 const MAX_LISTED_SESSIONS = 100
 const MAX_MESSAGES = 40
-const MAX_CONTEXT_CHARS = 96 * 1024
+const MAX_CONTEXT_TOKENS = 30_000
+const TOKEN_ESTIMATE_CHARS = 4
+const MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS * TOKEN_ESTIMATE_CHARS
 const MAX_SEND_CHARS = 64 * 1024
 const MAX_CREATE_PROMPT_CHARS = 1_000_000
 const MAX_WAIT_MS = 30_000
@@ -48,30 +50,60 @@ interface CollaborationSnapshot {
   session: Pick<SessionRecord, 'id' | 'harness' | 'title' | 'status' | 'updatedAt'>
   cursor: string
   live: boolean
+  estimated_tokens: number
+  token_limit: number
+  truncated: boolean
   messages: CollaborationMessage[]
 }
 
 function messageText(message: TranscriptMessage): string {
+  if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'agent') return ''
   return message.parts.map((part) => {
-    if (part.type === 'text' || part.type === 'thinking' || part.type === 'agentMessage') return part.text
-    if (part.type === 'toolResult') return `[${part.name ?? 'tool'} result]\n${part.text}`
-    if (part.type === 'toolCall') return `[tool call: ${part.name}]`
-    if (part.type === 'compaction') return part.summary ? `[compaction]\n${part.summary}` : '[compaction]'
-    return '[image]'
+    if (part.type === 'text' || part.type === 'agentMessage') return part.text
+    if (part.type === 'thinking') return `[thinking]\n${part.text}`
+    if (part.type === 'image') return '[image omitted]'
+    return ''
   }).filter(Boolean).join('\n')
 }
 
-function boundedMessages(transcript: TranscriptMessage[]): CollaborationMessage[] {
+function truncateMiddle(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value
+  const marker = '\n[...message truncated...]\n'
+  if (maxChars <= marker.length) return value.slice(-maxChars)
+  const available = maxChars - marker.length
+  const headChars = Math.ceil(available / 2)
+  return `${value.slice(0, headChars)}${marker}${value.slice(-(available - headChars))}`
+}
+
+function boundedMessages(transcript: TranscriptMessage[]): {
+  messages: CollaborationMessage[]
+  estimatedTokens: number
+  truncated: boolean
+} {
   let remaining = MAX_CONTEXT_CHARS
   const messages: CollaborationMessage[] = []
-  for (const message of transcript.slice(-MAX_MESSAGES).reverse()) {
-    if (remaining <= 0) break
+  let truncated = false
+  let includedMessages = 0
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const message = transcript[index]
     const raw = messageText(message)
-    const text = raw.length <= remaining ? raw : raw.slice(-remaining)
+    if (!raw) continue
+    if (includedMessages >= MAX_MESSAGES || remaining <= 0) {
+      truncated = true
+      break
+    }
+    const text = truncateMiddle(raw, remaining)
+    if (text.length < raw.length) truncated = true
     remaining -= text.length
     messages.push({ id: message.id, role: message.role, agentName: message.agentName, text })
+    includedMessages += 1
+    if (text.length < raw.length) break
   }
-  return messages.reverse()
+  return {
+    messages: messages.reverse(),
+    estimatedTokens: Math.ceil((MAX_CONTEXT_CHARS - remaining) / TOKEN_ESTIMATE_CHARS),
+    truncated,
+  }
 }
 
 function cursorFor(session: SessionRecord, messages: CollaborationMessage[], live: boolean): string {
@@ -276,7 +308,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   }
 
   private async snapshot(target: CollaborationTarget): Promise<CollaborationSnapshot> {
-    const messages = boundedMessages(await target.service.read(target.session.filePath))
+    const context = boundedMessages(await target.service.read(target.session.filePath))
     // The target was authorized through a forced catalog scan. Polling waits
     // use the service cache so a 30-second wait never rescans every session
     // file four times per second.
@@ -286,9 +318,12 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     const live = Boolean(target.manager.getForSession(refreshed.filePath))
     return {
       session: { id: refreshed.id, harness: refreshed.harness, title: refreshed.title, status: refreshed.status, updatedAt: refreshed.updatedAt },
-      cursor: cursorFor(refreshed, messages, live),
+      cursor: cursorFor(refreshed, context.messages, live),
       live,
-      messages,
+      estimated_tokens: context.estimatedTokens,
+      token_limit: MAX_CONTEXT_TOKENS,
+      truncated: context.truncated,
+      messages: context.messages,
     }
   }
 

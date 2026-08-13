@@ -108,7 +108,7 @@ function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
   pi.registerTool<{ target_session_id: string }>({
     name: 'session_read',
     label: 'Read session',
-    description: 'Read bounded recent context from another GooeyPi session in this working directory without modifying its transcript.',
+    description: 'Read bounded recent conversational context from another GooeyPi session in this working directory without modifying its transcript. Includes user, assistant, agent, and thinking text; omits tool calls, tool results, and internal compaction data. Results are capped at 30,000 estimated tokens and report whether truncation occurred.',
     parameters: Type.Object({ target_session_id: target }),
     async execute(_id, params) { return result(await call('read', params)) },
   })

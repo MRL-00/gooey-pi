@@ -62,13 +62,15 @@ function manager(runtime?: RuntimeInfo, onCreate?: () => void) {
   }
 }
 
-async function fixture(live = true) {
+const defaultTargetTranscript: TranscriptMessage[] = [
+  { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Implement the API.' }] },
+  { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'The endpoint is ready.' }] },
+]
+
+async function fixture(live = true, targetTranscript: TranscriptMessage[] = defaultTargetTranscript) {
   const records = [source, target, foreign, child, archived]
   const primeSessions = service(records, {
-    [target.filePath]: [
-      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Implement the API.' }] },
-      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'The endpoint is ready.' }] },
-    ],
+    [target.filePath]: targetTranscript,
   })
   const targetRuntime: RuntimeInfo | undefined = live ? {
     runtimeId: 'runtime-target', harness: 'prime', sessionId: target.id, sessionFile: target.filePath, cwd: '/project', isStreaming: false,
@@ -125,7 +127,13 @@ describe('AgentCollaborationBridge', () => {
 
     const read = await call('read', { target_session_id: target.id })
     expect(read.status).toBe(200)
-    expect(read.body.result).toMatchObject({ session: { id: target.id, harness: 'prime' }, live: true })
+    expect(read.body.result).toMatchObject({
+      session: { id: target.id, harness: 'prime' },
+      live: true,
+      estimated_tokens: expect.any(Number),
+      token_limit: 30_000,
+      truncated: false,
+    })
     expect(JSON.stringify(read.body.result)).toContain('The endpoint is ready.')
 
     const denied = await call('read', { target_session_id: foreign.id })
@@ -137,6 +145,58 @@ describe('AgentCollaborationBridge', () => {
     const archivedDenied = await call('read', { target_session_id: archived.id })
     expect(archivedDenied.status).toBe(409)
     expect(archivedDenied.body.error).toContain('not found in this working directory')
+  })
+
+  it('reads conversational I/O and thinking without exposing execution traces', async () => {
+    const toolOnly: TranscriptMessage[] = Array.from({ length: 45 }, (_, index) => ({
+      id: `tool-${index}`,
+      role: 'tool',
+      parts: [{ type: 'toolResult', name: 'shell', text: `SECRET_TOOL_RESULT_${index}` }],
+    }))
+    const { call } = await fixture(true, [
+      { id: 'input', role: 'user', parts: [{ type: 'text', text: 'VISIBLE_USER_INPUT' }, { type: 'image' }] },
+      ...toolOnly,
+      { id: 'internal', role: 'system', parts: [{ type: 'text', text: 'SECRET_SYSTEM_TEXT' }] },
+      { id: 'goal', role: 'goal', parts: [{ type: 'text', text: 'SECRET_GOAL_TEXT' }] },
+      { id: 'output', role: 'assistant', parts: [
+        { type: 'thinking', text: 'VISIBLE_THINKING' },
+        { type: 'toolCall', name: 'dangerous_tool', args: { secret: 'SECRET_TOOL_ARGUMENT' } },
+        { type: 'toolResult', name: 'dangerous_tool', text: 'SECRET_INLINE_TOOL_RESULT' },
+        { type: 'compaction', status: 'done', summary: 'SECRET_COMPACTION_SUMMARY' },
+        { type: 'text', text: 'VISIBLE_ASSISTANT_OUTPUT' },
+      ] },
+    ])
+
+    const read = await call('read', { target_session_id: target.id })
+    expect(read.status).toBe(200)
+    expect(read.body.result).toMatchObject({ token_limit: 30_000, truncated: false })
+    const serialized = JSON.stringify(read.body.result)
+    expect(serialized).toContain('VISIBLE_USER_INPUT')
+    expect(serialized).toContain('[image omitted]')
+    expect(serialized).toContain('[thinking]\\nVISIBLE_THINKING')
+    expect(serialized).toContain('VISIBLE_ASSISTANT_OUTPUT')
+    expect(serialized).not.toContain('SECRET_TOOL_RESULT')
+    expect(serialized).not.toContain('SECRET_SYSTEM_TEXT')
+    expect(serialized).not.toContain('SECRET_GOAL_TEXT')
+    expect(serialized).not.toContain('SECRET_TOOL_ARGUMENT')
+    expect(serialized).not.toContain('SECRET_INLINE_TOOL_RESULT')
+    expect(serialized).not.toContain('SECRET_COMPACTION_SUMMARY')
+  })
+
+  it('caps session reads at 30,000 estimated tokens and marks truncation', async () => {
+    const { call } = await fixture(true, [
+      { id: 'older', role: 'user', parts: [{ type: 'text', text: `START_${'a'.repeat(79_988)}_END` }] },
+      { id: 'newer', role: 'assistant', parts: [{ type: 'text', text: 'b'.repeat(80_000) }] },
+    ])
+
+    const read = await call('read', { target_session_id: target.id })
+    expect(read.status).toBe(200)
+    expect(read.body.result).toMatchObject({ estimated_tokens: 30_000, token_limit: 30_000, truncated: true })
+    const messages = (read.body.result as { messages: Array<{ text: string }> }).messages
+    expect(messages.map(({ text }) => text).join('').length).toBe(120_000)
+    expect(messages[0]?.text).toContain('[...message truncated...]')
+    expect(messages[0]?.text).toContain('START_')
+    expect(messages[0]?.text).toContain('_END')
   })
 
   it('delivers attributed messages to a live target and returns a wait cursor', async () => {
