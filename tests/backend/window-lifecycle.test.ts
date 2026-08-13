@@ -17,12 +17,25 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => electron)
 
-import { confirmAppClose, hardenRenderer, loadInitialRenderer, settleShutdown } from '../../electron/main/index'
+import { confirmAppClose, hardenRenderer, loadInitialRenderer, mainWindowChromeOptions, settleShutdown } from '../../electron/main/index'
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
 
 describe('application window lifecycle', () => {
+  it('uses one overlay title bar on Linux while preserving native platform chrome elsewhere', () => {
+    expect(mainWindowChromeOptions('linux')).toEqual({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { height: 52 },
+      autoHideMenuBar: true,
+    })
+    expect(mainWindowChromeOptions('win32')).toEqual({ titleBarStyle: 'default' })
+    expect(mainWindowChromeOptions('darwin')).toMatchObject({
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 18, y: 18 },
+    })
+  })
+
   it('defaults to cancel and warns that automations stop when GooeyPi closes', () => {
     const window = {} as BrowserWindow
     electron.dialog.showMessageBoxSync.mockReturnValueOnce(0)

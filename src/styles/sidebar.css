@@ -2,6 +2,8 @@
 .sidebar { position: relative; z-index: 30; width: 248px; flex: 0 0 248px; height: 100%; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--sidebar); user-select: none; }
 .sidebar__titlebar { height: 52px; flex: 0 0 52px; display: flex; align-items: center; gap: 7px; padding-right: 8px; }
 .sidebar__titlebar .traffic-light-clearance { width: 84px; flex-basis: 84px; }
+.app-shell[data-platform='linux'] .sidebar__titlebar, .app-shell[data-platform='win32'] .sidebar__titlebar { padding-left: 8px; }
+.app-shell[data-platform='linux'] .traffic-light-clearance, .app-shell[data-platform='win32'] .traffic-light-clearance { display: none; }
 .sidebar__brand { position: relative; min-width: 0; display: flex; align-items: center; gap: 7px; }
 .brand-switcher__trigger { display: flex; align-items: center; gap: 7px; margin-left: -5px; padding: 3px 5px; border-radius: 7px; color: inherit; background: transparent; }
 .brand-switcher__trigger:hover, .brand-switcher__trigger[aria-expanded='true'] { background: var(--surface-hover); }

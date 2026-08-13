@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
+import type { BrowserWindowConstructorOptions } from 'electron'
 import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -194,14 +195,27 @@ export function confirmAppClose(window: BrowserWindow): boolean {
   }) === 1
 }
 
+export function mainWindowChromeOptions(platform: NodeJS.Platform = process.platform): BrowserWindowConstructorOptions {
+  if (platform === 'darwin') return {
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 18, y: 18 },
+    vibrancy: 'sidebar',
+    visualEffectState: 'active',
+  }
+  if (platform === 'linux') return {
+    // Let the app's existing 52px drag regions become the one visible title
+    // bar. Native controls remain managed by Electron/the window manager, and
+    // the default application menu remains reachable with Alt without taking
+    // a permanent second row.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { height: 52 },
+    autoHideMenuBar: true,
+  }
+  return { titleBarStyle: 'default' }
+}
+
 async function createWindow(): Promise<BrowserWindow | null> {
   if (shutdownStarted) return null
-  const macOptions = process.platform === 'darwin' ? {
-    titleBarStyle: 'hiddenInset' as const,
-    trafficLightPosition: { x: 18, y: 18 },
-    vibrancy: 'sidebar' as const,
-    visualEffectState: 'active' as const,
-  } : { titleBarStyle: 'default' as const }
   const window = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -210,7 +224,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     show: false,
     backgroundColor: '#f5f5f4',
     icon: appIconPath(),
-    ...macOptions,
+    ...mainWindowChromeOptions(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       zoomFactor: (store?.getSettings().interfaceFontScale ?? 110) / 100,

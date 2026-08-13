@@ -487,7 +487,7 @@ export default function App() {
         setBrowserGeneration((value) => value + 1)
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(HARNESS_PROVIDER_DOCS[activeHarness]) }} /> : null
 
-  return <div className="app-shell" aria-busy={!initialized} data-ready={initialized ? 'true' : 'false'}>
+  return <div className="app-shell" aria-busy={!initialized} data-platform={meta?.platform ?? 'darwin'} data-ready={initialized ? 'true' : 'false'}>
     {sidebarVisible && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} /> : null}
     {sidebarVisible && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && sidebarVisible ? true : undefined}>

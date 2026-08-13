@@ -603,6 +603,21 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
   })
 
+  test('left aligns the harness picker for Linux and Windows chrome', async () => {
+    const shell = page.locator('.app-shell')
+    const sidebar = page.locator('.sidebar')
+    const clearance = page.locator('.sidebar__titlebar .traffic-light-clearance')
+    const trigger = page.getByRole('button', { name: 'Prime Work — switch harness' })
+    for (const platform of ['linux', 'win32']) {
+      await shell.evaluate((node, value) => { node.setAttribute('data-platform', value) }, platform)
+      await expect(clearance).toHaveCSS('display', 'none')
+      const offset = await trigger.evaluate((node) => node.getBoundingClientRect().left - node.closest('.sidebar')!.getBoundingClientRect().left)
+      expect(offset).toBeLessThanOrEqual(8)
+      expect(offset).toBeGreaterThanOrEqual(0)
+    }
+    await expect(sidebar).toBeVisible()
+  })
+
   test('uses the persisted selected pet for realtime voice after a full restart', async () => {
     const desktopPet = page.getByRole('button', { name: /Orb, draggable GooeyPi pet/ })
     await expect(desktopPet).toBeVisible()
