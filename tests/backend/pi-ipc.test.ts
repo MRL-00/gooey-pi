@@ -32,14 +32,18 @@ interface Harness {
 
 function buildServices() {
   const settingsState = { disabledProviders: ['blocked'], disabledModels: [], ompDisabledProviders: ['anthropic'], ompDisabledModels: [], piDisabledProviders: ['anthropic'], piDisabledModels: [] }
-  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
-    from,
-    models: [
-      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude', enabled: !disabledModels.has('anthropic/claude') },
-      { key: 'openai/gpt', provider: 'openai', id: 'gpt', enabled: !disabledModels.has('openai/gpt') },
-    ],
-    providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: !disabled.has(id) })),
-  })
+  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => {
+    const models = [
+      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude' },
+      { key: 'openai/gpt', provider: 'openai', id: 'gpt' },
+    ]
+    const providerEnabled = (id: string) => !disabled.has(id) && models.some((model) => model.provider === id && !disabledModels.has(model.key))
+    return {
+      from,
+      models: models.map((model) => ({ ...model, enabled: providerEnabled(model.provider) && !disabledModels.has(model.key) })),
+      providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: providerEnabled(id) })),
+    }
+  }
   const sessionGate = (accepted: string) => vi.fn(async (path: unknown) => {
     if (path === accepted) return path
     throw new TypeError('Session path is outside the Prime session directory')
@@ -211,13 +215,13 @@ describe('pi harness IPC routing', () => {
       from: 'pi',
       providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: false }],
     })
-    expect(harness.services.settings.update).toHaveBeenCalledWith({ piDisabledProviders: ['anthropic', 'openai'] })
+    expect(harness.services.settings.update).toHaveBeenCalledWith({ piDisabledProviders: ['anthropic', 'openai'], piDisabledModels: [] })
 
     await expect(harness.invoke('providers:set-disabled', ['openai'], 'pi')).resolves.toMatchObject({
       from: 'pi',
       providers: [{ id: 'anthropic', enabled: true }, { id: 'openai', enabled: false }],
     })
-    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ piDisabledProviders: ['openai'] })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ piDisabledProviders: ['openai'], piDisabledModels: [] })
   })
 
   it('rejects provider credential mutations aimed at the pi harness', async () => {

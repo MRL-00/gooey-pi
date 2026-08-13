@@ -770,6 +770,10 @@ test.describe('Prime Work desktop smoke', () => {
     await row.locator('.provider-model-row__toggle').click()
     await expect(toggle).not.toBeChecked()
     await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledModels).toEqual(['openai-codex/gpt-fixture'])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual(['openai-codex'])
+    const groups = page.locator('.provider-model-group')
+    await expect(groups.nth(0)).toContainText('Claude Fixture')
+    await expect(groups.nth(1)).toContainText('GPT Fixture')
 
     const voiceModels = await page.evaluate(async () => JSON.parse((await window.prime.voice.executeTool({ name: 'list_models', arguments: {} }, 'omp')).output) as { models: Array<{ name: string }> })
     expect(voiceModels.models.map((model) => model.name)).toEqual(['Claude Fixture'])
@@ -777,6 +781,17 @@ test.describe('Prime Work desktop smoke', () => {
     const modelPicker = page.getByRole('combobox', { name: 'Model' })
     await expect(modelPicker.locator('option', { hasText: 'GPT Fixture' })).toHaveCount(0)
     await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(1)
+
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Providers', exact: true }).click()
+    await page.getByRole('tab', { name: /Models/ }).click()
+    const hiddenToggle = page.getByRole('checkbox', { name: 'Show GPT Fixture model' })
+    await page.locator('.provider-model-row').filter({ has: hiddenToggle }).locator('.provider-model-row__toggle').click()
+    await expect(hiddenToggle).toBeChecked()
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledModels).toEqual([])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual([])
+    await page.getByRole('tab', { name: /Providers/ }).click()
+    await expect(page.getByRole('checkbox', { name: 'Show openai-codex provider' })).toBeChecked()
   })
 
   test('keeps Harness settings shared when changing the default while providers follow the active harness', async () => {

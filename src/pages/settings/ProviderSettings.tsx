@@ -1,7 +1,7 @@
 import { ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
-import type { HarnessId, PrimeModelCatalog, PrimeProviderDescriptor } from '@/types/api'
+import type { HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor } from '@/types/api'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { Modal } from '@/components/ui'
 
@@ -30,6 +30,10 @@ function authDescription(provider: PrimeProviderDescriptor): string {
   return `${source} · ${provider.availableModelCount.toLocaleString()} available models`
 }
 
+function activeFirst<T extends { enabled?: boolean }>(items: readonly T[]): T[] {
+  return [...items].sort((left, right) => Number(right.enabled !== false) - Number(left.enabled !== false))
+}
+
 export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onSetModelEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
   // OMP and Pi own their credentials in their CLIs; GooeyPi only toggles visibility.
   const externalAuth = harness !== 'prime'
@@ -43,15 +47,37 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   const [apiKeyError, setApiKeyError] = useState('')
   const providers = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    if (!normalized) return catalog?.providers ?? []
-    return (catalog?.providers ?? []).filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(normalized))
+    const matches = normalized
+      ? (catalog?.providers ?? []).filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(normalized))
+      : catalog?.providers ?? []
+    return activeFirst(matches)
   }, [catalog, query])
   const providerNames = useMemo(() => new Map((catalog?.providers ?? []).map((provider) => [provider.id, provider.name])), [catalog])
-  const providerEnabled = useMemo(() => new Map((catalog?.providers ?? []).map((provider) => [provider.id, provider.enabled])), [catalog])
-  const models = useMemo(() => {
+  const modelGroups = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    if (!normalized) return catalog?.models ?? []
-    return (catalog?.models ?? []).filter((model) => `${model.name} ${model.id} ${model.provider} ${providerNames.get(model.provider) ?? ''}`.toLowerCase().includes(normalized))
+    const matches = normalized
+      ? (catalog?.models ?? []).filter((model) => `${model.name} ${model.id} ${model.provider} ${providerNames.get(model.provider) ?? ''}`.toLowerCase().includes(normalized))
+      : catalog?.models ?? []
+    const byProvider = new Map<string, PrimeModelDescriptor[]>()
+    for (const model of matches) {
+      const models = byProvider.get(model.provider)
+      if (models) models.push(model)
+      else byProvider.set(model.provider, [model])
+    }
+    const orderedProviders = activeFirst(catalog?.providers ?? [])
+    const groups = orderedProviders.flatMap((provider) => {
+      const models = byProvider.get(provider.id)
+      if (!models?.length) return []
+      byProvider.delete(provider.id)
+      return [{ provider, models: activeFirst(models) }]
+    })
+    for (const [providerId, models] of byProvider) {
+      groups.push({
+        provider: { id: providerId, name: providerNames.get(providerId) ?? providerId, authMethod: 'external', configured: false, modelCount: models.length, availableModelCount: 0, enabled: models.some((model) => model.enabled !== false) },
+        models: activeFirst(models),
+      })
+    }
+    return groups
   }, [catalog, providerNames, query])
 
   const run = async (providerId: string, action: () => Promise<void>) => {
@@ -81,7 +107,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
-  const availableModelCount = catalog?.models.filter((model) => model.available && model.enabled !== false && providerEnabled.get(model.provider) !== false).length ?? 0
+  const availableModelCount = catalog?.models.filter((model) => model.available && model.enabled !== false).length ?? 0
   const disabledCount = catalog?.providers.filter((provider) => !provider.enabled).length ?? 0
 
   return (
@@ -110,18 +136,21 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
           </div>
         })}
       </div> : <div className="provider-list provider-model-list">
-        {models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
-          <div className="provider-row__identity"><strong>{model.name}</strong><small>{providerNames.get(model.provider) ?? model.provider} · {model.id}</small></div>
-          <div className="provider-model-row__capabilities">
-            {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
-            {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
-            <span className={model.available && model.enabled !== false && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{model.enabled === false || providerEnabled.get(model.provider) === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
-          </div>
-          <label className="provider-row__toggle provider-model-row__toggle" title={model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${model.name} model`} checked={model.enabled !== false} disabled={busyProvider === `model:${model.key}`} onChange={(event) => void run(`model:${model.key}`, () => onSetModelEnabled(model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
+        {modelGroups.map(({ provider, models }) => <div className={`provider-model-group${provider.enabled ? '' : ' is-disabled'}`} key={provider.id}>
+          <div className="provider-model-group__heading"><strong>{provider.name}</strong><small>{models.filter((model) => model.enabled !== false).length.toLocaleString()} of {models.length.toLocaleString()} on</small></div>
+          {models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
+            <div className="provider-row__identity"><strong>{model.name}</strong><small>{model.id}</small></div>
+            <div className="provider-model-row__capabilities">
+              {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
+              {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
+              <span className={model.available && model.enabled !== false ? 'is-available' : ''}>{model.enabled === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
+            </div>
+            <label className="provider-row__toggle provider-model-row__toggle" title={model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${model.name} model`} checked={model.enabled !== false} disabled={busyProvider === `model:${model.key}`} onChange={(event) => void run(`model:${model.key}`, () => onSetModelEnabled(model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
+          </div>)}
         </div>)}
       </div>}
       {catalog && view === 'providers' && !providers.length ? <p className="settings-empty">No providers match your search.</p> : null}
-      {catalog && view === 'models' && !models.length ? <p className="settings-empty">No models match your search.</p> : null}
+      {catalog && view === 'models' && !modelGroups.length ? <p className="settings-empty">No models match your search.</p> : null}
       {apiKeyProvider ? <Modal title={`Connect ${apiKeyProvider.name}`} onClose={() => { if (!busyProvider) closeApiKey() }} footer={<><button type="button" className="button" disabled={Boolean(busyProvider)} onClick={closeApiKey}>Cancel</button><button type="button" className="button button--primary" disabled={Boolean(busyProvider) || !apiKey.trim()} onClick={() => void saveApiKey()}>Save API key</button></>}><p className="modal-intro">The key is sent directly to Prime Agent’s protected auth store. GooeyPi clears it from renderer state when this dialog closes.</p>{apiKeyError ? <p className="settings-error" role="alert">{apiKeyError}</p> : null}<label className="field"><span>API key</span><input autoFocus type="password" value={apiKey} autoComplete="off" spellCheck={false} onChange={(event) => setApiKey(event.target.value)} /></label></Modal> : null}
     </section>
   )

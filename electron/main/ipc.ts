@@ -224,7 +224,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const providerCatalogs: Record<HarnessId, (force?: boolean) => ReturnType<ModelCatalogProvider['catalog']>> = {
     prime: providerCatalog, omp: ompProviderCatalog, pi: piProviderCatalog,
   }
-  /** Desktop-owned provider-visibility settings key per harness. */
+  /** Desktop-owned provider/model visibility settings keys per harness. */
   const disabledProvidersKeys = { prime: 'disabledProviders', omp: 'ompDisabledProviders', pi: 'piDisabledProviders' } as const
   const disabledModelsKeys = { prime: 'disabledModels', omp: 'ompDisabledModels', pi: 'piDisabledModels' } as const
   handle('providers:catalog', (_event, force, harness) => providerCatalogs[requireHarness(harness)](force === true))
@@ -244,11 +244,19 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
     const catalog = await providerCatalogs[target]()
     if (!catalog.providers.some((provider) => provider.id === id)) throw new Error('Provider was not found')
-    const settingsKey = disabledProvidersKeys[target]
-    const disabled = new Set(services.settings.get()[settingsKey])
-    if (enabled) disabled.delete(id)
-    else disabled.add(id)
-    await services.settings.update({ [settingsKey]: [...disabled].sort() })
+    const providerSettingsKey = disabledProvidersKeys[target]
+    const modelSettingsKey = disabledModelsKeys[target]
+    const settings = services.settings.get()
+    const disabledProviders = new Set(settings[providerSettingsKey])
+    const disabledModels = new Set(settings[modelSettingsKey])
+    if (enabled) {
+      disabledProviders.delete(id)
+      for (const model of catalog.models) if (model.provider === id) disabledModels.delete(model.key)
+    } else disabledProviders.add(id)
+    await services.settings.update({
+      [providerSettingsKey]: [...disabledProviders].sort(),
+      [modelSettingsKey]: [...disabledModels].sort(),
+    })
     return providerCatalogs[target]()
   })
   handle('providers:set-disabled', async (_event, providerIds, harness) => {
@@ -258,8 +266,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     const catalog = await providerCatalogs[target]()
     const known = new Set(catalog.providers.map((provider) => provider.id))
     if (ids.some((id) => !known.has(id))) throw new Error('Provider was not found')
-    const settingsKey = disabledProvidersKeys[target]
-    await services.settings.update({ [settingsKey]: ids })
+    const providerSettingsKey = disabledProvidersKeys[target]
+    const modelSettingsKey = disabledModelsKeys[target]
+    const disabledModels = ids.length ? services.settings.get()[modelSettingsKey] : []
+    await services.settings.update({ [providerSettingsKey]: ids, [modelSettingsKey]: disabledModels })
     return providerCatalogs[target]()
   })
   handle('providers:set-model-enabled', async (_event, modelKey, enabled, harness) => {
@@ -267,12 +277,30 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     const key = requireString(modelKey, 'modelKey', { min: 3, max: 385, trim: true })
     if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
     const catalog = await providerCatalogs[target]()
-    if (!catalog.models.some((model) => model.key === key)) throw new Error('Model was not found')
-    const settingsKey = disabledModelsKeys[target]
-    const disabled = new Set(services.settings.get()[settingsKey])
-    if (enabled) disabled.delete(key)
-    else disabled.add(key)
-    await services.settings.update({ [settingsKey]: [...disabled].sort() })
+    const model = catalog.models.find((candidate) => candidate.key === key)
+    if (!model) throw new Error('Model was not found')
+    const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
+    if (!provider) throw new Error('Provider was not found')
+    const providerSettingsKey = disabledProvidersKeys[target]
+    const modelSettingsKey = disabledModelsKeys[target]
+    const settings = services.settings.get()
+    const disabledProviders = new Set(settings[providerSettingsKey])
+    const disabledModels = new Set(settings[modelSettingsKey])
+    const siblingKeys = catalog.models.filter((candidate) => candidate.provider === model.provider).map((candidate) => candidate.key)
+    if (enabled) {
+      if (!provider.enabled) {
+        disabledProviders.delete(model.provider)
+        for (const siblingKey of siblingKeys) if (siblingKey !== key) disabledModels.add(siblingKey)
+      }
+      disabledModels.delete(key)
+    } else {
+      disabledModels.add(key)
+      if (!siblingKeys.some((siblingKey) => !disabledModels.has(siblingKey))) disabledProviders.add(model.provider)
+    }
+    await services.settings.update({
+      [providerSettingsKey]: [...disabledProviders].sort(),
+      [modelSettingsKey]: [...disabledModels].sort(),
+    })
     return providerCatalogs[target]()
   })
   handle('providers:start-oauth', (_event, providerId, harness) => {

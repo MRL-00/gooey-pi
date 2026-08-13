@@ -8,6 +8,7 @@ import type { Api, Model } from 'prime-agent-ai'
 import type { OAuthLoginCallbacks } from 'prime-agent-ai/oauth'
 import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor, ProviderAuthEvent, ProviderAuthMethod, ProviderAuthSource, SkillRecord } from '../../src/types/api'
 import { errorCode, readAtMost } from './plugins/file-io'
+import { withModelVisibility } from './model-visibility'
 import { isRecord, requireString, requireWebUrl } from './validation'
 
 const CATALOG_TTL_MS = 30_000
@@ -189,14 +190,14 @@ export class PrimeProviderService {
 
   async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
-      return this.withEnabledState(this.cachedCatalog, disabledProviders, disabledModels)
+      return withModelVisibility(this.cachedCatalog, disabledProviders, disabledModels)
     }
     // Single-flight: concurrent callers share one refresh instead of racing
     // duplicate registry work; the in-flight promise is cleared in finally.
     if (!this.catalogRefresh) {
       this.catalogRefresh = this.refreshCatalog().finally(() => { this.catalogRefresh = null })
     }
-    return this.withEnabledState(await this.catalogRefresh, disabledProviders, disabledModels)
+    return withModelVisibility(await this.catalogRefresh, disabledProviders, disabledModels)
   }
 
   private async refreshCatalog(): Promise<PrimeModelCatalog> {
@@ -409,14 +410,6 @@ export class PrimeProviderService {
     if (!provider) throw new Error('Provider was not found')
     if (expectedMethod && provider.authMethod !== expectedMethod) throw new Error(`Provider requires ${provider.authMethod} authentication`)
     return provider
-  }
-
-  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>, disabledModels: ReadonlySet<string>): PrimeModelCatalog {
-    return {
-      ...catalog,
-      models: catalog.models.map((model) => ({ ...model, enabled: !disabledModels.has(model.key) })),
-      providers: catalog.providers.map((provider) => ({ ...provider, enabled: !disabledProviders.has(provider.id) })),
-    }
   }
 
   private async runOAuth(flow: OAuthFlow): Promise<void> {

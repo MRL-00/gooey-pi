@@ -4,6 +4,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
+import { withModelVisibility } from './model-visibility'
 import { executableChildEnvironment, killProcessTree, resolveExecutable, runProcess, waitForProcessExit, type ExecutableSource } from './process-utils'
 import { requireString } from './validation'
 
@@ -230,7 +231,7 @@ export class PiModelCatalogService implements ModelCatalogProvider {
       return { primeVersion: 'unknown', refreshedAt: new Date().toISOString(), models: [], providers: [], warning: PI_NOT_INSTALLED_WARNING }
     }
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
-      return this.withEnabledState(this.cachedCatalog, disabledProviders, disabledModels)
+      return withModelVisibility(this.cachedCatalog, disabledProviders, disabledModels)
     }
     // Single-flight: concurrent callers share one RPC probe instead of
     // spawning duplicate subprocesses; the in-flight promise is cleared in
@@ -242,14 +243,14 @@ export class PiModelCatalogService implements ModelCatalogProvider {
       this.catalogRefresh = { executable, promise }
     }
     try {
-      return this.withEnabledState(await this.catalogRefresh.promise, disabledProviders, disabledModels)
+      return withModelVisibility(await this.catalogRefresh.promise, disabledProviders, disabledModels)
     } catch (error) {
       // A failed refresh degrades to the last good catalog instead of an
       // error; first-ever loads still surface the failure.
       if (!this.cachedCatalog) throw error
       const reason = error instanceof Error ? error.message : String(error)
       const staleWarning = `The Pi model catalog could not be refreshed (${reason}); showing the last loaded catalog.`
-      return this.withEnabledState({
+      return withModelVisibility({
         ...this.cachedCatalog,
         warning: this.cachedCatalog.warning ? `${this.cachedCatalog.warning} ${staleWarning}` : staleWarning,
       }, disabledProviders, disabledModels)
@@ -374,11 +375,4 @@ export class PiModelCatalogService implements ModelCatalogProvider {
     this.version = null
   }
 
-  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>, disabledModels: ReadonlySet<string>): PrimeModelCatalog {
-    return {
-      ...catalog,
-      models: catalog.models.map((model) => ({ ...model, enabled: !disabledModels.has(model.key) })),
-      providers: catalog.providers.map((provider) => ({ ...provider, enabled: !disabledProviders.has(provider.id) })),
-    }
-  }
 }

@@ -21,12 +21,13 @@ const catalog: PrimeModelCatalog = {
   primeVersion: '0.7.0',
   refreshedAt: '2026-08-06T00:00:00.000Z',
   models: [
-    { ...model, input: [...model.input], availableThinkingLevels: [...model.availableThinkingLevels] },
-    { ...model, key: 'openai-codex/gpt-5.5', id: 'gpt-5.5', name: 'GPT-5.5', input: [...model.input], availableThinkingLevels: ['low', 'high'] },
+    { ...model, key: 'anthropic/claude-sonnet', provider: 'anthropic', id: 'claude-sonnet', name: 'Claude Sonnet', input: [...model.input], availableThinkingLevels: ['low', 'high'], enabled: false },
+    { ...model, key: 'openai-codex/gpt-5.5', id: 'gpt-5.5', name: 'GPT-5.5', input: [...model.input], availableThinkingLevels: ['low', 'high'], enabled: false },
+    { ...model, input: [...model.input], availableThinkingLevels: [...model.availableThinkingLevels], enabled: true },
   ],
   providers: [
-    { id: 'openai-codex', name: 'ChatGPT Plus/Pro', authMethod: 'oauth', configured: true, authSource: 'stored', modelCount: 8, availableModelCount: 8, enabled: true },
     { id: 'anthropic', name: 'Anthropic', authMethod: 'api_key', configured: false, modelCount: 14, availableModelCount: 0, enabled: false },
+    { id: 'openai-codex', name: 'ChatGPT Plus/Pro', authMethod: 'oauth', configured: true, authSource: 'stored', modelCount: 8, availableModelCount: 8, enabled: true },
   ],
 }
 const runtime: RuntimeInfo = {
@@ -98,9 +99,12 @@ describe('provider settings behavior and accessibility', () => {
     const onSetAllDisabled = vi.fn().mockResolvedValue(undefined)
     await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onSetAllDisabled={onSetAllDisabled} onSetModelEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
-    expect(container.textContent).toContain('2 providers · 2 models')
+    expect(container.textContent).toContain('2 providers · 3 models')
     expect(container.textContent).toContain('ChatGPT Plus/Pro')
     expect(container.textContent).toContain('Anthropic')
+    const providerRows = [...container.querySelectorAll('.provider-row')]
+    expect(providerRows[0]?.textContent).toContain('ChatGPT Plus/Pro')
+    expect(providerRows[1]?.textContent).toContain('Anthropic')
     expect(button('Reconnect')).toBeTruthy()
     expect(button('Add key')).toBeTruthy()
     await click(button('Enable all'))
@@ -113,7 +117,17 @@ describe('provider settings behavior and accessibility', () => {
     await click(button('Models'))
     expect(container.textContent).toContain('GPT-5.6')
     expect(container.textContent).toContain('GPT-5.5')
+    expect(container.textContent).toContain('Claude Sonnet')
     expect(container.querySelector('input[aria-label="Search models"]')).not.toBeNull()
+    const groups = [...container.querySelectorAll('.provider-model-group')]
+    expect(groups).toHaveLength(2)
+    expect(groups[0]?.querySelector('.provider-model-group__heading')?.textContent).toContain('ChatGPT Plus/Pro')
+    expect(groups[0]?.querySelector('.provider-model-group__heading')?.textContent).toContain('1 of 2 on')
+    expect(groups[1]?.querySelector('.provider-model-group__heading')?.textContent).toContain('Anthropic')
+    expect(groups[1]?.querySelector('.provider-model-group__heading')?.textContent).toContain('0 of 1 on')
+    const openAiModels = [...groups[0]!.querySelectorAll('.provider-model-row')]
+    expect(openAiModels[0]?.textContent).toContain('GPT-5.6')
+    expect(openAiModels[1]?.textContent).toContain('GPT-5.5')
   })
 
   it('puts each model switch at the far right and sends the model key', async () => {

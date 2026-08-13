@@ -32,14 +32,19 @@ interface Harness {
 
 function buildServices() {
   const settingsState = { disabledProviders: ['blocked'], disabledModels: [], ompDisabledProviders: ['anthropic'], ompDisabledModels: [], piDisabledProviders: ['openai'], piDisabledModels: [] }
-  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
-    from,
-    models: [
-      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude', enabled: !disabledModels.has('anthropic/claude') },
-      { key: 'openai/gpt', provider: 'openai', id: 'gpt', enabled: !disabledModels.has('openai/gpt') },
-    ],
-    providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: !disabled.has(id) })),
-  })
+  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => {
+    const models = [
+      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude' },
+      { key: 'openai/gpt', provider: 'openai', id: 'gpt' },
+      { key: 'openai/gpt-mini', provider: 'openai', id: 'gpt-mini' },
+    ]
+    const providerEnabled = (id: string) => !disabled.has(id) && models.some((model) => model.provider === id && !disabledModels.has(model.key))
+    return {
+      from,
+      models: models.map((model) => ({ ...model, enabled: providerEnabled(model.provider) && !disabledModels.has(model.key) })),
+      providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: providerEnabled(id) })),
+    }
+  }
   const primeSessionGate = vi.fn(async (path: unknown) => {
     if (path === PRIME_SESSION) return path
     throw new TypeError('Session path is outside the Prime session directory')
@@ -298,25 +303,54 @@ describe('harness-aware IPC routing', () => {
       from: 'omp',
       providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: false }],
     })
-    expect(harness.services.settings.update).toHaveBeenCalledWith({ ompDisabledProviders: ['anthropic', 'openai'] })
+    expect(harness.services.settings.update).toHaveBeenCalledWith({ ompDisabledProviders: ['anthropic', 'openai'], ompDisabledModels: [] })
 
     await expect(harness.invoke('providers:set-disabled', ['openai'], 'omp')).resolves.toMatchObject({
       from: 'omp',
       providers: [{ id: 'anthropic', enabled: true }, { id: 'openai', enabled: false }],
     })
-    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['openai'] })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['openai'], ompDisabledModels: [] })
   })
 
-  it('stores OMP model visibility independently and returns the updated switch state', async () => {
-    await expect(harness.invoke('providers:set-model-enabled', 'openai/gpt', false, 'omp')).resolves.toMatchObject({
-      models: [{ key: 'anthropic/claude', enabled: true }, { key: 'openai/gpt', enabled: false }],
+  it('keeps OMP provider and model visibility synchronized in both directions', async () => {
+    await expect(harness.invoke('providers:set-enabled', 'openai', false, 'omp')).resolves.toMatchObject({
+      providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: false }],
+      models: [
+        { key: 'anthropic/claude', enabled: false },
+        { key: 'openai/gpt', enabled: false },
+        { key: 'openai/gpt-mini', enabled: false },
+      ],
     })
-    expect(harness.services.settings.update).toHaveBeenCalledWith({ ompDisabledModels: ['openai/gpt'] })
 
     await expect(harness.invoke('providers:set-model-enabled', 'openai/gpt', true, 'omp')).resolves.toMatchObject({
-      models: [{ key: 'anthropic/claude', enabled: true }, { key: 'openai/gpt', enabled: true }],
+      providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: true }],
+      models: [
+        { key: 'anthropic/claude', enabled: false },
+        { key: 'openai/gpt', enabled: true },
+        { key: 'openai/gpt-mini', enabled: false },
+      ],
     })
-    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledModels: [] })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['anthropic'], ompDisabledModels: ['openai/gpt-mini'] })
+
+    await expect(harness.invoke('providers:set-model-enabled', 'openai/gpt', false, 'omp')).resolves.toMatchObject({
+      providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: false }],
+      models: [
+        { key: 'anthropic/claude', enabled: false },
+        { key: 'openai/gpt', enabled: false },
+        { key: 'openai/gpt-mini', enabled: false },
+      ],
+    })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['anthropic', 'openai'], ompDisabledModels: ['openai/gpt', 'openai/gpt-mini'] })
+
+    await expect(harness.invoke('providers:set-enabled', 'openai', true, 'omp')).resolves.toMatchObject({
+      providers: [{ id: 'anthropic', enabled: false }, { id: 'openai', enabled: true }],
+      models: [
+        { key: 'anthropic/claude', enabled: false },
+        { key: 'openai/gpt', enabled: true },
+        { key: 'openai/gpt-mini', enabled: true },
+      ],
+    })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['anthropic'], ompDisabledModels: [] })
   })
 
   it('rejects provider credential mutations aimed at the omp harness', async () => {
