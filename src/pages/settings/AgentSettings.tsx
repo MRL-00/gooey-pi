@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { HARNESS_IDS, OMP_APPROVAL_MODES, type HarnessId, type OmpApprovalMode } from '@/types/api'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES, HARNESS_PRODUCT_NAMES } from '@/lib/harness'
+import { detectRendererPlatform, shortcutLabel } from '@/lib/platform-shortcuts'
 import type { SettingsMetaSectionProps } from './contracts'
 import { DraftSettingField } from './DraftSettingField'
 import { SettingsToggle } from './SettingsToggle'
@@ -19,6 +20,9 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
   const detectedHarnesses = HARNESS_IDS.filter((harness) => Boolean(meta?.harnesses[harness].path))
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
+  const platform = meta?.platform ?? detectRendererPlatform()
+  const oppositeActionShortcut = shortcutLabel(platform, ['Primary', 'Enter'])
+  const newLineShortcut = shortcutLabel(platform, ['Shift', 'Enter'])
   const refreshHarnesses = async () => {
     if (refreshing) return
     setRefreshing(true)
@@ -95,13 +99,13 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
       <section className="settings-group">
         <h2>Message shortcuts</h2>
         <label className="settings-row">
-          <span><strong>Primary Enter action while an agent is working</strong><small>Ctrl+Enter or ⌘+Enter always uses the opposite action. Shift+Enter adds a new line.</small></span>
+          <span><strong>Primary Enter action while an agent is working</strong><small>{oppositeActionShortcut} always uses the opposite action. {newLineShortcut} adds a new line.</small></span>
           <span className="shortcut-choice" role="radiogroup" aria-label="Primary Enter action">
             {(['queue', 'steer'] as const).map((action) => <button key={action} type="button" className={`button button--compact ${settings.messageEnterAction === action ? 'is-active' : ''}`} role="radio" aria-checked={settings.messageEnterAction === action} onClick={() => { void onUpdate({ messageEnterAction: action }) }}>{action === 'queue' ? 'Queue' : 'Steer'}</button>)}
           </span>
         </label>
         <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Queue message' : 'Steer current turn'}</span><kbd>Enter</kbd></div>
-        <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Steer current turn' : 'Queue message'}</span><kbd>Ctrl Enter / ⌘ Enter</kbd></div>
+        <div className="shortcut-row"><span><Keyboard size={14} />{settings.messageEnterAction === 'queue' ? 'Steer current turn' : 'Queue message'}</span><kbd>{oppositeActionShortcut}</kbd></div>
       </section>
       <section className="settings-group">
         <h2>Permissions</h2>

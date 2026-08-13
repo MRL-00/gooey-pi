@@ -2,6 +2,7 @@ import { Check, KeyRound, Laptop, Mic2, Radio, RefreshCw, ShieldCheck, Trash2, W
 import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
+import { shortcutLabel } from '@/lib/platform-shortcuts'
 import {
   DEEPGRAM_MODELS,
   GROQ_MODELS,
@@ -24,6 +25,7 @@ const CREDENTIALS: Array<{ id: VoiceCredentialProvider; name: string; monogram: 
 
 interface VoiceSettingsProps extends SettingsSectionProps {
   voice: PrimeWorkApi['voice'] | null
+  platform?: NodeJS.Platform
 }
 
 type VoiceServiceState = 'checking' | 'ready' | 'restart-required' | 'error'
@@ -59,7 +61,7 @@ function PathInput({ label, description, placeholder, value, onCommit }: { label
   )
 }
 
-export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps) {
+export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }: VoiceSettingsProps) {
   const [status, setStatus] = useState<VoiceCredentialStatus | null>(null)
   const [serviceState, setServiceState] = useState<VoiceServiceState>(voice ? 'checking' : 'restart-required')
   const [credential, setCredential] = useState<VoiceCredentialProvider | null>(null)
@@ -114,7 +116,7 @@ export function VoiceSettings({ settings, onUpdate, voice }: VoiceSettingsProps)
       {serviceState === 'restart-required' ? (
         <div className="voice-bridge-notice" role="status">
           <RefreshCw size={17} />
-          <span><strong>Restart GooeyPi to finish enabling Voice</strong><small>This app window is connected to an older desktop process without the Voice handlers. Quit GooeyPi completely with ⌘Q, then reopen it.</small></span>
+          <span><strong>Restart GooeyPi to finish enabling Voice</strong><small>This app window is connected to an older desktop process without the Voice handlers. Quit GooeyPi completely with {shortcutLabel(platform, ['Primary', 'Q'])}, then reopen it.</small></span>
         </div>
       ) : null}
 

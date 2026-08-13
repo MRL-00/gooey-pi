@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, Bot, ExternalLink, History, MessageCirclePlus, R
 import { createElement, useEffect, useRef, useState } from 'react'
 import { annotationMarkersScript, annotationPickerScript, annotationTakeScript } from '@/lib/annotation-picker'
 import { MAX_BROWSER_ANNOTATIONS, sanitizeCapturedElement } from '@/lib/browser-annotations'
+import { detectRendererPlatform, shortcutLabel } from '@/lib/platform-shortcuts'
 import type { BrowserAnnotationsApi } from '@/hooks/useBrowserAnnotations'
 import type { StampedPointerEvent } from '@/hooks/useAgentBrowserTabs'
 import { AgentCursorOverlay, type AgentSlotRect } from '../AgentBrowserLayer'
@@ -37,8 +38,6 @@ function runInPage(view: WebviewElement, code: string): Promise<unknown> {
   }
 }
 
-const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)
-
 function normalizeUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return 'about:blank'
@@ -49,6 +48,7 @@ function normalizeUrl(value: string) {
 }
 
 interface BrowserPanelProps {
+  platform?: NodeJS.Platform
   home: string
   onOpenExternal(url: string): void
   annotations: BrowserAnnotationsApi
@@ -82,7 +82,7 @@ function agentTabLabel(tab: AgentBrowserTabRecord): string {
   return 'New tab'
 }
 
-export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, onNavigateAgentTab, pollIntervalMs = 350 }: BrowserPanelProps) {
+export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = [], activeAgentTabId = null, previewSelected = true, onSelectAgentTab, onCloseAgentTab, onShowPreview, onAgentSlotRect, agentSessionKey, onPreviewContext, previewPointerEvent = null, onNavigateAgentTab, pollIntervalMs = 350, platform = detectRendererPlatform() }: BrowserPanelProps) {
   const webviewRef = useRef<WebviewElement | null>(null)
   const [address, setAddress] = useState(home)
   const [currentUrl, setCurrentUrl] = useState(home)
@@ -465,10 +465,10 @@ export function BrowserPanel({ home, onOpenExternal, annotations, agentTabs = []
               />
               <p className="annotation-popover__hints">
                 <span>
-                  <kbd>{IS_MAC ? '↩' : 'Enter'}</kbd> add to chat
+                  <kbd>{platform === 'darwin' ? '↩' : 'Enter'}</kbd> add to chat
                 </span>
                 <span>
-                  <kbd>{IS_MAC ? '⌘↩' : 'Ctrl+Enter'}</kbd> send now
+                  <kbd>{shortcutLabel(platform, ['Primary', 'Enter'])}</kbd> send now
                 </span>
               </p>
               <div>

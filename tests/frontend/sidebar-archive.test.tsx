@@ -133,6 +133,33 @@ describe('sidebar project context menu', () => {
     expect(container.querySelector('[aria-label="New session in Project"][title="New session in Project"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Add project"][title="Add project"]')).not.toBeNull()
   })
+
+  it('shows Linux shortcut names on Linux', async () => {
+    await act(async () => {
+      root.render(
+        <Sidebar
+          platform="linux"
+          projects={[project]}
+          sessions={[session]}
+          activeView="session"
+          onSelectProject={noop}
+          onSelectSession={noop}
+          onNavigate={noop}
+          onNewSession={noop}
+          onAddProject={noop}
+          onRemoveProject={noop}
+          onClose={noop}
+          onOpenPalette={noop}
+          onRenameSession={async () => undefined}
+          onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    expect(container.querySelector('.sidebar__primary button[title="New session (Ctrl+N)"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Hide sidebar (Ctrl+B)"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('⌘')
+  })
 })
 
 describe('sidebar archive confirmation', () => {

@@ -1,6 +1,7 @@
 import { AudioLines, Bot, Boxes, ChevronRight, Info, LockKeyhole, PawPrint, Settings2, Sun, Terminal } from 'lucide-react'
 import { useEffect, useState, type ComponentType } from 'react'
 import { errorMessage } from '@/lib/errors'
+import { detectRendererPlatform } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, Modal } from '@/components/ui'
 import type { AppMeta, AppSettings, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
@@ -55,6 +56,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
+  const platform = meta?.platform ?? detectRendererPlatform()
 
   useEffect(() => { setSection(initialSection) }, [initialSection, initialSectionRequestId])
 
@@ -77,10 +79,10 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
       case 'appearance': return <AppearanceSettings settings={settings} onUpdate={onUpdate} />
       case 'agent': return <AgentSettings settings={settings} meta={meta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />
       case 'providers': return <ProvidersSettings harness={settings.activeHarness} catalog={providerCatalog} onRefresh={onRefreshProviders} onSaveApiKey={onSaveProviderApiKey} onLogout={onLogoutProvider} onSetEnabled={onSetProviderEnabled} onSetAllEnabled={onSetAllProvidersEnabled} onSetAllDisabled={onSetAllProvidersDisabled} onStartOAuth={onStartProviderOAuth} onOpenDocs={onOpenDocs} />
-      case 'voice': return <VoiceSettings settings={settings} onUpdate={onUpdate} voice={voice} />
+      case 'voice': return <VoiceSettings settings={settings} onUpdate={onUpdate} voice={voice} platform={platform} />
       case 'pets': return <PetsSettings settings={settings} onUpdate={onUpdate} pets={pets} />
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
-      case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} />
+      case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} platform={platform} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
       case 'about': return <AboutSettings meta={meta} onOpenDocs={onOpenDocs} />
     }

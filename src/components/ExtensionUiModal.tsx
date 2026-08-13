@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { ExtensionUiQuestion, ExtensionUiRequest } from '@/lib/extension-ui'
+import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { Modal } from './ui'
 
 const OTHER_OPTION = 'Other (type your own answer)'
@@ -13,6 +14,7 @@ export type ExtensionUiResponse =
 interface ExtensionUiModalProps {
   request: ExtensionUiRequest
   onRespond(response: ExtensionUiResponse): void
+  platform?: NodeJS.Platform
 }
 
 function questionnaireAnswer(
@@ -36,7 +38,7 @@ function questionnaireAnswer(
   }
 }
 
-export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) {
+export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: ExtensionUiModalProps) {
   const prefill = request.method === 'editor' ? request.prefill : undefined
   const [value, setValue] = useState(prefill ?? '')
   const [selected, setSelected] = useState(0)
@@ -233,7 +235,7 @@ export function ExtensionUiModal({ request, onRespond }: ExtensionUiModalProps) 
                       }}
                     />
                   </label>
-                  <p className="extension-questionnaire__hint">Ctrl+← → or PgUp/PgDn questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
+                  <p className="extension-questionnaire__hint">{shortcutLabel(platform, ['Primary', 'ArrowLeft'])} / {shortcutLabel(platform, ['Primary', 'ArrowRight'])} or PgUp/PgDn questions · ↑ ↓ choices · 1–9 select · Enter continue</p>
                 </div>
               ) : (
                 <div className="extension-questionnaire__submit" role="listbox" aria-label="Submit answers">

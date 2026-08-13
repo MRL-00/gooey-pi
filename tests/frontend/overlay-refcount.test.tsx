@@ -32,8 +32,8 @@ afterEach(async () => {
 
 const noop = () => undefined
 
-function palette(open: boolean) {
-  return <CommandPalette open={open} onClose={noop} onNavigate={noop} onNewSession={noop} onToggleSidebar={noop} onToggleTerminal={noop} onOpenBrowser={noop} />
+function palette(open: boolean, platform: NodeJS.Platform = 'darwin') {
+  return <CommandPalette open={open} platform={platform} onClose={noop} onNavigate={noop} onNewSession={noop} onToggleSidebar={noop} onToggleTerminal={noop} onOpenBrowser={noop} />
 }
 
 describe('app shell overlay refcount', () => {
@@ -72,5 +72,12 @@ describe('app shell overlay refcount', () => {
     await act(async () => { root.render(palette(false)) })
     expect(shell.inert).toBe(false)
     expect(shell.hasAttribute('aria-hidden')).toBe(false)
+  })
+
+  it('shows Windows shortcut names in the command palette on Windows', async () => {
+    await act(async () => { root.render(palette(true, 'win32')) })
+    expect(document.body.textContent).toContain('Ctrl+N')
+    expect(document.body.textContent).toContain('Ctrl+Shift+B')
+    expect(document.body.textContent).not.toContain('⌘')
   })
 })

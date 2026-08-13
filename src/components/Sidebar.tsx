@@ -25,6 +25,7 @@ import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
 import type { AppMeta, HarnessId, ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
+import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { sessionAttentionSignature } from '@/app/session-attention'
 import { IconButton, Modal, OmpMark, PiMark, PrimeMark, useFocusTrap } from './ui'
 
@@ -49,6 +50,7 @@ export interface SidebarProps {
   onRenameSession(session: SessionRecord, title: string): Promise<void>
   onArchiveSession(session: SessionRecord): Promise<void>
   overlay?: boolean
+  platform?: NodeJS.Platform
 }
 
 const statusLabel: Record<SessionRecord['status'], string> = {
@@ -131,7 +133,7 @@ async function copySessionUuid(id: string): Promise<void> {
   if (!copied) throw new Error('Copy is unavailable')
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false, platform = 'darwin' }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -149,6 +151,10 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
     return Boolean(signature && clearedAttention[session.id] !== signature)
   }
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
+  const newSessionShortcut = shortcutLabel(platform, ['Primary', 'N'])
+  const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
+  const commandsShortcut = shortcutLabel(platform, ['Primary', 'K'])
+  const settingsShortcut = shortcutLabel(platform, ['Primary', ','])
   useEffect(() => {
     if (!harnessMenuOpen) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.brand-switcher')) setHarnessMenuOpen(false) }
@@ -220,13 +226,13 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
           ) : null}
         </div>
         <div className="sidebar__title-actions no-drag">
-          <IconButton label="New session (⌘N)" onClick={() => onNewSession()}><NotebookPen size={16} /></IconButton>
-          <IconButton label="Hide sidebar (⌘B)" onClick={onClose}><PanelLeftClose size={16} /></IconButton>
+          <IconButton label={`New session (${newSessionShortcut})`} onClick={() => onNewSession()}><NotebookPen size={16} /></IconButton>
+          <IconButton label={`Hide sidebar (${sidebarShortcut})`} onClick={onClose}><PanelLeftClose size={16} /></IconButton>
         </div>
       </div>
 
       <nav className="sidebar__primary" aria-label="Primary">
-        <button type="button" title="New session (⌘N)" onClick={() => onNewSession()}><NotebookPen size={15} /><span>New session</span><kbd>⌘N</kbd></button>
+        <button type="button" title={`New session (${newSessionShortcut})`} onClick={() => onNewSession()}><NotebookPen size={15} /><span>New session</span><kbd>{newSessionShortcut}</kbd></button>
         <button type="button" title="Search" onClick={() => { setSearchOpen((open) => !open); window.setTimeout(() => document.getElementById('session-search')?.focus(), 0) }} className={searchOpen ? 'is-active' : ''}><Search size={15} /><span>Search</span></button>
         {searchOpen ? (
           <div className="sidebar-search">
@@ -298,8 +304,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
       </div>
 
       <div className="sidebar__footer">
-        <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>⌘K</kbd></button>
-        <button type="button" title="Settings" className={activeView === 'settings' ? 'is-active' : ''} onClick={() => onNavigate('settings')}><Settings size={15} /><span>Settings</span><kbd>⌘,</kbd></button>
+        <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
+        <button type="button" title="Settings" className={activeView === 'settings' ? 'is-active' : ''} onClick={() => onNavigate('settings')}><Settings size={15} /><span>Settings</span><kbd>{settingsShortcut}</kbd></button>
       </div>
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}
       {removeTarget ? <Modal title="Remove project" onClose={() => setRemoveTarget(null)} footer={<><button type="button" className="button" onClick={() => setRemoveTarget(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => { const target = removeTarget; setRemoveTarget(null); onRemoveProject(target) }}>Remove</button></>}><p>Remove “{removeTarget.name}” from {HARNESS_PRODUCT_NAMES[activeHarness]}? The folder and saved sessions will not be deleted.</p></Modal> : null}
@@ -328,6 +334,7 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.onRenameSession === next.onRenameSession
     && previous.onArchiveSession === next.onArchiveSession
     && previous.overlay === next.overlay
+    && previous.platform === next.platform
 }
 
 export const Sidebar = memo(SidebarView, areSidebarPropsEqual)

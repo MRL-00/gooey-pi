@@ -2,11 +2,12 @@ import { Bell, CalendarClock, Folder, LayoutPanelLeft, NotebookPen, PackageOpen,
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { HarnessId, WorkspaceView } from '@/types/api'
+import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, useAppShellOverlay, useFocusTrap } from './ui'
 
 interface Command { id:string; label:string; detail:string; shortcut?:string; icon:ReactNode; run():void }
 
-export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, onNewSession, onToggleSidebar, onToggleTerminal, onOpenBrowser }: { open:boolean; onClose():void; harness?:HarnessId; onNavigate(view:WorkspaceView):void; onNewSession():void; onToggleSidebar():void; onToggleTerminal():void; onOpenBrowser():void }) {
+export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, onNewSession, onToggleSidebar, onToggleTerminal, onOpenBrowser, platform = 'darwin' }: { open:boolean; onClose():void; harness?:HarnessId; onNavigate(view:WorkspaceView):void; onNewSession():void; onToggleSidebar():void; onToggleTerminal():void; onOpenBrowser():void; platform?:NodeJS.Platform }) {
   const [query,setQuery]=useState('')
   const [active,setActive]=useState(0)
   const inputRef=useRef<HTMLInputElement>(null)
@@ -14,15 +15,15 @@ export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, o
   // Scheduling remains Prime-only here; capabilities are harness-specific and universal.
   const primeOnly=new Set(harness==='prime'?[]:['scheduled'])
   const commands:Command[]=[
-    {id:'new',label:'New session',detail:'Start fresh in the current project',shortcut:'⌘N',icon:<NotebookPen size={14}/>,run:onNewSession},
+    {id:'new',label:'New session',detail:'Start fresh in the current project',shortcut:shortcutLabel(platform, ['Primary', 'N']),icon:<NotebookPen size={14}/>,run:onNewSession},
     {id:'projects',label:'Open Projects',detail:'Browse local workspaces',icon:<Folder size={14}/>,run:()=>onNavigate('projects')},
     {id:'activity',label:'Open Activity',detail:'See work that needs attention',icon:<Bell size={14}/>,run:()=>onNavigate('activity')},
     {id:'scheduled',label:'Open Scheduled',detail:'Manage recurring work',icon:<CalendarClock size={14}/>,run:()=>onNavigate('scheduled')},
     {id:'plugins',label:'Open Capabilities',detail:'Extend the active harness',icon:<PackageOpen size={14}/>,run:()=>onNavigate('plugins')},
-    {id:'browser',label:'Toggle browser',detail:'Open the in-app browser',shortcut:'⌘⇧B',icon:<BrowserGlobe size={14}/>,run:onOpenBrowser},
-    {id:'terminal',label:'Toggle terminal',detail:'Open a project shell',shortcut:'⌘J',icon:<Terminal size={14}/>,run:onToggleTerminal},
-    {id:'sidebar',label:'Toggle sidebar',detail:'Show or hide project navigation',shortcut:'⌘B',icon:<LayoutPanelLeft size={14}/>,run:onToggleSidebar},
-    {id:'settings',label:'Open Settings',detail:'Configure GooeyPi',shortcut:'⌘,',icon:<Settings size={14}/>,run:()=>onNavigate('settings')},
+    {id:'browser',label:'Toggle browser',detail:'Open the in-app browser',shortcut:shortcutLabel(platform, ['Primary', 'Shift', 'B']),icon:<BrowserGlobe size={14}/>,run:onOpenBrowser},
+    {id:'terminal',label:'Toggle terminal',detail:'Open a project shell',shortcut:shortcutLabel(platform, ['Primary', 'J']),icon:<Terminal size={14}/>,run:onToggleTerminal},
+    {id:'sidebar',label:'Toggle sidebar',detail:'Show or hide project navigation',shortcut:shortcutLabel(platform, ['Primary', 'B']),icon:<LayoutPanelLeft size={14}/>,run:onToggleSidebar},
+    {id:'settings',label:'Open Settings',detail:'Configure GooeyPi',shortcut:shortcutLabel(platform, ['Primary', ',']),icon:<Settings size={14}/>,run:()=>onNavigate('settings')},
   ]
   const visible=commands.filter((command)=>!primeOnly.has(command.id)&&`${command.label} ${command.detail}`.toLowerCase().includes(query.toLowerCase()))
   useEffect(()=>{if(open){setQuery('');setActive(0);requestAnimationFrame(()=>inputRef.current?.focus())}},[open])

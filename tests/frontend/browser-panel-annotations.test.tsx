@@ -55,7 +55,7 @@ const webviewMethods = {
 let latestApi: BrowserAnnotationsApi
 function Harness({ pollIntervalMs = 50 }: { pollIntervalMs?: number }) {
   latestApi = useBrowserAnnotations()
-  return <BrowserPanel home="https://example.com/" onOpenExternal={() => undefined} annotations={latestApi} pollIntervalMs={pollIntervalMs} />
+  return <BrowserPanel platform="linux" home="https://example.com/" onOpenExternal={() => undefined} annotations={latestApi} pollIntervalMs={pollIntervalMs} />
 }
 
 beforeEach(() => {
@@ -178,7 +178,7 @@ describe('BrowserPanel annotation mode', () => {
     }
 
     await capture()
-    // jsdom reports no platform, so the non-mac hint labels render.
+    // Linux uses PC keyboard labels in the annotation hints.
     const hints = container.querySelector('.annotation-popover__hints')
     expect(hints?.textContent).toContain('Enter add to chat')
     expect(hints?.textContent).toContain('Ctrl+Enter send now')

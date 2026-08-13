@@ -55,6 +55,13 @@ describe('realtime voice surface', () => {
     expect(labels.slice(0, 2)).toEqual(['Close realtime voice', 'Toggle terminal (⌘J)'])
   })
 
+  it('uses Linux shortcut labels on Linux', () => {
+    act(() => root.render(<TitleToolbar platform="linux" view="session" sidebarOpen inspectorOpen terminalOpen={false} onToggleSidebar={vi.fn()} onToggleInspector={vi.fn()} onToggleTerminal={vi.fn()} onOpenBrowser={vi.fn()} />))
+    const labels = [...container.querySelectorAll<HTMLButtonElement>('.title-toolbar__actions button')].map((button) => button.getAttribute('aria-label'))
+    expect(labels).toContain('Toggle terminal (Ctrl+J)')
+    expect(labels).toContain('Open browser (Ctrl+Shift+B)')
+  })
+
   it('shows mute and close controls and disables the microphone track when muted', async () => {
     const voice = {
       createRealtimeCall: vi.fn(async () => 'v=0\r\no=test-answer-value'),

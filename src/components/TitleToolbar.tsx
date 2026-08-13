@@ -6,6 +6,7 @@ import {
   Terminal,
 } from 'lucide-react'
 import type { ProjectRecord, WorkspaceView } from '@/types/api'
+import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, IconButton } from './ui'
 
 const viewTitles: Record<Exclude<WorkspaceView, 'session'>, string> = {
@@ -26,14 +27,18 @@ interface TitleToolbarProps {
   onOpenBrowser(): void
   voiceOpen?: boolean
   onToggleVoice?(): void
+  platform?: NodeJS.Platform
 }
 
-export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice }: TitleToolbarProps) {
+export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice, platform = 'darwin' }: TitleToolbarProps) {
+  const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
+  const terminalShortcut = shortcutLabel(platform, ['Primary', 'J'])
+  const browserShortcut = shortcutLabel(platform, ['Primary', 'Shift', 'B'])
   return (
     <header className="title-toolbar drag-region">
       {!sidebarOpen ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
       <div className="title-toolbar__nav no-drag">
-        {!sidebarOpen ? <IconButton label="Show sidebar (⌘B)" onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
+        {!sidebarOpen ? <IconButton label={`Show sidebar (${sidebarShortcut})`} onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
       <div className="title-toolbar__identity">
         <strong>{project?.name ?? (view === 'session' ? productName : viewTitles[view])}</strong>
@@ -41,10 +46,10 @@ export function TitleToolbar({ project, view, productName = 'Prime Work', sideba
       </div>
       <div className="title-toolbar__actions no-drag">
         {view === 'session' && onToggleVoice ? <IconButton className={voiceOpen ? 'is-active voice-toggle--active' : ''} label={voiceOpen ? 'Close realtime voice' : 'Open realtime voice'} onClick={onToggleVoice}><AudioWaveform size={17} /></IconButton> : null}
-        {view === 'session' ? <IconButton className={terminalOpen ? 'is-active' : ''} label="Toggle terminal (⌘J)" onClick={onToggleTerminal}><Terminal size={17} /></IconButton> : null}
-        {view === 'session' ? <IconButton label="Open browser (⌘⇧B)" onClick={onOpenBrowser}><BrowserGlobe size={18} /></IconButton> : null}
+        {view === 'session' ? <IconButton className={terminalOpen ? 'is-active' : ''} label={`Toggle terminal (${terminalShortcut})`} onClick={onToggleTerminal}><Terminal size={17} /></IconButton> : null}
+        {view === 'session' ? <IconButton label={`Open browser (${browserShortcut})`} onClick={onOpenBrowser}><BrowserGlobe size={18} /></IconButton> : null}
         {view === 'session' ? <IconButton className={inspectorOpen ? 'is-active' : ''} label="Toggle inspector" onClick={onToggleInspector}><PanelRight size={16} /></IconButton> : null}
-        {view !== 'session' && sidebarOpen ? <IconButton label="Hide sidebar (⌘B)" onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
+        {view !== 'session' && sidebarOpen ? <IconButton label={`Hide sidebar (${sidebarShortcut})`} onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
     </header>
   )
