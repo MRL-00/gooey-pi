@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
+import type { HarnessId } from '../../../src/types/api'
 import { requireRecord, requireString } from '../validation'
 
 const MAX_BODY_BYTES = 1_100_000
@@ -11,6 +12,7 @@ export interface CapabilityClaim {
   token: string
   cwd: string
   sessionPath?: string
+  harness?: HarnessId
   expiresAt: number
   windowStartedAt: number
   requests: number
@@ -19,6 +21,7 @@ export interface CapabilityClaim {
 export interface CapabilityScope {
   cwd: string
   sessionPath?: string
+  harness?: HarnessId
 }
 
 function safeEqual(left: string, right: string): boolean {

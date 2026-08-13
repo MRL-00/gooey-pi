@@ -25,6 +25,7 @@ import { AutomationService } from './schedules/service'
 import { AgentScheduleBridge } from './schedules/agent-bridge'
 import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
+import { AgentCollaborationBridge } from './collaboration/agent-bridge'
 import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
 import { piSessionServiceOptions } from './sessions/pi'
@@ -48,6 +49,7 @@ let automation: AutomationService | null = null
 let agentScheduleBridges: AgentScheduleBridge[] = []
 let agentBrowser: AgentBrowserService | null = null
 let agentBrowserBridge: AgentBrowserBridge | null = null
+let agentCollaborationBridge: AgentCollaborationBridge | null = null
 let shutdownStarted = false
 let trustedRendererUrl = ''
 let windowCreation: Promise<BrowserWindow | null> | null = null
@@ -524,6 +526,9 @@ async function bootstrap(): Promise<void> {
   const ompAskUserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
+  const collaborationExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'omp-work-collaboration.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-collaboration.ts')
   const computerUseSkill = async () => {
     const status = await cuaDriver.status()
     return {
@@ -679,17 +684,27 @@ async function bootstrap(): Promise<void> {
     ? join(process.resourcesPath, 'extensions', 'prime-work-browser.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'prime-work-browser.ts')
   const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
-  await browserBridge.start()
+  const collaborationBridge = new AgentCollaborationBridge({
+    extensionPath: collaborationExtensionPath,
+    sessions: { prime: sessions, omp: ompSessions, pi: piSessions },
+    agents: { prime: agents, omp: ompManager, pi: piManager },
+  })
+  await Promise.all([browserBridge.start(), collaborationBridge.start()])
   agentBrowserBridge = browserBridge
+  agentCollaborationBridge = collaborationBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({
     ...scheduleBridge.environmentFor(scope),
     ...(stateStore.getSettings().browserEnabled ? browserBridge.environmentFor(scope) : {}),
+    ...collaborationBridge.environmentFor({ ...scope, harness: 'prime' }),
     PRIME_WORK_ASK_USER_EXTENSION_PATH: stateStore.getSettings().askUserEnabled && scope.interactive ? ompAskUserExtensionPath : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
-  agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
+  agents.setRuntimeStartListener((environment, info) => {
+    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+  })
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
   // app-specific usage guidance while OMP's own skills stay discovery-based.
@@ -700,18 +715,26 @@ async function bootstrap(): Promise<void> {
   }
   ompManager.setRuntimeEnvironmentProvider((scope) => ({
     ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...collaborationBridge.environmentFor({ ...scope, harness: 'omp' }),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
-  ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
+  ompManager.setRuntimeStartListener((environment, info) => {
+    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+  })
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) => ({
     ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...collaborationBridge.environmentFor({ ...scope, harness: 'pi' }),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
-  piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
+  piManager.setRuntimeStartListener((environment, info) => {
+    browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+  })
   if (shutdownStarted) return
   const meta: AppMeta = {
     version: app.getVersion(),
@@ -815,6 +838,7 @@ app.on('before-quit', (event) => {
   void settleShutdown([
     ...agentScheduleBridges.map((bridge) => bridge.stop()),
     agentBrowserBridge?.stop() ?? Promise.resolve(),
+    agentCollaborationBridge?.stop() ?? Promise.resolve(),
     automation?.stop() ?? Promise.resolve(),
     terminals?.killAll() ?? Promise.resolve(),
     agents?.stopAll() ?? Promise.resolve(),

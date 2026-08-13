@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OmpExtensionApi as BrowserExtensionApi } from '../../assets/extensions/omp-work-browser'
 import type { OmpExtensionApi as ScheduleExtensionApi } from '../../assets/extensions/omp-work-schedules'
 import type { OmpExtensionApi as AskUserExtensionApi } from '../../assets/extensions/omp-work-ask-user'
+import type { OmpExtensionApi as CollaborationExtensionApi } from '../../assets/extensions/omp-work-collaboration'
 
 /**
  * Base pi host simulation: unlike OMP, pi injects no `pi.typebox` shim.
@@ -131,5 +132,18 @@ describe('extensions on a base pi host (no injected pi.typebox)', () => {
     expect(schema.required).toEqual(['questions'])
     expect(schema.properties.questions.type).toBe('array')
     expect(schema.properties.questions.items.required).toEqual(['question', 'options'])
+  })
+
+  it('collaboration extension registers the same session tools on base pi', async () => {
+    vi.resetModules()
+    vi.stubEnv('GOOEYPI_COLLABORATION_URL', 'http://127.0.0.1:1/')
+    vi.stubEnv('GOOEYPI_COLLABORATION_TOKEN', 'token')
+    const factory = (await import('../../assets/extensions/omp-work-collaboration')).default
+    const { tools, pi } = piHost()
+    await factory(pi as unknown as CollaborationExtensionApi)
+    expect(tools.map((tool) => tool.name)).toEqual(['session_list', 'session_read', 'session_send', 'session_wait'])
+    expect(schemaOf(tools[1]).required).toEqual(['target_session_id'])
+    expect(schemaOf(tools[2]).required).toEqual(['target_session_id', 'message'])
+    expect(schemaOf(tools[3]).properties.timeout_ms.type).toBe('number')
   })
 })

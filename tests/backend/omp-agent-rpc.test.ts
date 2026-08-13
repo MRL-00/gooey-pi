@@ -132,15 +132,17 @@ describe('OMP RPC adapter argv', () => {
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
+      GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
       GOOEYPI_COMPUTER_USE_SKILL_PATH: '/skills/computer-use.md',
     } as NodeJS.ProcessEnv
     const args = OMP_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })
     expect(args).not.toContain('--skill')
     expect(args).toContain('--append-system-prompt')
-    expect(args.slice(-6)).toEqual([
+    expect(args.slice(-8)).toEqual([
       '--extension', '/extensions/schedules.ts',
       '--extension', '/extensions/browser.ts',
       '--extension', '/extensions/ask-user.ts',
+      '--extension', '/extensions/collaboration.ts',
     ])
   })
 })
@@ -185,6 +187,7 @@ describe('OMP RPC handshake', () => {
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
+      GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
     }))
     const events: Array<Record<string, unknown>> = []
     manager.setEventSink(({ event }) => events.push(event))
@@ -199,7 +202,7 @@ describe('OMP RPC handshake', () => {
     expect(argv).not.toContain('--provider')
     expect(argv).not.toContain('--skill')
     const extensionPaths = argv.flatMap((value, index) => value === '--extension' ? [argv[index + 1]] : [])
-    expect(extensionPaths).toEqual(['/extensions/schedules.ts', '/extensions/browser.ts', '/extensions/ask-user.ts'])
+    expect(extensionPaths).toEqual(['/extensions/schedules.ts', '/extensions/browser.ts', '/extensions/ask-user.ts', '/extensions/collaboration.ts'])
   })
 
   it('omits --approval-mode when no override is configured', async () => {

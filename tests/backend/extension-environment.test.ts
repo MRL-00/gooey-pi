@@ -103,4 +103,15 @@ describe('capability extension environment parity (OMP and pi)', () => {
     })
     expect(args.slice(-2)).toEqual(['--extension', extensionPaths.askUser])
   })
+
+  it.each([
+    ['prime', PRIME_RPC_ADAPTER],
+    ['omp', OMP_RPC_ADAPTER],
+    ['pi', PI_RPC_ADAPTER],
+  ] as const)('injects session collaboration into %s without accepting an unsafe path', (_harness, adapter) => {
+    const args = adapter.buildStartArgs({ cwd: '/work', environment: { GOOEYPI_COLLABORATION_EXTENSION_PATH: '/app/extensions/omp-work-collaboration.ts' } })
+    expect(args.slice(-2)).toEqual(['--extension', '/app/extensions/omp-work-collaboration.ts'])
+    const unsafe = adapter.buildStartArgs({ cwd: '/work', environment: { GOOEYPI_COLLABORATION_EXTENSION_PATH: '--session-injection' } })
+    expect(unsafe).not.toContain('--session-injection')
+  })
 })
