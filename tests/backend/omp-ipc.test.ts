@@ -76,7 +76,7 @@ function buildServices() {
     },
     terminals: serviceStub(),
     git: serviceStub(),
-    plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
+    plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
     providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined) },
     settings: {
       ...serviceStub(),
@@ -87,7 +87,7 @@ function buildServices() {
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
-      plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), listWorktrees: vi.fn(async () => ['omp-worktrees']), openWorktree: vi.fn(async () => 'omp-open'), createWorktree: vi.fn(async () => 'omp-create'), grantInferred: vi.fn(async () => 'omp-grant') },
       sessions: {
         ...serviceStub(),
@@ -112,7 +112,7 @@ function buildServices() {
       },
     },
     pi: {
-      plugins: { ...serviceStub(), list: vi.fn(async () => 'pi-plugins'), install: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'pi-plugins') },
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'pi-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'pi-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['pi-projects']), listWorktrees: vi.fn(async () => ['pi-worktrees']), openWorktree: vi.fn(async () => 'pi-open'), createWorktree: vi.fn(async () => 'pi-create'), grantInferred: vi.fn(async () => 'pi-grant') },
       sessions: {
         ...serviceStub(),
@@ -238,6 +238,8 @@ describe('harness-aware IPC routing', () => {
 
     await harness.invoke('plugins:install', 'npm:example', 'omp')
     expect(harness.services.omp.plugins.install).toHaveBeenCalledWith('npm:example')
+    await harness.invoke('plugins:install-extension', { source: '/tmp/example.ts', scope: 'user' }, 'omp')
+    expect(harness.services.omp.plugins.installExtension).toHaveBeenCalledWith({ source: '/tmp/example.ts', scope: 'user' })
     await harness.invoke('plugins:set-mcp-support', true, 'pi')
     expect(harness.services.pi.plugins.setMcpSupport).toHaveBeenCalledWith(true)
     await harness.invoke('plugins:connect-mcp', { name: 'docs' }, 'omp')

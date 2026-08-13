@@ -21,11 +21,16 @@ the same way. This document defines the product contract for that surface.
 
 ## Harness contracts
 
-| Harness | Installable bundle | MCP runtime | MCP configuration | Interactive authentication |
-| --- | --- | --- | --- | --- |
-| Prime Agent | `prime-agent package install <source>` | A matching Python-backed `McpIntegration` skill | User `~/.prime/agent/settings.json` or project `.prime/agent/settings.json`; HTTP only | `/mcp login <name>`; credentials remain in Prime Agent auth storage |
-| OMP | `omp plugin install <target> --json` | Native | User `~/.omp/agent/mcp.json` or project `.omp/mcp.json` | `/mcp reauth <name>`; credentials remain in the active OMP profile |
-| Pi | `pi install <source>` | `pi-mcp-adapter` extension package | User `~/.pi/agent/mcp.json` or project `.pi/mcp.json` | `/mcp-auth <name>`; credentials remain in the OS secure credential store |
+| Harness | Installable bundle | Standalone extension | MCP runtime | MCP configuration | Interactive authentication |
+| --- | --- | --- | --- | --- | --- |
+| Prime Agent | `prime-agent package install <source>` | Local file through `package install`; `--local` for project scope | A matching Python-backed `McpIntegration` skill | User `~/.prime/agent/settings.json` or project `.prime/agent/settings.json`; HTTP only | `/mcp login <name>`; credentials remain in Prime Agent auth storage |
+| OMP | `omp plugin install <target> --json` | Copy one local module into user `~/.omp/agent/extensions/` or project `.omp/extensions/` | Native | User `~/.omp/agent/mcp.json` or project `.omp/mcp.json` | `/mcp reauth <name>`; credentials remain in the active OMP profile |
+| Pi | `pi install <source>` | Local file through `pi install`; `-l` for project scope | `pi-mcp-adapter` extension package | User `~/.pi/agent/mcp.json` or project `.pi/mcp.json` | `/mcp-auth <name>`; credentials remain in the OS secure credential store |
+
+The app labels this surface **Capabilities** for every harness. Its Add button
+first opens a capability-type chooser, then a type-specific form: **Add MCP**,
+**Add Plugin** (OMP) or **Add Package** (Prime/Pi), and **Add Extension**. Pi's
+MCP choice remains visible but disabled until its adapter toggle is enabled.
 
 ## Product behavior
 
@@ -72,6 +77,10 @@ credential store is unavailable.
   an argv array; no shell interpolation is permitted.
 - Package, plugin, server, URL, command, argument, and environment-variable
   inputs are bounded and validated in the main process.
+- Standalone extensions must be absolute local JavaScript or TypeScript files.
+  Project installs are re-authorized and their destination directories remain
+  pinned against symlink replacement; existing OMP extension files are never
+  overwritten.
 - MCP settings retain the existing lock, conflict retry, project-directory
   pinning, atomic replacement, and rollback protections.
 - GooeyPi never reads or writes Prime/Pi auth files or OMP's `agent.db`.

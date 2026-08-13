@@ -662,7 +662,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' })).toBeVisible()
     await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Plugins & skills' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Capabilities' })).toBeVisible()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
     await expect(page.getByRole('main').getByText('OMP fixture reply.')).toBeVisible()
     await ompBrand.click()
@@ -681,7 +681,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' })).toBeVisible()
     await expect(page.locator('.session-row__title').filter({ hasText: 'Hermetic desktop fixture' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Scheduled' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Plugins & skills' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Capabilities' })).toBeVisible()
     await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()
     await expect(page.getByRole('main').getByText('Pi fixture reply.')).toBeVisible()
     await piBrand.click()
@@ -1008,10 +1008,10 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('navigates all primary workspace pages and command palette', async () => {
-    for (const destination of ['Projects', 'Activity', 'Scheduled', 'Plugins & skills']) {
+    for (const destination of ['Projects', 'Activity', 'Scheduled', 'Capabilities']) {
       await page.getByRole('button', { name: destination, exact: true }).click()
       await expect(page.locator('.page')).toBeVisible()
-      if (destination === 'Plugins & skills') {
+      if (destination === 'Capabilities') {
         await expect(page.locator('.feature-strip')).toHaveCount(0)
         await expect(page.locator('.directory-tools')).toBeVisible()
         const askUserToggle = page.getByRole('button', { name: 'Disable Ask user' })
@@ -1027,9 +1027,11 @@ test.describe('Prime Work desktop smoke', () => {
         await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.computerUseEnabled).toBe(true)
         await expect(page.getByText(/Prime MCP integrations require a matching Python skill package/)).toBeVisible()
         await page.getByRole('button', { name: 'Add', exact: true }).click()
-        const addDialog = page.getByRole('dialog', { name: 'Add tools to Prime' })
-        await expect(addDialog.getByText('MCP integration', { exact: true })).toBeVisible()
-        await expect(addDialog.getByText('Prime package', { exact: true })).toBeVisible()
+        const addDialog = page.getByRole('dialog', { name: 'Add a Prime capability' })
+        await expect(addDialog.getByText('Add MCP', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('Add Package', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('Add Extension', { exact: true })).toBeVisible()
+        await addDialog.getByRole('button', { name: /Add MCP/ }).click()
         await expect(addDialog.getByText('Integration package source', { exact: true })).toBeVisible()
         await expect(addDialog.getByText('Local command', { exact: true })).toHaveCount(0)
         await addDialog.getByRole('button', { name: 'Cancel' }).click()
@@ -1058,7 +1060,7 @@ test.describe('Prime Work desktop smoke', () => {
   test('installs and removes Pi MCP support from its directory toggle', async () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
-    await page.getByRole('button', { name: 'Plugins & skills' }).click()
+    await page.getByRole('button', { name: 'Capabilities' }).click()
 
     const enable = page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })
     await expect(enable).toHaveAttribute('aria-pressed', 'false')
@@ -1068,7 +1070,9 @@ test.describe('Prime Work desktop smoke', () => {
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
 
     await page.getByRole('button', { name: 'Add', exact: true }).click()
-    const addDialog = page.getByRole('dialog', { name: 'Add tools to Pi' })
+    const chooser = page.getByRole('dialog', { name: 'Add a Pi capability' })
+    await chooser.getByRole('button', { name: /Add MCP/ }).click()
+    const addDialog = page.getByRole('dialog', { name: 'Add MCP server' })
     await addDialog.getByLabel('Server name').fill('docs')
     await addDialog.getByLabel('Server URL').fill('https://docs.example/mcp')
     await addDialog.getByLabel('Authentication').selectOption('oauth')
@@ -1078,7 +1082,7 @@ test.describe('Prime Work desktop smoke', () => {
     const promptPath = join(fixtureRoot, 'pi-prompt-args.json')
     await expect.poll(() => existsSync(promptPath) ? JSON.parse(readFileSync(promptPath, 'utf8')).message : null).toBe('/mcp-auth docs')
 
-    await page.getByRole('button', { name: 'Plugins & skills' }).click()
+    await page.getByRole('button', { name: 'Capabilities' }).click()
 
     await page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' }).click()
     await expect(page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')

@@ -88,6 +88,7 @@ const api: PrimeWorkApi = {
   plugins: {
     list: (projectPath, harness) => ipcRenderer.invoke('plugins:list', projectPath, harness),
     install: (source, harness) => ipcRenderer.invoke('plugins:install', source, harness),
+    installExtension: (input, harness) => ipcRenderer.invoke('plugins:install-extension', input, harness),
     setMcpSupport: (enabled, harness) => ipcRenderer.invoke('plugins:set-mcp-support', enabled, harness),
     connectMcp: (input, harness) => ipcRenderer.invoke('plugins:connect-mcp', input, harness),
     refresh: (harness) => ipcRenderer.invoke('plugins:refresh', harness),

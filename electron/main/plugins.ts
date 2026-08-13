@@ -11,6 +11,7 @@ import { readAtMost } from './plugins/file-io'
 import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
 import type { ProjectSettingsPath } from './plugins/mcp'
 import { executeOmpPluginInstall, executePackageInstall, executePiPluginInstall, executePiPluginRemove, validatePackageSource } from './plugins/package-execution'
+import { installOmpExtension, validateExtensionInstallInput } from './plugins/extension-installation'
 
 type PluginDiscovery = typeof discoverPlugins
 
@@ -139,6 +140,37 @@ export class PluginService {
           : this.harness === 'pi'
             ? await executePiPluginInstall(agentPath, source)
             : await executePackageInstall(agentPath, source)
+      } finally {
+        await release()
+      }
+    })
+    this.settingsMutation = operation.then(() => undefined, () => undefined)
+    return await operation
+  }
+
+  async installExtension(inputValue: unknown): Promise<ProcessOutcome> {
+    const input = validateExtensionInstallInput(inputValue)
+    const safeProjectPath = input.scope === 'project'
+      ? await this.authorizeProject(input.projectPath!)
+      : undefined
+    if (safeProjectPath) this.lastProjectPath = safeProjectPath
+    if (this.harness === 'omp') return await installOmpExtension(input, this.agentDir, safeProjectPath)
+
+    const agentPath = resolveExecutable(this.agentPath)
+    if (!agentPath) return { ok: false, reason: 'blocked', output: `${HARNESSES[this.harness].agentName} executable was not found` }
+    const projectSettings = safeProjectPath
+      ? await prepareProjectSettingsPath(safeProjectPath, {
+          segments: this.harness === 'prime' ? ['.prime', 'agent'] : ['.pi'],
+          filename: 'settings.json',
+        })
+      : undefined
+    const settingsPath = projectSettings?.path ?? join(this.agentDir, 'settings.json')
+    const operation = this.settingsMutation.then(async () => {
+      const release = await acquireSettingsLock(settingsPath, projectSettings?.verify)
+      try {
+        return this.harness === 'pi'
+          ? await executePiPluginInstall(agentPath, input.source, safeProjectPath)
+          : await executePackageInstall(agentPath, input.source, safeProjectPath)
       } finally {
         await release()
       }

@@ -11,14 +11,14 @@ export function CommandPalette({ open, onClose, harness = 'prime', onNavigate, o
   const [active,setActive]=useState(0)
   const inputRef=useRef<HTMLInputElement>(null)
   const paletteRef=useFocusTrap<HTMLDivElement>(open,onClose)
-  // Schedules and plugins are prime-only surfaces; hide their commands for OMP.
-  const primeOnly=new Set(harness==='prime'?[]:['scheduled','plugins'])
+  // Scheduling remains Prime-only here; capabilities are harness-specific and universal.
+  const primeOnly=new Set(harness==='prime'?[]:['scheduled'])
   const commands:Command[]=[
     {id:'new',label:'New session',detail:'Start fresh in the current project',shortcut:'⌘N',icon:<NotebookPen size={14}/>,run:onNewSession},
     {id:'projects',label:'Open Projects',detail:'Browse local workspaces',icon:<Folder size={14}/>,run:()=>onNavigate('projects')},
     {id:'activity',label:'Open Activity',detail:'See work that needs attention',icon:<Bell size={14}/>,run:()=>onNavigate('activity')},
     {id:'scheduled',label:'Open Scheduled',detail:'Manage recurring work',icon:<CalendarClock size={14}/>,run:()=>onNavigate('scheduled')},
-    {id:'plugins',label:'Open Plugins & skills',detail:'Extend Prime',icon:<PackageOpen size={14}/>,run:()=>onNavigate('plugins')},
+    {id:'plugins',label:'Open Capabilities',detail:'Extend the active harness',icon:<PackageOpen size={14}/>,run:()=>onNavigate('plugins')},
     {id:'browser',label:'Toggle browser',detail:'Open the in-app browser',shortcut:'⌘⇧B',icon:<BrowserGlobe size={14}/>,run:onOpenBrowser},
     {id:'terminal',label:'Toggle terminal',detail:'Open a project shell',shortcut:'⌘J',icon:<Terminal size={14}/>,run:onToggleTerminal},
     {id:'sidebar',label:'Toggle sidebar',detail:'Show or hide project navigation',shortcut:'⌘B',icon:<LayoutPanelLeft size={14}/>,run:onToggleSidebar},

@@ -34,6 +34,15 @@ button.plugin-toggle:disabled { cursor: wait; opacity: .65; }
 .add-tool-form { margin-top: 14px; }
 .add-tool-form .modal-intro { margin: 0; }
 .add-tool-form .field > .segmented { align-self: flex-start; }
+.capability-choice-list { display: grid; gap: 8px; }
+.capability-choice-list > button { width: 100%; min-height: 68px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 18px; align-items: center; gap: 10px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-raised); text-align: left; }
+.capability-choice-list > button:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.capability-choice-list > button:disabled { cursor: not-allowed; opacity: .48; }
+.capability-choice-list > button > span:first-child { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; color: var(--prime); background: var(--surface-subtle); }
+.capability-choice-list > button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.capability-choice-list strong { font-size: 12px; font-weight: 580; }
+.capability-choice-list small { color: var(--text-secondary); font-size: 10px; line-height: 1.35; }
+.capability-choice-list > button > svg { color: var(--text-tertiary); }
 .field-help { display: block; margin-top: 5px; color: var(--text-tertiary); font-size: 10px; line-height: 1.45; }
 .field-help code { color: var(--text-secondary); }
 .field > span small { color: var(--text-tertiary); font-size: 9.5px; font-weight: 400; }

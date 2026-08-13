@@ -217,7 +217,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
         <button type="button" title="Projects" className={activeView === 'projects' ? 'is-active' : ''} onClick={() => onNavigate('projects')}><Folder size={15} /><span>Projects</span></button>
         <button type="button" title="Activity" className={activeView === 'activity' ? 'is-active' : ''} onClick={() => onNavigate('activity')}><Bell size={15} /><span>Activity</span>{unreadCount ? <span className="nav-count">{unreadCount}</span> : null}</button>
         <button type="button" title="Scheduled" className={activeView === 'scheduled' ? 'is-active' : ''} onClick={() => onNavigate('scheduled')}><CalendarClock size={15} /><span>Scheduled</span></button>
-        <button type="button" title="Plugins & skills" className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>Plugins & skills</span></button>
+        <button type="button" title="Capabilities" className={activeView === 'plugins' ? 'is-active' : ''} onClick={() => onNavigate('plugins')}><PackageOpen size={15} /><span>Capabilities</span></button>
       </nav>
 
       <div className="sidebar__scroll scroll-area">

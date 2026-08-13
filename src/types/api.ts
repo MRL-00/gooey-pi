@@ -265,6 +265,12 @@ export type McpConnectionInput = {
   | { type: 'stdio'; command: string; args?: string[] }
 )
 
+export interface ExtensionInstallInput {
+  source: string
+  scope: 'user' | 'project'
+  projectPath?: string
+}
+
 export interface ProjectFileEntry { path: string; type: 'file' | 'directory' }
 export interface ProjectFileListing { entries: ProjectFileEntry[]; skipped: number }
 
@@ -653,6 +659,7 @@ export interface PrimeWorkApi {
   plugins: {
     list(projectPath?: string, harness?: HarnessId): Promise<PluginCatalog>
     install(source: string, harness?: HarnessId): Promise<ProcessOutcome>
+    installExtension(input: ExtensionInstallInput, harness?: HarnessId): Promise<ProcessOutcome>
     setMcpSupport(enabled: boolean, harness?: HarnessId): Promise<ProcessOutcome>
     connectMcp(input: McpConnectionInput, harness?: HarnessId): Promise<ProcessOutcome>
     refresh(harness?: HarnessId): Promise<PluginCatalog>

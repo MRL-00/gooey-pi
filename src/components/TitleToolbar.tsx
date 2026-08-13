@@ -9,7 +9,7 @@ import type { ProjectRecord, WorkspaceView } from '@/types/api'
 import { BrowserGlobe, IconButton } from './ui'
 
 const viewTitles: Record<Exclude<WorkspaceView, 'session'>, string> = {
-  projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Plugins & skills', settings: 'Settings',
+  projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Capabilities', settings: 'Settings',
 }
 
 interface TitleToolbarProps {

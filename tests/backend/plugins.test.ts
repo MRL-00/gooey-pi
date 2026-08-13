@@ -667,6 +667,24 @@ const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(installStarted)},'
     expect(settings.mcpServers['after-package'].url).toBe('https://after-package.example/mcp')
   })
 
+  it('registers a standalone project extension through Prime package install --local', async () => {
+    const root = temp()
+    const agentDir = join(root, '.prime', 'agent')
+    const project = join(root, 'project')
+    const extension = join(root, 'review.ts')
+    const executable = join(root, 'prime-agent.cjs')
+    const capture = join(root, 'extension-argv.json')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    writeFileSync(extension, 'export default () => undefined\n')
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }))\n`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => realpathSync(path), { agentDir })
+
+    expect((await service.installExtension({ source: extension, scope: 'project', projectPath: project })).ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['package', 'install', '--local', realpathSync(extension)], cwd: realpathSync(project) })
+  })
+
 })
 
 describe('PluginService OMP parity', () => {
@@ -756,6 +774,28 @@ describe('PluginService OMP parity', () => {
 
     await service.install('code-review@official')
     expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['plugin', 'install', 'code-review@official', '--json'])
+  })
+
+  it('installs standalone OMP extensions through native user and project extension directories', async () => {
+    const root = temp()
+    const agentDir = join(root, '.omp', 'agent')
+    const project = join(root, 'project')
+    const source = join(root, 'clock.ts')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    writeFileSync(source, 'export default () => undefined\n')
+    const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'omp' })
+
+    const user = await service.installExtension({ source, scope: 'user' })
+    const local = await service.installExtension({ source, scope: 'project', projectPath: project })
+    const duplicate = await service.installExtension({ source, scope: 'user' })
+
+    expect(user).toMatchObject({ ok: true, output: expect.stringContaining('clock.ts') })
+    expect(local.ok).toBe(true)
+    expect(readFileSync(join(agentDir, 'extensions', 'clock.ts'), 'utf8')).toContain('export default')
+    expect(readFileSync(join(project, '.omp', 'extensions', 'clock.ts'), 'utf8')).toContain('export default')
+    expect(duplicate).toMatchObject({ ok: false, reason: 'blocked' })
+    await expect(service.installExtension({ source: join(root, 'missing.ts'), scope: 'user' })).rejects.toThrow(/does not exist/)
   })
 })
 
@@ -890,6 +930,24 @@ describe('PluginService Pi parity', () => {
     const missing = new PluginService(null, async (path) => resolve(path), { agentDir, harness: 'pi' })
     expect(await missing.install('npm:@scope/example-plugin')).toEqual({ ok: false, reason: 'blocked', output: 'Pi executable was not found' })
     await expect(service.install('--registry=https://evil.test')).rejects.toThrow(/Invalid package source/)
+  })
+
+  it('registers a standalone project extension through pi install -l', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const project = join(root, 'project')
+    const extension = join(root, 'review.ts')
+    const executable = join(root, 'pi.cjs')
+    const capture = join(root, 'extension-argv.json')
+    mkdirSync(agentDir, { recursive: true })
+    mkdirSync(project)
+    writeFileSync(extension, 'export default () => undefined\n')
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }))\n`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
+
+    expect((await service.installExtension({ source: extension, scope: 'project', projectPath: project })).ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['install', '-l', realpathSync(extension)], cwd: realpathSync(project) })
   })
 
   it('uses Pi install/remove for the MCP adapter toggle and preserves MCP config', async () => {

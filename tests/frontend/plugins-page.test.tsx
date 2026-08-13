@@ -41,6 +41,7 @@ describe('PluginsPage bundled capability controls', () => {
         askUserEnabled={true} onSetAskUserEnabled={setEnabled}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
       />)
@@ -63,6 +64,7 @@ describe('PluginsPage bundled capability controls', () => {
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={setEnabled} onOpenExternal={openExternal}
         onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
       />)
@@ -85,6 +87,7 @@ describe('PluginsPage bundled capability controls', () => {
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={async () => undefined} onInstall={install}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={login}
         onConnectMcp={connect}
       />)
@@ -92,7 +95,10 @@ describe('PluginsPage bundled capability controls', () => {
     expect(container.textContent).toContain('matching Python skill package')
     await act(async () => { container.querySelector<HTMLButtonElement>('.button--primary')!.click() })
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
-    expect(dialog?.textContent).toContain('MCP integration')
+    expect(dialog?.textContent).toContain('Add MCP')
+    expect(dialog?.textContent).toContain('Add Package')
+    expect(dialog?.textContent).toContain('Add Extension')
+    await act(async () => { [...dialog!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add MCP'))!.click() })
     expect(dialog?.textContent).toContain('Integration package source')
     expect(dialog?.textContent).not.toContain('Local command')
     const inputs = dialog!.querySelectorAll<HTMLInputElement>('input')
@@ -125,6 +131,7 @@ describe('PluginsPage bundled capability controls', () => {
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={setMcpSupport} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
       />)
@@ -133,5 +140,34 @@ describe('PluginsPage bundled capability controls', () => {
     await act(async () => { toggle.click(); await Promise.resolve(); await Promise.resolve() })
     expect(setMcpSupport).toHaveBeenCalledWith(true)
     expect(refresh).toHaveBeenCalled()
+  })
+
+  it('greys out Pi MCP until its adapter is enabled and opens the extension form separately', async () => {
+    const installExtension = vi.fn(async () => ({ ok: true, output: 'installed extension' }))
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="pi" skills={[]} warnings={[]} loading={false} activeProjectPath="/repo"
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={installExtension}
+        onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
+        onConnectMcp={async () => ({ ok: true, output: '' })}
+      />)
+    })
+
+    await act(async () => { container.querySelector<HTMLButtonElement>('.button--primary')!.click() })
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    const addMcp = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add MCP'))!
+    expect(addMcp.disabled).toBe(true)
+    expect(addMcp.textContent).toContain('Enable MCP | Pi MCP Adapter first')
+
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add Extension'))!.click() })
+    expect(dialog.textContent).toContain('Extension file')
+    expect(dialog.textContent).toContain('native package manager')
+    changeInput(dialog.querySelector<HTMLInputElement>('input')!, '/tmp/example.ts')
+    const install = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Install extension')!
+    await act(async () => { install.click(); await Promise.resolve(); await Promise.resolve() })
+    expect(installExtension).toHaveBeenCalledWith({ source: '/tmp/example.ts', scope: 'user', projectPath: undefined })
   })
 })

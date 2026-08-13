@@ -45,7 +45,7 @@ function buildServices() {
     throw new TypeError('Session path is outside the Prime session directory')
   })
   const harnessSet = (name: string, session: string) => ({
-    plugins: { ...serviceStub(), list: vi.fn(async () => `${name}-plugins`), install: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => `${name}-plugins`) },
+    plugins: { ...serviceStub(), list: vi.fn(async () => `${name}-plugins`), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => `${name}-plugins`) },
     projects: { ...serviceStub(), list: vi.fn(async () => [`${name}-projects`]), listWorktrees: vi.fn(async () => [`${name}-worktrees`]), openWorktree: vi.fn(async () => `${name}-open`), createWorktree: vi.fn(async () => `${name}-create`), grantInferred: vi.fn(async () => `${name}-grant`) },
     sessions: {
       ...serviceStub(),
@@ -150,6 +150,8 @@ describe('pi harness IPC routing', () => {
     expect(harness.services.pi.plugins.list).toHaveBeenCalledWith('/repo')
     await harness.invoke('plugins:install', 'npm:example', 'pi')
     expect(harness.services.pi.plugins.install).toHaveBeenCalledWith('npm:example')
+    await harness.invoke('plugins:install-extension', { source: '/tmp/example.ts', scope: 'user' }, 'pi')
+    expect(harness.services.pi.plugins.installExtension).toHaveBeenCalledWith({ source: '/tmp/example.ts', scope: 'user' })
     await harness.invoke('plugins:set-mcp-support', true, 'pi')
     expect(harness.services.pi.plugins.setMcpSupport).toHaveBeenCalledWith(true)
     await harness.invoke('plugins:connect-mcp', { name: 'docs' }, 'pi')
