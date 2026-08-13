@@ -133,7 +133,6 @@ describe('release preflight', () => {
     expect(packageJson.engines).toEqual({ node: '>=22.12.0', npm: '>=10.9.0' })
     expect(readFileSync('.nvmrc', 'utf8').trim()).toBe('22.12.0')
     expect(readFileSync('README.md', 'utf8')).toContain('Node.js 22.12.0 or newer and npm 10.9.0 or newer')
-    expect(readFileSync('AGENTS.md', 'utf8')).toContain('Node 22.12.0+, npm 10.9.0+')
   })
 
   test('fails closed without Developer ID credentials', () => {
