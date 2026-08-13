@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readSessionMetadata } from '../../electron/main/sessions/metadata'
 import { readTranscript } from '../../electron/main/sessions/transcript'
-import { configureGooeyPiAgentMessageSigning, encodeGooeyPiAgentMessage, parseGooeyPiAgentMessage } from '../../electron/main/collaboration/message-envelope'
+import { configureGooeyPiAgentMessageSigning, encodeGooeyPiAgentMessage, loadOrCreateGooeyPiAgentMessageKey, parseGooeyPiAgentMessage } from '../../electron/main/collaboration/message-envelope'
 
 const dirs: string[] = []
 configureGooeyPiAgentMessageSigning(Buffer.alloc(32, 7))
@@ -34,6 +34,16 @@ describe('session file record tolerance', () => {
 })
 
 describe('GooeyPi agent messages', () => {
+  it('creates and reuses an owner-only signing key in a fresh user-data directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-message-key-'))
+    dirs.push(dir)
+    const path = join(dir, 'fresh-user-data', 'agent-message-signing.key')
+    const created = loadOrCreateGooeyPiAgentMessageKey(path)
+    expect(created).toHaveLength(32)
+    expect(loadOrCreateGooeyPiAgentMessageKey(path)).toEqual(created)
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
   it('persists a bounded envelope and renders it as a native agent message', async () => {
     const file = makeSessionFile()
     const envelope = encodeGooeyPiAgentMessage({

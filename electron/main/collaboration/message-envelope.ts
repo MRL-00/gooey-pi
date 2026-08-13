@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import type { HarnessId } from '../../../src/types/api'
 import { isRecord } from '../validation'
 
@@ -32,20 +33,25 @@ function signature(metadata: SignedMetadata, text: string): Buffer {
 
 /** Loads the app-local signing key, creating it with owner-only permissions on first use. */
 export function loadOrCreateGooeyPiAgentMessageKey(path: string): Buffer {
-  try {
+  const readExisting = (): Buffer => {
+    const stat = lstatSync(path)
+    if (!stat.isFile() || stat.size !== KEY_BYTES) throw new Error('The GooeyPi agent-message signing key is invalid')
+    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) chmodSync(path, 0o600)
     const existing = readFileSync(path)
     if (existing.length !== KEY_BYTES) throw new Error('The GooeyPi agent-message signing key is invalid')
     return existing
+  }
+  try {
+    return readExisting()
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const created = randomBytes(KEY_BYTES)
   try { writeFileSync(path, created, { flag: 'wx', mode: 0o600 }) }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    const existing = readFileSync(path)
-    if (existing.length !== KEY_BYTES) throw new Error('The GooeyPi agent-message signing key is invalid')
-    return existing
+    return readExisting()
   }
   return created
 }
