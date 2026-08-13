@@ -1,5 +1,5 @@
-import { watch, type FSWatcher, type Stats } from 'node:fs'
-import { realpath } from 'node:fs/promises'
+import { watch, type Dirent, type Stats } from 'node:fs'
+import { readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import type { HarnessId, SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
@@ -17,12 +17,30 @@ interface RuntimeSessionState { isStreaming: boolean; isCompacting?: boolean }
 interface RuntimeSessionSnapshot extends RuntimeSessionState { sessionFile?: string }
 
 const MAX_SESSION_FILES = 5_000
+const MAX_SESSION_WATCH_DIRECTORIES = 512
 const MAX_CONCURRENT_TRANSCRIPT_READS = 2
 const MAX_PENDING_TRANSCRIPT_READS = 32
 
 type TranscriptReader = (filePath: string, isStreaming: boolean) => Promise<TranscriptMessage[]>
 
 type SessionPathAuthorizer = (sessionRootRealPath: string, sessionRealPath: string) => boolean
+
+export interface SessionWatcher {
+  close(): void
+  on(event: 'error', listener: (error: Error) => void): SessionWatcher
+}
+
+export type SessionWatchFactory = (
+  path: string,
+  options: { persistent: boolean },
+  listener: (eventType: string, filename: string | Buffer | null) => void,
+) => SessionWatcher
+
+const watchSessionDirectory: SessionWatchFactory = (path, options, listener) => watch(
+  path,
+  options,
+  (eventType, filename) => listener(eventType, filename),
+)
 
 const authorizePrimeSessionPath: SessionPathAuthorizer = (root, path) => isPathWithin(root, path) && path.endsWith('.jsonl')
 
@@ -39,12 +57,12 @@ export interface SessionServiceOptions {
   /** Containment rule applied to realpathed candidates; defaults to root containment plus a `.jsonl` suffix. */
   isSessionPathAuthorized?: SessionPathAuthorizer
   /**
-   * Watch the session root recursively (for harnesses that bucket sessions one
-   * directory deep). Honored only where fs.watch supports recursion natively
-   * (darwin/win32); elsewhere the watcher falls back to non-recursive root
-   * watching, whose events trigger catalog-wide refreshes.
+   * Also watch a bounded set of session directories exactly one level below
+   * the root (for harnesses that bucket sessions).
    */
   recursiveWatch?: boolean
+  /** Injectable watch seam for deterministic filesystem-event tests. */
+  watchDirectory?: SessionWatchFactory
   maxConcurrentTranscriptReads?: number
   maxPendingTranscriptReads?: number
 }
@@ -63,8 +81,12 @@ export class SessionService {
   private readonly transcriptAdmission: AdmissionQueue
   private readonly transcriptReader: TranscriptReader
   private readonly isSessionPathAuthorized: SessionPathAuthorizer
+  private readonly watchDirectory: SessionWatchFactory
   private readonly changeListeners = new Set<(event: SessionChangeEvent) => void>()
-  private sessionWatcher: FSWatcher | null = null
+  private sessionWatcher: SessionWatcher | null = null
+  private readonly bucketWatchers = new Map<string, SessionWatcher>()
+  private bucketWatcherRefresh: Promise<void> | null = null
+  private bucketWatcherRefreshPending = false
   private watcherRetry: NodeJS.Timeout | null = null
   private changeTimer: NodeJS.Timeout | null = null
   private readonly changedNames = new Set<string>()
@@ -93,6 +115,7 @@ export class SessionService {
     this.metadataReader = options.metadataReader ?? createSessionMetadataReader()
     this.transcriptReader = options.transcriptReader ?? readTranscript
     this.isSessionPathAuthorized = options.isSessionPathAuthorized ?? authorizePrimeSessionPath
+    this.watchDirectory = options.watchDirectory ?? watchSessionDirectory
     this.catalog = new SessionMetadataCatalog(
       () => this.sessionRoot,
       primeAgentPath,
@@ -251,15 +274,17 @@ export class SessionService {
     try {
       // A missing session root (harness never used on this machine) throws
       // here and lands in the retry below, which watches once the root appears.
-      const recursive = this.recursiveWatch && (process.platform === 'darwin' || process.platform === 'win32')
-      const watcher = watch(this.sessionRoot, { persistent: false, recursive }, (_eventType, filename) => {
+      const watcher = this.watchDirectory(this.sessionRoot, { persistent: false }, (_eventType, filename) => {
         this.queueSessionChange(filename)
+        if (this.recursiveWatch) this.refreshBucketWatchers(watcher)
       })
       this.sessionWatcher = watcher
+      if (this.recursiveWatch) this.refreshBucketWatchers(watcher)
       watcher.on('error', () => {
         if (this.sessionWatcher !== watcher) return
         watcher.close()
         this.sessionWatcher = null
+        this.closeBucketWatchers()
         this.queueSessionChange(null)
         this.scheduleWatcherRetry()
       })
@@ -280,12 +305,87 @@ export class SessionService {
   private stopWatcher(): void {
     this.sessionWatcher?.close()
     this.sessionWatcher = null
+    this.closeBucketWatchers()
     if (this.watcherRetry) clearTimeout(this.watcherRetry)
     if (this.changeTimer) clearTimeout(this.changeTimer)
     this.watcherRetry = null
     this.changeTimer = null
     this.changedNames.clear()
     this.catalogOnlyChange = false
+    this.bucketWatcherRefreshPending = false
+  }
+
+  /**
+   * Pi and OMP keep JSONL files exactly one bucket below the session root, so
+   * watch a bounded set of real child directories and feed their root-relative
+   * names through the same containment checks as root events. Using this on
+   * every platform keeps behavior identical where recursive `fs.watch` is not
+   * implemented (notably Linux).
+   */
+  private refreshBucketWatchers(rootWatcher: SessionWatcher): void {
+    if (this.bucketWatcherRefresh) {
+      this.bucketWatcherRefreshPending = true
+      return
+    }
+    this.bucketWatcherRefresh = this.performBucketWatcherRefresh(rootWatcher)
+      .finally(() => {
+        const refreshAgain = this.bucketWatcherRefreshPending
+        this.bucketWatcherRefreshPending = false
+        this.bucketWatcherRefresh = null
+        const currentWatcher = this.sessionWatcher
+        if (refreshAgain && currentWatcher && this.changeListeners.size) this.refreshBucketWatchers(currentWatcher)
+      })
+  }
+
+  private async performBucketWatcherRefresh(rootWatcher: SessionWatcher): Promise<void> {
+    let entries: Dirent<string>[]
+    let root: string
+    try {
+      [entries, root] = await Promise.all([
+        readdir(this.sessionRoot, { withFileTypes: true }),
+        realpath(this.sessionRoot),
+      ])
+    } catch { return }
+    if (this.sessionWatcher !== rootWatcher || !this.changeListeners.size) return
+
+    const bucketNames = entries
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()
+        && entry.name.length > 0 && entry.name.length <= 255 && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort()
+      .slice(0, MAX_SESSION_WATCH_DIRECTORIES)
+    const wanted = new Set(bucketNames)
+    for (const [name, watcher] of this.bucketWatchers) {
+      if (wanted.has(name)) continue
+      watcher.close()
+      this.bucketWatchers.delete(name)
+    }
+
+    for (const name of bucketNames) {
+      if (this.bucketWatchers.has(name)) continue
+      try {
+        const bucketPath = await realpath(join(root, name))
+        if (this.sessionWatcher !== rootWatcher || !this.changeListeners.size) return
+        if (!isPathWithin(root, bucketPath) || bucketPath === root) continue
+        const watcher = this.watchDirectory(bucketPath, { persistent: false }, (_eventType, filename) => {
+          if (this.sessionWatcher !== rootWatcher) return
+          const leaf = typeof filename === 'string' ? filename : ''
+          this.queueSessionChange(leaf ? join(name, leaf) : null)
+        })
+        this.bucketWatchers.set(name, watcher)
+        watcher.on('error', () => {
+          if (this.bucketWatchers.get(name) !== watcher) return
+          watcher.close()
+          this.bucketWatchers.delete(name)
+          this.queueSessionChange(null)
+        })
+      } catch { /* The root watcher will report replacements and retry discovery. */ }
+    }
+  }
+
+  private closeBucketWatchers(): void {
+    for (const watcher of this.bucketWatchers.values()) watcher.close()
+    this.bucketWatchers.clear()
   }
 
   /**

@@ -1268,11 +1268,46 @@ test.describe('Prime Work desktop smoke', () => {
     expect(colors.note).not.toContain('rgba')
   })
 
-  test('applies dark appearance and restores system appearance', async () => {
+  test('applies themed native select colors and restores system appearance', async () => {
     await page.keyboard.press('Meta+,')
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    const nativeSelectTheme = () => page.evaluate(() => {
+      const select = document.createElement('select')
+      const option = document.createElement('option')
+      option.textContent = 'Theme probe'
+      select.append(option)
+      document.body.append(select)
+      const root = getComputedStyle(document.documentElement)
+      const selectStyle = getComputedStyle(select)
+      const optionStyle = getComputedStyle(option)
+      const result = {
+        scheme: selectStyle.colorScheme,
+        optionColor: optionStyle.color,
+        optionBackground: optionStyle.backgroundColor,
+        themeColor: root.getPropertyValue('--text').trim(),
+        themeBackground: root.getPropertyValue('--surface-raised').trim(),
+      }
+      select.remove()
+      return result
+    })
+    await page.getByRole('button', { name: /Light/ }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+    expect(await nativeSelectTheme()).toMatchObject({
+      scheme: 'light',
+      optionColor: 'rgb(32, 32, 30)',
+      optionBackground: 'rgb(255, 255, 255)',
+      themeColor: '#20201e',
+      themeBackground: '#ffffff',
+    })
     await page.getByRole('button', { name: /Dark/ }).click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    expect(await nativeSelectTheme()).toMatchObject({
+      scheme: 'dark',
+      optionColor: 'rgb(241, 241, 238)',
+      optionBackground: 'rgb(34, 34, 32)',
+      themeColor: '#f1f1ee',
+      themeBackground: '#222220',
+    })
     await page.getByRole('button', { name: /System/ }).click()
   })
 

@@ -547,6 +547,36 @@ process.exit(0)
 
 
 describe('SessionService live changes', () => {
+  it('installs a one-level watcher and resolves bucketed session changes', async () => {
+    const watched = new Map<string, (eventType: string, filename: string | Buffer | null) => void>()
+    const { root, project, service } = setup(undefined, {
+      recursiveWatch: true,
+      watchDirectory: (path, _options, listener) => {
+        watched.set(path, listener)
+        const watcher = {
+          close: () => { watched.delete(path) },
+          on: () => watcher,
+        }
+        return watcher
+      },
+    })
+    const bucket = join(root, 'project-bucket')
+    mkdirSync(bucket)
+    const file = join(bucket, 'bucketed.jsonl')
+    writeSession(file, project, 'bucketed')
+    const events: Array<{ filePath?: string }> = []
+    const unsubscribe = service.onDidChange((event) => events.push(event))
+
+    try {
+      const watcherHarness = service as unknown as { bucketWatchers: Map<string, unknown> }
+      await waitUntil(() => watcherHarness.bucketWatchers.has('project-bucket'), 4_000)
+      watched.get(realpathSync(bucket))?.('change', 'bucketed.jsonl')
+      await waitUntil(() => events.some((event) => event.filePath === realpathSync(file)), 4_000)
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('emits refreshes during continuous JSONL writes instead of waiting for the stream to stop', async () => {
     const { root, project, service } = setup()
     const file = join(root, 'streaming.jsonl')

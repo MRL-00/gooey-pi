@@ -252,8 +252,8 @@ export function ompSessionServiceOptions(sessionRoot = ompSessionRoot()): Sessio
     metadataReader: createOmpSessionMetadataReader(),
     transcriptReader: readOmpTranscript,
     isSessionPathAuthorized: isOmpSessionPath,
-    // Session files sit one bucket directory below the root; recursion is
-    // honored on platforms with native support and degrades gracefully elsewhere.
+    // Session files sit one bucket directory below the root; bounded one-level
+    // watchers keep catalog refresh behavior identical across platforms.
     recursiveWatch: true,
   }
 }

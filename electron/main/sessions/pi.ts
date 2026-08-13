@@ -226,8 +226,8 @@ export function piSessionServiceOptions(sessionRoot = piSessionRoot()): SessionS
     metadataReader: createPiSessionMetadataReader(),
     transcriptReader: readPiTranscript,
     isSessionPathAuthorized: isPiSessionPath,
-    // Session files sit one bucket directory below the root; recursion is
-    // honored on platforms with native support and degrades gracefully elsewhere.
+    // Session files sit one bucket directory below the root; bounded one-level
+    // watchers keep catalog refresh behavior identical across platforms.
     recursiveWatch: true,
   }
 }
