@@ -295,6 +295,7 @@ describe('release preflight', () => {
     expect(workflow).toContain('node scripts/release/validate-release-tag.mjs --tag "$RELEASE_TAG"')
     expect(workflow).toContain('git merge-base --is-ancestor HEAD refs/remotes/origin/main')
     expect(workflow).toContain('node scripts/release/prepare-github-release.mjs')
+    expect(workflow).toMatch(/release-packages:[\s\S]*?npm ci --ignore-scripts[\s\S]*?node scripts\/release\/prepare-github-release\.mjs/)
     expect(workflow).toContain('actions/download-artifact@')
     expect(workflow).toContain('actions/attest-build-provenance@')
     expect(workflow).toContain('gh release create "$RELEASE_TAG" release-assets/*')
@@ -332,13 +333,14 @@ describe('GitHub Release publication', () => {
   test('selects an exact enabled platform set', () => {
     expect(parseReleasePlatforms('mac,linux')).toEqual(['mac', 'linux'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['mac', 'linux'])).not.toContain('GooeyPi-0.2.0-win-x64.exe')
-    expect(expectedGitHubReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-intel-chip.dmg', 'GooeyPi-0.2.0-m-chip.dmg', 'GooeyPi-0.2.0-x64.zip'])
-    expect(expectedDownloadedReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-x64.dmg', 'GooeyPi-0.2.0-arm64.dmg', 'GooeyPi-0.2.0-x64.zip'])
+    expect(expectedGitHubReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-intel-chip.dmg', 'GooeyPi-0.2.0-m-chip.dmg', 'GooeyPi-0.2.0-x64.zip', 'latest-mac.yml'])
+    expect(expectedDownloadedReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-x64.dmg', 'GooeyPi-0.2.0-arm64.dmg', 'GooeyPi-0.2.0-x64.zip', 'latest-mac.yml'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['linux'])).toEqual([
       'GooeyPi-0.2.0-linux-amd64.deb',
       'GooeyPi-0.2.0-linux-x64.pacman',
       'GooeyPi-0.2.0-linux-x86_64.AppImage',
       'GooeyPi-0.2.0-linux-x86_64.rpm',
+      'latest-linux.yml',
     ])
     expect(() => parseReleasePlatforms('mac,mac')).toThrow(/duplicates/)
     expect(() => parseReleasePlatforms('mac,android')).toThrow(/Unsupported/)
@@ -367,9 +369,15 @@ describe('GitHub Release publication', () => {
     for (const [index, name] of downloaded.entries()) {
       const artifactDirectory = join(inputDirectory, `artifact-${index}`)
       mkdirSync(artifactDirectory)
-      writeFileSync(join(artifactDirectory, name), `asset ${index}`)
-      writeFileSync(join(artifactDirectory, 'latest.yml'), 'ignored update metadata')
+      const updateTarget = name === 'latest-mac.yml' ? 'GooeyPi-0.2.0-arm64.zip' : name === 'latest-linux.yml' ? 'GooeyPi-0.2.0-linux-x86_64.AppImage' : 'GooeyPi-0.2.0-win-x64.exe'
+      const content = name.startsWith('latest')
+        ? `version: 0.2.0\nfiles:\n  - url: ${updateTarget}\n    sha512: checksum-${index}\n    size: ${index + 1}\npath: ${updateTarget}\nsha512: checksum-${index}\n`
+        : `asset ${index}`
+      writeFileSync(join(artifactDirectory, name), content)
     }
+    const secondMacManifest = join(inputDirectory, 'macos-x64')
+    mkdirSync(secondMacManifest)
+    writeFileSync(join(secondMacManifest, 'latest-mac.yml'), 'version: 0.2.0\nfiles:\n  - url: GooeyPi-0.2.0-x64.zip\n    sha512: checksum-x64\n    size: 42\n')
 
     try {
       const result = await prepareGitHubRelease({ inputDirectory, outputDirectory, projectDirectory, tag: 'v0.2.0' })
@@ -377,10 +385,15 @@ describe('GitHub Release publication', () => {
       expect(readdirSync(outputDirectory).sort()).toEqual([...expected, 'SHA256SUMS.txt'].sort())
       const checksums = readFileSync(join(outputDirectory, 'SHA256SUMS.txt'), 'utf8').trim().split('\n')
       expect(checksums).toHaveLength(expected.length)
-      for (const [index, name] of expected.entries()) {
-        const digest = createHash('sha256').update(`asset ${index}`).digest('hex')
+      for (const name of expected) {
+        const digest = createHash('sha256')
+          .update(readFileSync(join(outputDirectory, name)))
+          .digest('hex')
         expect(checksums).toContain(`${digest}  ${name}`)
       }
+      const macFeed = readFileSync(join(outputDirectory, 'latest-mac.yml'), 'utf8')
+      expect(macFeed).toContain('GooeyPi-0.2.0-arm64.zip')
+      expect(macFeed).toContain('GooeyPi-0.2.0-x64.zip')
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
@@ -401,7 +414,8 @@ describe('GitHub Release publication', () => {
       for (const [index, name] of expected.entries()) {
         const artifactDirectory = join(inputDirectory, `artifact-${index}`)
         mkdirSync(artifactDirectory)
-        writeFileSync(join(artifactDirectory, name), `asset ${index}`)
+        const updateTarget = name === 'latest-mac.yml' ? 'GooeyPi-0.2.0-arm64.zip' : name === 'latest-linux.yml' ? 'GooeyPi-0.2.0-linux-x86_64.AppImage' : 'GooeyPi-0.2.0-win-x64.exe'
+        writeFileSync(join(artifactDirectory, name), name.startsWith('latest') ? `version: 0.2.0\nfiles:\n  - url: ${updateTarget}\n    sha512: checksum-${index}\n` : `asset ${index}`)
       }
       const duplicateDirectory = join(inputDirectory, 'duplicate')
       mkdirSync(duplicateDirectory)

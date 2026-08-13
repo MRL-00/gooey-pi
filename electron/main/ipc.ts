@@ -14,6 +14,7 @@ import type { HeartbeatService } from './schedules/heartbeats'
 import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
 import type { VoiceService } from './voice'
+import type { UpdateService } from './updates'
 import type { AgentBrowserService } from './browser/agent-service'
 import { requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
 
@@ -28,6 +29,7 @@ interface Services {
   plugins: PluginService
   providers: PrimeProviderService
   settings: SettingsService
+  updates: UpdateService
   cuaDriver: CuaDriverService
   heartbeats: HeartbeatService
   schedules: AutomationService
@@ -183,6 +185,9 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     }
     return false
   })
+  handle('updates:get-state', () => services.updates.getState())
+  handle('updates:check', () => services.updates.check())
+  handle('updates:install', () => services.updates.install())
 
   handle('projects:list', (_event, harness) => projectsFor(requireHarness(harness)).list())
   handle('projects:list-files', (_event, root, harness) => projectsFor(requireHarness(harness)).listFiles(root))

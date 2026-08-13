@@ -596,8 +596,9 @@ test.describe('Prime Work desktop smoke', () => {
       return { type: typeof prime, groups: prime ? Object.keys(prime).sort() : [], voiceMethods: voice && typeof voice === 'object' ? Object.keys(voice).sort() : [] }
     })
     expect(bridge.type).toBe('object')
-    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'voice'])
+    expect(bridge.groups).toEqual(['agent', 'app', 'browser', 'git', 'heartbeats', 'pets', 'plugins', 'projects', 'providers', 'schedules', 'sessions', 'settings', 'terminal', 'updates', 'voice'])
     expect(bridge.voiceMethods).toContain('testSelfHosted')
+    await expect(page.evaluate(() => window.prime.updates.getState())).resolves.toMatchObject({ phase: 'unsupported' })
     const credentialStatus = await page.evaluate(() => window.prime.voice.credentialStatus())
     expect(typeof credentialStatus.storage.available).toBe('boolean')
     if (!credentialStatus.storage.available) expect(credentialStatus.storage.message).toMatch(/secure|credential|keyring|kwallet/i)
@@ -611,6 +612,25 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
+    const updateControl = page.locator('.sidebar__footer .sidebar-update')
+    await expect(updateControl).toContainText('Automatic updates')
+    await expect(updateControl.locator('.lucide-download')).toBeVisible()
+    await expect(updateControl.evaluate((button) => button.nextElementSibling?.getAttribute('title'))).resolves.toBe('Settings')
+    const updateColor = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
+      const reference = document.createElement('span')
+      reference.style.color = 'var(--prime)'
+      document.body.append(reference)
+      const colors = { actual: getComputedStyle(icon).color, theme: getComputedStyle(reference).color }
+      reference.remove()
+      return colors
+    })
+    expect(updateColor.actual).toBe(updateColor.theme)
+    const updateIconBounds = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
+      const { width, height } = icon.getBoundingClientRect()
+      return { width, height }
+    })
+    expect(updateIconBounds.width).toBeCloseTo(22, 0)
+    expect(updateIconBounds.height).toBeCloseTo(22, 0)
   })
 
   test('left aligns the harness picker for Linux and Windows chrome', async () => {

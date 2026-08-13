@@ -19,6 +19,7 @@ import { AgentBrowserLayer, type AgentSlotRect } from '@/components/AgentBrowser
 import { useAgentBrowserTabs } from '@/hooks/useAgentBrowserTabs'
 import { useAgentEvents } from '@/hooks/useAgentEvents'
 import { useAppSettings } from '@/hooks/useAppSettings'
+import { useAppUpdates } from '@/hooks/useAppUpdates'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useBrowserAnnotations } from '@/hooks/useBrowserAnnotations'
 import { useExtensionUi } from '@/hooks/useExtensionUi'
@@ -101,6 +102,7 @@ export default function App() {
   const reportError = useCallback((error: unknown) => {
     setToast(errorMessage(error))
   }, [])
+  const appUpdates = useAppUpdates(bridge, reportError)
   useEffect(() => {
     window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
   }, [clearedAttention])
@@ -490,7 +492,7 @@ export default function App() {
       }} onOpenDocs={() => { if (bridge) void bridge.app.openExternal(HARNESS_PROVIDER_DOCS[activeHarness]) }} /> : null
 
   return <div className="app-shell" aria-busy={!initialized} data-platform={platform} data-ready={initialized ? 'true' : 'false'}>
-    {sidebarVisible && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} platform={platform} /> : null}
+    {sidebarVisible && initialized ? <Sidebar projects={projects} sessions={sessions} clearedAttention={clearedAttention} activeProjectId={activeProject?.id} activeSessionId={workspace.activeSessionId} activeView={view} activeHarness={activeHarness} harnesses={meta?.harnesses ?? null} updateState={appUpdates.state} onUpdateAction={appUpdates.act} onSelectHarness={selectHarness} {...sidebarActions} overlay={layout.compactLayout} platform={platform} /> : null}
     {sidebarVisible && initialized ? <button type="button" className="panel-scrim panel-scrim--sidebar" aria-label="Close sidebar" onClick={toggleSidebar} /> : null}
     <div className="workbench" inert={layout.compactLayout && sidebarVisible ? true : undefined}>
       <TitleToolbar project={view === 'session' ? activeProject : undefined} view={view} productName={HARNESS_PRODUCT_NAMES[activeHarness]} sidebarOpen={sidebarVisible} inspectorOpen={inspectorVisible} terminalOpen={terminalOpen} voiceOpen={voiceOrbOpen} onToggleSidebar={toggleSidebar} onToggleInspector={toggleInspector} onToggleTerminal={toggleTerminal} onToggleVoice={toggleVoice} onOpenBrowser={openBrowser} platform={platform} />

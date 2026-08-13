@@ -23,7 +23,7 @@
 .sidebar__primary { padding: 5px 8px 7px; display: flex; flex-direction: column; gap: 1px; border-bottom: 1px solid var(--border); }
 .sidebar__primary > button, .sidebar__footer > button { width: 100%; height: 32px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border-radius: 7px; color: var(--text-secondary); background: transparent; text-align: left; }
 .sidebar__primary > button:hover, .sidebar__footer > button:hover, .sidebar__primary > button.is-active, .sidebar__footer > button.is-active { color: var(--text); background: var(--surface-hover); }
-.sidebar__primary > button span:not(.nav-count), .sidebar__footer > button span { flex: 1; }
+.sidebar__primary > button span:not(.nav-count), .sidebar__footer > button span:not(.sidebar-update__icon) { flex: 1; }
 .sidebar__primary kbd, .sidebar__footer kbd { opacity: 0; transition: opacity 130ms ease-out; }
 .sidebar__primary button:hover kbd, .sidebar__footer button:hover kbd { opacity: 1; }
 .nav-count { min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 5px; border-radius: 9px; color: var(--prime); background: var(--prime-soft); font-size: 10.5px; font-weight: 650; }
@@ -78,3 +78,14 @@
 .session-status-mark--idle > span, .session-status-mark--unknown > span, .session-status-mark--failed > span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); }
 .session-row-wrap.has-attention .session-status-mark--failed > span { background: var(--danger); }
 .sidebar__footer { flex: 0 0 auto; padding: 7px 8px 9px; border-top: 1px solid var(--border); }
+.sidebar__footer > .sidebar-update { opacity: 1; }
+.sidebar-update__icon { position: relative; width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; margin-left: -3px; border: 1px solid color-mix(in srgb, var(--prime) 24%, transparent); border-radius: 50%; color: var(--prime); background: var(--prime-soft); transition: transform 150ms ease-out, color 150ms ease-out, background 150ms ease-out; }
+.sidebar-update:hover .sidebar-update__icon { transform: translateY(-1px); background: color-mix(in srgb, var(--prime) 18%, var(--sidebar)); }
+.sidebar-update--checking .sidebar-update__icon, .sidebar-update--available .sidebar-update__icon { animation: update-pulse 1.4s ease-in-out infinite; }
+.sidebar-update--downloading .sidebar-update__icon { border-color: transparent; background: conic-gradient(var(--prime) var(--update-progress), var(--prime-soft) 0); }
+.sidebar-update--downloading .sidebar-update__icon::before { content: ''; position: absolute; inset: 2px; border-radius: inherit; background: var(--sidebar); }
+.sidebar-update--downloading .sidebar-update__icon > svg { position: relative; z-index: 1; }
+.sidebar-update--downloaded .sidebar-update__icon { color: white; background: var(--prime); box-shadow: 0 0 0 3px var(--prime-soft); }
+.sidebar-update--error .sidebar-update__icon { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, transparent); background: var(--danger-soft); }
+.sidebar-update:disabled { cursor: default; }
+@keyframes update-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--prime) 10%, transparent); } }

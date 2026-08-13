@@ -4,7 +4,7 @@ import { extname, join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { BROWSER_PARTITION, type AppMeta, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
+import { BROWSER_PARTITION, type AppMeta, type AppUpdateState, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
@@ -35,6 +35,7 @@ import { JsonStateStore } from './store'
 import { TerminalService } from './terminal'
 import { VoiceService, voiceSecretStorageStatus } from './voice'
 import { isAllowedRendererAudioPermission } from './voice-permissions'
+import { getAutoUpdater, UpdateService } from './updates'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
@@ -46,6 +47,7 @@ let piAgents: AgentRpcManager | null = null
 let terminals: TerminalService | null = null
 let downloads: BrowserDownloadGuard | null = null
 let providerService: PrimeProviderService | null = null
+let updateService: UpdateService | null = null
 let store: JsonStateStore | null = null
 let automation: AutomationService | null = null
 let agentScheduleBridges: AgentScheduleBridge[] = []
@@ -779,6 +781,8 @@ async function bootstrap(): Promise<void> {
     homeDir: homedir(),
     harnesses: initialHarnesses,
   }
+  const updates = new UpdateService(getAutoUpdater(), { enabled: app.isPackaged })
+  updateService = updates
   const refreshHarnesses = async () => {
     const harnesses = await discovery.refresh()
     const currentSettings = await reconcileActiveHarness(stateStore, harnesses)
@@ -787,7 +791,7 @@ async function bootstrap(): Promise<void> {
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, cuaDriver, heartbeats, schedules, browser: browserService, voice, pets,
+    meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, updates, cuaDriver, heartbeats, schedules, browser: browserService, voice, pets,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
     pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
   }, trustedRendererUrl)
@@ -812,7 +816,16 @@ async function bootstrap(): Promise<void> {
       renderer.send('providers:auth-event', event)
     }
   })
+  updates.setEventSink((state: AppUpdateState) => {
+    const renderer = mainWindow?.webContents
+    if (!shutdownStarted && renderer && !renderer.isDestroyed()
+      && isTrustedRendererUrl(renderer.getURL(), trustedRendererUrl)
+      && isTrustedRendererUrl(renderer.mainFrame.url, trustedRendererUrl)) {
+      renderer.send('updates:changed', state)
+    }
+  })
   await ensureWindow()
+  updates.start()
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -864,6 +877,7 @@ app.on('before-quit', (event) => {
   const registration = ipc
   ipc = null
   registration?.dispose()
+  updateService?.dispose()
   agents?.beginShutdown()
   ompAgents?.beginShutdown()
   piAgents?.beginShutdown()
