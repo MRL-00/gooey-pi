@@ -72,9 +72,9 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user'
     ? { ...skill, enabled: askUserEnabled }
     : skill.id === 'gooeypi-cua-driver-mcp'
-      ? { ...skill, enabled: cuaDriverMcpEnabled }
+      ? { ...skill, enabled: cuaDriverMcpEnabled && skill.availability?.available !== false }
       : skill.id === 'gooeypi-computer-use'
-        ? { ...skill, enabled: cuaDriverMcpEnabled && computerUseEnabled }
+        ? { ...skill, enabled: cuaDriverMcpEnabled && computerUseEnabled && skill.availability?.available !== false }
       : skill).filter((skill) =>
     (tab === 'skills' ? skill.kind === 'skill' || skill.kind === 'prompt' : skill.kind !== 'skill' && skill.kind !== 'prompt')
     && (filter === 'all' || filter === 'installed' && skill.enabled || filter === skill.location)

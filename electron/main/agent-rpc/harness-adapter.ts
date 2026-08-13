@@ -132,7 +132,6 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
       input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
       input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
       input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_CUA_DRIVER_EXTENSION_PATH,
     ]) {
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
@@ -192,7 +191,6 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
       input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
       input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
       input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_CUA_DRIVER_EXTENSION_PATH,
     ]) {
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }

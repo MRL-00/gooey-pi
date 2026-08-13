@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OmpExtensionApi as BrowserExtensionApi } from '../../assets/extensions/omp-work-browser'
 import type { OmpExtensionApi as ScheduleExtensionApi } from '../../assets/extensions/omp-work-schedules'
 import type { OmpExtensionApi as AskUserExtensionApi } from '../../assets/extensions/omp-work-ask-user'
-import type { PiCuaExtensionApi } from '../../assets/extensions/pi-work-cua-driver'
 
 /**
  * Base pi host simulation: unlike OMP, pi injects no `pi.typebox` shim.
@@ -132,19 +131,5 @@ describe('extensions on a base pi host (no injected pi.typebox)', () => {
     expect(schema.required).toEqual(['questions'])
     expect(schema.properties.questions.type).toBe('array')
     expect(schema.properties.questions.items.required).toEqual(['question', 'options'])
-  })
-
-  it('CUA extension registers the compact MCP proxy without an external Pi adapter', async () => {
-    vi.resetModules()
-    vi.stubEnv('GOOEYPI_CUA_DRIVER_PATH', '/opt/cua-driver')
-    const factory = (await import('../../assets/extensions/pi-work-cua-driver')).default
-    const { tools, pi } = piHost()
-    await factory(pi as unknown as PiCuaExtensionApi)
-    expect(tools).toHaveLength(1)
-    expect(tools[0].name).toBe('cua_driver_mcp')
-    const schema = schemaOf(tools[0])
-    expect(schema.required).toEqual(['tool', 'argumentsJson'])
-    expect(schema.properties.tool.type).toBe('string')
-    expect(schema.properties.argumentsJson.type).toBe('string')
   })
 })

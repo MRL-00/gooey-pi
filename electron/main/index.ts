@@ -526,20 +526,17 @@ async function bootstrap(): Promise<void> {
   const ompAskUserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
-  const cuaDriverExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'pi-work-cua-driver.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'pi-work-cua-driver.ts')
   const cuaDriverSkills = async (harness: HarnessId) => {
     const status = await cuaDriver.status()
+    const piNote = harness === 'pi' ? ' Pi also requires the pi-mcp-adapter package.' : ''
     const available = status.installed && status.supported
     const current = stateStore.getSettings()
     return [{
       id: 'gooeypi-cua-driver-mcp', name: 'CUA Driver MCP',
-      description: 'Use GooeyPi\'s bundled MCP adapter with a separately installed Cua Driver runtime on macOS, Windows, and Linux.',
+      description: `Use GooeyPi's bundled MCP adapter with a separately installed Cua Driver runtime on macOS, Windows, and Linux.${piNote}`,
       kind: 'extension' as const, location: 'system' as const,
-      path: harness === 'prime' ? cuaDriverSkillPath : cuaDriverExtensionPath,
       enabled: current.cuaDriverMcpEnabled && available,
-      availability: { available: status.installed && status.supported, detail: status.detail, actionUrl: status.installUrl },
+      availability: { available: status.installed && status.supported, detail: `${status.detail}${piNote}`, actionUrl: status.installUrl },
     }, {
       id: 'gooeypi-computer-use', name: 'Computer Use',
       description: 'Allow agent sessions to capture the screen and control native apps through the CUA Driver MCP connection.',
@@ -714,20 +711,13 @@ async function bootstrap(): Promise<void> {
     browser: ompBrowserExtensionPath,
     askUser: ompAskUserExtensionPath,
   }
-  ompManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
-    GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().cuaDriverMcpEnabled && stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
-    GOOEYPI_CUA_DRIVER_EXTENSION_PATH: stateStore.getSettings().cuaDriverMcpEnabled && stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? cuaDriverExtensionPath : undefined,
-  }))
+  ompManager.setRuntimeEnvironmentProvider((scope) =>
+    extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) =>
-    ({
-      ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
-      GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().cuaDriverMcpEnabled && stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
-      GOOEYPI_CUA_DRIVER_EXTENSION_PATH: stateStore.getSettings().cuaDriverMcpEnabled && stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? cuaDriverExtensionPath : undefined,
-    }))
+    extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
   piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   if (shutdownStarted) return
   const meta: AppMeta = {
