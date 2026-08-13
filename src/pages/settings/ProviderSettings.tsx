@@ -1,4 +1,4 @@
-import { ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
+import { ChevronRight, ExternalLink, Gauge, KeyRound, LogIn, LogOut, RefreshCw, Search, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { errorMessage } from '@/lib/errors'
 import type { HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor } from '@/types/api'
@@ -43,6 +43,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   const [apiKeyProvider, setApiKeyProvider] = useState<PrimeProviderDescriptor | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [busyProvider, setBusyProvider] = useState<string | null>(null)
+  const [collapsedModelProviders, setCollapsedModelProviders] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState('')
   const [apiKeyError, setApiKeyError] = useState('')
   const providers = useMemo(() => {
@@ -102,6 +103,12 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
   }
 
   const closeApiKey = () => { setApiKey(''); setApiKeyError(''); setApiKeyProvider(null) }
+  const toggleModelProvider = (providerId: string) => setCollapsedModelProviders((current) => {
+    const next = new Set(current)
+    if (next.has(providerId)) next.delete(providerId)
+    else next.add(providerId)
+    return next
+  })
   const enableAll = () => run('enable-all', onSetAllEnabled)
   const disableAll = () => run('disable-all', onSetAllDisabled)
 
@@ -136,9 +143,12 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
           </div>
         })}
       </div> : <div className="provider-list provider-model-list">
-        {modelGroups.map(({ provider, models }) => <div className={`provider-model-group${provider.enabled ? '' : ' is-disabled'}`} key={provider.id}>
-          <div className="provider-model-group__heading"><strong>{provider.name}</strong><small>{models.filter((model) => model.enabled !== false).length.toLocaleString()} of {models.length.toLocaleString()} on</small></div>
-          {models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
+        {modelGroups.map(({ provider, models }) => {
+          const collapsed = collapsedModelProviders.has(provider.id)
+          const contentId = `provider-models-${provider.id.replace(/[^a-z0-9_-]/gi, '-')}`
+          return <div className={`provider-model-group${provider.enabled ? '' : ' is-disabled'}${collapsed ? ' is-collapsed' : ''}`} key={provider.id}>
+          <button type="button" className="provider-model-group__heading" aria-expanded={!collapsed} aria-controls={contentId} onClick={() => toggleModelProvider(provider.id)}><strong>{provider.name}</strong><small>{models.filter((model) => model.enabled !== false).length.toLocaleString()} of {models.length.toLocaleString()} on</small><ChevronRight className="provider-model-group__chevron" size={13} aria-hidden="true" /></button>
+          <div id={contentId} className="provider-model-group__models" hidden={collapsed}>{models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
             <div className="provider-row__identity"><strong>{model.name}</strong><small>{model.id}</small></div>
             <div className="provider-model-row__capabilities">
               {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
@@ -146,8 +156,8 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
               <span className={model.available && model.enabled !== false ? 'is-available' : ''}>{model.enabled === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
             </div>
             <label className="provider-row__toggle provider-model-row__toggle" title={model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${model.name} model`} checked={model.enabled !== false} disabled={busyProvider === `model:${model.key}`} onChange={(event) => void run(`model:${model.key}`, () => onSetModelEnabled(model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
-          </div>)}
-        </div>)}
+          </div>)}</div>
+        </div>})}
       </div>}
       {catalog && view === 'providers' && !providers.length ? <p className="settings-empty">No providers match your search.</p> : null}
       {catalog && view === 'models' && !modelGroups.length ? <p className="settings-empty">No models match your search.</p> : null}

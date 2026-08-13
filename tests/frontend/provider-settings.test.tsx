@@ -128,6 +128,16 @@ describe('provider settings behavior and accessibility', () => {
     const openAiModels = [...groups[0]!.querySelectorAll('.provider-model-row')]
     expect(openAiModels[0]?.textContent).toContain('GPT-5.6')
     expect(openAiModels[1]?.textContent).toContain('GPT-5.5')
+    const openAiHeader = groups[0]!.querySelector<HTMLButtonElement>('.provider-model-group__heading')
+    const openAiContent = groups[0]!.querySelector<HTMLElement>('.provider-model-group__models')
+    expect(openAiHeader?.getAttribute('aria-expanded')).toBe('true')
+    expect(openAiContent?.hidden).toBe(false)
+    await click(openAiHeader!)
+    expect(openAiHeader?.getAttribute('aria-expanded')).toBe('false')
+    expect(openAiContent?.hidden).toBe(true)
+    await click(openAiHeader!)
+    expect(openAiHeader?.getAttribute('aria-expanded')).toBe('true')
+    expect(openAiContent?.hidden).toBe(false)
   })
 
   it('puts each model switch at the far right and sends the model key', async () => {
