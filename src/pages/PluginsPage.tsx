@@ -41,11 +41,14 @@ interface PluginsPageProps {
   onRefresh(): Promise<void>
   askUserEnabled: boolean
   onSetAskUserEnabled(enabled: boolean): Promise<void>
+  computerUseEnabled: boolean
+  onSetComputerUseEnabled(enabled: boolean): Promise<void>
+  onOpenExternal(url: string): void
   onInstall(source: string): Promise<{ ok: boolean; output: string }>
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
 }
 
-export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onConnectMcp }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -61,12 +64,16 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [result, setResult] = useState('')
   const [adding, setAdding] = useState(false)
   const [askUserUpdating, setAskUserUpdating] = useState(false)
+  const [computerUseUpdating, setComputerUseUpdating] = useState(false)
+  const [computerUseAlert, setComputerUseAlert] = useState('')
 
-  const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user' ? { ...skill, enabled: askUserEnabled } : skill).filter((skill) =>
+  const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user'
+    ? { ...skill, enabled: askUserEnabled }
+    : skill.id === 'gooeypi-computer-use' ? { ...skill, enabled: computerUseEnabled } : skill).filter((skill) =>
     (tab === 'skills' ? skill.kind === 'skill' || skill.kind === 'prompt' : skill.kind !== 'skill' && skill.kind !== 'prompt')
     && (filter === 'all' || filter === 'installed' && skill.enabled || filter === skill.location)
     && `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase())
-  ), [askUserEnabled, skills, tab, filter, query])
+  ), [askUserEnabled, computerUseEnabled, skills, tab, filter, query])
 
   const canAdd = addKind === 'repository'
     ? Boolean(source.trim())
@@ -108,6 +115,22 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
       setAskUserUpdating(false)
     }
   }
+  const toggleComputerUse = async (skill: SkillRecord) => {
+    if (computerUseUpdating) return
+    if (!computerUseEnabled && skill.availability?.available === false) {
+      setComputerUseAlert(skill.availability.detail)
+      if (skill.availability.actionUrl) onOpenExternal(skill.availability.actionUrl)
+      return
+    }
+    setComputerUseAlert('')
+    setComputerUseUpdating(true)
+    try {
+      await onSetComputerUseEnabled(!computerUseEnabled)
+      await onRefresh()
+    } finally {
+      setComputerUseUpdating(false)
+    }
+  }
 
   return (
     <div className="page plugin-page scroll-area">
@@ -135,6 +158,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             <AlertTriangle size={13} /> {warning.scope === 'project' ? 'Project' : 'Personal'} {warning.message} ({warning.path})
           </p>
         ))}
+        {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Plugins' : 'Skills'}</h2><span>{visible.length} available</span></div>
         {visible.length ? (
           <div className="directory-list">{visible.map((skill) => (
@@ -149,6 +173,16 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                   aria-pressed={skill.enabled}
                   disabled={askUserUpdating}
                   onClick={() => void toggleAskUser()}
+                >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
+              ) : skill.id === 'gooeypi-computer-use' ? (
+                <button
+                  type="button"
+                  className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
+                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Computer Use | TryCUA`}
+                  aria-pressed={skill.enabled}
+                  disabled={computerUseUpdating}
+                  title={skill.availability?.detail}
+                  onClick={() => void toggleComputerUse(skill)}
                 >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
               ) : (
                 <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>

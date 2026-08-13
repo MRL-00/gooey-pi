@@ -33,6 +33,7 @@ export class SettingsService {
       showToolCalls: (value) => requireBoolean(value, 'showToolCalls'),
       telemetry: (value) => requireBoolean(value, 'telemetry'),
       askUserEnabled: (value) => requireBoolean(value, 'askUserEnabled'),
+      computerUseEnabled: (value) => requireBoolean(value, 'computerUseEnabled'),
       defaultInspectorTab: (value) => {
         if (value !== 'summary' && value !== 'changes' && value !== 'browser' && value !== 'files') throw new TypeError('Invalid inspector tab')
         return value

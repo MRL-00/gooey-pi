@@ -238,6 +238,11 @@ export interface SkillRecord {
   enabled: boolean
   icon?: string
   source?: string
+  availability?: {
+    available: boolean
+    detail: string
+    actionUrl?: string
+  }
 }
 
 export interface PluginWarning {
@@ -364,6 +369,8 @@ export interface AppSettings {
   telemetry: boolean
   /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
   askUserEnabled: boolean
+  /** Expose the separately installed TryCUA driver to new sessions through its official CLI. */
+  computerUseEnabled: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]
   /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */

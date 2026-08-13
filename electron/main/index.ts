@@ -7,6 +7,7 @@ import { BROWSER_PARTITION, type AppMeta, type HarnessId, type PrimeEventEnvelop
 import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
+import { CuaDriverService } from './cua-driver'
 import { GitService } from './git'
 import { isTrustedRendererUrl, registerIpc, type IpcRegistration } from './ipc'
 import { HarnessDiscoveryService, reconcileActiveHarness } from './harness-discovery'
@@ -480,6 +481,8 @@ async function bootstrap(): Promise<void> {
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
   const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
+  const cuaDriver = new CuaDriverService()
+  await cuaDriver.status()
   const voice = new VoiceService({
     secretPath: join(app.getPath('userData'), 'voice-secrets.json'),
     secretCodec: {
@@ -505,6 +508,9 @@ async function bootstrap(): Promise<void> {
   const browserSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'prime-work-browser')
     : join(app.getAppPath(), 'assets', 'skills', 'prime-work-browser')
+  const computerUseSkillPath = app.isPackaged
+    ? join(process.resourcesPath, 'skills', 'gooeypi-computer-use', 'SKILL.md')
+    : join(app.getAppPath(), 'assets', 'skills', 'gooeypi-computer-use', 'SKILL.md')
   const ompBrowserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
@@ -514,8 +520,18 @@ async function bootstrap(): Promise<void> {
   const ompAskUserExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
+  const computerUseSkill = async () => {
+    const status = await cuaDriver.status()
+    return {
+      id: 'gooeypi-computer-use', name: 'Computer Use | TryCUA',
+      description: 'Drive native apps through a separately installed TryCUA driver. Install the driver before enabling.',
+      kind: 'extension' as const, location: 'system' as const, path: computerUseSkillPath,
+      enabled: stateStore.getSettings().computerUseEnabled,
+      availability: { available: status.available, detail: status.detail, actionUrl: status.available ? undefined : status.installUrl },
+    }
+  }
   const plugins = new PluginService(primeExecutable, (path) => projects.authorizeProjectRoot(path), {
-    builtInSkills: () => [{
+    builtInSkills: async () => [{
       id: 'prime-work-schedules', name: 'Scheduled tasks',
       description: 'Create and manage durable project and thread schedules from an agent.',
       kind: 'skill', location: 'system', path: scheduleSkillPath, enabled: true,
@@ -527,11 +543,11 @@ async function bootstrap(): Promise<void> {
       id: 'prime-work-browser', name: 'Browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
       kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
-    }],
+    }, await computerUseSkill()],
   })
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
     harness: 'omp',
-    builtInSkills: () => [{
+    builtInSkills: async () => [{
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'OMP extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
@@ -543,13 +559,13 @@ async function bootstrap(): Promise<void> {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'OMP extension for asking focused multiple-choice questions in the GooeyPi app.',
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
-    }],
+    }, await computerUseSkill()],
   })
   // Pi's extension API is the ancestor of OMP's, so pi runtimes inject the
   // same omp-work-* extension files (accepted naming drift; never forked).
   const piPlugins = new PluginService(piExecutable, (path) => piProjects.authorizeProjectRoot(path), {
     harness: 'pi',
-    builtInSkills: () => [{
+    builtInSkills: async () => [{
       id: 'omp-work-schedules', name: 'Scheduled tasks',
       description: 'Pi extension for durable project and thread schedules managed by GooeyPi.',
       kind: 'extension', location: 'system', path: ompScheduleExtensionPath, enabled: true,
@@ -561,7 +577,7 @@ async function bootstrap(): Promise<void> {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'Pi extension for asking focused multiple-choice questions in the GooeyPi app.',
       kind: 'extension', location: 'system', path: ompAskUserExtensionPath, enabled: stateStore.getSettings().askUserEnabled,
-    }],
+    }, await computerUseSkill()],
   })
   const heartbeats = new HeartbeatService(agents, primeExecutable)
   const primeScheduledRuns = new ScheduledRunExecutor(
@@ -664,6 +680,8 @@ async function bootstrap(): Promise<void> {
     ...browserBridge.environmentFor(scope),
     PRIME_WORK_ASK_USER_EXTENSION_PATH: stateStore.getSettings().askUserEnabled && scope.interactive ? ompAskUserExtensionPath : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
+    GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
+    GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
   agents.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
@@ -674,13 +692,19 @@ async function bootstrap(): Promise<void> {
     browser: ompBrowserExtensionPath,
     askUser: ompAskUserExtensionPath,
   }
-  ompManager.setRuntimeEnvironmentProvider((scope) =>
-    extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
+  ompManager.setRuntimeEnvironmentProvider((scope) => ({
+    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
+    GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
+    GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
+  }))
   ompManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
-  piManager.setRuntimeEnvironmentProvider((scope) =>
-    extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive))
+  piManager.setRuntimeEnvironmentProvider((scope) => ({
+    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
+    GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
+    GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
+  }))
   piManager.setRuntimeStartListener((environment, info) => browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile))
   if (shutdownStarted) return
   const meta: AppMeta = {
@@ -697,7 +721,7 @@ async function bootstrap(): Promise<void> {
   }
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
-    meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, heartbeats, schedules, browser: browserService, voice, pets,
+    meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, cuaDriver, heartbeats, schedules, browser: browserService, voice, pets,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
     pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
   }, trustedRendererUrl)

@@ -77,7 +77,7 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
       args.push('--model', input.modelId)
     }
     if (input.thinking) args.push('--thinking', input.thinking)
-    for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH]) {
+    for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH, input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
     for (const extensionPath of [
@@ -122,6 +122,8 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
       if (!OMP_APPROVAL_MODES.has(input.approvalMode)) throw new TypeError('Invalid approval mode')
       args.push('--approval-mode', input.approvalMode)
     }
+    const computerUseSkillPath = input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH
+    if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--append-system-prompt', computerUseSkillPath)
     // OMP has no --skill flag: app capabilities are injected as explicit,
     // self-contained extensions while normal OMP skills remain discovery-based.
     for (const extensionPath of [
@@ -181,6 +183,8 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
       args.push('--model', input.modelId)
     }
     if (input.thinking) args.push('--thinking', input.thinking)
+    const computerUseSkillPath = input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH
+    if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--skill', computerUseSkillPath)
     // App capabilities are injected as explicit, self-contained extensions
     // (the same decision as OMP); pi's --skill flag stays unused.
     for (const extensionPath of [

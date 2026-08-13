@@ -32,6 +32,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enabledHarnesses: ['omp', 'prime', 'pi'],
   telemetry: false,
   askUserEnabled: true,
+  computerUseEnabled: false,
   disabledProviders: [],
   ompDisabledProviders: [],
   piDisabledProviders: [],

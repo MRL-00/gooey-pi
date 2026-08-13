@@ -18,7 +18,7 @@ interface PluginServiceOptions {
   harness?: HarnessId
   agentDir?: string
   discover?: PluginDiscovery
-  builtInSkills?: SkillRecord[] | (() => SkillRecord[])
+  builtInSkills?: SkillRecord[] | (() => SkillRecord[] | Promise<SkillRecord[]>)
 }
 
 const MAX_ADAPTER_SETTINGS_BYTES = 4 * 1024 * 1024
@@ -50,7 +50,7 @@ export class PluginService {
   private readonly discoveryInFlight = createSingleFlight<string, PluginCatalog>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
-  private readonly builtInSkills: () => SkillRecord[]
+  private readonly builtInSkills: () => SkillRecord[] | Promise<SkillRecord[]>
   private readonly harness: HarnessId
 
   constructor(
@@ -81,7 +81,7 @@ export class PluginService {
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, resolveExecutable(this.agentPath), this.harness)
-    const builtInSkills = this.builtInSkills()
+    const builtInSkills = await this.builtInSkills()
     const combined = [...builtInSkills, ...result.skills.filter((item) => !builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.

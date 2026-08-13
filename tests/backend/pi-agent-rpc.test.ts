@@ -116,17 +116,18 @@ describe('pi RPC adapter argv', () => {
     expect(PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, approvalMode: 'yolo' })).toEqual(['--mode', 'rpc'])
   })
 
-  it('never emits --skill flags and forwards the scoped app extensions', () => {
+  it('injects only the enabled computer-use skill and forwards the scoped app extensions', () => {
     const environment = {
       PRIME_WORK_SCHEDULE_SKILL_PATH: '/skills/schedule.md',
       PRIME_WORK_BROWSER_SKILL_PATH: '/skills/browser.md',
       PRIME_WORK_SCHEDULE_EXTENSION_PATH: '/extensions/schedules.ts',
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
+      GOOEYPI_COMPUTER_USE_SKILL_PATH: '/skills/computer-use.md',
     } as NodeJS.ProcessEnv
     const args = PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })
-    expect(args).not.toContain('--skill')
-    expect(args.slice(-6)).toEqual([
+    expect(args.slice(-8)).toEqual([
+      '--skill', '/skills/computer-use.md',
       '--extension', '/extensions/schedules.ts',
       '--extension', '/extensions/browser.ts',
       '--extension', '/extensions/ask-user.ts',

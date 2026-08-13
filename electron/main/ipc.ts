@@ -2,6 +2,7 @@ import { ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type WebCon
 import type { AppMeta, HarnessId, SessionChangeEvent } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
 import type { GitService } from './git'
+import type { CuaDriverService } from './cua-driver'
 import type { ModelCatalogProvider } from './model-catalog'
 import type { PluginService } from './plugins'
 import type { PetService } from './pets'
@@ -27,6 +28,7 @@ interface Services {
   plugins: PluginService
   providers: PrimeProviderService
   settings: SettingsService
+  cuaDriver: CuaDriverService
   heartbeats: HeartbeatService
   schedules: AutomationService
   browser: AgentBrowserService
@@ -298,10 +300,12 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('settings:get', () => services.settings.get())
   handle('settings:update', async (event, patch) => {
-    const askUserEnabled = services.settings.get().askUserEnabled
+    const previous = services.settings.get()
+    const patchRecord = requireRecord(patch, 'settings patch')
+    if (patchRecord.computerUseEnabled === true && !previous.computerUseEnabled) await services.cuaDriver.requireAvailable()
     const settings = await services.settings.update(patch)
     event.sender.setZoomFactor(settings.interfaceFontScale / 100)
-    if (settings.askUserEnabled !== askUserEnabled) {
+    if (settings.askUserEnabled !== previous.askUserEnabled || settings.computerUseEnabled !== previous.computerUseEnabled) {
       await Promise.all([
         services.agents.requestRuntimeEnvironmentRefresh(),
         services.omp.agents.requestRuntimeEnvironmentRefresh(),
