@@ -149,9 +149,13 @@ export default function App() {
   useEffect(() => {
     if (!git.files.length || !settingsState.settings.showFileChangesPopup) setChangesCardDismissed(false)
   }, [git.files.length, settingsState.settings.showFileChangesPopup])
+  const closeSmallestPanels = useCallback(() => {
+    void settingsState.updateSettings({ sidebarOpen: false, inspectorOpen: false })
+  }, [settingsState.updateSettings])
   const layout = usePanelLayout({
     sidebarOpen: settingsState.sidebarOpen,
     inspectorOpen: settingsState.inspectorOpen, setInspectorOpen: settingsState.setInspectorOpen,
+    closeSmallestPanels,
     terminalOpen, view,
   })
   const extension = useExtensionUi({

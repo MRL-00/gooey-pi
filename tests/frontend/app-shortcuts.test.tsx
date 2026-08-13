@@ -45,4 +45,34 @@ describe('app keyboard shortcuts lifecycle', () => {
     expect(keydownRemoves()).toBeGreaterThan(0)
     container.remove()
   })
+
+  it('auto-closes the sidebar on entering the smallest breakpoint but still allows toggling it', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 721 })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+
+    await act(async () => { root.render(<App />) })
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 720 })
+    await act(async () => { window.dispatchEvent(new Event('resize')) })
+    expect(container.querySelector('.sidebar')).toBeNull()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true })) })
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true })) })
+    expect(container.querySelector('.sidebar')).toBeNull()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true })) })
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 721 })
+    await act(async () => { window.dispatchEvent(new Event('resize')) })
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 720 })
+    await act(async () => { window.dispatchEvent(new Event('resize')) })
+    expect(container.querySelector('.sidebar')).toBeNull()
+
+    await act(async () => root.unmount())
+    container.remove()
+  })
 })

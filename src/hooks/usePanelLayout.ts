@@ -7,6 +7,7 @@ export const CHAT_MIN = 360
 export const TERMINAL_MIN = 170
 export const TERMINAL_DEFAULT = 310
 export const WORKSPACE_ROW_MIN = 220
+export const SMALLEST_LAYOUT_BREAKPOINT = 720
 
 const readPanelSize = (key: string, fallback: number) => {
   if (typeof window === 'undefined') return fallback
@@ -18,6 +19,7 @@ interface UsePanelLayoutOptions {
   sidebarOpen: boolean
   inspectorOpen: boolean
   setInspectorOpen(value: boolean): void
+  closeSmallestPanels(): void
   terminalOpen: boolean
   view: WorkspaceView
 }
@@ -26,6 +28,7 @@ export function usePanelLayout({
   sidebarOpen,
   inspectorOpen,
   setInspectorOpen,
+  closeSmallestPanels,
   terminalOpen,
   view,
 }: UsePanelLayoutOptions) {
@@ -37,13 +40,21 @@ export function usePanelLayout({
   const workspaceRowRef = useRef<HTMLDivElement>(null)
   const sessionWorkspaceRef = useRef<HTMLDivElement>(null)
   const compactRestoreRef = useRef<'inspector' | null>(null)
+  const sidebarOpenRef = useRef(sidebarOpen)
+  const inspectorOpenRef = useRef(inspectorOpen)
+  sidebarOpenRef.current = sidebarOpen
+  inspectorOpenRef.current = inspectorOpen
 
   useEffect(() => {
-    const sync = () => setCompactLayout(window.innerWidth <= 980)
+    const sync = () => {
+      const smallestLayout = window.innerWidth <= SMALLEST_LAYOUT_BREAKPOINT
+      setCompactLayout(window.innerWidth <= 980)
+      if (smallestLayout && (sidebarOpenRef.current || inspectorOpenRef.current)) closeSmallestPanels()
+    }
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [])
+  }, [closeSmallestPanels])
 
   useEffect(() => {
     if (compactLayout && sidebarOpen && inspectorOpen) {

@@ -1486,6 +1486,42 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
   })
 
+  test('auto-closes both drawers at the smallest breakpoint while keeping them user-toggleable', async () => {
+    await expect(page.locator('.sidebar')).toBeVisible()
+    await page.setViewportSize({ width: 720, height: 700 })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Show sidebar/ })).toBeVisible()
+    await expect(page.locator('.workbench')).not.toHaveAttribute('inert')
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
+
+    await page.getByRole('button', { name: /Show sidebar/ }).click()
+    await expect(page.locator('.sidebar')).toBeVisible()
+    await page.getByRole('button', { name: 'Close sidebar' }).click({ position: { x: 400, y: 300 } })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
+
+    await page.setViewportSize({ width: 721, height: 700 })
+    await page.getByRole('button', { name: /Show sidebar/ }).click()
+    await expect(page.locator('.sidebar')).toBeVisible()
+    await page.setViewportSize({ width: 720, height: 700 })
+    await expect(page.locator('.sidebar')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
+
+    const inspectorToggle = page.getByRole('button', { name: 'Toggle inspector' })
+    await inspectorToggle.click()
+    await expect(page.locator('.inspector')).toBeVisible()
+    await page.locator('.inspector').getByRole('button', { name: 'Close inspector' }).click()
+    await expect(page.locator('.inspector')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).inspectorOpen)).toBe(false)
+
+    await page.setViewportSize({ width: 721, height: 700 })
+    await inspectorToggle.click()
+    await expect(page.locator('.inspector')).toBeVisible()
+    await page.setViewportSize({ width: 720, height: 700 })
+    await expect(page.locator('.inspector')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).inspectorOpen)).toBe(false)
+  })
+
   test('attaches an isolated browser guest without navigation errors', async () => {
     await page.getByRole('button', { name: /^New session/ }).first().click()
     await page.getByRole('tab', { name: 'Browser' }).click()
