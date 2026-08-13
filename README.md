@@ -1,57 +1,107 @@
 # GooeyPi
 
-GooeyPi is a macOS, Linux, and Windows desktop workspace for [OMP](https://github.com/can1357/oh-my-pi) and [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It pairs a native-feeling three-pane interface with each harness's real RPC runtime: projects and persistent sessions on the left, the agent transcript and composer in the center, and Summary, Git Changes, Browser, or Files on the right. A real project-scoped PTY is available as a bottom drawer.
+GooeyPi is a desktop workspace for [Pi](https://pi.dev/), [OMP](https://github.com/can1357/oh-my-pi), and [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). It gives all three coding agents the same friendly interface on macOS, Linux, and Windows while leaving each harness in charge of its own models, logins, and saved sessions.
 
-<img width="2234" height="1332" alt="CleanShot 2026-08-10 at 12 02 52" src="https://github.com/user-attachments/assets/864ff0e1-71cc-49da-955f-f226710ef890" />
+<img width="2234" height="1332" alt="GooeyPi desktop workspace" src="https://github.com/user-attachments/assets/864ff0e1-71cc-49da-955f-f226710ef890" />
 
+## Three harnesses, one workspace
 
-## Features
+Use the switcher in the top-left corner to move between Pi Work, OMP Work, and Prime Work. GooeyPi detects the harnesses installed on your computer and shows the ones that are ready. You can refresh detection or set a custom executable path in Settings.
 
-- Real Prime Agent sessions discovered from `~/.prime/agent/sessions/*.jsonl`
-- One isolated `prime-agent --mode rpc` child per active desktop runtime
-- Streaming Markdown/GFM, reasoning, tool calls/results, abort, follow-up, resume, and session rename/archive/restore
-- `@session` references plus bounded read/send/wait tools so top-level sessions can coordinate by title or copied UUID
-- Persisted multi-folder projects, bounded workspace file trees, and display-only projects inferred from Prime sessions
-- Git status, diffs, stage/unstage, guarded restore, commit, and surfaced command failures
-- Isolated in-app browser with navigation, history, annotations, and external-browser handoff
-- Project-scoped `node-pty` terminal with clear, maximize/restore, resize, and clean shutdown
-- Skills, extensions, prompts, packages, redacted MCP discovery, and explicit MCP endpoint/command configuration
-- Bundled, toggleable `ask_user` question dialogs across Prime, OMP, and Pi
-- Agent-backed schedules, activity filters, command palette, settings, light/dark/system themes
-- Native keyboard navigation, responsive panel overlays, reduced motion, and accessible labels/focus states
+Each harness keeps its own projects, sessions, model list, provider visibility, and running work. Switching harnesses changes the workspace without stopping work already running in another one.
 
-## Requirements
+You only need one harness to get started:
 
-- macOS (Apple Silicon or Intel), a supported Linux distribution, or Windows 10/11 x64
-- Node.js 22.12.0 or newer and npm 10.9.0 or newer
-- OMP, Pi, and/or Prime Agent installed on `PATH` (`omp.exe`, `pi.exe`, or `prime-agent.exe` on Windows). Custom executable paths can be set in GooeyPi's harness settings.
-- A configured Prime Agent provider/login
+- [Pi](https://pi.dev/) is the base coding-agent harness in the Pi family.
+- [OMP](https://github.com/can1357/oh-my-pi) adds its own plugins, commands, and approval controls.
+- [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) adds Prime's provider integrations and native heartbeats.
 
-Verify the harness before launching:
+## What you can do
 
-```bash
-prime-agent --version
-prime-agent model list
-prime-agent
-# Use /login in the Prime Agent CLI when authentication is required.
-```
+### Work with agents
 
-GooeyPi never stores provider API keys. Authentication remains owned by the active harness.
+- Stream conversations with Markdown, reasoning summaries, tool activity, retries, and context compaction.
+- Choose a model, reasoning level, and Fast mode when the selected model supports it.
+- Queue a follow-up or steer an agent while it is working.
+- Paste or drop PNG, JPEG, GIF, and WebP images into a prompt when the model supports vision.
+- Resume, rename, search, and archive persistent sessions.
+- See running, finished, failed, and waiting-for-input work in one Activity view, then clear items you have handled.
 
-### Ask the user from an agent turn
+### Keep projects organized
 
-GooeyPi includes `ask_user` in every installation as an optional native capability. It is off by default on fresh installs; use the **Capabilities → Ask user** control to enable or disable it universally for Prime, OMP, and Pi. GooeyPi restarts idle runtime children immediately; a busy child finishes its current turn before the new setting takes effect. Scheduled tasks never receive this UI-blocking tool.
+- Add local folders and reopen sessions grouped by project.
+- Search projects, chats, and branches from the sidebar.
+- Switch between linked Git worktrees from the composer.
+- Create a branch worktree and open it as a new GooeyPi workspace.
+- Mention another top-level session with `@session`, copy its UUID, or let agents create and message model-selected sessions for parallel work.
 
-The tool supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
+### Use the built-in coding workspace
 
-## Develop
+- Review Git status and diffs, stage or unstage files, restore changes with confirmation, and commit without leaving the app.
+- Browse project files and reveal them in your system file manager.
+- Open multiple terminal tabs for a session. Highlight terminal output to attach it to the next prompt.
+- Open the right-hand Summary, Changes, Browser, or Files panel whenever you need it.
+
+### Browse with shared context
+
+- Use an isolated in-app browser with an address bar, navigation history, downloads, and an external-browser handoff.
+- Point at page elements and add notes. GooeyPi attaches those annotations to your next message.
+- Enable browser control so an agent can open and operate its own tabs. You can watch its cursor and work in the same tabs when you want to take over.
+
+### Automate repeat work
+
+- Create one-time or recurring schedules for the active harness.
+- Pick the project or existing session, model, reasoning level, timezone, and Fast mode.
+- Run a schedule immediately, pause or resume it, and inspect the result and run history.
+- Manage Prime heartbeats alongside GooeyPi schedules when Prime Agent exposes them.
+
+### Add capabilities
+
+The Capabilities page brings together packages, plugins, extensions, skills, prompts, and MCP servers. The available controls follow the selected harness, including guided MCP setup and sign-in where supported.
+
+GooeyPi also ships optional capabilities for:
+
+- Let an agent ask you a small set of questions in a native dialog.
+- Give agents controlled access to the in-app browser.
+- Use TryCUA computer control when the separate CUA Driver is installed.
+
+Ask User and computer control are off by default. You can enable, disable, or remove capabilities from the app.
+
+### Talk instead of type
+
+- Dictate prompts with OpenAI, Groq, Deepgram, or a local `whisper.cpp` installation.
+- Open the realtime voice companion to search, discuss work, and start a task in the currently selected harness.
+- Choose an animated desktop pet that reacts while an agent works and carries the realtime voice controls. GooeyPi includes the Orb and GooeyPi pets and can discover compatible Codex pets.
+
+### Make it comfortable
+
+- Choose a light, dark, or system theme and adjust the interface text size.
+- Reduce motion, resize the workspace panels, or let them become overlays in a narrow window.
+- Use keyboard navigation and the command palette for common actions.
+
+## Get started
+
+1. Install Pi, OMP, Prime Agent, or any combination of the three.
+2. Sign in or configure a model provider through each harness's own CLI.
+3. Download GooeyPi from [GitHub Releases](https://github.com/am-will/gooey-pi/releases), or run it from source.
+4. Add a project folder and start a session.
+
+GooeyPi checks common install locations automatically. If a harness is missing, open **Settings → Harness** to refresh detection or choose its executable.
+
+GitHub Releases provides a DMG and ZIP for macOS, common Linux package formats plus AppImage, and a Windows installer and ZIP.
+
+Harness provider credentials stay with the harness. Optional voice keys are encrypted with the operating system's secure storage, and local `whisper.cpp` dictation needs no API key.
+
+## Run from source
+
+You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer.
 
 ```bash
 npm install
 npm run dev
 ```
 
-`node-pty` is a native dependency. If a local Python lacks the build tooling used by Electron rebuild, use a Python environment that provides it:
+`node-pty` is a native dependency. If Electron cannot rebuild it with your default Python environment, point npm at a Python installation with the required build tools:
 
 ```bash
 export npm_config_python=/path/to/python3
@@ -59,57 +109,51 @@ npm install --ignore-scripts
 npx electron-builder install-app-deps
 ```
 
-## Quality gates
-
-```bash
-npm run typecheck       # Node and renderer TypeScript
-npm test                # 33 backend, protocol, security, shutdown, and Git tests
-npm run test:e2e        # production build + Playwright Electron smoke suite
-npm run build           # main, CommonJS preload, and renderer bundles
-```
-
-The twelve Electron smoke tests verify the sandboxed bridge, service-backed boot, primary pages, command palette, modal focus containment, dark mode, keyboard suggestions, extension-question round trips, optimistic setting rollback, compact overlays, resizable panes, isolated browser guest, real PTY, terminal maximize/restore, and last-window app shutdown.
-
-## Build installable packages
-
-Build on the target operating system so `node-pty` is rebuilt for that runtime. Each command produces artifacts in `release/<platform>/<arch>/`.
-
-```bash
-npm run package:mac
-npm run package:linux
-npm run package:win
-```
-
-Pass `-- --arch x64` or `-- --arch arm64` when building for a supported non-default native architecture. The default is the build machine's architecture. The macOS release path emits a signed, notarized DMG and ZIP; it needs the Apple credentials described below. Linux emits AppImage, DEB, RPM, and pacman (`.pacman`) packages. Windows emits an NSIS installer and ZIP.
-
-For local unsigned smoke packages, use `npm run package:<platform>:local-qa` instead. macOS local QA packages deliberately do not pass Gatekeeper on another Mac.
-
-For users, ship the conventional installer for their operating system: DMG on macOS; DEB for Debian/Ubuntu-family distributions, RPM for Fedora/RHEL/openSUSE-family distributions, pacman for Arch-family distributions, or the portable AppImage fallback on Linux; and the NSIS setup executable on Windows. The Windows package should be Authenticode-signed before public distribution; macOS remains subject to Developer ID signing and notarization.
-
-Electron Builder uses an available signing identity automatically. Public macOS distribution additionally requires Apple notarization credentials supported by Electron Builder (Apple ID/app-specific password/team ID or App Store Connect API key). A locally signed but unnotarized build will be rejected by Gatekeeper on another Mac; this repository does not contain release credentials.
-
 ## Keyboard shortcuts
+
+Use `⌘` on macOS and `Ctrl` on Linux or Windows.
 
 | Shortcut | Action |
 |---|---|
-| `⌘N` | New session |
-| `⌘K` | Command palette/search |
-| `⌘B` | Toggle project sidebar |
-| `⌘J` | Toggle terminal |
-| `⌘,` | Settings |
-| `Enter` | Queue a message while Prime is working |
-| `Ctrl+Enter` | Steer the current turn while Prime is working |
-| `Shift+Enter` | Add a new line in the composer |
-| `Esc` | Close the active palette/modal/overlay |
+| `⌘/Ctrl+N` | New session |
+| `⌘/Ctrl+K` | Command palette |
+| `⌘/Ctrl+B` | Toggle the project sidebar |
+| `⌘/Ctrl+Shift+B` | Open the browser |
+| `⌘/Ctrl+J` | Toggle the terminal |
+| `⌘/Ctrl+,` | Open Settings |
+| `Enter` | Queue a message while the agent is working |
+| `⌘/Ctrl+Enter` | Steer the current turn while the agent is working |
+| `Shift+Enter` | Add a new line |
+| `Esc` | Close the active menu, dialog, or overlay |
 
-The Enter and Ctrl+Enter message actions can be swapped in **Settings → Prime Agent → Message shortcuts**.
+The Queue and Steer shortcuts can be swapped in **Settings → Harness → Message shortcuts**.
 
-## Data and security
+## Local data and safety
 
-Prime and OMP session/auth/config files remain authoritative. GooeyPi stores UI settings, project bookmarks, local archive metadata, and an owner-only collaboration-message signing key in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer retains the secure internal `prime-work://` scheme for compatibility rather than using privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
+GooeyPi is built around local projects and local harness sessions. It does not rewrite session history or take ownership of Pi, OMP, or Prime Agent credentials.
 
-Prime Agent tools, extensions, skills, packages, and terminals run with your OS user permissions. Review projects, commands, and third-party packages before running them. See [`docs/security.md`](docs/security.md) for the complete trust boundary.
+Remote pages open in a separate browser profile with Node access disabled. Project paths and desktop actions are checked in the main process, and third-party capabilities still run with your operating-system permissions. Review packages, commands, MCP servers, and projects before allowing them to act.
 
-## Current scope
+See [docs/security.md](docs/security.md) for the full security model.
 
-GooeyPi targets the local agent workflow. The composer checkout picker lists linked Git worktrees for the active repository, switches the workspace to a selected checkout, and can create a new branch worktree at a user-chosen location. Cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
+## Development checks
+
+Run these before submitting a code change:
+
+```bash
+npm run typecheck
+npm run check
+npm test
+npm run test:e2e
+npm run build
+```
+
+To make an installable local QA build, run the command for your operating system:
+
+```bash
+npm run package:mac:local-qa
+npm run package:linux:local-qa
+npm run package:win:local-qa
+```
+
+Build packages on their target operating system so native dependencies match the release.
