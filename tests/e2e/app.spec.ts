@@ -36,7 +36,7 @@ async function closeHermeticApp(target: ElectronApplication | undefined): Promis
   await closeEvent
 }
 
-function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; piExecutable: string; sessionFile: string } {
+function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; piExecutable: string; cuaExecutable: string; sessionFile: string } {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'prime-work-e2e-'))
   const userData = join(fixtureRoot, 'user-data')
   const home = join(fixtureRoot, 'home')
@@ -385,10 +385,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 })
 `)
   chmodSync(piExecutable, 0o755)
-  return { userData, home, project, executable, ompExecutable, piExecutable, sessionFile: realpathSync(sessionFile) }
+  const cuaExecutable = join(fixtureRoot, 'cua-driver-fixture.cjs')
+  writeFileSync(cuaExecutable, `#!/usr/bin/env node
+if (process.argv.includes('--version')) { process.stdout.write('cua-driver 0.19.0\\n'); process.exit(0) }
+process.exit(2)
+`)
+  chmodSync(cuaExecutable, 0o755)
+  return { userData, home, project, executable, ompExecutable, piExecutable, cuaExecutable, sessionFile: realpathSync(sessionFile) }
 }
 
-function hermeticEnvironment(home: string, executable: string, ompExecutable: string, piExecutable: string, restrictPath = false): NodeJS.ProcessEnv {
+function hermeticEnvironment(home: string, executable: string, ompExecutable: string, piExecutable: string, cuaExecutable: string, restrictPath = false): NodeJS.ProcessEnv {
   let path = process.env.PATH
   if (restrictPath) {
     const bin = join(fixtureRoot, 'bin')
@@ -408,6 +414,7 @@ function hermeticEnvironment(home: string, executable: string, ompExecutable: st
     PRIME_AGENT_BINARY: executable,
     OMP_BINARY: ompExecutable,
     PI_BINARY: piExecutable,
+    CUA_DRIVER_PATH: cuaExecutable,
   }
   for (const key of ['USER', 'LOGNAME', '__CF_USER_TEXT_ENCODING']) if (process.env[key]) env[key] = process.env[key]
   return env
@@ -436,7 +443,7 @@ test.describe('Prime Work desktop smoke', () => {
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable, liveInstall || noHarnesses) as Record<string, string>,
+          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable, fixture.cuaExecutable, liveInstall || noHarnesses) as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
@@ -1002,6 +1009,17 @@ test.describe('Prime Work desktop smoke', () => {
         await expect(page.getByRole('button', { name: 'Enable Ask user' })).toHaveAttribute('aria-pressed', 'false')
         await page.getByRole('button', { name: 'Enable Ask user' }).click()
         await expect(page.getByRole('button', { name: 'Disable Ask user' })).toHaveAttribute('aria-pressed', 'true')
+        const computerUseToggle = page.getByRole('button', { name: 'Enable Computer Use | TryCUA' })
+        await expect(computerUseToggle).toHaveAttribute('aria-pressed', 'false')
+        await computerUseToggle.click()
+        await expect(page.getByRole('button', { name: 'Disable Computer Use | TryCUA' })).toHaveAttribute('aria-pressed', 'true')
+        await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.computerUseEnabled).toBe(true)
+        await expect(page.getByText(/Prime Agent exposes MCP through matching Python integration skills/)).toBeVisible()
+        await page.getByRole('button', { name: 'Add', exact: true }).click()
+        const addDialog = page.getByRole('dialog', { name: 'Add tools to Prime' })
+        await expect(addDialog.getByText('Integration package', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('MCP server', { exact: true })).toHaveCount(0)
+        await addDialog.getByRole('button', { name: 'Cancel' }).click()
       }
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
