@@ -103,9 +103,11 @@ describe('OMP model catalog service', () => {
 
     await expect(service.requireAvailableModel('nope/none')).rejects.toThrow(/not found in the OMP catalog/)
     await expect(service.requireAvailableModel('anthropic/claude-fable-5', new Set(['anthropic']))).rejects.toThrow(/disabled/)
+    await expect(service.requireAvailableModel('openai-codex/gpt-5.6-luna', new Set(), new Set(['openai-codex/gpt-5.6-luna']))).rejects.toThrow(/disabled/)
     const disabledView = await service.catalog(false, new Set(['anthropic']))
     expect(disabledView.providers.find((provider) => provider.id === 'anthropic')?.enabled).toBe(false)
     expect(disabledView.providers.find((provider) => provider.id === 'openai-codex')?.enabled).toBe(true)
+    expect((await service.catalog(false, new Set(), new Set(['openai-codex/gpt-5.6-luna']))).models.find((candidate) => candidate.key === 'openai-codex/gpt-5.6-luna')?.enabled).toBe(false)
 
     expect(await service.capabilities('anthropic', 'claude-fable-5')).toMatchObject({ key: 'anthropic/claude-fable-5' })
     expect(await service.capabilities('anthropic', undefined)).toBeUndefined()

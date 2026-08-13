@@ -115,14 +115,14 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   }
 
-  async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
+  async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
     const executable = resolveExecutable(this.executable)
     this.prepareExecutable(executable)
     if (!executable) {
       return { primeVersion: 'unknown', refreshedAt: new Date().toISOString(), models: [], providers: [], warning: OMP_NOT_INSTALLED_WARNING }
     }
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
-      return this.withEnabledState(this.cachedCatalog, disabledProviders)
+      return this.withEnabledState(this.cachedCatalog, disabledProviders, disabledModels)
     }
     // Single-flight: concurrent callers share one CLI run instead of spawning
     // duplicate subprocesses; the in-flight promise is cleared in finally.
@@ -133,7 +133,7 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
       this.catalogRefresh = { executable, promise }
     }
     try {
-      return this.withEnabledState(await this.catalogRefresh.promise, disabledProviders)
+      return this.withEnabledState(await this.catalogRefresh.promise, disabledProviders, disabledModels)
     } catch (error) {
       // A failed refresh degrades to the last good catalog instead of an
       // error; first-ever loads still surface the failure.
@@ -143,17 +143,18 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
       return this.withEnabledState({
         ...this.cachedCatalog,
         warning: this.cachedCatalog.warning ? `${this.cachedCatalog.warning} ${staleWarning}` : staleWarning,
-      }, disabledProviders)
+      }, disabledProviders, disabledModels)
     }
   }
 
-  async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
+  async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
     const key = requireString(rawKey, 'model', { min: 3, max: 512, trim: true })
-    const catalog = await this.catalog(false, disabledProviders)
+    const catalog = await this.catalog(false, disabledProviders, disabledModels)
     const model = catalog.models.find((candidate) => candidate.key === key)
     if (!model) throw new Error('Model was not found in the OMP catalog')
     const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
     if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled`)
+    if (model.enabled === false) throw new Error(`${model.name} is disabled`)
     if (!model.available) throw new Error(`Provider ${model.provider} is not configured for ${model.name}`)
     return model
   }
@@ -265,10 +266,10 @@ export class OmpModelCatalogService implements ModelCatalogProvider {
     this.version = null
   }
 
-  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>): PrimeModelCatalog {
+  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>, disabledModels: ReadonlySet<string>): PrimeModelCatalog {
     return {
       ...catalog,
-      models: catalog.models.map((model) => ({ ...model })),
+      models: catalog.models.map((model) => ({ ...model, enabled: !disabledModels.has(model.key) })),
       providers: catalog.providers.map((provider) => ({ ...provider, enabled: !disabledProviders.has(provider.id) })),
     }
   }

@@ -34,7 +34,7 @@ function makeService(overrides: Partial<VoiceServiceOptions> = {}) {
   const start = vi.fn(async (): Promise<RuntimeInfo> => ({ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: false }))
   const list = vi.fn(() => [{ runtimeId: 'runtime-1', harness: 'prime', cwd: '/tmp/prime', isStreaming: true, sessionId: 'session-1', sessionFile: '/tmp/session.jsonl' }])
   const agent = { start, command, stop, list }
-  const catalog = async (_force = false, disabledProviders: ReadonlySet<string> = new Set()) => ({
+  const catalog = async (_force = false, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
     primeVersion: 'test', refreshedAt: '2026-01-01T00:00:00.000Z',
     providers: [
       { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'oauth' as const, configured: true, modelCount: 3, availableModelCount: 2, enabled: !disabledProviders.has('openai-codex') },
@@ -46,7 +46,7 @@ function makeService(overrides: Partial<VoiceServiceOptions> = {}) {
       model('openai-codex/gpt-hidden', 'GPT Hidden', ['high'], false),
       model('anthropic/claude-sonnet-4-6', 'Claude Sonnet 4.6', ['off', 'max']),
       model('anthropic/claude-opus-hidden', 'Claude Opus Hidden', ['high'], false),
-    ],
+    ].map((entry) => ({ ...entry, enabled: !disabledModels.has(entry.key) })),
   })
   const primeCatalog = vi.fn(catalog)
   const ompCatalog = vi.fn(catalog)
@@ -291,8 +291,17 @@ describe('VoiceService', () => {
     const ompResult = await service.executeTool({ name: 'list_models', arguments: { query: 'GPT' } }, 'omp')
     expect(JSON.parse(primeResult.output).models).toEqual([])
     expect(JSON.parse(ompResult.output).models).toHaveLength(2)
-    expect(options.catalogs.prime.catalog).toHaveBeenCalledWith(false, new Set(['openai-codex']))
-    expect(options.catalogs.omp.catalog).toHaveBeenCalledWith(false, new Set(['anthropic']))
+    expect(options.catalogs.prime.catalog).toHaveBeenCalledWith(false, new Set(['openai-codex']), new Set())
+    expect(options.catalogs.omp.catalog).toHaveBeenCalledWith(false, new Set(['anthropic']), new Set())
+  })
+
+  it('omits desktop-disabled models without hiding their provider siblings', async () => {
+    const settings = { ...defaultSettings(), disabledModels: ['openai-codex/gpt-5.6-sol'] }
+    const { service } = makeService({ settings: () => settings })
+    const result = await service.executeTool({ name: 'list_models', arguments: { query: 'GPT five six' } }, 'prime')
+    const keys = JSON.parse(result.output).models.map((entry: { key: string }) => entry.key) as string[]
+    expect(keys).toContain('openai-codex/gpt-5.6-luna')
+    expect(keys).not.toContain('openai-codex/gpt-5.6-sol')
   })
 
   it('starts with the closest active model and supported reasoning level', async () => {

@@ -755,6 +755,30 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(0)
   })
 
+  test('persists an OMP model toggle and removes only that model from every picker', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Providers', exact: true }).click()
+    await page.getByRole('tab', { name: /Models/ }).click()
+
+    const toggle = page.getByRole('checkbox', { name: 'Show GPT Fixture model' })
+    await expect(toggle).toBeChecked()
+    const row = page.locator('.provider-model-row').filter({ has: toggle })
+    await expect(row.locator('.provider-model-row__capabilities')).toBeVisible()
+    await expect(row.locator('.provider-model-row__toggle')).toBeVisible()
+    await row.locator('.provider-model-row__toggle').click()
+    await expect(toggle).not.toBeChecked()
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledModels).toEqual(['openai-codex/gpt-fixture'])
+
+    const voiceModels = await page.evaluate(async () => JSON.parse((await window.prime.voice.executeTool({ name: 'list_models', arguments: {} }, 'omp')).output) as { models: Array<{ name: string }> })
+    expect(voiceModels.models.map((model) => model.name)).toEqual(['Claude Fixture'])
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+    const modelPicker = page.getByRole('combobox', { name: 'Model' })
+    await expect(modelPicker.locator('option', { hasText: 'GPT Fixture' })).toHaveCount(0)
+    await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(1)
+  })
+
   test('keeps Harness settings shared when changing the default while providers follow the active harness', async () => {
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await page.getByRole('button', { name: 'Harness', exact: true }).click()

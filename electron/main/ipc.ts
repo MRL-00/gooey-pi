@@ -218,14 +218,15 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('agent:stop', (_event, runtimeId) => agentsForRuntime(runtimeId).stop(runtimeId))
   handle('agent:list', () => [...services.agents.list(), ...services.omp.agents.list(), ...services.pi.agents.list()])
 
-  const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders))
-  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force, new Set(services.settings.get().ompDisabledProviders))
-  const piProviderCatalog = (force = false) => services.pi.catalog.catalog(force, new Set(services.settings.get().piDisabledProviders))
+  const providerCatalog = (force = false) => services.providers.catalog(force, new Set(services.settings.get().disabledProviders), new Set(services.settings.get().disabledModels))
+  const ompProviderCatalog = (force = false) => services.omp.catalog.catalog(force, new Set(services.settings.get().ompDisabledProviders), new Set(services.settings.get().ompDisabledModels))
+  const piProviderCatalog = (force = false) => services.pi.catalog.catalog(force, new Set(services.settings.get().piDisabledProviders), new Set(services.settings.get().piDisabledModels))
   const providerCatalogs: Record<HarnessId, (force?: boolean) => ReturnType<ModelCatalogProvider['catalog']>> = {
     prime: providerCatalog, omp: ompProviderCatalog, pi: piProviderCatalog,
   }
   /** Desktop-owned provider-visibility settings key per harness. */
   const disabledProvidersKeys = { prime: 'disabledProviders', omp: 'ompDisabledProviders', pi: 'piDisabledProviders' } as const
+  const disabledModelsKeys = { prime: 'disabledModels', omp: 'ompDisabledModels', pi: 'piDisabledModels' } as const
   handle('providers:catalog', (_event, force, harness) => providerCatalogs[requireHarness(harness)](force === true))
   handle('providers:save-api-key', async (_event, providerId, apiKey, harness) => {
     requirePrimeProviderAuth(harness)
@@ -259,6 +260,19 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     if (ids.some((id) => !known.has(id))) throw new Error('Provider was not found')
     const settingsKey = disabledProvidersKeys[target]
     await services.settings.update({ [settingsKey]: ids })
+    return providerCatalogs[target]()
+  })
+  handle('providers:set-model-enabled', async (_event, modelKey, enabled, harness) => {
+    const target = requireHarness(harness)
+    const key = requireString(modelKey, 'modelKey', { min: 3, max: 385, trim: true })
+    if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
+    const catalog = await providerCatalogs[target]()
+    if (!catalog.models.some((model) => model.key === key)) throw new Error('Model was not found')
+    const settingsKey = disabledModelsKeys[target]
+    const disabled = new Set(services.settings.get()[settingsKey])
+    if (enabled) disabled.delete(key)
+    else disabled.add(key)
+    await services.settings.update({ [settingsKey]: [...disabled].sort() })
     return providerCatalogs[target]()
   })
   handle('providers:start-oauth', (_event, providerId, harness) => {

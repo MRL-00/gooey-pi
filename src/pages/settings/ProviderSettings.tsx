@@ -15,6 +15,7 @@ interface ProviderSettingsProps {
   onSetEnabled(providerId: string, enabled: boolean): Promise<void>
   onSetAllEnabled(): Promise<void>
   onSetAllDisabled(): Promise<void>
+  onSetModelEnabled(modelKey: string, enabled: boolean): Promise<void>
   onStartOAuth(providerId: string): Promise<void>
   onOpenDocs(): void
 }
@@ -29,7 +30,7 @@ function authDescription(provider: PrimeProviderDescriptor): string {
   return `${source} · ${provider.availableModelCount.toLocaleString()} available models`
 }
 
-export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
+export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSaveApiKey, onLogout, onSetEnabled, onSetAllEnabled, onSetAllDisabled, onSetModelEnabled, onStartOAuth, onOpenDocs }: ProviderSettingsProps) {
   // OMP and Pi own their credentials in their CLIs; GooeyPi only toggles visibility.
   const externalAuth = harness !== 'prime'
   const agentName = HARNESS_AGENT_NAMES[harness]
@@ -80,7 +81,7 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
 
   const providerCount = catalog?.providers.length ?? 0
   const modelCount = catalog?.models.length ?? 0
-  const availableModelCount = catalog?.models.filter((model) => model.available && providerEnabled.get(model.provider) !== false).length ?? 0
+  const availableModelCount = catalog?.models.filter((model) => model.available && model.enabled !== false && providerEnabled.get(model.provider) !== false).length ?? 0
   const disabledCount = catalog?.providers.filter((provider) => !provider.enabled).length ?? 0
 
   return (
@@ -109,13 +110,14 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
           </div>
         })}
       </div> : <div className="provider-list provider-model-list">
-        {models.map((model) => <div className="provider-model-row" key={model.key}>
+        {models.map((model) => <div className={`provider-model-row${model.enabled === false ? ' is-disabled' : ''}`} key={model.key}>
           <div className="provider-row__identity"><strong>{model.name}</strong><small>{providerNames.get(model.provider) ?? model.provider} · {model.id}</small></div>
           <div className="provider-model-row__capabilities">
             {model.reasoning ? <span title={`${model.availableThinkingLevels.length} reasoning levels`}><Gauge size={11} /> Reasoning</span> : null}
             {model.fastModeSupported ? <span><Zap size={11} /> Fast</span> : null}
-            <span className={model.available && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{providerEnabled.get(model.provider) === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
+            <span className={model.available && model.enabled !== false && providerEnabled.get(model.provider) !== false ? 'is-available' : ''}>{model.enabled === false || providerEnabled.get(model.provider) === false ? (externalAuth ? 'Hidden' : 'Disabled') : externalAuth ? 'Shown' : model.available ? 'Available' : 'Needs credentials'}</span>
           </div>
+          <label className="provider-row__toggle provider-model-row__toggle" title={model.enabled === false ? `Show model in ${agentName}` : `Hide model in ${agentName}`}><input type="checkbox" aria-label={`Show ${model.name} model`} checked={model.enabled !== false} disabled={busyProvider === `model:${model.key}`} onChange={(event) => void run(`model:${model.key}`, () => onSetModelEnabled(model.key, event.target.checked))} /><i aria-hidden="true"><span /></i></label>
         </div>)}
       </div>}
       {catalog && view === 'providers' && !providers.length ? <p className="settings-empty">No providers match your search.</p> : null}

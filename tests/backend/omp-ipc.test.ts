@@ -31,12 +31,12 @@ interface Harness {
 }
 
 function buildServices() {
-  const settingsState = { disabledProviders: ['blocked'], ompDisabledProviders: ['anthropic'], piDisabledProviders: ['openai'] }
-  const catalog = (from: string, disabled: ReadonlySet<string> = new Set()) => ({
+  const settingsState = { disabledProviders: ['blocked'], disabledModels: [], ompDisabledProviders: ['anthropic'], ompDisabledModels: [], piDisabledProviders: ['openai'], piDisabledModels: [] }
+  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
     from,
     models: [
-      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude' },
-      { key: 'openai/gpt', provider: 'openai', id: 'gpt' },
+      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude', enabled: !disabledModels.has('anthropic/claude') },
+      { key: 'openai/gpt', provider: 'openai', id: 'gpt', enabled: !disabledModels.has('openai/gpt') },
     ],
     providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: !disabled.has(id) })),
   })
@@ -77,7 +77,7 @@ function buildServices() {
     terminals: serviceStub(),
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })), logoutMcp: vi.fn(async () => undefined) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })), logoutMcp: vi.fn(async () => undefined) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -108,7 +108,7 @@ function buildServices() {
         list: vi.fn(() => [{ runtimeId: 'omp-runtime', harness: 'omp' }]),
       },
       catalog: {
-        catalog: vi.fn(async (_force, disabled) => catalog('omp', disabled)),
+        catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('omp', disabled, disabledModels)),
       },
     },
     pi: {
@@ -133,7 +133,7 @@ function buildServices() {
         list: vi.fn(() => [{ runtimeId: 'pi-runtime', harness: 'pi' }]),
       },
       catalog: {
-        catalog: vi.fn(async (_force, disabled) => catalog('pi', disabled)),
+        catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('pi', disabled, disabledModels)),
       },
     },
   }
@@ -280,10 +280,10 @@ describe('harness-aware IPC routing', () => {
 
   it('routes providers:catalog with independent desktop visibility per harness', async () => {
     await expect(harness.invoke('providers:catalog', true)).resolves.toMatchObject({ from: 'prime' })
-    expect(harness.services.providers.catalog).toHaveBeenCalledWith(true, new Set(['blocked']))
+    expect(harness.services.providers.catalog).toHaveBeenCalledWith(true, new Set(['blocked']), new Set())
 
     await expect(harness.invoke('providers:catalog', true, 'omp')).resolves.toMatchObject({ from: 'omp' })
-    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']))
+    expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']), new Set())
   })
 
   it('routes Prime MCP OAuth through the desktop auth service', async () => {
@@ -305,6 +305,18 @@ describe('harness-aware IPC routing', () => {
       providers: [{ id: 'anthropic', enabled: true }, { id: 'openai', enabled: false }],
     })
     expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['openai'] })
+  })
+
+  it('stores OMP model visibility independently and returns the updated switch state', async () => {
+    await expect(harness.invoke('providers:set-model-enabled', 'openai/gpt', false, 'omp')).resolves.toMatchObject({
+      models: [{ key: 'anthropic/claude', enabled: true }, { key: 'openai/gpt', enabled: false }],
+    })
+    expect(harness.services.settings.update).toHaveBeenCalledWith({ ompDisabledModels: ['openai/gpt'] })
+
+    await expect(harness.invoke('providers:set-model-enabled', 'openai/gpt', true, 'omp')).resolves.toMatchObject({
+      models: [{ key: 'anthropic/claude', enabled: true }, { key: 'openai/gpt', enabled: true }],
+    })
+    expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledModels: [] })
   })
 
   it('rejects provider credential mutations aimed at the omp harness', async () => {

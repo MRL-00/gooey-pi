@@ -49,6 +49,7 @@ const api: PrimeWorkApi = {
     logout: (providerId) => ipcRenderer.invoke('providers:logout', providerId),
     setEnabled: (providerId, enabled, harness) => ipcRenderer.invoke('providers:set-enabled', providerId, enabled, harness),
     setDisabled: (providerIds, harness) => ipcRenderer.invoke('providers:set-disabled', providerIds, harness),
+    setModelEnabled: (modelKey, enabled, harness) => ipcRenderer.invoke('providers:set-model-enabled', modelKey, enabled, harness),
     startOAuth: (providerId) => ipcRenderer.invoke('providers:start-oauth', providerId),
     startMcpOAuth: (server, harness) => ipcRenderer.invoke('providers:start-mcp-oauth', server, harness),
     logoutMcp: (server, harness) => ipcRenderer.invoke('providers:logout-mcp', server, harness),

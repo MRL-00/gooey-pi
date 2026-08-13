@@ -487,8 +487,18 @@ export class VoiceService {
     return new Set(disabled[harness])
   }
 
+  private disabledModels(harness: HarnessId): ReadonlySet<string> {
+    const settings = this.options.settings()
+    const disabled: Record<HarnessId, string[]> = {
+      prime: settings.disabledModels,
+      omp: settings.ompDisabledModels,
+      pi: settings.piDisabledModels,
+    }
+    return new Set(disabled[harness])
+  }
+
   private async availableModels(harness: HarnessId): Promise<PrimeModelDescriptor[]> {
-    return availableModels(this.options.catalogs[harness], this.disabledProviders(harness))
+    return availableModels(this.options.catalogs[harness], this.disabledProviders(harness), this.disabledModels(harness))
   }
 
   private async listModels(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {

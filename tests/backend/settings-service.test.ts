@@ -39,7 +39,11 @@ describe('SettingsService.update', () => {
       telemetry: false,
       askUserEnabled: false,
       disabledProviders: ['openai', 'openai', 'google'],
+      disabledModels: ['openai/gpt-5.6', 'openai/gpt-5.6'],
       ompDisabledProviders: ['anthropic', 'anthropic'],
+      ompDisabledModels: ['anthropic/claude-sonnet-4'],
+      piDisabledProviders: [],
+      piDisabledModels: ['openai/gpt-5.6-codex'],
       activeHarness: 'omp',
       ompApprovalMode: 'always-ask',
       petEnabled: true,
@@ -63,7 +67,8 @@ describe('SettingsService.update', () => {
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
       runtimePaths: { prime: '/opt/prime-agent', omp: '/opt/omp', pi: '/opt/pi' }, enabledHarnesses: ['prime', 'omp'],
-      telemetry: false, askUserEnabled: false, disabledProviders: ['openai', 'google'], ompDisabledProviders: ['anthropic'],
+      telemetry: false, askUserEnabled: false, disabledProviders: ['openai', 'google'], disabledModels: ['openai/gpt-5.6'], ompDisabledProviders: ['anthropic'],
+      ompDisabledModels: ['anthropic/claude-sonnet-4'], piDisabledModels: ['openai/gpt-5.6-codex'],
       activeHarness: 'omp', ompApprovalMode: 'always-ask', petEnabled: true, petId: 'codex/rocky', petSize: 65,
       voiceTranscriptionProvider: 'groq', voiceSelfHostedUrl: 'https://speech.example.test/v1', voiceSelfHostedModel: 'nvidia/parakeet-tdt-0.6b-v3', voiceRealtimeVoice: 'cedar',
     })
@@ -97,10 +102,14 @@ describe('SettingsService.update', () => {
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ disabledProviders: Array.from({ length: 129 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ disabledModels: ['../evil'] })).rejects.toThrow(/model key/)
+    await expect(service.update({ disabledModels: Array.from({ length: 5_001 }, () => 'openai/gpt') })).rejects.toThrow(/bounded/)
     await expect(service.update({ ompDisabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ ompDisabledProviders: Array.from({ length: 257 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ ompDisabledModels: ['missing-slash'] })).rejects.toThrow(/model key/)
     await expect(service.update({ piDisabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
     await expect(service.update({ piDisabledProviders: Array.from({ length: 257 }, () => 'p') })).rejects.toThrow(/bounded/)
+    await expect(service.update({ piDisabledModels: ['provider/model with spaces'] })).rejects.toThrow(/model key/)
     await expect(service.update({ activeHarness: 'codex' })).rejects.toThrow(/Invalid harness/)
     await expect(service.update({ ompApprovalMode: 'sudo' })).rejects.toThrow(/Invalid OMP approval mode/)
     await expect(service.update({ petId: '../escape' })).rejects.toThrow(/Invalid pet id/)

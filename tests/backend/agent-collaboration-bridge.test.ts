@@ -84,7 +84,7 @@ async function fixture(live = true, targetTranscript: TranscriptMessage[] = defa
     agents: { prime: primeManager as unknown as AgentRpcManager, omp: emptyManager as unknown as AgentRpcManager, pi: emptyManager as unknown as AgentRpcManager },
     catalogs: {
       prime: {
-        catalog: vi.fn(async (_force = false, disabled: ReadonlySet<string> = new Set()) => ({
+        catalog: vi.fn(async (_force = false, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
           primeVersion: 'test', refreshedAt: '2026-01-01T00:00:00.000Z',
           providers: [
             { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'oauth' as const, configured: true, modelCount: 1, availableModelCount: 1, enabled: !disabled.has('openai-codex') },
@@ -93,10 +93,13 @@ async function fixture(live = true, targetTranscript: TranscriptMessage[] = defa
           models: [{
             key: 'openai-codex/gpt-5.6-sol', provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol',
             reasoning: true, input: ['text'] as const, contextWindow: 128_000, maxTokens: 16_000,
-            availableThinkingLevels: ['low', 'high', 'max'] as const, fastModeSupported: true, available: true,
+            availableThinkingLevels: ['low', 'high', 'max'] as const, fastModeSupported: true, available: true, enabled: !disabledModels.has('openai-codex/gpt-5.6-sol'),
           }, {
             key: 'hidden/secret', provider: 'hidden', id: 'secret', name: 'Secret', reasoning: true, input: ['text'] as const,
-            contextWindow: 128_000, maxTokens: 16_000, availableThinkingLevels: ['high'] as const, fastModeSupported: false, available: true,
+            contextWindow: 128_000, maxTokens: 16_000, availableThinkingLevels: ['high'] as const, fastModeSupported: false, available: true, enabled: !disabledModels.has('hidden/secret'),
+          }, {
+            key: 'openai-codex/desktop-hidden', provider: 'openai-codex', id: 'desktop-hidden', name: 'Desktop Hidden', reasoning: false, input: ['text'] as const,
+            contextWindow: 128_000, maxTokens: 16_000, availableThinkingLevels: ['off'] as const, fastModeSupported: false, available: true, enabled: !disabledModels.has('openai-codex/desktop-hidden'),
           }],
         })),
       },
@@ -104,6 +107,7 @@ async function fixture(live = true, targetTranscript: TranscriptMessage[] = defa
       pi: { catalog: vi.fn(async () => ({ primeVersion: 'test', refreshedAt: '', providers: [], models: [] })) },
     } as unknown as ConstructorParameters<typeof AgentCollaborationBridge>[0]['catalogs'],
     disabledProviders: { prime: () => new Set(['hidden']), omp: () => new Set(), pi: () => new Set() },
+    disabledModels: { prime: () => new Set(['openai-codex/desktop-hidden']), omp: () => new Set(), pi: () => new Set() },
   })
   await bridge.start()
   bridges.push(bridge)
@@ -241,6 +245,8 @@ describe('AgentCollaborationBridge', () => {
       matched: 1,
     })
     expect(JSON.stringify(models.body.result)).not.toContain('Secret')
+    const visible = await call('models')
+    expect(JSON.stringify(visible.body.result)).not.toContain('Desktop Hidden')
 
     const response = await call('create', {
       prompt: 'Review the model integration.', title: 'Model reviewer', model: 'GPT five six sol', reasoning: 'very high', fast: true,

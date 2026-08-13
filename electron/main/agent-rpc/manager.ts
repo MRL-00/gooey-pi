@@ -12,7 +12,7 @@ import type { RpcObject } from './types'
  * satisfies it today and a future OMP model catalog can be injected in its place.
  */
 export interface ProviderCatalog {
-  requireAvailableModel(rawKey: unknown, disabledProviders?: ReadonlySet<string>): Promise<PrimeModelDescriptor>
+  requireAvailableModel(rawKey: unknown, disabledProviders?: ReadonlySet<string>, disabledModels?: ReadonlySet<string>): Promise<PrimeModelDescriptor>
   capabilities(provider: string | undefined, modelId: string | undefined): Promise<PrimeModelDescriptor | undefined>
 }
 
@@ -21,6 +21,7 @@ export class AgentRpcManager {
   private readonly startingRuntimes = new Set<string>()
   private readonly runtimeEnvironmentRevisions = new Map<string, number>()
   private runtimeEnvironmentRevision = 0
+  private disabledModels: () => ReadonlySet<string> = () => new Set()
   private eventSink: (envelope: PrimeEventEnvelope) => void = () => undefined
   private runtimeEnvironmentProvider: (scope: { cwd: string; sessionPath?: string; interactive: boolean }) => NodeJS.ProcessEnv = () => ({})
   private runtimeStartListener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void = () => undefined
@@ -39,6 +40,8 @@ export class AgentRpcManager {
   ) {}
 
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
+
+  setDisabledModelsProvider(provider: () => ReadonlySet<string>): void { this.disabledModels = provider }
 
   setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string; interactive: boolean }) => NodeJS.ProcessEnv): void {
     this.runtimeEnvironmentProvider = provider
@@ -75,7 +78,7 @@ export class AgentRpcManager {
     let modelId: string | undefined
     if (options.model !== undefined) {
       selectedModel = this.providers
-        ? await this.providers.requireAvailableModel(options.model, this.disabledProviders())
+        ? await this.providers.requireAvailableModel(options.model, this.disabledProviders(), this.disabledModels())
         : undefined
       modelId = selectedModel?.id ?? requireString(options.model, 'model', { min: 1, max: 256, trim: true })
     }
@@ -170,7 +173,7 @@ export class AgentRpcManager {
     // interception below routes it via runtime.setServiceTier instead.
     const translated = this.adapter.translateCommand(command)
     if (command.type === 'set_model' && this.providers) {
-      await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders())
+      await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())
     }
     if (command.type === 'set_service_tier') {
       const serviceTier = command.serviceTier === 'priority' ? 'priority' : 'default'

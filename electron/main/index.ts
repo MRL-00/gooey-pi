@@ -416,8 +416,11 @@ async function bootstrap(): Promise<void> {
   })
   providerService = providers
   const disabledProviders = () => new Set(stateStore.getSettings().disabledProviders)
+  const disabledModels = () => new Set(stateStore.getSettings().disabledModels)
   const ompDisabledProviders = () => new Set(stateStore.getSettings().ompDisabledProviders)
+  const ompDisabledModels = () => new Set(stateStore.getSettings().ompDisabledModels)
   const piDisabledProviders = () => new Set(stateStore.getSettings().piDisabledProviders)
+  const piDisabledModels = () => new Set(stateStore.getSettings().piDisabledModels)
   const ompCatalog = new OmpModelCatalogService(ompExecutable)
   const piCatalog = new PiModelCatalogService(piExecutable)
   agents = new AgentRpcManager(
@@ -427,6 +430,7 @@ async function bootstrap(): Promise<void> {
     providers,
     disabledProviders,
   )
+  agents.setDisabledModelsProvider(disabledModels)
   // The OMP manager exists whether or not the omp CLI is installed; starting a
   // runtime without it fails with the adapter's per-harness not-found error.
   // OMP provider visibility is desktop-owned and independent from both Prime's
@@ -443,6 +447,7 @@ async function bootstrap(): Promise<void> {
       return mode === 'inherit' ? undefined : mode
     },
   )
+  ompManager.setDisabledModelsProvider(ompDisabledModels)
   ompAgents = ompManager
   // Pi mirrors the OMP construction, minus the approval-mode getter: pi has no
   // permission system, so the manager keeps its default (undefined) override.
@@ -454,6 +459,7 @@ async function bootstrap(): Promise<void> {
     piDisabledProviders,
     PI_RPC_ADAPTER,
   )
+  piManager.setDisabledModelsProvider(piDisabledModels)
   piAgents = piManager
   sessions.bindRuntimeHooks({
     get: (path) => agents?.getForSession(path),
@@ -621,6 +627,7 @@ async function bootstrap(): Promise<void> {
     agents,
     providers,
     () => new Set(stateStore.getSettings().disabledProviders),
+    () => new Set(stateStore.getSettings().disabledModels),
   )
   const ompScheduledRuns = new ScheduledRunExecutor(
     ompProjects,
@@ -628,6 +635,7 @@ async function bootstrap(): Promise<void> {
     ompManager,
     ompCatalog,
     () => new Set(stateStore.getSettings().ompDisabledProviders),
+    () => new Set(stateStore.getSettings().ompDisabledModels),
   )
   const piScheduledRuns = new ScheduledRunExecutor(
     piProjects,
@@ -635,6 +643,7 @@ async function bootstrap(): Promise<void> {
     piManager,
     piCatalog,
     () => new Set(stateStore.getSettings().piDisabledProviders),
+    () => new Set(stateStore.getSettings().piDisabledModels),
   )
   const scheduledRuns: Record<HarnessId, ScheduledRunExecutor> = { prime: primeScheduledRuns, omp: ompScheduledRuns, pi: piScheduledRuns }
   const schedules = new AutomationService(stateStore, {
@@ -714,6 +723,7 @@ async function bootstrap(): Promise<void> {
     agents: { prime: agents, omp: ompManager, pi: piManager },
     catalogs: { prime: providers, omp: ompCatalog, pi: piCatalog },
     disabledProviders: { prime: disabledProviders, omp: ompDisabledProviders, pi: piDisabledProviders },
+    disabledModels: { prime: disabledModels, omp: ompDisabledModels, pi: piDisabledModels },
   })
   await Promise.all([browserBridge.start(), collaborationBridge.start()])
   agentBrowserBridge = browserBridge

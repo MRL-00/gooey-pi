@@ -187,16 +187,16 @@ export class PrimeProviderService {
     return Object.fromEntries(BUILTIN_MCP_CATALOG.map((integration) => [integration.server, integration.url]))
   }
 
-  async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
+  async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
-      return this.withEnabledState(this.cachedCatalog, disabledProviders)
+      return this.withEnabledState(this.cachedCatalog, disabledProviders, disabledModels)
     }
     // Single-flight: concurrent callers share one refresh instead of racing
     // duplicate registry work; the in-flight promise is cleared in finally.
     if (!this.catalogRefresh) {
       this.catalogRefresh = this.refreshCatalog().finally(() => { this.catalogRefresh = null })
     }
-    return this.withEnabledState(await this.catalogRefresh, disabledProviders)
+    return this.withEnabledState(await this.catalogRefresh, disabledProviders, disabledModels)
   }
 
   private async refreshCatalog(): Promise<PrimeModelCatalog> {
@@ -255,13 +255,14 @@ export class PrimeProviderService {
     return this.cachedCatalog
   }
 
-  async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
+  async requireAvailableModel(rawKey: unknown, disabledProviders: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()): Promise<PrimeModelDescriptor> {
     const key = requireString(rawKey, 'model', { min: 3, max: 512, trim: true })
-    const catalog = await this.catalog(false, disabledProviders)
+    const catalog = await this.catalog(false, disabledProviders, disabledModels)
     const model = catalog.models.find((candidate) => candidate.key === key)
     if (!model) throw new Error('Model was not found in the Prime Agent catalog')
     const provider = catalog.providers.find((candidate) => candidate.id === model.provider)
     if (!provider?.enabled) throw new Error(`Provider ${model.provider} is disabled in GooeyPi`)
+    if (model.enabled === false) throw new Error(`${model.name} is disabled in GooeyPi`)
     if (!model.available) throw new Error(`Provider ${model.provider} is not configured for ${model.name}`)
     return model
   }
@@ -410,10 +411,10 @@ export class PrimeProviderService {
     return provider
   }
 
-  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>): PrimeModelCatalog {
+  private withEnabledState(catalog: PrimeModelCatalog, disabledProviders: ReadonlySet<string>, disabledModels: ReadonlySet<string>): PrimeModelCatalog {
     return {
       ...catalog,
-      models: catalog.models.map((model) => ({ ...model })),
+      models: catalog.models.map((model) => ({ ...model, enabled: !disabledModels.has(model.key) })),
       providers: catalog.providers.map((provider) => ({ ...provider, enabled: !disabledProviders.has(provider.id) })),
     }
   }

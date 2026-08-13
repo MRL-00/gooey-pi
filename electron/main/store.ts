@@ -52,8 +52,11 @@ export function defaultSettings(): AppSettings {
     browserEnabled: true,
     computerUseEnabled: false,
     disabledProviders: [],
+    disabledModels: [],
     ompDisabledProviders: [],
+    ompDisabledModels: [],
     piDisabledProviders: [],
+    piDisabledModels: [],
     activeHarness: 'omp',
     ompApprovalMode: 'inherit',
     petEnabled: true,
@@ -164,12 +167,15 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     disabledProviders: Array.isArray(value.disabledProviders)
       ? [...new Set(value.disabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 128)
       : defaults.disabledProviders,
+    disabledModels: parseDisabledModels(value.disabledModels, defaults.disabledModels),
     ompDisabledProviders: Array.isArray(value.ompDisabledProviders)
       ? [...new Set(value.ompDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.ompDisabledProviders,
+    ompDisabledModels: parseDisabledModels(value.ompDisabledModels, defaults.ompDisabledModels),
     piDisabledProviders: Array.isArray(value.piDisabledProviders)
       ? [...new Set(value.piDisabledProviders.filter((item): item is string => typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(item)))].slice(0, 256)
       : defaults.piDisabledProviders,
+    piDisabledModels: parseDisabledModels(value.piDisabledModels, defaults.piDisabledModels),
     activeHarness,
     ompApprovalMode: value.ompApprovalMode === 'inherit' || value.ompApprovalMode === 'always-ask' || value.ompApprovalMode === 'write' || value.ompApprovalMode === 'yolo' ? value.ompApprovalMode : defaults.ompApprovalMode,
     petEnabled: typeof value.petEnabled === 'boolean' ? value.petEnabled : defaults.petEnabled,
@@ -187,6 +193,13 @@ function parseSettings(value: unknown, legacyState = false): AppSettings {
     voiceRealtimeModel: boundedString(value.voiceRealtimeModel, 128) ? value.voiceRealtimeModel : defaults.voiceRealtimeModel,
     voiceRealtimeVoice: boundedString(value.voiceRealtimeVoice, 64) ? value.voiceRealtimeVoice : defaults.voiceRealtimeVoice,
   }
+}
+
+function parseDisabledModels(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback
+  return [...new Set(value.filter((item): item is string => (
+    typeof item === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9._:/+-]{1,256}$/i.test(item)
+  )))].slice(0, 5_000)
 }
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set(['auto', ...PRIME_THINKING_LEVELS])

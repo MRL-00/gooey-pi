@@ -31,12 +31,12 @@ interface Harness {
 }
 
 function buildServices() {
-  const settingsState = { disabledProviders: ['blocked'], ompDisabledProviders: ['anthropic'], piDisabledProviders: ['anthropic'] }
-  const catalog = (from: string, disabled: ReadonlySet<string> = new Set()) => ({
+  const settingsState = { disabledProviders: ['blocked'], disabledModels: [], ompDisabledProviders: ['anthropic'], ompDisabledModels: [], piDisabledProviders: ['anthropic'], piDisabledModels: [] }
+  const catalog = (from: string, disabled: ReadonlySet<string> = new Set(), disabledModels: ReadonlySet<string> = new Set()) => ({
     from,
     models: [
-      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude' },
-      { key: 'openai/gpt', provider: 'openai', id: 'gpt' },
+      { key: 'anthropic/claude', provider: 'anthropic', id: 'claude', enabled: !disabledModels.has('anthropic/claude') },
+      { key: 'openai/gpt', provider: 'openai', id: 'gpt', enabled: !disabledModels.has('openai/gpt') },
     ],
     providers: ['anthropic', 'openai'].map((id) => ({ id, enabled: !disabled.has(id) })),
   })
@@ -66,7 +66,7 @@ function buildServices() {
       list: vi.fn(() => [{ runtimeId: `${name}-runtime`, harness: name }]),
     },
     catalog: {
-      catalog: vi.fn(async (_force, disabled) => catalog(name, disabled)),
+      catalog: vi.fn(async (_force, disabled, disabledModels) => catalog(name, disabled, disabledModels)),
     },
   })
   return {
@@ -93,7 +93,7 @@ function buildServices() {
     terminals: serviceStub(),
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -202,7 +202,7 @@ describe('pi harness IPC routing', () => {
 
   it('routes providers:catalog for pi with its own desktop visibility list', async () => {
     await expect(harness.invoke('providers:catalog', true, 'pi')).resolves.toMatchObject({ from: 'pi' })
-    expect(harness.services.pi.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']))
+    expect(harness.services.pi.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']), new Set())
     expect(harness.services.providers.catalog).not.toHaveBeenCalled()
   })
 

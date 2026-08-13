@@ -480,7 +480,7 @@ export const Composer = memo(function Composer({
   const modelOptions = useMemo(
     () =>
       providers
-        .filter((provider) => provider.enabled && provider.modelCount > 0)
+        .filter((provider) => provider.enabled && (modelsByProvider.get(provider.id)?.length ?? 0) > 0)
         .map((provider) => (
           <optgroup key={provider.id} label={`${provider.name}${provider.configured ? '' : ' · not connected'}`}>
             {(modelsByProvider.get(provider.id) ?? []).map((candidate) => (

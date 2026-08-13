@@ -9,6 +9,7 @@ const DEFAULT_REASONING_LEVELS: PrimeThinkingLevel[] = ['off', 'minimal', 'low',
 export function groupModelsByProvider(models: readonly PrimeModelDescriptor[] | undefined): Map<string, PrimeModelDescriptor[]> {
   const grouped = new Map<string, PrimeModelDescriptor[]>()
   for (const model of models ?? []) {
+    if (model.enabled === false) continue
     const bucket = grouped.get(model.provider)
     if (bucket) bucket.push(model)
     else grouped.set(model.provider, [model])
@@ -86,8 +87,8 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
   }, [bridge, harness, ready, setCatalogFor])
 
   const selectedModel = useMemo<PrimeModelDescriptor | undefined>(() => {
-    if (model !== 'auto') return catalog?.models.find((candidate) => candidate.key === model)
-    return catalog?.models.find((candidate) => candidate.provider === runtime?.model?.provider && candidate.id === runtime?.model?.id)
+    if (model !== 'auto') return catalog?.models.find((candidate) => candidate.key === model && candidate.enabled !== false)
+    return catalog?.models.find((candidate) => candidate.provider === runtime?.model?.provider && candidate.id === runtime?.model?.id && candidate.enabled !== false)
   }, [catalog, model, runtime?.model?.id, runtime?.model?.provider])
   const reasoningLevels = selectedModel?.availableThinkingLevels ?? runtime?.availableThinkingLevels ?? DEFAULT_REASONING_LEVELS
   // Group once per catalog identity so the composer's <option> tree can memoize.
@@ -134,7 +135,7 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
 
   useEffect(() => {
     if (!runtime?.model?.provider || !runtime.model.id || !catalog) return
-    const effectiveModel = catalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id)
+    const effectiveModel = catalog.models.find((candidate) => candidate.provider === runtime.model?.provider && candidate.id === runtime.model?.id && candidate.enabled !== false)
     if (effectiveModel) updateModel(effectiveModel.key)
     if (runtime.thinkingLevel && effectiveModel?.availableThinkingLevels.includes(runtime.thinkingLevel as PrimeThinkingLevel)) updateEffort(runtime.thinkingLevel as PrimeThinkingLevel)
   }, [catalog, runtime?.model?.id, runtime?.model?.provider, runtime?.thinkingLevel, updateEffort, updateModel])
@@ -226,6 +227,13 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
     }
   }, [bridge, catalog?.models, catalog?.providers, harness, setCatalogFor, updateFast, updateModel])
 
+  const setModelEnabled = useCallback(async (modelKey: string, enabled: boolean) => {
+    if (!bridge) throw new Error('Models can only be configured in the desktop app.')
+    const next = await bridge.providers.setModelEnabled(modelKey, enabled, harness)
+    setCatalogFor(harness, next)
+    if (!enabled && modelRef.current === modelKey) { updateModel('auto'); updateFast(false) }
+  }, [bridge, harness, setCatalogFor, updateFast, updateModel])
+
   const startOAuth = useCallback(async (providerId: string) => {
     if (!bridge) throw new Error('Providers can only be configured in the desktop app.')
     await bridge.providers.startOAuth(providerId)
@@ -249,6 +257,6 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
   return {
     model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels, modelsByProvider,
     refresh, changeModel, changeEffort, changeFast,
-    saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, startOAuth, startMcpOAuth, respondOAuth, cancelOAuth,
+    saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, setModelEnabled, startOAuth, startMcpOAuth, respondOAuth, cancelOAuth,
   }
 }

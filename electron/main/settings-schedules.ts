@@ -109,6 +109,7 @@ export class SettingsService {
           return id
         }))]
       },
+      disabledModels: (value) => this.disabledModels(value, 'disabledModels'),
       ompDisabledProviders: (value) => {
         if (!Array.isArray(value) || value.length > 256) throw new TypeError('ompDisabledProviders must be a bounded array')
         return [...new Set(value.map((entry, index) => {
@@ -117,6 +118,7 @@ export class SettingsService {
           return id
         }))]
       },
+      ompDisabledModels: (value) => this.disabledModels(value, 'ompDisabledModels'),
       piDisabledProviders: (value) => {
         if (!Array.isArray(value) || value.length > 256) throw new TypeError('piDisabledProviders must be a bounded array')
         return [...new Set(value.map((entry, index) => {
@@ -125,6 +127,7 @@ export class SettingsService {
           return id
         }))]
       },
+      piDisabledModels: (value) => this.disabledModels(value, 'piDisabledModels'),
     }
     const keys = Object.keys(validators) as Array<keyof AppSettings>
     rejectUnknownKeys(raw, keys, 'settings patch')
@@ -144,6 +147,15 @@ export class SettingsService {
     const model = requireString(value, label, { min: 1, max: 128, trim: true })
     if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(model)) throw new TypeError(`${label} is not valid`)
     return model
+  }
+
+  private disabledModels(value: unknown, label: string): string[] {
+    if (!Array.isArray(value) || value.length > 5_000) throw new TypeError(`${label} must be a bounded array`)
+    return [...new Set(value.map((entry, index) => {
+      const key = requireString(entry, `${label}[${index}]`, { min: 3, max: 385, trim: true })
+      if (!/^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9._:/+-]{1,256}$/i.test(key)) throw new TypeError(`${label}[${index}] is not a valid model key`)
+      return key
+    }))]
   }
 
   async resetBrowserData(): Promise<boolean> {

@@ -510,6 +510,7 @@ describe('harness settings surfaces', () => {
         onSetProviderEnabled={noopAsync}
         onSetAllProvidersEnabled={noopAsync}
         onSetAllProvidersDisabled={noopAsync}
+        onSetModelEnabled={noopAsync}
         onStartProviderOAuth={noopAsync}
       />
     )
@@ -574,7 +575,7 @@ describe('harness settings surfaces', () => {
     }
     const noopAsync = async () => undefined
     await act(async () => {
-      root.render(<ProviderSettings harness="omp" catalog={catalog} onRefresh={noopAsync} onSaveApiKey={noopAsync} onLogout={noopAsync} onSetEnabled={noopAsync} onSetAllEnabled={noopAsync} onSetAllDisabled={noopAsync} onStartOAuth={noopAsync} onOpenDocs={() => undefined} />)
+      root.render(<ProviderSettings harness="omp" catalog={catalog} onRefresh={noopAsync} onSaveApiKey={noopAsync} onLogout={noopAsync} onSetEnabled={noopAsync} onSetAllEnabled={noopAsync} onSetAllDisabled={noopAsync} onSetModelEnabled={noopAsync} onStartOAuth={noopAsync} onOpenDocs={() => undefined} />)
     })
 
     expect(container.textContent).toContain('OMP catalogue')
@@ -600,7 +601,7 @@ describe('harness settings surfaces', () => {
     const noopAsync = async () => undefined
     const onSetEnabled = vi.fn(async () => undefined)
     await act(async () => {
-      root.render(<ProviderSettings harness="pi" catalog={catalog} onRefresh={noopAsync} onSaveApiKey={noopAsync} onLogout={noopAsync} onSetEnabled={onSetEnabled} onSetAllEnabled={noopAsync} onSetAllDisabled={noopAsync} onStartOAuth={noopAsync} onOpenDocs={() => undefined} />)
+      root.render(<ProviderSettings harness="pi" catalog={catalog} onRefresh={noopAsync} onSaveApiKey={noopAsync} onLogout={noopAsync} onSetEnabled={onSetEnabled} onSetAllEnabled={noopAsync} onSetAllDisabled={noopAsync} onSetModelEnabled={noopAsync} onStartOAuth={noopAsync} onOpenDocs={() => undefined} />)
     })
 
     expect(container.textContent).toContain('Pi catalogue')

@@ -140,6 +140,15 @@ describe('Prime provider adapter', () => {
     expect(typeof anthropic?.configured).toBe('boolean')
   })
 
+  it('keeps model enablement as a per-key desktop policy', async () => {
+    const initial = await service().catalog(true)
+    const modelKey = initial.models[0]?.key
+    expect(modelKey).toBeTruthy()
+    const catalog = await service().catalog(false, new Set(), new Set([modelKey!]))
+    expect(catalog.models.find((model) => model.key === modelKey)?.enabled).toBe(false)
+    expect(catalog.models.filter((model) => model.key !== modelKey).every((model) => model.enabled)).toBe(true)
+  })
+
   it('reports DeepSeek V4 Flash non-think, high, and max reasoning levels from custom config', async () => {
     const catalog = await serviceWithModels({ providers: {
       'deepseek-linux': {

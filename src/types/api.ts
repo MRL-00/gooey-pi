@@ -187,6 +187,8 @@ export interface PrimeModelDescriptor {
   availableThinkingLevels: PrimeThinkingLevel[]
   fastModeSupported: boolean
   available: boolean
+  /** GooeyPi visibility policy for this harness; absent catalogs predate per-model controls. */
+  enabled?: boolean
 }
 
 export interface PrimeProviderDescriptor {
@@ -400,10 +402,16 @@ export interface AppSettings {
   computerUseEnabled: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
   disabledProviders: string[]
+  /** Models hidden from Prime Work's Prime model picker, stored as provider/model keys. */
+  disabledModels: string[]
   /** Providers hidden from Prime Work's OMP model picker; OMP config is untouched. */
   ompDisabledProviders: string[]
+  /** Models hidden from Prime Work's OMP model picker; OMP config is untouched. */
+  ompDisabledModels: string[]
   /** Providers hidden from Prime Work's pi model picker; pi config is untouched. */
   piDisabledProviders: string[]
+  /** Models hidden from Prime Work's pi model picker; pi config is untouched. */
+  piDisabledModels: string[]
   /** Harness whose workspace the renderer shows; new installs default to 'omp'. */
   activeHarness: HarnessId
   /** OMP tool-approval override; 'inherit' leaves OMP's own config in charge. */
@@ -662,6 +670,7 @@ export interface PrimeWorkApi {
     logout(providerId: string): Promise<PrimeModelCatalog>
     setEnabled(providerId: string, enabled: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
     setDisabled(providerIds: string[], harness?: HarnessId): Promise<PrimeModelCatalog>
+    setModelEnabled(modelKey: string, enabled: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
     startOAuth(providerId: string): Promise<{ flowId: string }>
     startMcpOAuth(server: string, harness?: HarnessId): Promise<{ flowId: string }>
     logoutMcp(server: string, harness?: HarnessId): Promise<void>

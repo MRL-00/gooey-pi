@@ -37,6 +37,7 @@ export interface AgentCollaborationBridgeOptions {
   agents: Record<HarnessId, AgentRpcManager>
   catalogs: Record<HarnessId, ModelCatalogProvider>
   disabledProviders: Record<HarnessId, () => ReadonlySet<string>>
+  disabledModels: Record<HarnessId, () => ReadonlySet<string>>
 }
 
 interface CollaborationMessage {
@@ -215,7 +216,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
 
   private async modelsFor(source: CollaborationTarget): Promise<PrimeModelDescriptor[]> {
     const harness = source.session.harness
-    return availableModels(this.options.catalogs[harness], this.options.disabledProviders[harness]())
+    return availableModels(this.options.catalogs[harness], this.options.disabledProviders[harness](), this.options.disabledModels[harness]())
   }
 
   private async listModels(source: CollaborationTarget, rawQuery: unknown): Promise<Record<string, unknown>> {

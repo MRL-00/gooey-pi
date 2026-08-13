@@ -82,7 +82,7 @@ function deferred<T = void>() {
 describe('provider settings behavior and accessibility', () => {
   it('gives each enable checkbox a provider-specific accessible name and reports toggle failure', async () => {
     const onSetEnabled = vi.fn().mockRejectedValue(new Error('Provider policy was not saved'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onSetAllDisabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={noop} onSetAllDisabled={noop} onSetModelEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     const checkbox = container.querySelector<HTMLInputElement>('input[aria-label="Show Anthropic provider"]')
     expect(checkbox).not.toBeNull()
@@ -96,7 +96,7 @@ describe('provider settings behavior and accessibility', () => {
     const onSetEnabled = vi.fn().mockResolvedValue(undefined)
     const onSetAllEnabled = vi.fn().mockResolvedValue(undefined)
     const onSetAllDisabled = vi.fn().mockResolvedValue(undefined)
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onSetAllDisabled={onSetAllDisabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={onSetEnabled} onSetAllEnabled={onSetAllEnabled} onSetAllDisabled={onSetAllDisabled} onSetModelEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     expect(container.textContent).toContain('2 providers · 2 models')
     expect(container.textContent).toContain('ChatGPT Plus/Pro')
@@ -116,9 +116,22 @@ describe('provider settings behavior and accessibility', () => {
     expect(container.querySelector('input[aria-label="Search models"]')).not.toBeNull()
   })
 
+  it('puts each model switch at the far right and sends the model key', async () => {
+    const onSetModelEnabled = vi.fn().mockResolvedValue(undefined)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={noop} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onSetAllDisabled={noop} onSetModelEnabled={onSetModelEnabled} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+
+    await click(button('Models'))
+    const row = container.querySelector('.provider-model-row')
+    const toggle = row?.querySelector<HTMLInputElement>('input[aria-label="Show GPT-5.6 model"]')
+    expect(toggle).not.toBeNull()
+    expect(row?.lastElementChild?.classList.contains('provider-model-row__toggle')).toBe(true)
+    await click(toggle!)
+    expect(onSetModelEnabled).toHaveBeenCalledWith('openai-codex/gpt-5.6', false)
+  })
+
   it('keeps API-key failures announced inside the active modal', async () => {
     const onSaveApiKey = vi.fn().mockRejectedValue(new Error('Credential rejected'))
-    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onSetAllDisabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
+    await render(<ProviderSettings catalog={catalog} onRefresh={noop} onSaveApiKey={onSaveApiKey} onLogout={noop} onSetEnabled={noop} onSetAllEnabled={noop} onSetAllDisabled={noop} onSetModelEnabled={noop} onStartOAuth={noop} onOpenDocs={() => undefined} />)
 
     await click(button('Add key'))
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')

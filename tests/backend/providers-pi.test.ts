@@ -135,9 +135,11 @@ describe('Pi model catalog service', () => {
 
     await expect(service.requireAvailableModel('nope/none')).rejects.toThrow(/not found in the Pi catalog/)
     await expect(service.requireAvailableModel('google/gemini-2.5-pro', new Set(['google']))).rejects.toThrow(/disabled/)
+    await expect(service.requireAvailableModel('openai-codex/gpt-5.6-luna', new Set(), new Set(['openai-codex/gpt-5.6-luna']))).rejects.toThrow(/disabled/)
     const disabledView = await service.catalog(false, new Set(['google']))
     expect(disabledView.providers.find((provider) => provider.id === 'google')?.enabled).toBe(false)
     expect(disabledView.providers.find((provider) => provider.id === 'openai-codex')?.enabled).toBe(true)
+    expect((await service.catalog(false, new Set(), new Set(['openai-codex/gpt-5.6-luna']))).models.find((candidate) => candidate.key === 'openai-codex/gpt-5.6-luna')?.enabled).toBe(false)
 
     expect(await service.capabilities('google', 'gemini-2.5-pro')).toMatchObject({ key: 'google/gemini-2.5-pro' })
     expect(await service.capabilities('google', undefined)).toBeUndefined()
