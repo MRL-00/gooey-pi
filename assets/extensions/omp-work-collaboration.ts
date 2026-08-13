@@ -72,7 +72,7 @@ export default function (pi: ExtensionApi): void | Promise<void> {
 }
 
 function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
-  const target = Type.String({ description: 'Exact session UUID from an @session reference, Copy session UUID, or session_list' })
+  const target = Type.String({ description: 'Exact session UUID from an @session reference, Copy session UUID, session_list, or from_session_id in an incoming GooeyPi agent message' })
 
   pi.registerTool({
     name: 'session_list',
@@ -91,7 +91,7 @@ function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
   pi.registerTool<{ target_session_id: string; message: string }>({
     name: 'session_send',
     label: 'Message session',
-    description: 'Send an attributed background message to another GooeyPi session in this working directory. GooeyPi safely wakes an idle saved session when needed. This returns after delivery; call session_wait with cursor_before to wait for its response. Never busy-wait or create mutual waits.',
+    description: 'Send an attributed background message to another GooeyPi session in this working directory. For an incoming agent message, reply directly to its from_session_id; its signed reply_with field names this tool, so no session listing is needed. GooeyPi safely wakes an idle saved session when needed. This returns after delivery; call session_wait with cursor_before to wait for its response. Never busy-wait or create mutual waits.',
     parameters: Type.Object({
       target_session_id: target,
       message: Type.String({ minLength: 1, maxLength: 64 * 1024, description: 'The concise message or coordination request to send' }),

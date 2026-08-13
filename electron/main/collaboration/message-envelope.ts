@@ -22,6 +22,7 @@ interface SignedMetadata {
   from_session_id: string
   from_title: string
   from_harness: HarnessId
+  reply_with?: 'session_send'
   nonce: string
   sent_at: string
 }
@@ -67,6 +68,7 @@ export function encodeGooeyPiAgentMessage(message: GooeyPiAgentMessage): string 
     from_session_id: message.fromSessionId,
     from_title: message.fromTitle,
     from_harness: message.fromHarness,
+    reply_with: 'session_send',
     nonce: randomUUID(),
     sent_at: new Date().toISOString(),
   }
@@ -85,12 +87,14 @@ export function parseGooeyPiAgentMessage(value: string): GooeyPiAgentMessage | u
   const fromSessionId = metadata.from_session_id
   const fromTitle = metadata.from_title
   const fromHarness = metadata.from_harness
+  const replyWith = metadata.reply_with
   const nonce = metadata.nonce
   const sentAt = metadata.sent_at
   const encodedSignature = metadata.signature
   if (typeof fromSessionId !== 'string' || fromSessionId.length < 1 || fromSessionId.length > 128) return undefined
   if (typeof fromTitle !== 'string' || fromTitle.length < 1 || fromTitle.length > 200) return undefined
   if (typeof fromHarness !== 'string' || !HARNESSES.has(fromHarness as HarnessId)) return undefined
+  if (replyWith !== undefined && replyWith !== 'session_send') return undefined
   if (typeof nonce !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)) return undefined
   if (typeof sentAt !== 'string' || sentAt.length > 64 || !Number.isFinite(Date.parse(sentAt))) return undefined
   if (typeof encodedSignature !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(encodedSignature)) return undefined
@@ -99,7 +103,9 @@ export function parseGooeyPiAgentMessage(value: string): GooeyPiAgentMessage | u
   if (!signingKey) return undefined
   const unsigned: SignedMetadata = {
     version: 1, from_session_id: fromSessionId, from_title: fromTitle,
-    from_harness: fromHarness as HarnessId, nonce, sent_at: sentAt,
+    from_harness: fromHarness as HarnessId,
+    ...(replyWith === 'session_send' ? { reply_with: replyWith } : {}),
+    nonce, sent_at: sentAt,
   }
   const actual = Buffer.from(encodedSignature, 'base64url')
   const expected = signature(unsigned, text)

@@ -6,7 +6,7 @@ Every Prime, OMP, and pi runtime receives four app-owned tools:
 
 - `session_list`: list accessible peer titles, UUIDs, status, and liveness.
 - `session_read`: read a bounded recent snapshot and cursor without modifying the peer.
-- `session_send`: deliver an attributed prompt or follow-up. If the saved peer is idle/offline, GooeyPi starts its normal RPC runtime first; the runtime manager revalidates its project and session paths.
+- `session_send`: deliver an attributed prompt or follow-up. Incoming messages carry the sender's exact `from_session_id` and a signed `reply_with: "session_send"` hint, so the recipient can answer directly without listing sessions. If the saved peer is idle/offline, GooeyPi starts its normal RPC runtime first; the runtime manager revalidates its project and session paths.
 - `session_wait`: wait up to 30 seconds for a peer to become idle and produce context after a cursor. Sends are non-blocking, and tool guidance prohibits mutual waits.
 
 ## Upstream research

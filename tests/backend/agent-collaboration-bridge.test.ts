@@ -110,6 +110,8 @@ describe('AgentCollaborationBridge', () => {
     expect(sent.body.result).toHaveProperty('cursor_before')
     expect(primeManager.command).toHaveBeenCalledWith('runtime-target', expect.objectContaining({ type: 'prompt' }))
     const delivered = (primeManager.command.mock.calls[0] as unknown as [string, { message: string }])[1]
+    expect(delivered.message).toContain(`"from_session_id":"${source.id}"`)
+    expect(delivered.message).toContain('"reply_with":"session_send"')
     expect(parseGooeyPiAgentMessage(delivered.message)).toEqual({
       fromSessionId: source.id,
       fromTitle: source.title,

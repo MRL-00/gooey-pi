@@ -144,6 +144,8 @@ describe('extensions on a base pi host (no injected pi.typebox)', () => {
     expect(tools.map((tool) => tool.name)).toEqual(['session_list', 'session_read', 'session_send', 'session_wait'])
     expect(schemaOf(tools[1]).required).toEqual(['target_session_id'])
     expect(schemaOf(tools[2]).required).toEqual(['target_session_id', 'message'])
+    expect(tools[2].description).toContain('reply directly to its from_session_id')
+    expect(JSON.stringify(schemaOf(tools[2]).properties.target_session_id)).toContain('from_session_id')
     expect(schemaOf(tools[3]).properties.timeout_ms.type).toBe('number')
   })
 })

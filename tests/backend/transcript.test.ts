@@ -52,6 +52,7 @@ describe('GooeyPi agent messages', () => {
       fromHarness: 'omp',
       text: 'Please coordinate ownership before editing.',
     })
+    expect(envelope).toContain('"reply_with":"session_send"')
     writeFileSync(file, [
       JSON.stringify({ type: 'session', id: 'target', cwd: '/project' }),
       JSON.stringify({ type: 'message', id: 'peer-message', parentId: null, message: { role: 'user', content: envelope } }),
