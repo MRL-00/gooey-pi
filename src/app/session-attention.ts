@@ -59,6 +59,7 @@ export function sessionCompanionNotificationSignature(session: SessionRecord): s
 }
 
 export function sessionShowsCompanionNotification(session: SessionRecord, clearedSignature?: string): boolean {
+  if (session.archived) return false
   const signature = sessionCompanionNotificationSignature(session)
   return Boolean(signature && signature !== clearedSignature)
 }

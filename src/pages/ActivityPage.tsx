@@ -1,10 +1,10 @@
-import { ArchiveRestore, Bell, CheckCircle2, CircleAlert, Clock3, LoaderCircle, Search } from 'lucide-react'
+import { Bell, CheckCircle2, CircleAlert, Clock3, LoaderCircle, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ProjectRecord, SessionRecord } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { EmptyState, Segmented } from '@/components/ui'
 
-export type ActivityFilter = 'all' | 'attention' | 'running' | 'archived'
+export type ActivityFilter = 'all' | 'attention' | 'running'
 export const ACTIVITY_BATCH = 250
 
 export interface ActivityViewState {
@@ -21,13 +21,13 @@ export function growActivityBatch(state: ActivityViewState, total: number): Acti
   return { ...state, visibleLimit: Math.min(total, state.visibleLimit + ACTIVITY_BATCH) }
 }
 
-export function ActivityPage({ sessions, projects, onOpen, onRestore }: { sessions: SessionRecord[]; projects: ProjectRecord[]; onOpen(session: SessionRecord): void; onRestore(session: SessionRecord): void }) {
+export function ActivityPage({ sessions, projects, onOpen }: { sessions: SessionRecord[]; projects: ProjectRecord[]; onOpen(session: SessionRecord): void }) {
   const [viewState, setViewState] = useState<ActivityViewState>({ filter: 'all', query: '', visibleLimit: ACTIVITY_BATCH })
   const { filter, query, visibleLimit } = viewState
   const projectNames = useMemo(() => new Map(projects.flatMap((project) => [...new Set([project.path, ...project.folders])].map((path) => [path, project.name] as const))), [projects])
   const normalized = query.trim().toLowerCase()
   const visible = useMemo(() => sessions.filter((session) => {
-    const statusMatches = filter === 'archived' ? session.archived : !session.archived && (
+    const statusMatches = !session.archived && (
       filter === 'all'
       || filter === 'attention' && (session.unread || session.status === 'waiting' || session.status === 'failed')
       || filter === 'running' && session.status === 'running'
@@ -39,8 +39,8 @@ export function ActivityPage({ sessions, projects, onOpen, onRestore }: { sessio
 
   return <div className="page scroll-area"><div className="page-container page-container--narrow">
     <header className="page-header"><div><h1>Activity</h1><p>Work in progress and sessions that need your attention.</p></div></header>
-    <div className="page-tools page-tools--activity"><Segmented value={filter} label="Activity filter" onChange={(value) => setViewState((current) => updateActivityCriteria(current, { filter: value as ActivityFilter }))} options={[{ value: 'all', label: 'All' }, { value: 'attention', label: 'Needs attention' }, { value: 'running', label: 'Running' }, { value: 'archived', label: 'Archived' }]}/><label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter activity"/></label></div>
-    {displayed.length ? <div className="activity-list">{displayed.map((session) => <div className="activity-row" key={session.id}><button type="button" className="activity-row__main" aria-label={session.archived ? `Restore ${session.title}` : `Open ${session.title}`} onClick={() => session.archived ? onRestore(session) : onOpen(session)}><span className={`activity-icon activity-icon--${session.status}`}>{session.status === 'running' ? <LoaderCircle className="spin" size={15}/> : session.status === 'failed' || session.status === 'waiting' ? <CircleAlert size={15}/> : <CheckCircle2 size={15}/>}</span><span className="activity-main"><span><strong>{session.title}</strong>{session.unread && !session.archived ? <i>New</i> : null}</span><small>{session.preview ?? (session.archived ? 'Restore this session to continue working' : 'Open session to view details')}</small><span><span>{projectName(session.projectPath)}</span><span><Clock3 size={11}/>{formatRelative(session.updatedAt)}</span></span></span><span className={`activity-status activity-status--${session.status}`}>{session.archived ? 'archived' : session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : session.status}</span></button>{session.archived ? <button type="button" className="activity-restore" onClick={() => onRestore(session)}><ArchiveRestore size={13}/> Restore</button> : null}</div>)}</div> : <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>}
+    <div className="page-tools page-tools--activity"><Segmented value={filter} label="Activity filter" onChange={(value) => setViewState((current) => updateActivityCriteria(current, { filter: value as ActivityFilter }))} options={[{ value: 'all', label: 'All' }, { value: 'attention', label: 'Needs attention' }, { value: 'running', label: 'Running' }]}/><label className="page-search page-search--small"><Search size={13}/><input value={query} onChange={(event) => setViewState((current) => updateActivityCriteria(current, { query: event.target.value }))} placeholder="Filter activity"/></label></div>
+    {displayed.length ? <div className="activity-list">{displayed.map((session) => <div className="activity-row" key={session.id}><button type="button" className="activity-row__main" aria-label={`Open ${session.title}`} onClick={() => onOpen(session)}><span className={`activity-icon activity-icon--${session.status}`}>{session.status === 'running' ? <LoaderCircle className="spin" size={15}/> : session.status === 'failed' || session.status === 'waiting' ? <CircleAlert size={15}/> : <CheckCircle2 size={15}/>}</span><span className="activity-main"><span><strong>{session.title}</strong>{session.unread ? <i>New</i> : null}</span><small>{session.preview ?? 'Open session to view details'}</small><span><span>{projectName(session.projectPath)}</span><span><Clock3 size={11}/>{formatRelative(session.updatedAt)}</span></span></span><span className={`activity-status activity-status--${session.status}`}>{session.status === 'waiting' ? 'Needs attention' : session.status === 'complete' ? 'Finished' : session.status}</span></button></div>)}</div> : <EmptyState icon={<Bell size={24}/>} title="You’re all caught up">Running sessions and new results will appear here.</EmptyState>}
     {visible.length > displayed.length ? <button type="button" className="page-show-more" onClick={() => setViewState((current) => growActivityBatch(current, visible.length))}>Show {Math.min(ACTIVITY_BATCH, visible.length - displayed.length)} more sessions</button> : null}
   </div></div>
 }

@@ -808,7 +808,8 @@ test.describe('Prime Work desktop smoke', () => {
 
     const primaryRow = page.locator('.session-row-wrap').filter({ hasText: 'Primary workspace fixture' })
     await expect(primaryRow).toHaveClass(/has-attention/)
-    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toBeVisible()
+    const activityCount = page.locator('.sidebar__primary button[title="Activity"] .nav-count')
+    await expect(activityCount).toHaveText('1')
     await expect(titles.nth(0)).toHaveText('Hermetic desktop fixture')
     const attentionColor = await primaryRow.evaluate((node) => getComputedStyle(node).backgroundColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [])
     expect(attentionColor.length).toBeGreaterThanOrEqual(3)
@@ -822,12 +823,39 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(primaryRow).toHaveClass(/session-row-wrap--failed/)
     await expect(failureMark).toHaveAttribute('title', 'Failed — notification cleared')
     await expect.poll(() => failureMark.locator('> span').evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(activeFailureColor)
-    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
+    await expect(activityCount).toHaveCount(0)
     appendFileSync(primaryFile, `${JSON.stringify({
       type: 'message', id: 'primary-new-user', parentId: 'primary-background-assistant', timestamp: '2028-01-01T00:00:00.000Z',
       message: { role: 'user', content: 'Move this thread now.' },
     })}\n`)
     await expect(titles.nth(0)).toHaveText('Primary workspace fixture')
+  })
+
+  test('removes archived chats from Activity and clears their notifications', async () => {
+    const primaryFile = join(fixtureSessionFile, '..', 'primary.jsonl')
+    appendFileSync(primaryFile, `${JSON.stringify({
+      type: 'message', id: 'primary-archive-failure', parentId: 'primary-message', timestamp: '2027-01-01T00:00:00.000Z',
+      message: { role: 'assistant', content: 'Archive this failed work.', stopReason: 'error' },
+    })}\n`)
+
+    const primaryRow = page.locator('.session-row-wrap').filter({ hasText: 'Primary workspace fixture' })
+    await expect(primaryRow).toHaveClass(/has-attention/)
+    const activityCount = page.locator('.sidebar__primary button[title="Activity"] .nav-count')
+    await expect(activityCount).toHaveText('1')
+
+    await primaryRow.getByTitle('Archive Primary workspace fixture').click()
+    await primaryRow.getByTitle('Confirm archive Primary workspace fixture').click()
+    await expect(primaryRow).toHaveCount(0)
+    await expect(activityCount).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() => {
+      const cleared = JSON.parse(window.localStorage.getItem('prime-work.cleared-session-attention') ?? '{}') as Record<string, string>
+      return cleared['primary-session']
+    })).toBeTruthy()
+
+    await page.getByRole('button', { name: 'Activity', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
+    await expect(page.getByText('Primary workspace fixture', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Archived', exact: true })).toHaveCount(0)
   })
 
   test('enforces the live preload and IPC frame boundaries', async () => {

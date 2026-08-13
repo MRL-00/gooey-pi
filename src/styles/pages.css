@@ -35,8 +35,6 @@
 .activity-row__main { width: 100%; min-height: 78px; display: flex; align-items: flex-start; gap: 12px; padding: 13px 8px; color: inherit; background: transparent; text-align: left; }
 .activity-row__main:hover { background: var(--surface-subtle); }
 .activity-row__main:focus-visible { background: var(--surface-subtle); }
-.activity-restore { align-self: center; min-height: 30px; display: flex; align-items: center; gap: 5px; margin-right: 8px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); background: var(--surface-raised); }
-.activity-restore:hover { color: var(--text); background: var(--surface-hover); }
 
 .activity-icon { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 8px; color: var(--success); background: var(--success-soft); }
 .activity-icon--running, .activity-icon--complete { color: var(--prime); background: var(--prime-soft); }

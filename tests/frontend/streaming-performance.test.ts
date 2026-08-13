@@ -160,8 +160,8 @@ describe('Activity batching', () => {
     expect(updateActivityCriteria(expanded, { query: 'running' })).toEqual({
       filter: 'all', query: 'running', visibleLimit: ACTIVITY_BATCH,
     })
-    expect(updateActivityCriteria(expanded, { filter: 'archived' })).toEqual({
-      filter: 'archived', query: '', visibleLimit: ACTIVITY_BATCH,
+    expect(updateActivityCriteria(expanded, { filter: 'running' })).toEqual({
+      filter: 'running', query: '', visibleLimit: ACTIVITY_BATCH,
     })
   })
 })

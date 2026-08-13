@@ -34,11 +34,11 @@ describe('useToast', () => {
     }
 
     await act(async () => { root.render(<ToastProbe />) })
-    await act(async () => { setToast('Session archived. Restore it from Activity.') })
-    expect(container.textContent).toBe('Session archived. Restore it from Activity.')
+    await act(async () => { setToast('Session archived.') })
+    expect(container.textContent).toBe('Session archived.')
 
     await act(async () => { vi.advanceTimersByTime(TOAST_DURATION_MS - 1) })
-    expect(container.textContent).toBe('Session archived. Restore it from Activity.')
+    expect(container.textContent).toBe('Session archived.')
 
     await act(async () => { setToast('Session restored.') })
     await act(async () => { vi.advanceTimersByTime(1) })
