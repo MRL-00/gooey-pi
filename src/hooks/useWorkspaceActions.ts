@@ -73,16 +73,24 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   const persistPanel = (patch: Partial<typeof DEFAULT_SETTINGS>) => { void getDeps().settingsState.updateSettings(patch) }
   const toggleSidebar = () => {
     const { settingsState, layout } = getDeps()
-    const next = !settingsState.sidebarOpen
+    const next = !(settingsState.sidebarOpen && !layout.sidebarSuppressed)
+    layout.setSmallestSidebarAllowed(next)
     layout.compactRestoreRef.current = null
-    if (layout.compactLayout && next && settingsState.inspectorOpen) settingsState.setInspectorOpen(false)
+    if (layout.compactLayout && next && settingsState.inspectorOpen) {
+      layout.setSmallestInspectorAllowed(false)
+      settingsState.setInspectorOpen(false)
+    }
     persistPanel({ sidebarOpen: next })
   }
   const toggleInspector = () => {
     const { settingsState, layout } = getDeps()
-    const next = !settingsState.inspectorOpen
+    const next = !(settingsState.inspectorOpen && !layout.inspectorSuppressed)
+    layout.setSmallestInspectorAllowed(next)
     layout.compactRestoreRef.current = null
-    if (layout.compactLayout && next && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout && next && settingsState.sidebarOpen) {
+      layout.setSmallestSidebarAllowed(false)
+      settingsState.setSidebarOpen(false)
+    }
     persistPanel({ inspectorOpen: next })
   }
   const toggleTerminal = async () => {
@@ -94,7 +102,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
   const selectProject = async (project: ProjectRecord) => {
     const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
-    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
     if (session) {
       clearSessionAttention(session)
@@ -112,7 +120,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
   const selectSession = async (session: SessionRecord) => {
     const { layout, settingsState, projects, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
-    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     clearSessionAttention(session)
     setSessions((items) => items.map((item) => item.id === session.id ? { ...item, unread: false } : item))
     const project = findProjectForSession(projects, session)
@@ -127,14 +135,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     if (!initialized) return
     const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
     if (!project) return
-    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     workspace.activateWorkspace(project)
     if (!bridge) workspace.setMessages([])
     setView('session'); setPaletteOpen(false)
   }
   const navigate = (nextView: WorkspaceView) => {
     const { layout, settingsState, setView, setPaletteOpen } = getDeps()
-    if (layout.compactLayout) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     setView(nextView); setPaletteOpen(false)
   }
   const renameSession = async (session: SessionRecord, title: string) => {
@@ -471,14 +479,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
   const openBrowser = () => {
     const { layout, settingsState, setView } = getDeps()
-    if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout && settingsState.sidebarOpen) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     setView('session')
     settingsState.selectInspectorTab('browser')
     if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true })
   }
   const openChanges = () => {
     const { layout, settingsState } = getDeps()
-    if (layout.compactLayout && settingsState.sidebarOpen) settingsState.setSidebarOpen(false)
+    if (layout.compactLayout && settingsState.sidebarOpen) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
     settingsState.selectInspectorTab('changes')
     if (!settingsState.inspectorOpen) persistPanel({ inspectorOpen: true })
   }

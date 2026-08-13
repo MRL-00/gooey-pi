@@ -19,7 +19,7 @@ interface UsePanelLayoutOptions {
   sidebarOpen: boolean
   inspectorOpen: boolean
   setInspectorOpen(value: boolean): void
-  closeSmallestPanels(): void
+  closeSmallestPanels(patch: { sidebarOpen?: false; inspectorOpen?: false }): void
   terminalOpen: boolean
   view: WorkspaceView
 }
@@ -33,6 +33,9 @@ export function usePanelLayout({
   view,
 }: UsePanelLayoutOptions) {
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 980px)').matches)
+  const [smallestLayout, setSmallestLayout] = useState(() => window.matchMedia(`(max-width: ${SMALLEST_LAYOUT_BREAKPOINT}px)`).matches)
+  const [smallestSidebarAllowed, setSmallestSidebarAllowed] = useState(false)
+  const [smallestInspectorAllowed, setSmallestInspectorAllowed] = useState(false)
   const [inspectorWidth, setInspectorWidth] = useState(() => readPanelSize('prime-work.inspector-width', INSPECTOR_DEFAULT))
   const [terminalHeight, setTerminalHeight] = useState(() => readPanelSize('prime-work.terminal-height', TERMINAL_DEFAULT))
   const [inspectorMax, setInspectorMax] = useState(660)
@@ -40,38 +43,53 @@ export function usePanelLayout({
   const workspaceRowRef = useRef<HTMLDivElement>(null)
   const sessionWorkspaceRef = useRef<HTMLDivElement>(null)
   const compactRestoreRef = useRef<'inspector' | null>(null)
-  const sidebarOpenRef = useRef(sidebarOpen)
-  const inspectorOpenRef = useRef(inspectorOpen)
-  sidebarOpenRef.current = sidebarOpen
-  inspectorOpenRef.current = inspectorOpen
+  const sidebarSuppressed = smallestLayout && sidebarOpen && !smallestSidebarAllowed
+  const inspectorSuppressed = smallestLayout && inspectorOpen && !smallestInspectorAllowed
+  const visibleSidebarOpen = sidebarOpen && !sidebarSuppressed
+  const visibleInspectorOpen = inspectorOpen && !inspectorSuppressed
 
   useEffect(() => {
     const sync = () => {
       const smallestLayout = window.innerWidth <= SMALLEST_LAYOUT_BREAKPOINT
       setCompactLayout(window.innerWidth <= 980)
-      if (smallestLayout && (sidebarOpenRef.current || inspectorOpenRef.current)) closeSmallestPanels()
+      setSmallestLayout(smallestLayout)
+      if (smallestLayout) {
+        setSmallestSidebarAllowed(false)
+        setSmallestInspectorAllowed(false)
+      }
     }
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [closeSmallestPanels])
+  }, [])
 
   useEffect(() => {
-    if (compactLayout && sidebarOpen && inspectorOpen) {
+    if (!smallestLayout) return
+    const patch: { sidebarOpen?: false; inspectorOpen?: false } = {}
+    if (sidebarSuppressed) patch.sidebarOpen = false
+    if (inspectorSuppressed) patch.inspectorOpen = false
+    if (patch.sidebarOpen === false || patch.inspectorOpen === false) closeSmallestPanels(patch)
+  }, [closeSmallestPanels, inspectorSuppressed, sidebarSuppressed, smallestLayout])
+
+  useEffect(() => {
+    if (compactLayout && visibleSidebarOpen && visibleInspectorOpen) {
       compactRestoreRef.current = 'inspector'
       setInspectorOpen(false)
-    } else if (!compactLayout && compactRestoreRef.current === 'inspector' && sidebarOpen && !inspectorOpen) {
+    } else if (!compactLayout && compactRestoreRef.current === 'inspector' && visibleSidebarOpen && !visibleInspectorOpen) {
       compactRestoreRef.current = null
       setInspectorOpen(true)
     }
-  }, [compactLayout, inspectorOpen, setInspectorOpen, sidebarOpen])
+  }, [compactLayout, setInspectorOpen, visibleInspectorOpen, visibleSidebarOpen])
 
   useEffect(() => {
-    if (!compactLayout || !inspectorOpen) return
-    const targets = [...document.querySelectorAll<HTMLElement>('.title-toolbar, .conversation-pane, .terminal-drawer, .session-workspace > .resize-handle')]
+    if (!compactLayout || !visibleInspectorOpen) return
+    const selectors = window.innerWidth <= SMALLEST_LAYOUT_BREAKPOINT
+      ? '.conversation-pane, .terminal-drawer, .session-workspace > .resize-handle'
+      : '.title-toolbar, .conversation-pane, .terminal-drawer, .session-workspace > .resize-handle'
+    const targets = [...document.querySelectorAll<HTMLElement>(selectors)]
     for (const target of targets) target.inert = true
     return () => { for (const target of targets) target.inert = false }
-  }, [compactLayout, inspectorOpen, terminalOpen])
+  }, [compactLayout, terminalOpen, visibleInspectorOpen])
 
   useEffect(() => {
     const row = workspaceRowRef.current
@@ -97,6 +115,10 @@ export function usePanelLayout({
 
   return {
     compactLayout,
+    sidebarSuppressed,
+    inspectorSuppressed,
+    setSmallestSidebarAllowed,
+    setSmallestInspectorAllowed,
     compactRestoreRef,
     inspectorWidth,
     setInspectorWidth,

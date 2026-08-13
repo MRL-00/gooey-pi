@@ -1498,7 +1498,7 @@ test.describe('Prime Work desktop smoke', () => {
 
     await page.getByRole('button', { name: /Show sidebar/ }).click()
     await expect(page.locator('.sidebar')).toBeVisible()
-    await page.getByRole('button', { name: 'Close sidebar' }).click({ position: { x: 400, y: 300 } })
+    await page.locator('.sidebar').getByRole('button', { name: /Hide sidebar/ }).click()
     await expect(page.locator('.sidebar')).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).sidebarOpen)).toBe(false)
 
@@ -1512,7 +1512,8 @@ test.describe('Prime Work desktop smoke', () => {
     const inspectorToggle = page.getByRole('button', { name: 'Toggle inspector' })
     await inspectorToggle.click()
     await expect(page.locator('.inspector')).toBeVisible()
-    await page.locator('.inspector').getByRole('button', { name: 'Close inspector' }).click()
+    await expect(page.locator('.title-toolbar')).not.toHaveAttribute('inert')
+    await inspectorToggle.click()
     await expect(page.locator('.inspector')).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => (await window.prime.settings.get()).inspectorOpen)).toBe(false)
 
