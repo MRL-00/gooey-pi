@@ -1033,10 +1033,11 @@ test.describe('Prime Work desktop smoke', () => {
         await expect(addDialog.getByText('Add Extension', { exact: true })).toBeVisible()
         await expect(addDialog.getByText(/Not every third-party package, plugin, or extension will work in GooeyPi/)).toBeVisible()
         await addDialog.getByRole('button', { name: /Add MCP/ }).click()
-        await expect(addDialog.getByText(/Not every third-party/)).toHaveCount(0)
-        await expect(addDialog.getByText('Integration package source', { exact: true })).toBeVisible()
-        await expect(addDialog.getByText('Local command', { exact: true })).toHaveCount(0)
-        await addDialog.getByRole('button', { name: 'Cancel' }).click()
+        const mcpDialog = page.getByRole('dialog', { name: 'Add MCP server' })
+        await expect(mcpDialog.getByText(/Not every third-party/)).toHaveCount(0)
+        await expect(mcpDialog.getByText('Integration package source', { exact: true })).toBeVisible()
+        await expect(mcpDialog.getByText('Local command', { exact: true })).toHaveCount(0)
+        await mcpDialog.getByRole('button', { name: 'Close' }).click()
       }
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
