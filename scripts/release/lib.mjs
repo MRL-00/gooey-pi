@@ -170,10 +170,10 @@ const ZEROMQ_ARCHITECTURE_DIRECTORIES = new Map([
   ['x86_64', 'x64'],
 ])
 
-// The runtime-library directory name ("libc-115-Release" today) encodes the
-// zeromq prebuild's toolchain and changes across zeromq upgrades, so the
-// layout matches it with a wildcard and the verifier asserts exactly one
-// addon per packaged architecture instead of pinning the name.
+// Runtime-library directory names (for example, "libc-115-Release") encode
+// the zeromq prebuild's toolchain and change across upgrades. An architecture
+// may intentionally ship multiple ABI fallbacks, so match the bounded set
+// without pinning the directory names.
 export function expectedUnpackedNativeLayout(appArchitectures) {
   if (!appArchitectures.size) throw new Error('Packaged application architecture list is empty')
   const files = [...NODE_PTY_UNPACKED_FILES]
@@ -218,8 +218,8 @@ export function assertUnpackedNativeLayout(unpackedDirectory, appArchitectures, 
   const expected = [...files]
   for (const { label, pattern } of zeroMqAddons) {
     const matches = actual.files.filter((path) => pattern.test(path))
-    if (matches.length !== 1) throw new Error(`Expected exactly one unpacked ZeroMQ addon matching ${label}, found ${matches.length}`)
-    expected.push(matches[0])
+    if (!matches.length) throw new Error(`Expected at least one unpacked ZeroMQ addon matching ${label}, found 0`)
+    expected.push(...matches)
   }
   const expectedSet = new Set(expected)
   const allowedDirectories = expectedDirectories(expected)

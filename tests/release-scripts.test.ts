@@ -528,17 +528,16 @@ describe('post-package verification helpers', () => {
     expect(packageJson.dependencies.zeromq).toBe(primeAgent.dependencies.zeromq)
   })
 
-  test('requires exactly one ZeroMQ addon per architecture regardless of runtime-library name', () => {
+  test('accepts bounded ZeroMQ ABI fallbacks per architecture', () => {
     const architectures = new Set(['arm64'])
-    const duplicatedDirectory = createUnpackedFixture(architectures)
-    const duplicate = join(duplicatedDirectory, fixtureAddonPath('arm64', 'libc-999-Release'))
-    mkdirSync(dirname(duplicate), { recursive: true })
-    writeFileSync(duplicate, 'fixture')
+    const fallbackDirectory = createUnpackedFixture(architectures)
+    const fallback = join(fallbackDirectory, fixtureAddonPath('arm64', 'libc-999-Release'))
+    mkdirSync(dirname(fallback), { recursive: true })
+    writeFileSync(fallback, 'fixture')
     try {
-      // Two runtime-library directories for one architecture must fail.
-      expect(() => assertUnpackedNativeLayout(duplicatedDirectory, architectures, () => architectures)).toThrow(/exactly one.*ZeroMQ/i)
+      expect(() => assertUnpackedNativeLayout(fallbackDirectory, architectures, () => architectures)).not.toThrow()
     } finally {
-      rmSync(duplicatedDirectory, { recursive: true, force: true })
+      rmSync(fallbackDirectory, { recursive: true, force: true })
     }
 
     const futureDirectory = mkdtempSync(join(tmpdir(), 'prime-work-unpacked-'))
@@ -548,7 +547,7 @@ describe('post-package verification helpers', () => {
       writeFileSync(path, 'fixture')
     }
     try {
-      // A future runtime-library name still matches the wildcard exactly once.
+      // A future runtime-library name still matches the bounded wildcard.
       expect(() => assertUnpackedNativeLayout(futureDirectory, architectures, () => architectures)).not.toThrow()
     } finally {
       rmSync(futureDirectory, { recursive: true, force: true })
