@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
+import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
 import { killProcessTree, resolveExecutable, runProcess, safeChildEnvironment, waitForProcessExit, type ExecutableSource } from './process-utils'
@@ -28,6 +29,10 @@ function safeProviderId(value: unknown): value is string {
 
 function boundedInteger(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function toFastModeSupported(provider: string, id: string): boolean {
+  return supportsFastMode({ provider, id, api: 'openai-codex-responses' } as Parameters<typeof supportsFastMode>[0])
 }
 
 /**
@@ -71,9 +76,9 @@ function toModelDescriptor(value: unknown): PrimeModelDescriptor | null {
     contextWindow: boundedInteger(record.contextWindow),
     maxTokens: boundedInteger(record.maxTokens),
     availableThinkingLevels: toThinkingLevels(reasoning, record.thinkingLevelMap as Record<string, unknown> | undefined),
-    // Pi has no service-tier/fast-mode RPC command at all — the toggle is
-    // hidden for the harness, so no model may advertise support.
-    fastModeSupported: false,
+    // Pi's catalog does not carry fast-mode metadata. Keep the supported model
+    // families aligned with Prime/OMP; the bundled extension applies the tier.
+    fastModeSupported: toFastModeSupported(record.provider, record.id),
     // Pi does not report per-model auth state and its credentials live in the
     // CLI's own store, so every catalog model is treated as selectable.
     available: true,

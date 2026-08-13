@@ -101,8 +101,7 @@ describe('Pi model catalog service', () => {
     // xhigh and max are named by the map, minimal is remapped (not null), and
     // the unmapped defaults stay supported: the full pi ladder.
     expect(luna.availableThinkingLevels).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-    // Pi has no fast-mode/service-tier command, so no model advertises it.
-    expect(luna.fastModeSupported).toBe(false)
+    expect(luna.fastModeSupported).toBe(true)
     expect(luna.available).toBe(true)
 
     // Levels mapped to null are unsupported; xhigh/max are absent from the map.

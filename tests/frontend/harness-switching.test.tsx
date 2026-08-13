@@ -591,7 +591,7 @@ describe('harness settings surfaces', () => {
   it('renders Pi provider visibility toggles while keeping credentials CLI-owned', async () => {
     const catalog: PrimeModelCatalog = {
       primeVersion: '0.84.1', refreshedAt: '2026-08-06T00:00:00.000Z',
-      models: [{ key: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', reasoning: true, input: ['text'], contextWindow: 272_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'high'], fastModeSupported: false, available: true }],
+      models: [{ key: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', reasoning: true, input: ['text'], contextWindow: 272_000, maxTokens: 128_000, availableThinkingLevels: ['low', 'high'], fastModeSupported: true, available: true }],
       providers: [
         { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'external', configured: true, modelCount: 1, availableModelCount: 1, enabled: true },
         { id: 'anthropic', name: 'Anthropic', authMethod: 'external', configured: true, modelCount: 0, availableModelCount: 0, enabled: true },

@@ -546,6 +546,9 @@ async function bootstrap(): Promise<void> {
   const collaborationExtensionPath = app.isPackaged
     ? join(process.resourcesPath, 'extensions', 'omp-work-collaboration.ts')
     : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-collaboration.ts')
+  const piFastModeExtensionPath = app.isPackaged
+    ? join(process.resourcesPath, 'extensions', 'pi-work-fast-mode.ts')
+    : join(app.getAppPath(), 'assets', 'extensions', 'pi-work-fast-mode.ts')
   const computerUseSkill = async () => {
     const status = await cuaDriver.status()
     return {
@@ -747,6 +750,7 @@ async function bootstrap(): Promise<void> {
   piManager.setRuntimeEnvironmentProvider((scope) => ({
     ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'pi' }),
+    GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: piFastModeExtensionPath,
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))

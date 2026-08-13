@@ -165,8 +165,8 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
 /**
  * Base pi speaks Prime's request/response envelope, command vocabulary, and
  * event names with no handshake extras: no ready frame, no protocol
- * negotiation, no chunked frames. Only the Prime-only daemon/heartbeat family
- * and the service tier are missing.
+ * negotiation, no chunked frames. The Prime-only daemon/heartbeat family is
+ * missing; fast mode is supplied by GooeyPi's bundled compatibility extension.
  */
 export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'pi',
@@ -190,6 +190,7 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     // App capabilities are injected as explicit, self-contained extensions
     // (the same decision as OMP); pi's --skill flag stays unused.
     for (const extensionPath of [
+      input.environment.GOOEYPI_PI_FAST_MODE_EXTENSION_PATH,
       input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
       input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
       input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
@@ -208,8 +209,9 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     return command
   },
   normalizeEvent: (event) => event,
-  // No buildServiceTierCommand: pi has no fast mode, so applying a service
-  // tier fails in the runtime without sending a wire command.
+  // Pi has no native tier command. Its prompt RPC invokes the bundled private
+  // slash command, whose provider hook applies service_tier to supported models.
+  buildServiceTierCommand: (serviceTier) => ({ type: 'prompt', message: `/gooeypi-fast-mode ${serviceTier}` }),
   // pi's get_state carries no serviceTier, fastModeEnabled, or contextUsage;
   // context usage flows through the shared get_session_stats path.
   readState: () => ({}),

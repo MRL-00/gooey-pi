@@ -77,6 +77,15 @@ describe('capability extension environment parity (OMP and pi)', () => {
     expect(args).not.toContain('--skill')
   })
 
+  it('injects the Pi-only fast-mode compatibility extension without adding it to OMP', () => {
+    const environment = {
+      ...extensionRuntimeEnvironment(scheduleBridgeEnvironment, browserBridgeEnvironment, extensionPaths),
+      GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/app/extensions/pi-work-fast-mode.ts',
+    }
+    expect(PI_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment })).toContain('/app/extensions/pi-work-fast-mode.ts')
+    expect(OMP_RPC_ADAPTER.buildStartArgs({ cwd: '/work', environment })).not.toContain('/app/extensions/pi-work-fast-mode.ts')
+  })
+
   it('keeps standalone copies suppressed while omitting the bundled tool when disabled', () => {
     const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, browserBridgeEnvironment, extensionPaths, false)
     expect(environment.GOOEYPI_MANAGES_ASK_USER).toBe('1')

@@ -24,7 +24,7 @@ function fakePiAgent(options: FakePiOptions = {}): { cwd: string; executable: st
   const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pi-rpc-'))
   dirs.push(cwd)
   const executable = join(cwd, 'fake-pi.cjs')
-  // Like the real pi, the fake pushes no ready frame and knows no
+  // Like the real pi, the fake pushes no ready frame and knows no native
   // negotiate_protocol, branch, or fast-mode commands; get_state carries
   // hostile serviceTier/fastModeEnabled/contextUsage fields the adapter must
   // ignore, and get_session_stats owns the authoritative context usage.
@@ -47,6 +47,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (command.type === 'fork' || command.type === 'get_fork_messages') {
     send({ id: command.id, type: 'response', command: command.type, success: true, data: { received: command.type, entryId: command.entryId } })
   } else if (command.type === 'prompt') {
+    send({ type: 'fake_prompt', message: command.message })
     send({ id: command.id, type: 'response', command: 'prompt', success: true, data: { agentInvoked: true } })
     ${options.promptScript ?? ''}
   } else if (command.type === 'abort') {
@@ -64,7 +65,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 const lunaModel: PrimeModelDescriptor = {
   key: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna GPT-5.6',
   reasoning: true, input: ['text', 'image'], contextWindow: 272_000, maxTokens: 64_000,
-  availableThinkingLevels: ['off', 'low', 'medium', 'high'], fastModeSupported: false, available: true,
+  availableThinkingLevels: ['off', 'low', 'medium', 'high'], fastModeSupported: true, available: true,
 }
 
 const piCatalog: ProviderCatalog = {
@@ -124,11 +125,13 @@ describe('pi RPC adapter argv', () => {
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
       GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
+      GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/extensions/pi-fast-mode.ts',
       GOOEYPI_COMPUTER_USE_SKILL_PATH: '/skills/computer-use.md',
     } as NodeJS.ProcessEnv
     const args = PI_RPC_ADAPTER.buildStartArgs({ ...baseInput, environment })
-    expect(args.slice(-10)).toEqual([
+    expect(args.slice(-12)).toEqual([
       '--skill', '/skills/computer-use.md',
+      '--extension', '/extensions/pi-fast-mode.ts',
       '--extension', '/extensions/schedules.ts',
       '--extension', '/extensions/browser.ts',
       '--extension', '/extensions/ask-user.ts',
@@ -191,6 +194,7 @@ describe('pi RPC handshake', () => {
       PRIME_WORK_BROWSER_EXTENSION_PATH: '/extensions/browser.ts',
       PRIME_WORK_ASK_USER_EXTENSION_PATH: '/extensions/ask-user.ts',
       GOOEYPI_COLLABORATION_EXTENSION_PATH: '/extensions/collaboration.ts',
+      GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: '/extensions/pi-fast-mode.ts',
     }))
     const events: Array<Record<string, unknown>> = []
     manager.setEventSink(({ event }) => events.push(event))
@@ -207,7 +211,7 @@ describe('pi RPC handshake', () => {
     expect(argv).not.toContain('--skill')
     expect(argv).not.toContain('--approval-mode')
     const extensionPaths = argv.flatMap((value, index) => value === '--extension' ? [argv[index + 1]] : [])
-    expect(extensionPaths).toEqual(['/extensions/schedules.ts', '/extensions/browser.ts', '/extensions/ask-user.ts', '/extensions/collaboration.ts'])
+    expect(extensionPaths).toEqual(['/extensions/pi-fast-mode.ts', '/extensions/schedules.ts', '/extensions/browser.ts', '/extensions/ask-user.ts', '/extensions/collaboration.ts'])
   })
 })
 
@@ -242,20 +246,22 @@ describe('pi RPC command translation', () => {
     expect(events.some((event) => event.type === 'fake_unknown_command')).toBe(false)
   })
 
-  it('rejects set_service_tier without sending a wire command', async () => {
+  it('maps set_service_tier onto the bundled Pi fast-mode command', async () => {
     const fake = fakePiAgent()
-    const manager = piManager(fake.executable)
+    const manager = piManager(fake.executable, { providers: piCatalog })
     const events: Array<Record<string, unknown>> = []
     manager.setEventSink(({ event }) => events.push(event))
     const runtime = await manager.start({ cwd: fake.cwd })
 
-    await expect(manager.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: 'priority' }))
-      .rejects.toThrow('Service tier is not supported by the Pi harness')
-    await expect(manager.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: 'default' }))
-      .rejects.toThrow('Service tier is not supported by the Pi harness')
-    // Neither set_service_tier nor a fast-mode translation ever reached the fake.
-    expect(events.some((event) => event.type === 'fake_unknown_command')).toBe(false)
+    await manager.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: 'priority' })
+    expect(manager.list()[0]?.serviceTier).toBe('priority')
+    await manager.command(runtime.runtimeId, { type: 'set_service_tier', serviceTier: 'default' })
     expect(manager.list()[0]?.serviceTier).toBe('default')
+    expect(events.filter((event) => event.type === 'fake_prompt').map((event) => event.message)).toEqual([
+      '/gooeypi-fast-mode priority',
+      '/gooeypi-fast-mode default',
+    ])
+    expect(events.some((event) => event.type === 'fake_unknown_command')).toBe(false)
   })
 })
 
