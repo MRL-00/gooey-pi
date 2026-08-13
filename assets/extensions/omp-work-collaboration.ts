@@ -5,6 +5,7 @@ interface HostTypebox {
   Object(properties: Record<string, unknown>, options?: SchemaOptions): unknown
   String(options?: SchemaOptions): unknown
   Number(options?: SchemaOptions): unknown
+  Boolean(options?: SchemaOptions): unknown
   Optional(schema: unknown): unknown
 }
 interface ToolResult { content: Array<{ type: 'text'; text: string }>; details: Record<string, unknown> }
@@ -35,6 +36,7 @@ async function resolveHostTypebox(): Promise<HostTypebox> {
     }),
     String: (options) => ({ type: 'string', ...(options ?? {}) }),
     Number: (options) => ({ type: 'number', ...(options ?? {}) }),
+    Boolean: (options) => ({ type: 'boolean', ...(options ?? {}) }),
     Optional: (schema) => { if (typeof schema === 'object' && schema !== null) optional.add(schema); return schema },
   }
 }
@@ -80,6 +82,28 @@ function registerTools(pi: ExtensionApi, Type: HostTypebox): void {
     description: 'List other GooeyPi sessions in this working directory. Results include title, UUID, harness, status, and whether the session is live. Use an exact UUID with the other session tools.',
     parameters: Type.Object({}),
     async execute() { return result(await call('list')) },
+  })
+  pi.registerTool<{ query?: string }>({
+    name: 'session_models',
+    label: 'List session models',
+    description: 'List models available for new GooeyPi sessions in this harness from providers currently active in the GUI. Results include exact model keys and supported reasoning levels. Use an approximate query when a model was requested by name.',
+    parameters: Type.Object({
+      query: Type.Optional(Type.String({ maxLength: 256, description: 'Optional approximate model name, provider, family, or spoken model wording' })),
+    }),
+    async execute(_id, params) { return result(await call('models', params)) },
+  })
+  pi.registerTool<{ prompt: string; title?: string; model?: string; reasoning?: string; fast?: boolean }>({
+    name: 'session_create',
+    label: 'Create session',
+    description: 'Create and immediately start a new readable top-level GooeyPi session in this same harness and working directory. Use session_models when selecting a model. Model and reasoning wording may be approximate; GooeyPi resolves and revalidates them against active GUI providers before launch. Set fast true to request fast/priority mode when the selected model and harness support it. The result includes the exact session UUID for session_read, session_send, and session_wait.',
+    parameters: Type.Object({
+      prompt: Type.String({ minLength: 1, maxLength: 1_000_000, description: 'The self-contained initial task for the new session' }),
+      title: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: 'Optional concise session title' })),
+      model: Type.Optional(Type.String({ minLength: 1, maxLength: 512, description: 'Optional exact key from session_models or approximate model wording' })),
+      reasoning: Type.Optional(Type.String({ minLength: 1, maxLength: 64, description: 'Optional reasoning intensity; the closest level supported by the selected or default model is used' })),
+      fast: Type.Optional(Type.Boolean({ description: 'Request fast/priority mode; unsupported models still start normally and report fast mode as unavailable' })),
+    }),
+    async execute(_id, params) { return result(await call('create', params)) },
   })
   pi.registerTool<{ target_session_id: string }>({
     name: 'session_read',

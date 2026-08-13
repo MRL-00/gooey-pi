@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { HarnessId, RuntimeInfo, SessionRecord, TranscriptMessage } from '../../../src/types/api'
+import type { HarnessId, PrimeModelDescriptor, RuntimeInfo, SessionRecord, TranscriptMessage } from '../../../src/types/api'
 import type { AgentRpcManager } from '../agent-rpc'
 import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
-import { requireId, requireInteger, requireString } from '../validation'
+import type { ModelCatalogProvider } from '../model-catalog'
+import { availableModels, rankedModelMatches, resolveModel, resolveReasoning } from '../model-selection'
+import { requireBoolean, requireId, requireInteger, requireString } from '../validation'
 import { encodeGooeyPiAgentMessage } from './message-envelope'
 
 const MAX_LISTED_SESSIONS = 100
 const MAX_MESSAGES = 40
 const MAX_CONTEXT_CHARS = 96 * 1024
 const MAX_SEND_CHARS = 64 * 1024
+const MAX_CREATE_PROMPT_CHARS = 1_000_000
 const MAX_WAIT_MS = 30_000
 const WAIT_TRANSCRIPT_POLL_MS = 1_000
 const WAIT_RUNTIME_POLL_MS = 250
@@ -30,6 +33,8 @@ export interface AgentCollaborationBridgeOptions {
   extensionPath: string
   sessions: Record<HarnessId, CollaborationSessionService>
   agents: Record<HarnessId, AgentRpcManager>
+  catalogs: Record<HarnessId, ModelCatalogProvider>
+  disabledProviders: Record<HarnessId, () => ReadonlySet<string>>
 }
 
 interface CollaborationMessage {
@@ -91,6 +96,8 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   private readonly sourcesByToken = new Map<string, CollaborationTarget>()
   private readonly activeWaitsByToken = new Map<string, number>()
   private readonly activeWaitTargets = new Set<string>()
+  private readonly activeCreations = new Set<string>()
+  private readonly pendingRuntimeTokens = new Map<string, string>()
 
   constructor(private readonly options: AgentCollaborationBridgeOptions) { super() }
 
@@ -102,15 +109,25 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     }
   }
 
-  bindSession(token: string | undefined, sessionFile: string | undefined): void {
-    if (!token || !sessionFile) return
+  bindSession(token: string | undefined, sessionFile: string | undefined, runtimeId?: string): void {
+    if (!token) return
+    if (runtimeId && !sessionFile) this.pendingRuntimeTokens.set(runtimeId, token)
+    if (!sessionFile) return
     const claim = this.claimForToken(token)
     if (claim && !claim.sessionPath) claim.sessionPath = sessionFile
+    if (runtimeId) this.pendingRuntimeTokens.delete(runtimeId)
+  }
+
+  private bindRuntimeSession(runtimeId: string, sessionFile: string): void {
+    const token = this.pendingRuntimeTokens.get(runtimeId)
+    if (token) this.bindSession(token, sessionFile, runtimeId)
   }
 
   protected async dispatch(method: string, params: Record<string, unknown>, claim: CapabilityClaim): Promise<unknown> {
     const source = await this.sourceFor(claim)
     if (method === 'list') return this.listPeers(source)
+    if (method === 'models') return this.listModels(source, params.query)
+    if (method === 'create') return this.withCreationAdmission(claim, () => this.create(source, params))
     const targetId = requireId(params.target_session_id, 'target_session_id')
     if (method === 'wait') return this.withWaitAdmission(claim, targetId, async () => {
       const target = await this.targetFor(source, targetId)
@@ -162,6 +179,93 @@ export class AgentCollaborationBridge extends CapabilityBridge {
       updated_at: session.updatedAt,
       live: Boolean(manager.getForSession(session.filePath)),
     }))
+  }
+
+  private async modelsFor(source: CollaborationTarget): Promise<PrimeModelDescriptor[]> {
+    const harness = source.session.harness
+    return availableModels(this.options.catalogs[harness], this.options.disabledProviders[harness]())
+  }
+
+  private async listModels(source: CollaborationTarget, rawQuery: unknown): Promise<Record<string, unknown>> {
+    const query = rawQuery === undefined ? '' : requireString(rawQuery, 'query', { max: 256, trim: true })
+    const available = await this.modelsFor(source)
+    const matches = query ? rankedModelMatches(query, available) : available
+    const models = matches.slice(0, 100).map((model) => ({
+      key: model.key,
+      name: model.name,
+      provider: model.provider,
+      reasoning_levels: model.availableThinkingLevels,
+    }))
+    return { models, matched: matches.length, returned: models.length, truncated: matches.length > models.length }
+  }
+
+  private async create(source: CollaborationTarget, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const prompt = requireString(params.prompt, 'prompt', { min: 1, max: MAX_CREATE_PROMPT_CHARS, trim: true })
+    const title = params.title === undefined ? undefined : requireString(params.title, 'title', { min: 1, max: 200, trim: true })
+    const modelQuery = params.model === undefined ? undefined : requireString(params.model, 'model', { min: 1, max: 512, trim: true })
+    const reasoningQuery = params.reasoning === undefined ? undefined : requireString(params.reasoning, 'reasoning', { min: 1, max: 64, trim: true })
+    const fast = params.fast === undefined ? undefined : requireBoolean(params.fast, 'fast')
+    const selectedModel = modelQuery ? resolveModel(modelQuery, await this.modelsFor(source)) : undefined
+    const selectedReasoning = selectedModel && reasoningQuery
+      ? resolveReasoning(reasoningQuery, selectedModel.availableThinkingLevels)
+      : undefined
+    const manager = source.manager
+    const runtime = await manager.start({
+      cwd: source.session.projectPath,
+      ...(selectedModel ? { model: selectedModel.key } : {}),
+      ...(selectedReasoning ? { thinking: selectedReasoning } : {}),
+      ...(fast !== undefined ? { fast } : {}),
+    })
+    let appliedReasoning = selectedReasoning
+    try {
+      if (!selectedModel && reasoningQuery) {
+        appliedReasoning = resolveReasoning(reasoningQuery, runtime.availableThinkingLevels ?? [])
+        await manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: appliedReasoning })
+      }
+      await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
+      if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
+      await manager.command(runtime.runtimeId, { type: 'get_state' })
+    } catch (error) {
+      this.pendingRuntimeTokens.delete(runtime.runtimeId)
+      await manager.stop(runtime.runtimeId).catch(() => false)
+      throw error
+    }
+    const current = manager.list().find((candidate) => candidate.runtimeId === runtime.runtimeId) ?? runtime
+    if (!current.sessionFile) {
+      this.pendingRuntimeTokens.delete(runtime.runtimeId)
+      await manager.stop(runtime.runtimeId).catch(() => false)
+      throw new Error('The harness accepted the prompt but did not create a visible session. The session was not reported as created.')
+    }
+    this.bindRuntimeSession(current.runtimeId, current.sessionFile)
+    const sessionPath = resolve(current.sessionFile)
+    const created = (await source.service.list(source.session.projectPath, false, true))
+      .find((candidate) => candidate.depth === 0 && resolve(candidate.filePath) === sessionPath)
+    if (!created) {
+      this.pendingRuntimeTokens.delete(runtime.runtimeId)
+      await manager.stop(runtime.runtimeId).catch(() => false)
+      throw new Error('The harness created a runtime but its session is not yet readable from GooeyPi')
+    }
+    return {
+      created: true,
+      session: {
+        id: created.id,
+        harness: created.harness,
+        title: created.title,
+        status: created.status,
+        updated_at: created.updatedAt,
+        live: true,
+      },
+      runtime_id: current.runtimeId,
+      ...(selectedModel ? { model: { key: selectedModel.key, name: selectedModel.name, provider: selectedModel.provider } } : {}),
+      ...(appliedReasoning ? { reasoning: appliedReasoning } : {}),
+      ...(fast !== undefined ? {
+        fast_mode: {
+          requested: fast,
+          enabled: current.serviceTier === 'priority',
+          available: current.fastModeAvailable ?? current.fastModeSupported ?? false,
+        },
+      } : {}),
+    }
   }
 
   private async targetFor(source: CollaborationTarget, targetId: string): Promise<CollaborationTarget> {
@@ -242,6 +346,13 @@ export class AgentCollaborationBridge extends CapabilityBridge {
       if (remaining > 0) this.activeWaitsByToken.set(claim.token, remaining)
       else this.activeWaitsByToken.delete(claim.token)
     }
+  }
+
+  private async withCreationAdmission<T>(claim: CapabilityClaim, action: () => Promise<T>): Promise<T> {
+    if (this.activeCreations.has(claim.token)) throw new Error('A session creation is already active for this runtime')
+    this.activeCreations.add(claim.token)
+    try { return await action() }
+    finally { this.activeCreations.delete(claim.token) }
   }
 
   private async wait(target: CollaborationTarget, rawCursor: unknown, rawTimeout: unknown): Promise<CollaborationSnapshot & { timed_out: boolean }> {

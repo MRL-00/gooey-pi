@@ -691,6 +691,8 @@ async function bootstrap(): Promise<void> {
     extensionPath: collaborationExtensionPath,
     sessions: { prime: sessions, omp: ompSessions, pi: piSessions },
     agents: { prime: agents, omp: ompManager, pi: piManager },
+    catalogs: { prime: providers, omp: ompCatalog, pi: piCatalog },
+    disabledProviders: { prime: disabledProviders, omp: ompDisabledProviders, pi: piDisabledProviders },
   })
   await Promise.all([browserBridge.start(), collaborationBridge.start()])
   agentBrowserBridge = browserBridge
@@ -706,7 +708,7 @@ async function bootstrap(): Promise<void> {
   }))
   agents.setRuntimeStartListener((environment, info) => {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
-    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
@@ -724,7 +726,7 @@ async function bootstrap(): Promise<void> {
   }))
   ompManager.setRuntimeStartListener((environment, info) => {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
-    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
@@ -736,7 +738,7 @@ async function bootstrap(): Promise<void> {
   }))
   piManager.setRuntimeStartListener((environment, info) => {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
-    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile)
+    collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
   if (shutdownStarted) return
   const meta: AppMeta = {

@@ -2,12 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { PRIME_THINKING_LEVELS } from '../../src/types/api'
 import type {
   AppSettings,
   HarnessId,
   PrimeModelDescriptor,
-  PrimeThinkingLevel,
   ProjectRecord,
   VoiceCredentialProvider,
   VoiceCredentialStatus,
@@ -17,6 +15,7 @@ import type {
 import type { AgentRpcManager } from './agent-rpc'
 import { HARNESSES } from './harness'
 import type { ModelCatalogProvider } from './model-catalog'
+import { availableModels, rankedModelMatches, resolveModel, resolveReasoning } from './model-selection'
 import type { ProcessResult } from './process-utils'
 import type { ProjectService } from './projects'
 import { isRecord, requireExistingPath, requireId, requireRecord, requireString } from './validation'
@@ -69,82 +68,6 @@ function boundedAudio(value: unknown): Uint8Array {
 
 function cleanText(value: unknown, label: string, max = 1_000_000): string {
   return requireString(value, label, { min: 1, max, trim: true })
-}
-
-const SPOKEN_NUMBER_TOKENS: Record<string, string> = {
-  zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
-}
-
-function normalizedModelText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .map((token) => SPOKEN_NUMBER_TOKENS[token] ?? token)
-    .join(' ')
-}
-
-function modelMatchScore(query: string, model: PrimeModelDescriptor): number {
-  const wanted = normalizedModelText(query)
-  if (!wanted) return 0
-  const fields = [model.key, model.id, model.name, `${model.provider} ${model.name}`, `${model.provider} ${model.id}`]
-    .map(normalizedModelText)
-  if (fields.includes(wanted)) return 10_000
-  const wantedTokens = new Set(wanted.split(' '))
-  let best = 0
-  for (const field of fields) {
-    if (field.includes(wanted) || wanted.includes(field)) best = Math.max(best, 7_000 - Math.abs(field.length - wanted.length))
-    const fieldTokens = new Set(field.split(' '))
-    const overlap = [...wantedTokens].filter((token) => fieldTokens.has(token)).length
-    if (overlap) {
-      const coverage = overlap / wantedTokens.size
-      const precision = overlap / fieldTokens.size
-      best = Math.max(best, Math.round(4_000 * coverage + 1_000 * precision))
-    }
-  }
-  return best
-}
-
-function rankedModelMatches(query: string, models: readonly PrimeModelDescriptor[]): PrimeModelDescriptor[] {
-  return models
-    .map((model) => ({ model, score: modelMatchScore(query, model) }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score || left.model.name.localeCompare(right.model.name) || left.model.key.localeCompare(right.model.key))
-    .map(({ model }) => model)
-}
-
-function resolveModel(query: string, models: readonly PrimeModelDescriptor[]): PrimeModelDescriptor {
-  const match = rankedModelMatches(query, models)[0]
-  if (!match) throw new Error(`No available model from a visible provider matched “${query}”`)
-  return match
-}
-
-const REASONING_RANK = new Map(PRIME_THINKING_LEVELS.map((level, index) => [level, index]))
-
-function requestedReasoningRank(value: string): number {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const exact = PRIME_THINKING_LEVELS.find((level) => normalized === level)
-  if (exact) return REASONING_RANK.get(exact)!
-  if (/\b(max|maximum|highest|ultra)\b/.test(normalized)) return REASONING_RANK.get('max')!
-  if (/\b(xhigh|extra high|very high)\b/.test(normalized)) return REASONING_RANK.get('xhigh')!
-  if (/\b(high|deep|strong)\b/.test(normalized)) return REASONING_RANK.get('high')!
-  if (/\b(medium|mid|middle|normal|balanced|default)\b/.test(normalized)) return REASONING_RANK.get('medium')!
-  if (/\b(low|light|quick)\b/.test(normalized)) return REASONING_RANK.get('low')!
-  if (/\b(minimal|minimum|tiny|little)\b/.test(normalized)) return REASONING_RANK.get('minimal')!
-  if (/\b(off|none|no reasoning|disable)\b/.test(normalized)) return REASONING_RANK.get('off')!
-  return REASONING_RANK.get('medium')!
-}
-
-function resolveReasoning(value: string, available: readonly PrimeThinkingLevel[]): PrimeThinkingLevel {
-  if (!available.length) throw new Error('The selected model does not expose any reasoning levels')
-  const wanted = requestedReasoningRank(value)
-  return [...available].sort((left, right) => {
-    const leftRank = REASONING_RANK.get(left)!
-    const rightRank = REASONING_RANK.get(right)!
-    const distance = Math.abs(leftRank - wanted) - Math.abs(rightRank - wanted)
-    return distance || (wanted >= REASONING_RANK.get('medium')! ? rightRank - leftRank : leftRank - rightRank)
-  })[0]
 }
 
 function localContext(harness: HarnessId): Record<string, string> {
@@ -459,9 +382,7 @@ export class VoiceService {
   }
 
   private async availableModels(harness: HarnessId): Promise<PrimeModelDescriptor[]> {
-    const catalog = await this.options.catalogs[harness].catalog(false, this.disabledProviders(harness))
-    const enabledProviders = new Set(catalog.providers.filter((provider) => provider.enabled).map((provider) => provider.id))
-    return catalog.models.filter((model) => model.available && enabledProviders.has(model.provider))
+    return availableModels(this.options.catalogs[harness], this.disabledProviders(harness))
   }
 
   private async listModels(args: Record<string, unknown>, harness: HarnessId): Promise<VoiceToolResult> {

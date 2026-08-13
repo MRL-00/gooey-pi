@@ -28,6 +28,9 @@ const child: SessionRecord = {
 const archived: SessionRecord = {
   ...target, id: '019f0000-0000-7000-8000-000000000005', filePath: '/sessions/archived.jsonl', title: 'Archived peer', archived: true,
 }
+const created: SessionRecord = {
+  ...target, id: '019f0000-0000-7000-8000-000000000006', filePath: '/sessions/created.jsonl', title: 'Model reviewer', status: 'running',
+}
 
 function service(records: SessionRecord[], transcripts: Record<string, TranscriptMessage[]> = {}) {
   return {
@@ -36,20 +39,32 @@ function service(records: SessionRecord[], transcripts: Record<string, Transcrip
   }
 }
 
-function manager(runtime?: RuntimeInfo) {
+function manager(runtime?: RuntimeInfo, onCreate?: () => void) {
   let current = runtime
   return {
     getForSession: vi.fn((filePath: string) => current?.sessionFile === filePath ? current : undefined),
-    start: vi.fn(async ({ cwd, sessionPath }: { cwd: string; sessionPath?: string }) => {
-      current = { runtimeId: 'runtime-awakened', harness: target.harness, sessionId: target.id, sessionFile: sessionPath, cwd, isStreaming: false }
+    start: vi.fn(async ({ cwd, sessionPath, model, fast }: { cwd: string; sessionPath?: string; model?: string; fast?: boolean }) => {
+      if (sessionPath) current = { runtimeId: 'runtime-awakened', harness: target.harness, sessionId: target.id, sessionFile: sessionPath, cwd, isStreaming: false }
+      else {
+        onCreate?.()
+        const fastModeSupported = model === 'openai-codex/gpt-5.6-sol'
+        current = {
+          runtimeId: 'runtime-created', harness: created.harness, sessionId: created.id, sessionFile: created.filePath, cwd, isStreaming: false,
+          availableThinkingLevels: ['low', 'high'], fastModeSupported,
+          ...(fast ? { fastModeAvailable: fastModeSupported, serviceTier: fastModeSupported ? 'priority' : 'default' } : {}),
+        }
+      }
       return current
     }),
     command: vi.fn(async () => ({ ok: true })),
+    list: vi.fn(() => current ? [current] : []),
+    stop: vi.fn(async () => true),
   }
 }
 
 async function fixture(live = true) {
-  const primeSessions = service([source, target, foreign, child, archived], {
+  const records = [source, target, foreign, child, archived]
+  const primeSessions = service(records, {
     [target.filePath]: [
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Implement the API.' }] },
       { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'The endpoint is ready.' }] },
@@ -58,13 +73,35 @@ async function fixture(live = true) {
   const targetRuntime: RuntimeInfo | undefined = live ? {
     runtimeId: 'runtime-target', harness: 'prime', sessionId: target.id, sessionFile: target.filePath, cwd: '/project', isStreaming: false,
   } : undefined
-  const primeManager = manager(targetRuntime)
+  const primeManager = manager(targetRuntime, () => records.push(created))
   const emptySessions = service([])
   const emptyManager = manager()
   const bridge = new AgentCollaborationBridge({
     extensionPath: '/app/extensions/omp-work-collaboration.ts',
     sessions: { prime: primeSessions, omp: emptySessions, pi: emptySessions },
     agents: { prime: primeManager as unknown as AgentRpcManager, omp: emptyManager as unknown as AgentRpcManager, pi: emptyManager as unknown as AgentRpcManager },
+    catalogs: {
+      prime: {
+        catalog: vi.fn(async (_force = false, disabled: ReadonlySet<string> = new Set()) => ({
+          primeVersion: 'test', refreshedAt: '2026-01-01T00:00:00.000Z',
+          providers: [
+            { id: 'openai-codex', name: 'OpenAI Codex', authMethod: 'oauth' as const, configured: true, modelCount: 1, availableModelCount: 1, enabled: !disabled.has('openai-codex') },
+            { id: 'hidden', name: 'Hidden', authMethod: 'api_key' as const, configured: true, modelCount: 1, availableModelCount: 1, enabled: !disabled.has('hidden') },
+          ],
+          models: [{
+            key: 'openai-codex/gpt-5.6-sol', provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol',
+            reasoning: true, input: ['text'] as const, contextWindow: 128_000, maxTokens: 16_000,
+            availableThinkingLevels: ['low', 'high', 'max'] as const, fastModeSupported: true, available: true,
+          }, {
+            key: 'hidden/secret', provider: 'hidden', id: 'secret', name: 'Secret', reasoning: true, input: ['text'] as const,
+            contextWindow: 128_000, maxTokens: 16_000, availableThinkingLevels: ['high'] as const, fastModeSupported: false, available: true,
+          }],
+        })),
+      },
+      omp: { catalog: vi.fn(async () => ({ primeVersion: 'test', refreshedAt: '', providers: [], models: [] })) },
+      pi: { catalog: vi.fn(async () => ({ primeVersion: 'test', refreshedAt: '', providers: [], models: [] })) },
+    } as unknown as ConstructorParameters<typeof AgentCollaborationBridge>[0]['catalogs'],
+    disabledProviders: { prime: () => new Set(['hidden']), omp: () => new Set(), pi: () => new Set() },
   })
   await bridge.start()
   bridges.push(bridge)
@@ -122,6 +159,53 @@ describe('AgentCollaborationBridge', () => {
     const waited = await call('wait', { target_session_id: target.id, timeout_ms: 100 })
     expect(waited.status).toBe(200)
     expect(waited.body.result).toMatchObject({ timed_out: false, live: true })
+  })
+
+  it('lists GUI-visible models and creates a readable peer with the selected model and reasoning', async () => {
+    const { bridge, call, primeManager } = await fixture()
+    const createdEnvironment = bridge.environmentFor({ cwd: '/project', harness: 'prime' })
+    bridge.bindSession(createdEnvironment.GOOEYPI_COLLABORATION_TOKEN, undefined, 'runtime-created')
+    const models = await call('models', { query: 'GPT five six sol' })
+    expect(models.status).toBe(200)
+    expect(models.body.result).toMatchObject({
+      models: [{ key: 'openai-codex/gpt-5.6-sol', reasoning_levels: ['low', 'high', 'max'] }],
+      matched: 1,
+    })
+    expect(JSON.stringify(models.body.result)).not.toContain('Secret')
+
+    const response = await call('create', {
+      prompt: 'Review the model integration.', title: 'Model reviewer', model: 'GPT five six sol', reasoning: 'very high', fast: true,
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.result).toMatchObject({
+      created: true,
+      session: { id: created.id, harness: 'prime', title: 'Model reviewer', live: true },
+      runtime_id: 'runtime-created',
+      model: { key: 'openai-codex/gpt-5.6-sol' },
+      reasoning: 'max',
+      fast_mode: { requested: true, enabled: true, available: true },
+    })
+    expect(primeManager.start).toHaveBeenCalledWith({
+      cwd: '/project', model: 'openai-codex/gpt-5.6-sol', thinking: 'max', fast: true,
+    })
+    expect(primeManager.command).toHaveBeenNthCalledWith(1, 'runtime-created', { type: 'prompt', message: 'Review the model integration.' })
+    expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'set_session_name', name: 'Model reviewer' })
+    expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'get_state' })
+    const createdList = await call('list', {}, createdEnvironment.GOOEYPI_COLLABORATION_TOKEN)
+    expect(createdList.status).toBe(200)
+    expect(createdList.body.result).toEqual(expect.arrayContaining([expect.objectContaining({ id: target.id })]))
+    expect(createdList.body.result).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: created.id })]))
+  })
+
+  it('starts normally and reports unavailable when fast mode is requested without model support', async () => {
+    const { call, primeManager } = await fixture()
+    const response = await call('create', { prompt: 'Review the fallback.', fast: true })
+    expect(response.status).toBe(200)
+    expect(response.body.result).toMatchObject({
+      created: true,
+      fast_mode: { requested: true, enabled: false, available: false },
+    })
+    expect(primeManager.start).toHaveBeenCalledWith({ cwd: '/project', fast: true })
   })
 
   it('serializes concurrent deliveries to the same target', async () => {
