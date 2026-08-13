@@ -138,11 +138,19 @@ describe('Composer session mentions', () => {
     const option = [...container.querySelectorAll('[role="option"]')].find((item) => item.textContent?.includes('@API owner')) as HTMLButtonElement
     expect(option).toBeDefined()
     await act(async () => option.click())
-    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Coordinate with @API owner ')
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.value).toBe('Coordinate with @API owner ')
+    expect(textarea.selectionStart).toBe(textarea.value.length)
+    expect(textarea.selectionEnd).toBe(textarea.value.length)
+    await act(async () => {
+      textarea.setRangeText('continue', textarea.selectionStart, textarea.selectionEnd, 'end')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(textarea.value).toBe('Coordinate with @API owner continue')
     await clickSend()
 
     const [prompt] = onSend.mock.calls[0]
-    expect(prompt.startsWith('Coordinate with @API owner\n\n')).toBe(true)
+    expect(prompt.startsWith('Coordinate with @API owner continue\n\n')).toBe(true)
     expect(prompt).toContain('pi session UUID 019f0000-0000-7000-8000-000000000002')
     expect(prompt).toContain('Use session_read, session_send, and session_wait')
   })

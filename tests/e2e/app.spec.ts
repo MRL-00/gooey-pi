@@ -996,7 +996,34 @@ test.describe('Prime Work desktop smoke', () => {
     const reference = page.getByRole('option', { name: /@Ownership peer fixture/ })
     await expect(reference).toBeVisible()
     await reference.click()
-    await composer.fill(`${await composer.inputValue()}about ownership`)
+    const caret = await composer.evaluate((element) => {
+      const textarea = element as HTMLTextAreaElement
+      return { start: textarea.selectionStart, end: textarea.selectionEnd, length: textarea.value.length }
+    })
+    expect(caret).toEqual({ start: caret.length, end: caret.length, length: caret.length })
+    const mentionStyles = await page.evaluate(() => {
+      const textarea = document.querySelector('.composer-input textarea')
+      const mark = document.querySelector('.composer-input__highlight mark')
+      if (!textarea || !mark) return null
+      const input = getComputedStyle(textarea)
+      const highlight = getComputedStyle(mark)
+      return {
+        inputFont: input.font,
+        highlightFont: highlight.font,
+        inputLetterSpacing: input.letterSpacing,
+        highlightLetterSpacing: highlight.letterSpacing,
+        background: highlight.backgroundColor,
+        border: highlight.borderTopWidth,
+      }
+    })
+    expect(mentionStyles).toMatchObject({
+      inputFont: mentionStyles?.highlightFont,
+      inputLetterSpacing: mentionStyles?.highlightLetterSpacing,
+      background: 'rgba(0, 0, 0, 0)',
+      border: '0px',
+    })
+    await composer.pressSequentially('about ownership')
+    await expect(composer).toHaveValue('Coordinate with @Ownership peer fixture about ownership')
     await composer.press('Enter')
 
     const marker = join(fixtureRoot, 'prompt-args.json')
@@ -1015,7 +1042,10 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(userMessage).toBeVisible()
     await expect(userMessage).not.toContainText('019fdf24-cccc-7000-8000-000000000003')
     await expect(userMessage).not.toContainText('GOOEYPI SESSION REFERENCES')
-    await userMessage.getByRole('button', { name: 'Open session Ownership peer fixture' }).click()
+    const linkedMention = userMessage.getByRole('link', { name: 'Open session Ownership peer fixture' })
+    await expect(linkedMention).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(linkedMention).toHaveCSS('border-top-width', '0px')
+    await linkedMention.click()
     await expect(page.locator('.session-row-wrap').filter({ hasText: 'Ownership peer fixture' })).toHaveClass(/is-selected/)
   })
 

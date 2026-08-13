@@ -23,7 +23,7 @@
 .composer-input > textarea { position: relative; z-index: 1; display: block; resize: none; outline: 0; color: transparent; background: transparent; caret-color: var(--text); -webkit-text-fill-color: transparent; }
 .composer-input > textarea::placeholder { color: var(--text-tertiary); -webkit-text-fill-color: var(--text-tertiary); }
 .composer-input__highlight { position: absolute; z-index: 0; inset: 0; overflow: hidden; color: var(--text); pointer-events: none; }
-.composer-input__highlight mark { color: var(--prime); background: color-mix(in srgb, var(--prime) 10%, transparent); border-radius: 3px; font-weight: 620; }
+.composer-input__highlight mark { padding: 0; border: 0; border-radius: 0; color: var(--prime); background: transparent; font: inherit; letter-spacing: inherit; }
 .composer-attachments { display: flex; align-items: center; gap: 6px; padding: 1px 6px 7px; overflow-x: auto; }
 .composer-attachment { max-width: 190px; height: 34px; display: flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 3px 4px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
 .composer-attachment > img { width: 26px; height: 26px; flex: 0 0 auto; border-radius: 4px; object-fit: cover; }
