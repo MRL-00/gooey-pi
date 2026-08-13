@@ -1069,7 +1069,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(userMessage).toBeVisible()
     await expect(userMessage).not.toContainText('019fdf24-cccc-7000-8000-000000000003')
     await expect(userMessage).not.toContainText('GOOEYPI SESSION REFERENCES')
-    const linkedMention = userMessage.getByRole('link', { name: 'Open session Ownership peer fixture' })
+    const linkedMention = userMessage.getByRole('button', { name: 'Open session Ownership peer fixture' })
     await expect(linkedMention).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect(linkedMention).toHaveCSS('border-top-width', '0px')
     await linkedMention.click()

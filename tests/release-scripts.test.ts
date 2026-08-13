@@ -21,7 +21,7 @@ import {
   validateWindowsReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
-import { expectedGitHubReleaseAssets, prepareGitHubRelease } from '../scripts/release/prepare-github-release.mjs'
+import { expectedGitHubReleaseAssets, parseReleasePlatforms, prepareGitHubRelease } from '../scripts/release/prepare-github-release.mjs'
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
 import { assertReleaseTag } from '../scripts/release/validate-release-tag.mjs'
 // after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
@@ -283,6 +283,8 @@ describe('release preflight', () => {
     expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
     expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
     expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
+    expect(releaseWorkflow).toContain("needs.package-windows.result == 'skipped'")
+    expect(releaseWorkflow).toContain('--platforms "$platforms"')
     expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
     expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
   })
@@ -302,7 +304,7 @@ describe('release preflight', () => {
     expect(workflow).toContain('--verify-tag')
     expect(workflow).toContain('--fail-on-no-commits')
     expect(workflow).toContain('--generate-notes')
-    expect(workflow).toMatch(/release-packages:\n {4}needs: \[package, package-linux, package-windows\]\n {4}runs-on: ubuntu-22\.04\n {4}permissions:\n {6}contents: write/)
+    expect(workflow).toMatch(/release-packages:\n {4}needs: \[package, package-linux, package-windows\]\n {4}if: always\(\).*\n {4}runs-on: ubuntu-22\.04\n {4}permissions:\n {6}contents: write/)
   })
 
   test('ships both mac architectures as separate builds from native-arch runners', () => {
@@ -327,6 +329,13 @@ describe('release preflight', () => {
 })
 
 describe('GitHub Release publication', () => {
+  test('selects an exact enabled platform set', () => {
+    expect(parseReleasePlatforms('mac,linux')).toEqual(['mac', 'linux'])
+    expect(expectedGitHubReleaseAssets('0.2.0', ['mac', 'linux'])).not.toContain('GooeyPi-0.2.0-win-x64.exe')
+    expect(() => parseReleasePlatforms('mac,mac')).toThrow(/duplicates/)
+    expect(() => parseReleasePlatforms('mac,android')).toThrow(/Unsupported/)
+  })
+
   test('requires the tag and both package manifests to agree exactly', () => {
     expect(assertReleaseTag('v0.2.0', '0.2.0', '0.2.0')).toEqual({ tag: 'v0.2.0', version: '0.2.0' })
     expect(() => assertReleaseTag('0.2.0', '0.2.0', '0.2.0')).toThrow(/must exactly match/)

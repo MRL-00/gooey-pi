@@ -235,7 +235,7 @@ export class PluginService {
       if (adapter?.enabled) return { ok: true, output: 'Pi MCP Adapter is already enabled.' }
       if (!adapter) return await this.install('npm:pi-mcp-adapter')
     } else {
-      if (!adapter || !adapter.enabled) return { ok: true, output: 'Pi MCP Adapter is already disabled.' }
+      if (!adapter?.enabled) return { ok: true, output: 'Pi MCP Adapter is already disabled.' }
     }
     const settingsPath = join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {

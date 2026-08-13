@@ -5,19 +5,27 @@ import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { validateReleaseTag } from './validate-release-tag.mjs'
 
-export function expectedGitHubReleaseAssets(version) {
-  return [
-    `GooeyPi-${version}-arm64.dmg`,
-    `GooeyPi-${version}-arm64.zip`,
-    `GooeyPi-${version}-x64.dmg`,
-    `GooeyPi-${version}-x64.zip`,
-    `GooeyPi-${version}-linux-x64.AppImage`,
-    `GooeyPi-${version}-linux-x64.deb`,
-    `GooeyPi-${version}-linux-x64.pacman`,
-    `GooeyPi-${version}-linux-x64.rpm`,
-    `GooeyPi-${version}-win-x64.exe`,
-    `GooeyPi-${version}-win-x64.zip`,
-  ].sort()
+const RELEASE_PLATFORMS = ['mac', 'linux', 'win']
+
+export function parseReleasePlatforms(value = RELEASE_PLATFORMS.join(',')) {
+  const platforms = value
+    .split(',')
+    .map((platform) => platform.trim())
+    .filter(Boolean)
+  if (!platforms.length) throw new Error('At least one release platform is required')
+  if (new Set(platforms).size !== platforms.length) throw new Error(`Release platforms contain duplicates: ${value}`)
+  const unsupported = platforms.filter((platform) => !RELEASE_PLATFORMS.includes(platform))
+  if (unsupported.length) throw new Error(`Unsupported release platforms: ${unsupported.join(', ')}`)
+  return platforms
+}
+
+export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFORMS) {
+  const assets = {
+    mac: [`GooeyPi-${version}-arm64.dmg`, `GooeyPi-${version}-arm64.zip`, `GooeyPi-${version}-x64.dmg`, `GooeyPi-${version}-x64.zip`],
+    linux: [`GooeyPi-${version}-linux-x64.AppImage`, `GooeyPi-${version}-linux-x64.deb`, `GooeyPi-${version}-linux-x64.pacman`, `GooeyPi-${version}-linux-x64.rpm`],
+    win: [`GooeyPi-${version}-win-x64.exe`, `GooeyPi-${version}-win-x64.zip`],
+  }
+  return platforms.flatMap((platform) => assets[platform]).sort()
 }
 
 function listFiles(directory, found = []) {
@@ -36,13 +44,13 @@ async function sha256(path) {
   return hash.digest('hex')
 }
 
-export async function prepareGitHubRelease({ inputDirectory, outputDirectory, tag, projectDirectory = process.cwd() }) {
+export async function prepareGitHubRelease({ inputDirectory, outputDirectory, tag, platforms = RELEASE_PLATFORMS, projectDirectory = process.cwd() }) {
   const release = validateReleaseTag(tag, projectDirectory)
   if (!existsSync(inputDirectory) || !lstatSync(inputDirectory).isDirectory()) throw new Error(`Downloaded release artifact directory does not exist: ${inputDirectory}`)
   if (existsSync(outputDirectory) && readdirSync(outputDirectory).length) throw new Error(`GitHub Release output directory must be empty: ${outputDirectory}`)
   mkdirSync(outputDirectory, { recursive: true })
 
-  const expected = expectedGitHubReleaseAssets(release.version)
+  const expected = expectedGitHubReleaseAssets(release.version, platforms)
   const expectedSet = new Set(expected)
   const selected = new Map()
   for (const path of listFiles(inputDirectory)) {
@@ -80,8 +88,9 @@ if (invokedAsScript()) {
     const inputDirectory = option('--input')
     const outputDirectory = option('--output')
     const tag = option('--tag')
+    const platforms = parseReleasePlatforms(option('--platforms'))
     if (!inputDirectory || !outputDirectory) throw new Error('Provide --input and --output directories')
-    const release = await prepareGitHubRelease({ inputDirectory: resolve(inputDirectory), outputDirectory: resolve(outputDirectory), tag })
+    const release = await prepareGitHubRelease({ inputDirectory: resolve(inputDirectory), outputDirectory: resolve(outputDirectory), tag, platforms })
     console.log(`Prepared ${release.assets.length} assets and ${release.checksumFile} for ${release.tag}.`)
   } catch (error) {
     console.error(`GitHub Release preparation failed: ${error instanceof Error ? error.message : String(error)}`)

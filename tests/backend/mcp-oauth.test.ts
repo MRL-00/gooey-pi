@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createMcpOAuthProvider } from '@earendil-works/pi-ai/mcp'
+import { createMcpOAuthProvider } from 'prime-agent-ai/mcp'
 
 afterEach(() => {
   vi.unstubAllGlobals()

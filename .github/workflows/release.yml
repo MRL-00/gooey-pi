@@ -10,6 +10,11 @@ on:
         description: Existing semantic version tag to publish (for example, v0.2.0)
         required: true
         type: string
+      include_windows:
+        description: Build signed Windows packages (requires Authenticode secrets)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   RELEASE_REF: ${{ inputs.tag || github.ref }}
+  RELEASE_WINDOWS_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true') }}
 
 jobs:
   validate:
@@ -168,6 +174,7 @@ jobs:
           if-no-files-found: error
 
   package-windows:
+    if: (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true')
     needs: [validate, quality, hermetic-e2e]
     runs-on: windows-2022
     steps:
@@ -201,6 +208,7 @@ jobs:
 
   release-packages:
     needs: [package, package-linux, package-windows]
+    if: always() && needs.package.result == 'success' && needs.package-linux.result == 'success' && (needs.package-windows.result == 'success' || needs.package-windows.result == 'skipped')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -219,7 +227,10 @@ jobs:
           pattern: gooeypi-public-*
           path: downloaded-release-artifacts
       - name: Select release assets and generate SHA-256 checksums
-        run: node scripts/release/prepare-github-release.mjs --input downloaded-release-artifacts --output release-assets --tag "$RELEASE_TAG"
+        run: |
+          platforms='mac,linux'
+          if [ "$RELEASE_WINDOWS_ENABLED" = 'true' ]; then platforms="$platforms,win"; fi
+          node scripts/release/prepare-github-release.mjs --input downloaded-release-artifacts --output release-assets --tag "$RELEASE_TAG" --platforms "$platforms"
       - name: Attest release assets
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:

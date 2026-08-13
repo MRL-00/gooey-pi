@@ -198,13 +198,13 @@ function SessionReferenceText({ text, references, onOpen }: { text: string; refe
       if (!found || foundIndex < 0) { parts.push(line.slice(cursor)); break }
       if (foundIndex > cursor) parts.push(line.slice(cursor, foundIndex))
       const reference = found
-      parts.push(<a
+      parts.push(<button
+        type="button"
         key={`${reference.harness}:${reference.sessionId}:${foundIndex}`}
-        href="#open-session"
         className="session-reference"
         aria-label={`Open session ${reference.label.slice(1)}`}
-        onClick={(event) => { event.preventDefault(); onOpen?.(reference.sessionId, reference.harness) }}
-      >{reference.label}</a>)
+        onClick={() => onOpen?.(reference.sessionId, reference.harness)}
+      >{reference.label}</button>)
       cursor = foundIndex + reference.label.length
     }
     return <Fragment key={`${lineIndex}-${line.slice(0, 12)}`}>{parts}{lineIndex < lines.length - 1 ? <br /> : null}</Fragment>

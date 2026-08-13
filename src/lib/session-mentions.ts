@@ -21,8 +21,8 @@ export interface RoutedSessionReference {
   harness: HarnessId
 }
 
-const boundaryBefore = (value: string | undefined): boolean => value === undefined || /[\s([{\"'`]/.test(value)
-const boundaryAfter = (value: string | undefined): boolean => value === undefined || /[\s.,!?;:()[\]{}\"'`]/.test(value)
+const boundaryBefore = (value: string | undefined): boolean => value === undefined || /[\s([{"'`]/.test(value)
+const boundaryAfter = (value: string | undefined): boolean => value === undefined || /[\s.,!?;:()[\]{}"'`]/.test(value)
 
 /** Resolves exact visible @title references to stable session UUIDs. */
 export function findSessionMentions(value: string, sessions: readonly SessionRecord[], preferredIds: ReadonlyMap<string, string> = new Map()): SessionMention[] {

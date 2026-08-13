@@ -162,9 +162,9 @@ describe('transcript rendering', () => {
       id: 'session-reference', role: 'user', parts: [{ type: 'text', text: 'Coordinate with @API owner.\n\n===== BEGIN GOOEYPI SESSION REFERENCES =====\n- "@API owner": prime session UUID secret-uuid. Use session_read.\n===== END GOOEYPI SESSION REFERENCES =====' }],
     }])
     expect(html).toContain('Coordinate with ')
-    expect(html).toContain('>@API owner</a>.')
+    expect(html).toContain('>@API owner</button>.')
     expect(html).toContain('class="session-reference"')
-    expect(html).toContain('href="#open-session"')
+    expect(html).toContain('type="button"')
     expect(html).toContain('aria-label="Open session API owner"')
     expect(html).not.toContain('secret-uuid')
     expect(html).not.toContain('GOOEYPI SESSION REFERENCES')
