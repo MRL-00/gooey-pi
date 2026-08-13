@@ -24,7 +24,16 @@ export function parseReleasePlatforms(value = RELEASE_PLATFORMS.join(',')) {
 export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFORMS) {
   const assets = {
     mac: [`GooeyPi-${version}-m-chip.dmg`, `GooeyPi-${version}-arm64.zip`, `GooeyPi-${version}-intel-chip.dmg`, `GooeyPi-${version}-x64.zip`],
-    linux: [`GooeyPi-${version}-linux-x86_64.AppImage`, `GooeyPi-${version}-linux-amd64.deb`, `GooeyPi-${version}-linux-x64.pacman`, `GooeyPi-${version}-linux-x86_64.rpm`],
+    linux: [
+      `GooeyPi-${version}-linux-arm64.AppImage`,
+      `GooeyPi-${version}-linux-arm64.deb`,
+      `GooeyPi-${version}-linux-aarch64.pacman`,
+      `GooeyPi-${version}-linux-aarch64.rpm`,
+      `GooeyPi-${version}-linux-x86_64.AppImage`,
+      `GooeyPi-${version}-linux-amd64.deb`,
+      `GooeyPi-${version}-linux-x64.pacman`,
+      `GooeyPi-${version}-linux-x86_64.rpm`,
+    ],
     win: [`GooeyPi-${version}-win-x64.exe`, `GooeyPi-${version}-win-x64.zip`],
   }
   return platforms.flatMap((platform) => [...assets[platform], UPDATE_METADATA[platform]]).sort()
@@ -98,6 +107,7 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
   const expected = expectedGitHubReleaseAssets(release.version, platforms)
   const downloaded = expectedDownloadedReleaseAssets(release.version, platforms)
   const expectedSet = new Set(downloaded)
+  const publishedNameByDownloadedName = new Map(downloaded.map((name, index) => [name, expected[index]]))
   const selected = new Map()
   const metadata = new Map()
   for (const path of listFiles(inputDirectory)) {
@@ -126,7 +136,19 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
           throw new Error(`Update metadata references an unpublished release asset: ${file.url}`)
         }
       }
-      writeFileSync(destination, dump(manifest, { lineWidth: -1, noRefs: true, sortKeys: false }))
+      if (manifest.path !== undefined && !expectedSet.has(manifest.path)) {
+        throw new Error(`Update metadata references an unpublished release asset: ${manifest.path}`)
+      }
+      // The CI artifacts retain electron-builder's architecture filenames, but
+      // the public release may use clearer labels (for example, m-chip and
+      // intel-chip for the macOS DMGs). Keep the checksums intact while making
+      // every feed URL resolve to the filename that is actually published.
+      const publishedManifest = {
+        ...manifest,
+        files: manifest.files.map((file) => ({ ...file, url: publishedNameByDownloadedName.get(file.url) })),
+        ...(manifest.path === undefined ? {} : { path: publishedNameByDownloadedName.get(manifest.path) }),
+      }
+      writeFileSync(destination, dump(publishedManifest, { lineWidth: -1, noRefs: true, sortKeys: false }))
     } else copyFileSync(selected.get(downloaded[index]), destination)
     if (lstatSync(destination).size === 0) throw new Error(`Release asset is empty: ${name}`)
     checksumLines.push(`${await sha256(destination)}  ${name}`)

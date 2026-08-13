@@ -279,12 +279,12 @@ describe('release preflight', () => {
     // an unpacked application directory; every platform publishes its update feed.
     expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(3)
     expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/latest*.yml')
-    expect(releaseWorkflow).toContain('release/linux/**/latest*.yml')
+    expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/latest*.yml')
     expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
     expect(releaseWorkflow).toMatch(/needs: \[package, package-linux, package-windows\]/)
     expect(releaseWorkflow).toContain("needs.package-windows.result == 'skipped'")
     expect(releaseWorkflow).toContain('--platforms "$platforms"')
-    expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
+    expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/*.pacman')
     expect(releaseWorkflow).toContain('sudo apt-get install --yes libarchive-tools')
     expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
   })
@@ -327,6 +327,19 @@ describe('release preflight', () => {
     // Universal binaries are excluded by design: the release ships two builds.
     expect(releaseWorkflow).not.toContain('--universal')
   })
+
+  test('ships both Linux architectures as separately labeled native builds', () => {
+    const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+    expect(releaseWorkflow).toMatch(/package-linux:\n {4}needs: \[validate, quality, hermetic-e2e\]\n {4}strategy:/)
+    expect(releaseWorkflow).toMatch(/- arch: arm64\n {12}runner: ubuntu-24\.04-arm/)
+    expect(releaseWorkflow).toMatch(/- arch: x64\n {12}runner: ubuntu-22\.04/)
+    expect(releaseWorkflow).toContain('runs-on: ${{ matrix.runner }}')
+    expect(releaseWorkflow).toContain('npm run package:linux -- --skip-verify --arch ${{ matrix.arch }}')
+    expect(releaseWorkflow).toContain('name: gooeypi-public-linux-${{ matrix.arch }}')
+    expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/*.AppImage')
+    expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/latest*.yml')
+    expect(releaseWorkflow).toContain('electron-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles(')
+  })
 })
 
 describe('GitHub Release publication', () => {
@@ -336,7 +349,11 @@ describe('GitHub Release publication', () => {
     expect(expectedGitHubReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-intel-chip.dmg', 'GooeyPi-0.2.0-m-chip.dmg', 'GooeyPi-0.2.0-x64.zip', 'latest-mac.yml'])
     expect(expectedDownloadedReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-x64.dmg', 'GooeyPi-0.2.0-arm64.dmg', 'GooeyPi-0.2.0-x64.zip', 'latest-mac.yml'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['linux'])).toEqual([
+      'GooeyPi-0.2.0-linux-aarch64.pacman',
+      'GooeyPi-0.2.0-linux-aarch64.rpm',
       'GooeyPi-0.2.0-linux-amd64.deb',
+      'GooeyPi-0.2.0-linux-arm64.AppImage',
+      'GooeyPi-0.2.0-linux-arm64.deb',
       'GooeyPi-0.2.0-linux-x64.pacman',
       'GooeyPi-0.2.0-linux-x86_64.AppImage',
       'GooeyPi-0.2.0-linux-x86_64.rpm',
@@ -371,13 +388,16 @@ describe('GitHub Release publication', () => {
       mkdirSync(artifactDirectory)
       const updateTarget = name === 'latest-mac.yml' ? 'GooeyPi-0.2.0-arm64.zip' : name === 'latest-linux.yml' ? 'GooeyPi-0.2.0-linux-x86_64.AppImage' : 'GooeyPi-0.2.0-win-x64.exe'
       const content = name.startsWith('latest')
-        ? `version: 0.2.0\nfiles:\n  - url: ${updateTarget}\n    sha512: checksum-${index}\n    size: ${index + 1}\npath: ${updateTarget}\nsha512: checksum-${index}\n`
+        ? `version: 0.2.0\nfiles:\n  - url: ${updateTarget}\n    sha512: checksum-${index}\n    size: ${index + 1}\n${name === 'latest-mac.yml' ? '  - url: GooeyPi-0.2.0-arm64.dmg\n    sha512: checksum-arm64-dmg\n    size: 44\n' : ''}path: ${updateTarget}\nsha512: checksum-${index}\n`
         : `asset ${index}`
       writeFileSync(join(artifactDirectory, name), content)
     }
     const secondMacManifest = join(inputDirectory, 'macos-x64')
     mkdirSync(secondMacManifest)
     writeFileSync(join(secondMacManifest, 'latest-mac.yml'), 'version: 0.2.0\nfiles:\n  - url: GooeyPi-0.2.0-x64.zip\n    sha512: checksum-x64\n    size: 42\n')
+    const secondLinuxManifest = join(inputDirectory, 'linux-arm64')
+    mkdirSync(secondLinuxManifest)
+    writeFileSync(join(secondLinuxManifest, 'latest-linux.yml'), 'version: 0.2.0\nfiles:\n  - url: GooeyPi-0.2.0-linux-arm64.AppImage\n    sha512: checksum-linux-arm64\n    size: 43\n')
 
     try {
       const result = await prepareGitHubRelease({ inputDirectory, outputDirectory, projectDirectory, tag: 'v0.2.0' })
@@ -394,6 +414,11 @@ describe('GitHub Release publication', () => {
       const macFeed = readFileSync(join(outputDirectory, 'latest-mac.yml'), 'utf8')
       expect(macFeed).toContain('GooeyPi-0.2.0-arm64.zip')
       expect(macFeed).toContain('GooeyPi-0.2.0-x64.zip')
+      expect(macFeed).toContain('GooeyPi-0.2.0-m-chip.dmg')
+      expect(macFeed).not.toContain('GooeyPi-0.2.0-arm64.dmg')
+      const linuxFeed = readFileSync(join(outputDirectory, 'latest-linux.yml'), 'utf8')
+      expect(linuxFeed).toContain('GooeyPi-0.2.0-linux-x86_64.AppImage')
+      expect(linuxFeed).toContain('GooeyPi-0.2.0-linux-arm64.AppImage')
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
@@ -518,7 +543,7 @@ describe('post-package verification helpers', () => {
     const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
     const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
     expect(ciWorkflow).toContain('release/linux/**/*.pacman')
-    expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
+    expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/*.pacman')
   })
 
   test('fails closed when Windows Authenticode verification is not valid', () => {

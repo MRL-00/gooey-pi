@@ -145,7 +145,19 @@ jobs:
 
   package-linux:
     needs: [validate, quality, hermetic-e2e]
-    runs-on: ubuntu-22.04
+    strategy:
+      # Ship both Linux architectures from native runners so npm install and
+      # electron-builder package node-pty and ZeroMQ for the matching ABI.
+      # Keep the legs independent so one architecture can never mask the
+      # other's artifact or updater-feed failure.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -159,22 +171,22 @@ jobs:
           path: |
             ~/.cache/electron
             ~/.cache/electron-builder
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Install pacman packaging dependency
         run: |
           sudo apt-get update
           sudo apt-get install --yes libarchive-tools
       - run: npm ci
-      - run: npm run package:linux -- --skip-verify
+      - run: npm run package:linux -- --skip-verify --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: gooeypi-public-linux
+          name: gooeypi-public-linux-${{ matrix.arch }}
           path: |
-            release/linux/**/*.AppImage
-            release/linux/**/*.deb
-            release/linux/**/*.rpm
-            release/linux/**/*.pacman
-            release/linux/**/latest*.yml
+            release/linux/${{ matrix.arch }}/*.AppImage
+            release/linux/${{ matrix.arch }}/*.deb
+            release/linux/${{ matrix.arch }}/*.rpm
+            release/linux/${{ matrix.arch }}/*.pacman
+            release/linux/${{ matrix.arch }}/latest*.yml
           if-no-files-found: error
 
   package-windows:
