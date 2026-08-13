@@ -32,18 +32,20 @@ describe('PluginsPage bundled capability controls', () => {
   })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
-  it('toggles the universal ask_user capability and refreshes the catalog', async () => {
+  it('confirms before disabling the universal ask_user capability', async () => {
     const setEnabled = vi.fn(async () => undefined)
     const refresh = vi.fn(async () => undefined)
     await act(async () => {
       root.render(<PluginsPage
         harness="pi" skills={[askUser]} warnings={[]} loading={false}
         askUserEnabled={true} onSetAskUserEnabled={setEnabled}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
 
@@ -51,8 +53,97 @@ describe('PluginsPage bundled capability controls', () => {
     expect(toggle?.getAttribute('aria-pressed')).toBe('true')
     await act(async () => { toggle!.click(); await Promise.resolve(); await Promise.resolve() })
 
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog.textContent).toContain('Disable Ask user?')
+    expect(dialog.textContent).toContain('Are you sure?')
+    expect(setEnabled).not.toHaveBeenCalled()
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve(); await Promise.resolve() })
+
     expect(setEnabled).toHaveBeenCalledWith(false)
     expect(refresh).toHaveBeenCalledOnce()
+  })
+
+  it('enables Browser directly and confirms before disabling it', async () => {
+    const setBrowserEnabled = vi.fn(async () => undefined)
+    const browser: SkillRecord = { id: 'prime-work-browser', name: 'Browser', description: 'In-app browser.', kind: 'skill', location: 'system', enabled: false }
+    const render = async (enabled: boolean) => act(async () => {
+      root.render(<PluginsPage
+        harness="prime" skills={[browser]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={enabled} onSetBrowserEnabled={setBrowserEnabled}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })} onSetMcpSupport={async () => ({ ok: true, output: '' })}
+        onConnectMcp={async () => ({ ok: true, output: '' })} onSetMcpEnabled={async () => ({ ok: true, output: '' })}
+        onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined} onRunMcpCommand={async () => undefined}
+      />)
+    })
+    await render(false)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable Browser"]')!.click(); await Promise.resolve() })
+    expect(setBrowserEnabled).toHaveBeenCalledWith(true)
+
+    await render(true)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable Browser"]')!.click() })
+    expect(setBrowserEnabled).not.toHaveBeenCalledWith(false)
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve() })
+    expect(setBrowserEnabled).toHaveBeenCalledWith(false)
+  })
+
+  it('connects bundled MCPs from plus and confirms before disconnecting them', async () => {
+    const connectBundled = vi.fn(async () => undefined)
+    const disconnectBundled = vi.fn(async () => undefined)
+    const notion: SkillRecord = { id: 'prime-mcp-notion', name: 'Notion', description: 'Official MCP.', kind: 'mcp', location: 'bundled', enabled: false }
+    const render = async (enabled: boolean) => act(async () => {
+      root.render(<PluginsPage
+        harness="prime" skills={[{ ...notion, enabled }]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })} onSetMcpSupport={async () => ({ ok: true, output: '' })}
+        onConnectMcp={async () => ({ ok: true, output: '' })} onSetMcpEnabled={async () => ({ ok: true, output: '' })}
+        onConnectBundledMcp={connectBundled} onDisconnectBundledMcp={disconnectBundled} onRunMcpCommand={async () => undefined}
+      />)
+    })
+    await render(false)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable Notion"]')!.click(); await Promise.resolve() })
+    expect(connectBundled).toHaveBeenCalledWith('notion')
+
+    await render(true)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable Notion"]')!.click() })
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog.textContent).toContain('authenticate again')
+    expect(disconnectBundled).not.toHaveBeenCalled()
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve() })
+    expect(disconnectBundled).toHaveBeenCalledWith('notion')
+  })
+
+  it('confirms before disabling configured MCPs and re-enables them from plus', async () => {
+    const setMcpEnabled = vi.fn(async () => ({ ok: true, output: '' }))
+    const docs: SkillRecord = { id: 'mcp:user:docs', name: 'docs', description: 'HTTP MCP.', kind: 'mcp', location: 'user', enabled: true }
+    const render = async (enabled: boolean) => act(async () => {
+      root.render(<PluginsPage
+        harness="omp" skills={[{ ...docs, enabled }]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })} onSetMcpSupport={async () => ({ ok: true, output: '' })}
+        onConnectMcp={async () => ({ ok: true, output: '' })} onSetMcpEnabled={setMcpEnabled}
+        onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined} onRunMcpCommand={async () => undefined}
+      />)
+    })
+    await render(true)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable docs"]')!.click() })
+    expect(setMcpEnabled).not.toHaveBeenCalled()
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve() })
+    expect(setMcpEnabled).toHaveBeenCalledWith({ name: 'docs', scope: 'user', projectPath: undefined, enabled: false })
+
+    await render(false)
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable docs"]')!.click(); await Promise.resolve() })
+    expect(setMcpEnabled).toHaveBeenLastCalledWith({ name: 'docs', scope: 'user', projectPath: undefined, enabled: true })
   })
 
   it('opens the TryCUA installer instead of enabling when the driver is missing', async () => {
@@ -62,11 +153,13 @@ describe('PluginsPage bundled capability controls', () => {
       root.render(<PluginsPage
         harness="omp" skills={[computerUse]} warnings={[]} loading={false}
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={setEnabled} onOpenExternal={openExternal}
         onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
 
@@ -85,11 +178,13 @@ describe('PluginsPage bundled capability controls', () => {
       root.render(<PluginsPage
         harness="prime" skills={[]} warnings={[]} loading={false} activeProjectPath="/repo"
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={async () => undefined} onInstall={install}
         onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={login}
         onConnectMcp={connect}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
     expect(container.textContent).not.toContain('Prime MCP integrations require a matching Python skill package')
@@ -131,11 +226,13 @@ describe('PluginsPage bundled capability controls', () => {
       root.render(<PluginsPage
         harness="pi" skills={[piMcp]} warnings={[]} loading={false}
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={setMcpSupport} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Pi MCP Adapter"]')!
@@ -148,11 +245,13 @@ describe('PluginsPage bundled capability controls', () => {
       root.render(<PluginsPage
         harness="prime" skills={[]} warnings={[]} loading={false}
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
         onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={async () => ({ ok: true, output: '' })}
         onSetMcpSupport={setMcpSupport} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
     expect(container.querySelector('[role="status"]')).toBeNull()
@@ -166,11 +265,13 @@ describe('PluginsPage bundled capability controls', () => {
       root.render(<PluginsPage
         harness="pi" skills={[]} warnings={[]} loading={false} activeProjectPath="/repo"
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
         computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={openExternal}
         onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={installExtension}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
         onConnectMcp={async () => ({ ok: true, output: '' })}
+        onSetMcpEnabled={async () => ({ ok: true, output: '' })} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined}
       />)
     })
 

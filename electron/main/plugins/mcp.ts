@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { renameSync, type BigIntStats, type Stats } from 'node:fs'
 import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { HarnessId, McpConnectionInput, ProcessOutcome } from '../../../src/types/api'
+import type { HarnessId, McpConnectionInput, McpStateInput, ProcessOutcome } from '../../../src/types/api'
 import { isPathWithin, isRecord, requireString } from '../validation'
 import { errorCode, readAtMost } from './file-io'
 
@@ -301,6 +301,17 @@ export function validateMcpConnection(value: unknown, harness: HarnessId = 'prim
   throw new TypeError('MCP transport must be http or stdio')
 }
 
+export function validateMcpStateInput(value: unknown, harness: HarnessId = 'prime'): McpStateInput {
+  if (!isRecord(value)) throw new TypeError('MCP state must be an object')
+  const name = requireString(value.name, 'MCP server name', { min: 1, max: 64, trim: true })
+  const validName = harness === 'prime' ? /^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(name) : /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(name)
+  if (!validName || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new TypeError('MCP server name contains unsupported characters')
+  if (value.scope !== 'user' && value.scope !== 'project') throw new TypeError('MCP scope must be user or project')
+  const projectPath = value.scope === 'project' ? requireString(value.projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
+  if (typeof value.enabled !== 'boolean') throw new TypeError('MCP enabled state must be a boolean')
+  return { name, scope: value.scope, projectPath, enabled: value.enabled }
+}
+
 export async function prepareProjectSettingsPath(
   projectPath: string,
   options: { segments?: readonly string[]; filename?: string } = {},
@@ -392,6 +403,40 @@ export async function updateMcpSettings(
         return { ok: true, output: options.successMessage ?? (agentName === 'OMP'
           ? `Saved MCP server definition “${input.name}”. Start a new OMP session to load it.`
           : `Saved MCP server definition “${input.name}”. Install or add a matching integration skill, then start a new Prime session.`) }
+      }
+    }
+    throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)
+  } finally {
+    await release()
+  }
+}
+
+export async function updateMcpState(
+  target: string | ProjectSettingsPath,
+  input: McpStateInput,
+  fingerprint: FingerprintSettings = settingsFingerprint,
+  options: { agentName?: string } = {},
+): Promise<ProcessOutcome> {
+  const agentName = options.agentName ?? 'Prime Agent'
+  const settingsPath = typeof target === 'string' ? target : target.path
+  const verify = typeof target === 'string' ? undefined : target.verify
+  const release = await acquireSettingsLock(settingsPath, verify)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      await verify?.()
+      const snapshot = await readSettingsForUpdate(settingsPath, agentName)
+      await verify?.()
+      const settings = snapshot.settings
+      if (!isRecord(settings.mcpServers)) return { ok: false, reason: 'blocked', output: `MCP server “${input.name}” was not found in this scope.` }
+      const current = settings.mcpServers[input.name]
+      if (!isRecord(current)) return { ok: false, reason: 'blocked', output: `MCP server “${input.name}” was not found in this scope.` }
+      const currentlyEnabled = current.enabled !== false
+      if (currentlyEnabled === input.enabled) {
+        return { ok: true, output: `MCP server “${input.name}” is already ${input.enabled ? 'enabled' : 'disabled'}.` }
+      }
+      settings.mcpServers = { ...settings.mcpServers, [input.name]: { ...current, enabled: input.enabled } }
+      if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
+        return { ok: true, output: `${input.enabled ? 'Enabled' : 'Disabled'} MCP server “${input.name}”. Start a new ${agentName} session to apply the change.` }
       }
     }
     throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)

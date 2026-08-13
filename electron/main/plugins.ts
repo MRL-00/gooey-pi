@@ -8,7 +8,7 @@ import { resolveExecutable, type ExecutableSource } from './process-utils'
 import { isRecord, requireString } from './validation'
 import { discoverPlugins } from './plugins/catalog'
 import { readAtMost } from './plugins/file-io'
-import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, validateMcpConnection } from './plugins/mcp'
+import { acquireSettingsLock, prepareProjectSettingsPath, settingsFingerprint, updateMcpSettings, updateMcpState, validateMcpConnection, validateMcpStateInput } from './plugins/mcp'
 import type { ProjectSettingsPath } from './plugins/mcp'
 import { executeOmpPluginInstall, executePackageInstall, executePiPluginInstall, executePiPluginRemove, validatePackageSource } from './plugins/package-execution'
 import { installOmpExtension, validateExtensionInstallInput } from './plugins/extension-installation'
@@ -240,6 +240,29 @@ export class PluginService {
       input,
       (path) => this.settingsFingerprint(path),
       options,
+    ))
+    this.settingsMutation = mutation.then(() => undefined, () => undefined)
+    return await mutation
+  }
+
+  async setMcpEnabled(inputValue: unknown): Promise<ProcessOutcome> {
+    const input = validateMcpStateInput(inputValue, this.harness)
+    let settingsTarget: string | ProjectSettingsPath
+    if (input.scope === 'project') {
+      const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
+      this.lastProjectPath = projectPath
+      settingsTarget = await prepareProjectSettingsPath(projectPath, this.harness === 'prime'
+        ? undefined
+        : { segments: [this.harness === 'omp' ? '.omp' : '.pi'], filename: 'mcp.json' })
+    } else {
+      settingsTarget = join(this.agentDir, this.harness === 'prime' ? 'settings.json' : 'mcp.json')
+    }
+    const agentName = HARNESSES[this.harness].agentName
+    const mutation = this.settingsMutation.then(() => updateMcpState(
+      settingsTarget,
+      input,
+      (path) => this.settingsFingerprint(path),
+      { agentName },
     ))
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation

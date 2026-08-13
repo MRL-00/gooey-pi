@@ -297,14 +297,15 @@ export function extensionRuntimeEnvironment(
   browserBridgeEnvironment: NodeJS.ProcessEnv,
   extensionPaths: CapabilityExtensionPaths,
   askUserEnabled = true,
+  browserEnabled = true,
 ): NodeJS.ProcessEnv {
   const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = scheduleBridgeEnvironment
   const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridgeEnvironment
   return {
     ...scheduleEnvironment,
-    ...browserEnvironment,
+    ...(browserEnabled ? browserEnvironment : {}),
     PRIME_WORK_SCHEDULE_EXTENSION_PATH: extensionPaths.schedule,
-    PRIME_WORK_BROWSER_EXTENSION_PATH: extensionPaths.browser,
+    PRIME_WORK_BROWSER_EXTENSION_PATH: browserEnabled ? extensionPaths.browser : undefined,
     PRIME_WORK_ASK_USER_EXTENSION_PATH: askUserEnabled ? extensionPaths.askUser : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
   }
@@ -542,7 +543,7 @@ async function bootstrap(): Promise<void> {
     }, {
       id: 'prime-work-browser', name: 'Browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
-      kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
+      kind: 'skill', location: 'system', path: browserSkillPath, enabled: stateStore.getSettings().browserEnabled,
     }, await computerUseSkill(), ...providers.mcpCapabilities()],
   })
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
@@ -554,7 +555,7 @@ async function bootstrap(): Promise<void> {
     }, {
       id: 'omp-work-browser', name: 'Browser',
       description: 'OMP extension for driving this thread\'s in-app browser.',
-      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
+      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: stateStore.getSettings().browserEnabled,
     }, {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'OMP extension for asking focused multiple-choice questions in the GooeyPi app.',
@@ -572,7 +573,7 @@ async function bootstrap(): Promise<void> {
     }, {
       id: 'omp-work-browser', name: 'Browser',
       description: 'Pi extension for driving this thread\'s in-app browser.',
-      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: true,
+      kind: 'extension', location: 'system', path: ompBrowserExtensionPath, enabled: stateStore.getSettings().browserEnabled,
     }, {
       id: 'gooeypi-ask-user', name: 'Ask user',
       description: 'Pi extension for asking focused multiple-choice questions in the GooeyPi app.',
@@ -677,7 +678,7 @@ async function bootstrap(): Promise<void> {
   agentBrowserBridge = browserBridge
   agents.setRuntimeEnvironmentProvider((scope) => ({
     ...scheduleBridge.environmentFor(scope),
-    ...browserBridge.environmentFor(scope),
+    ...(stateStore.getSettings().browserEnabled ? browserBridge.environmentFor(scope) : {}),
     PRIME_WORK_ASK_USER_EXTENSION_PATH: stateStore.getSettings().askUserEnabled && scope.interactive ? ompAskUserExtensionPath : undefined,
     GOOEYPI_MANAGES_ASK_USER: '1',
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
@@ -693,7 +694,7 @@ async function bootstrap(): Promise<void> {
     askUser: ompAskUserExtensionPath,
   }
   ompManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
+    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))
@@ -701,7 +702,7 @@ async function bootstrap(): Promise<void> {
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive),
+    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
   }))

@@ -269,6 +269,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     requirePrimeProviderAuth(harness)
     return services.providers.startMcpOAuth(server)
   })
+  handle('providers:logout-mcp', (_event, server, harness) => {
+    requirePrimeProviderAuth(harness)
+    return services.providers.logoutMcp(server)
+  })
   handle('providers:respond-oauth', (_event, flowId, promptId, value) => services.providers.respondOAuth(flowId, promptId, value))
   handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
 
@@ -302,6 +306,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('plugins:install-extension', (_event, input, harness) => pluginsFor(requireHarness(harness)).installExtension(input))
   handle('plugins:set-mcp-support', (_event, enabled, harness) => pluginsFor(requireHarness(harness)).setMcpSupport(enabled))
   handle('plugins:connect-mcp', (_event, input, harness) => pluginsFor(requireHarness(harness)).connectMcp(input))
+  handle('plugins:set-mcp-enabled', (_event, input, harness) => pluginsFor(requireHarness(harness)).setMcpEnabled(input))
   handle('plugins:refresh', (_event, harness) => pluginsFor(requireHarness(harness)).refresh())
 
   handle('settings:get', () => services.settings.get())
@@ -311,7 +316,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     if (patchRecord.computerUseEnabled === true && !previous.computerUseEnabled) await services.cuaDriver.requireAvailable()
     const settings = await services.settings.update(patch)
     event.sender.setZoomFactor(settings.interfaceFontScale / 100)
-    if (settings.askUserEnabled !== previous.askUserEnabled || settings.computerUseEnabled !== previous.computerUseEnabled) {
+    if (settings.askUserEnabled !== previous.askUserEnabled || settings.browserEnabled !== previous.browserEnabled || settings.computerUseEnabled !== previous.computerUseEnabled) {
       await Promise.all([
         services.agents.requestRuntimeEnvironmentRefresh(),
         services.omp.agents.requestRuntimeEnvironmentRefresh(),

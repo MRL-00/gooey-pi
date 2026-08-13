@@ -420,6 +420,33 @@ describe('PluginService MCP connections', () => {
     expect(record?.description).not.toContain('/mcp')
   })
 
+  it('disables and re-enables an MCP server without deleting its definition', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+    await service.connectMcp({ name: 'docs', scope: 'user', type: 'http', url: 'https://docs.example/mcp', auth: 'oauth' })
+
+    expect((await service.setMcpEnabled({ name: 'docs', scope: 'user', enabled: false })).ok).toBe(true)
+    let settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.mcpServers.docs).toEqual({ type: 'http', url: 'https://docs.example/mcp', oauth: true, enabled: false })
+    expect((await service.list()).skills.find((item) => item.name === 'docs')).toMatchObject({ enabled: false })
+
+    expect((await service.setMcpEnabled({ name: 'docs', scope: 'user', enabled: true })).ok).toBe(true)
+    settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.mcpServers.docs.enabled).toBe(true)
+  })
+
+  it('does not create a missing MCP definition while changing state', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    const response = await service.setMcpEnabled({ name: 'missing', scope: 'user', enabled: false })
+    expect(response).toMatchObject({ ok: false, reason: 'blocked' })
+  })
+
   it('connects a Prime HTTP MCP server at project scope', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')

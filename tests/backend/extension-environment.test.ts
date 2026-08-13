@@ -86,6 +86,16 @@ describe('capability extension environment parity (OMP and pi)', () => {
     }
   })
 
+  it('omits the browser extension and broker credentials when Browser is disabled', () => {
+    const environment = extensionRuntimeEnvironment(scheduleBridgeEnvironment, browserBridgeEnvironment, extensionPaths, true, false)
+    expect(environment.PRIME_WORK_BROWSER_EXTENSION_PATH).toBeUndefined()
+    expect(environment.PRIME_WORK_BROWSER_URL).toBeUndefined()
+    expect(environment.PRIME_WORK_BROWSER_TOKEN).toBeUndefined()
+    for (const adapter of [OMP_RPC_ADAPTER, PI_RPC_ADAPTER]) {
+      expect(adapter.buildStartArgs({ cwd: '/work', environment })).not.toContain(extensionPaths.browser)
+    }
+  })
+
   it('injects the bundled ask_user extension into Prime interactive runtimes', () => {
     const args = PRIME_RPC_ADAPTER.buildStartArgs({
       cwd: '/work',

@@ -224,6 +224,17 @@ export class PrimeProviderService {
   }
 
   async startMcpOAuth(rawServer: unknown): Promise<{ flowId: string }> {
+    const providerId = this.requireMcpOAuthProvider(rawServer)
+    return this.startOAuthFlow(providerId)
+  }
+
+  async logoutMcp(rawServer: unknown): Promise<void> {
+    const providerId = this.requireMcpOAuthProvider(rawServer)
+    this.authStorage.logout(providerId)
+    this.invalidate()
+  }
+
+  private requireMcpOAuthProvider(rawServer: unknown): string {
     const server = requireString(rawServer, 'MCP server', { min: 1, max: 64, trim: true })
     if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(server) || ['__proto__', 'prototype', 'constructor'].includes(server)) {
       throw new TypeError('MCP server name contains unsupported characters')
@@ -245,7 +256,7 @@ export class PrimeProviderService {
     if (!this.authStorage.getOAuthProviders().some((provider) => provider.id === providerId)) {
       throw new Error(`Unknown MCP integration: ${server}`)
     }
-    return this.startOAuthFlow(providerId)
+    return providerId
   }
 
   private startOAuthFlow(providerId: string): { flowId: string } {

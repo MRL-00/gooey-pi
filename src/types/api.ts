@@ -265,6 +265,13 @@ export type McpConnectionInput = {
   | { type: 'stdio'; command: string; args?: string[] }
 )
 
+export interface McpStateInput {
+  name: string
+  scope: 'user' | 'project'
+  projectPath?: string
+  enabled: boolean
+}
+
 export interface ExtensionInstallInput {
   source: string
   scope: 'user' | 'project'
@@ -375,6 +382,8 @@ export interface AppSettings {
   telemetry: boolean
   /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
   askUserEnabled: boolean
+  /** Expose GooeyPi's thread-scoped in-app browser controls to new sessions. */
+  browserEnabled: boolean
   /** Expose the separately installed TryCUA driver to new sessions through its official CLI. */
   computerUseEnabled: boolean
   /** Providers hidden from Prime Work's Prime model picker. */
@@ -629,6 +638,7 @@ export interface PrimeWorkApi {
     setDisabled(providerIds: string[], harness?: HarnessId): Promise<PrimeModelCatalog>
     startOAuth(providerId: string): Promise<{ flowId: string }>
     startMcpOAuth(server: string, harness?: HarnessId): Promise<{ flowId: string }>
+    logoutMcp(server: string, harness?: HarnessId): Promise<void>
     respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
     cancelOAuth(flowId: string): Promise<boolean>
     onAuthEvent(callback: (event: ProviderAuthEvent) => void): () => void
@@ -663,6 +673,7 @@ export interface PrimeWorkApi {
     installExtension(input: ExtensionInstallInput, harness?: HarnessId): Promise<ProcessOutcome>
     setMcpSupport(enabled: boolean, harness?: HarnessId): Promise<ProcessOutcome>
     connectMcp(input: McpConnectionInput, harness?: HarnessId): Promise<ProcessOutcome>
+    setMcpEnabled(input: McpStateInput, harness?: HarnessId): Promise<ProcessOutcome>
     refresh(harness?: HarnessId): Promise<PluginCatalog>
   }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }

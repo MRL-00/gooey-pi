@@ -161,6 +161,7 @@ describe('settings field ownership', () => {
       enabledHarnesses: 'agent',
       telemetry: 'privacy',
       askUserEnabled: 'agent',
+      browserEnabled: 'agent',
       computerUseEnabled: 'agent',
       disabledProviders: 'providers',
       ompDisabledProviders: 'providers',

@@ -228,6 +228,20 @@ describe('Prime provider adapter', () => {
     expect(JSON.stringify(capabilities)).not.toContain('secret-token')
   })
 
+  it('logs out only the selected built-in MCP integration', async () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { set(providerId: string, credential: unknown): void; get(providerId: string): unknown }
+    }
+    internals.authStorage.set('mcp:notion', { type: 'oauth', access: 'notion-secret' })
+    internals.authStorage.set('openai-codex', { type: 'oauth', access: 'provider-secret' })
+
+    await providerService.logoutMcp('notion')
+
+    expect(internals.authStorage.get('mcp:notion')).toBeUndefined()
+    expect(internals.authStorage.get('openai-codex')).toBeDefined()
+  })
+
   it('registers a configured custom Prime MCP OAuth server before login', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-provider-'))
     dirs.push(dir)

@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, BookOpen, Check, ChevronRight, FileCode2, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { ExtensionInstallInput, HarnessId, McpConnectionInput, PluginWarning, SkillRecord } from '@/types/api'
+import type { ExtensionInstallInput, HarnessId, McpConnectionInput, McpStateInput, PluginWarning, SkillRecord } from '@/types/api'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { EmptyState, Modal, Segmented } from '@/components/ui'
 
@@ -50,6 +50,8 @@ interface PluginsPageProps {
   onRefresh(): Promise<void>
   askUserEnabled: boolean
   onSetAskUserEnabled(enabled: boolean): Promise<void>
+  browserEnabled: boolean
+  onSetBrowserEnabled(enabled: boolean): Promise<void>
   computerUseEnabled: boolean
   onSetComputerUseEnabled(enabled: boolean): Promise<void>
   onOpenExternal(url: string): void
@@ -57,10 +59,13 @@ interface PluginsPageProps {
   onInstallExtension(input: ExtensionInstallInput): Promise<{ ok: boolean; output: string }>
   onSetMcpSupport(enabled: boolean): Promise<{ ok: boolean; output: string }>
   onConnectMcp(input: McpConnectionInput): Promise<{ ok: boolean; output: string }>
+  onSetMcpEnabled(input: McpStateInput): Promise<{ ok: boolean; output: string }>
+  onConnectBundledMcp(server: string): Promise<void>
+  onDisconnectBundledMcp(server: string): Promise<void>
   onRunMcpCommand(command: string): Promise<void>
 }
 
-export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onRunMcpCommand }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, browserEnabled, onSetBrowserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onSetMcpEnabled, onConnectBundledMcp, onDisconnectBundledMcp, onRunMcpCommand }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -79,21 +84,27 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [loginCommand, setLoginCommand] = useState('')
   const [adding, setAdding] = useState(false)
   const [askUserUpdating, setAskUserUpdating] = useState(false)
+  const [browserUpdating, setBrowserUpdating] = useState(false)
   const [computerUseUpdating, setComputerUseUpdating] = useState(false)
   const [computerUseAlert, setComputerUseAlert] = useState('')
   const [mcpSupportUpdating, setMcpSupportUpdating] = useState(false)
   const [mcpSupportAlert, setMcpSupportAlert] = useState('')
   const [mcpSupportNotice, setMcpSupportNotice] = useState('')
+  const [capabilityUpdating, setCapabilityUpdating] = useState('')
+  const [confirmDisable, setConfirmDisable] = useState<SkillRecord | null>(null)
+  const [capabilityAlert, setCapabilityAlert] = useState('')
   const piMcpAdapterInstalled = skills.some((skill) => skill.id === 'gooeypi-pi-mcp' && skill.enabled)
   const canConfigureMcp = harness === 'omp' || harness === 'pi' && piMcpAdapterInstalled
 
   const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user'
     ? { ...skill, enabled: askUserEnabled }
-    : skill.id === 'gooeypi-computer-use' ? { ...skill, enabled: computerUseEnabled } : skill).filter((skill) =>
-    (tab === 'skills' ? skill.kind === 'skill' || skill.kind === 'prompt' : skill.kind !== 'skill' && skill.kind !== 'prompt')
-    && (filter === 'all' || filter === 'installed' && skill.enabled || filter === skill.location)
-    && `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase())
-  ), [askUserEnabled, computerUseEnabled, skills, tab, filter, query])
+    : skill.id === 'prime-work-browser' || skill.id === 'omp-work-browser' ? { ...skill, enabled: browserEnabled }
+    : skill.id === 'gooeypi-computer-use' ? { ...skill, enabled: computerUseEnabled } : skill).filter((skill) => {
+    const capability = skill.id === 'prime-work-browser' || skill.id === 'omp-work-browser' || skill.kind !== 'skill' && skill.kind !== 'prompt'
+    return (tab === 'plugins' ? capability : !capability)
+      && (filter === 'all' || filter === 'installed' && skill.enabled || filter === skill.location)
+      && `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase())
+  }), [askUserEnabled, browserEnabled, computerUseEnabled, skills, tab, filter, query])
 
   const canAdd = addKind === 'bundle'
     ? Boolean(source.trim())
@@ -142,19 +153,29 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
 
   const selectAddKind = (value: AddKind | null) => { setAddKind(value); setSource(''); setResult(''); setLoginCommand('') }
   const openAdd = () => { setResult(''); setLoginCommand(''); setAddKind(null); setMcpTransport('http'); setAddOpen(true) }
-  const toggleAskUser = async () => {
+  const setAskUser = async (enabled: boolean) => {
     if (askUserUpdating) return
     setAskUserUpdating(true)
     try {
-      await onSetAskUserEnabled(!askUserEnabled)
+      await onSetAskUserEnabled(enabled)
       await onRefresh()
     } finally {
       setAskUserUpdating(false)
     }
   }
-  const toggleComputerUse = async (skill: SkillRecord) => {
+  const setBrowser = async (enabled: boolean) => {
+    if (browserUpdating) return
+    setBrowserUpdating(true)
+    try {
+      await onSetBrowserEnabled(enabled)
+      await onRefresh()
+    } finally {
+      setBrowserUpdating(false)
+    }
+  }
+  const setComputerUse = async (skill: SkillRecord, enabled: boolean) => {
     if (computerUseUpdating) return
-    if (!computerUseEnabled && skill.availability?.available === false) {
+    if (enabled && skill.availability?.available === false) {
       setComputerUseAlert(skill.availability.detail)
       if (skill.availability.actionUrl) onOpenExternal(skill.availability.actionUrl)
       return
@@ -162,15 +183,14 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
     setComputerUseAlert('')
     setComputerUseUpdating(true)
     try {
-      await onSetComputerUseEnabled(!computerUseEnabled)
+      await onSetComputerUseEnabled(enabled)
       await onRefresh()
     } finally {
       setComputerUseUpdating(false)
     }
   }
-  const toggleMcpSupport = async (skill: SkillRecord) => {
+  const setMcpSupport = async (skill: SkillRecord, enabling: boolean) => {
     if (mcpSupportUpdating) return
-    const enabling = !skill.enabled
     setMcpSupportUpdating(true)
     setMcpSupportAlert('')
     setMcpSupportNotice(enabling ? 'Installing Pi MCP Adapter…' : 'Removing Pi MCP Adapter…')
@@ -186,6 +206,49 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
     } finally {
       setMcpSupportUpdating(false)
     }
+  }
+  const mcpServerName = (skill: SkillRecord): string => skill.id.startsWith('prime-mcp-') ? skill.id.slice('prime-mcp-'.length) : skill.name
+  const setMcp = async (skill: SkillRecord, enabled: boolean) => {
+    if (capabilityUpdating) return
+    setCapabilityUpdating(skill.id)
+    setCapabilityAlert('')
+    try {
+      if (skill.id.startsWith('prime-mcp-')) {
+        if (enabled) await onConnectBundledMcp(mcpServerName(skill))
+        else await onDisconnectBundledMcp(mcpServerName(skill))
+      } else {
+        const response = await onSetMcpEnabled({ name: skill.name, scope: skill.location === 'project' ? 'project' : 'user', projectPath: skill.location === 'project' ? activeProjectPath : undefined, enabled })
+        if (!response.ok) setCapabilityAlert(response.output)
+      }
+    } finally {
+      setCapabilityUpdating('')
+    }
+  }
+  const disableCapability = async (skill: SkillRecord) => {
+    setConfirmDisable(null)
+    if (skill.id === 'gooeypi-ask-user') await setAskUser(false)
+    else if (skill.id === 'prime-work-browser' || skill.id === 'omp-work-browser') await setBrowser(false)
+    else if (skill.id === 'gooeypi-computer-use') await setComputerUse(skill, false)
+    else if (skill.id === 'gooeypi-pi-mcp') await setMcpSupport(skill, false)
+    else if (skill.kind === 'mcp') await setMcp(skill, false)
+  }
+  const capabilityControl = (skill: SkillRecord) => {
+    const isBrowser = skill.id === 'prime-work-browser' || skill.id === 'omp-work-browser'
+    const actionable = skill.id === 'gooeypi-ask-user' || isBrowser || skill.id === 'gooeypi-computer-use' || skill.id === 'gooeypi-pi-mcp' || skill.kind === 'mcp'
+    if (!actionable) return <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>
+    const updating = skill.id === 'gooeypi-ask-user' ? askUserUpdating
+      : isBrowser ? browserUpdating
+        : skill.id === 'gooeypi-computer-use' ? computerUseUpdating
+          : skill.id === 'gooeypi-pi-mcp' ? mcpSupportUpdating
+            : capabilityUpdating === skill.id
+    const enable = () => {
+      if (skill.id === 'gooeypi-ask-user') return setAskUser(true)
+      if (isBrowser) return setBrowser(true)
+      if (skill.id === 'gooeypi-computer-use') return setComputerUse(skill, true)
+      if (skill.id === 'gooeypi-pi-mcp') return setMcpSupport(skill, true)
+      return setMcp(skill, true)
+    }
+    return <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={updating} title={skill.availability?.detail} onClick={() => { if (skill.enabled) setConfirmDisable(skill); else void enable() }}>{updating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
   }
 
   return (
@@ -214,6 +277,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             <AlertTriangle size={13} /> {warning.scope === 'project' ? 'Project' : 'Personal'} {warning.message} ({warning.path})
           </p>
         ))}
+        {capabilityAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {capabilityAlert}</p> : null}
         {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
         {harness === 'pi' && mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
         {harness === 'pi' && mcpSupportNotice ? <p className="connection-warning" role="status">{mcpSupportUpdating ? <RefreshCw className="spin" size={13}/> : <ShieldCheck size={13}/>} {mcpSupportNotice}</p> : null}
@@ -224,41 +288,12 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             <article key={skill.id}>
               <span className={`directory-icon directory-icon--${skill.kind}`}><SkillIcon skill={skill}/></span>
               <div><div><h3>{skill.name}</h3><span>{skill.location}</span></div><p>{skill.description}</p></div>
-              {skill.id === 'gooeypi-ask-user' ? (
-                <button
-                  type="button"
-                  className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
-                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Ask user`}
-                  aria-pressed={skill.enabled}
-                  disabled={askUserUpdating}
-                  onClick={() => void toggleAskUser()}
-                >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
-              ) : skill.id === 'gooeypi-computer-use' ? (
-                <button
-                  type="button"
-                  className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
-                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Computer Use | TryCUA`}
-                  aria-pressed={skill.enabled}
-                  disabled={computerUseUpdating}
-                  title={skill.availability?.detail}
-                  onClick={() => void toggleComputerUse(skill)}
-                >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
-              ) : skill.id === 'gooeypi-pi-mcp' ? (
-                <button
-                  type="button"
-                  className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
-                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Pi MCP Adapter`}
-                  aria-pressed={skill.enabled}
-                  disabled={mcpSupportUpdating}
-                  title={skill.enabled ? 'Disabling removes the adapter package but keeps server definitions and credentials.' : 'Enabling installs npm:pi-mcp-adapter through Pi.'}
-                  onClick={() => void toggleMcpSupport(skill)}
-                >{mcpSupportUpdating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
-              ) : (
-                <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>
-              )}
+              {capabilityControl(skill)}
             </article>
           ))}</div>
         ) : <EmptyState icon={<Sparkles size={23}/>} title="Nothing here yet">Try another filter or add a capability package supported by {HARNESS_SHORT_NAMES[harness]}.</EmptyState>}
+
+        {confirmDisable ? <Modal title={`Disable ${confirmDisable.name}?`} onClose={() => setConfirmDisable(null)} footer={<><button type="button" className="button" onClick={() => setConfirmDisable(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => void disableCapability(confirmDisable)}>Yes, disable</button></>}><p className="modal-intro">Are you sure? {confirmDisable.kind === 'mcp' && confirmDisable.id.startsWith('prime-mcp-') ? 'You will need to authenticate again before using this MCP integration.' : 'New sessions will no longer receive this capability until you enable it again.'}</p></Modal> : null}
 
         {addOpen ? (
           <Modal

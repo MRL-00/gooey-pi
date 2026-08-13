@@ -76,8 +76,8 @@ function buildServices() {
     },
     terminals: serviceStub(),
     git: serviceStub(),
-    plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
+    plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })), logoutMcp: vi.fn(async () => undefined) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -87,7 +87,7 @@ function buildServices() {
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
     browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
-      plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), listWorktrees: vi.fn(async () => ['omp-worktrees']), openWorktree: vi.fn(async () => 'omp-open'), createWorktree: vi.fn(async () => 'omp-create'), grantInferred: vi.fn(async () => 'omp-grant') },
       sessions: {
         ...serviceStub(),
@@ -112,7 +112,7 @@ function buildServices() {
       },
     },
     pi: {
-      plugins: { ...serviceStub(), list: vi.fn(async () => 'pi-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'pi-plugins') },
+      plugins: { ...serviceStub(), list: vi.fn(async () => 'pi-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'pi-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['pi-projects']), listWorktrees: vi.fn(async () => ['pi-worktrees']), openWorktree: vi.fn(async () => 'pi-open'), createWorktree: vi.fn(async () => 'pi-create'), grantInferred: vi.fn(async () => 'pi-grant') },
       sessions: {
         ...serviceStub(),
@@ -244,6 +244,8 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.pi.plugins.setMcpSupport).toHaveBeenCalledWith(true)
     await harness.invoke('plugins:connect-mcp', { name: 'docs' }, 'omp')
     expect(harness.services.omp.plugins.connectMcp).toHaveBeenCalledWith({ name: 'docs' })
+    await harness.invoke('plugins:set-mcp-enabled', { name: 'docs', scope: 'user', enabled: false }, 'omp')
+    expect(harness.services.omp.plugins.setMcpEnabled).toHaveBeenCalledWith({ name: 'docs', scope: 'user', enabled: false })
     await harness.invoke('plugins:refresh', 'omp')
     expect(harness.services.omp.plugins.refresh).toHaveBeenCalledOnce()
 
@@ -287,6 +289,8 @@ describe('harness-aware IPC routing', () => {
   it('routes Prime MCP OAuth through the desktop auth service', async () => {
     await expect(harness.invoke('providers:start-mcp-oauth', 'notion', 'prime')).resolves.toEqual({ flowId: 'mcp-flow' })
     expect(harness.services.providers.startMcpOAuth).toHaveBeenCalledWith('notion')
+    await expect(harness.invoke('providers:logout-mcp', 'notion', 'prime')).resolves.toBeUndefined()
+    expect(harness.services.providers.logoutMcp).toHaveBeenCalledWith('notion')
   })
 
   it('stores OMP provider visibility in desktop settings without mutating OMP', async () => {
@@ -309,6 +313,7 @@ describe('harness-aware IPC routing', () => {
       ['providers:logout', ['openai']],
       ['providers:start-oauth', ['openai']],
       ['providers:start-mcp-oauth', ['notion']],
+      ['providers:logout-mcp', ['notion']],
     ] as const) {
       await expect(async () => harness.invoke(channel, ...args, 'omp'), channel).rejects.toThrow('managed by the omp CLI')
     }

@@ -51,6 +51,7 @@ const api: PrimeWorkApi = {
     setDisabled: (providerIds, harness) => ipcRenderer.invoke('providers:set-disabled', providerIds, harness),
     startOAuth: (providerId) => ipcRenderer.invoke('providers:start-oauth', providerId),
     startMcpOAuth: (server, harness) => ipcRenderer.invoke('providers:start-mcp-oauth', server, harness),
+    logoutMcp: (server, harness) => ipcRenderer.invoke('providers:logout-mcp', server, harness),
     respondOAuth: (flowId, promptId, value) => ipcRenderer.invoke('providers:respond-oauth', flowId, promptId, value),
     cancelOAuth: (flowId) => ipcRenderer.invoke('providers:cancel-oauth', flowId),
     onAuthEvent: (callback) => subscribe<ProviderAuthEvent>('providers:auth-event', callback),
@@ -92,6 +93,7 @@ const api: PrimeWorkApi = {
     installExtension: (input, harness) => ipcRenderer.invoke('plugins:install-extension', input, harness),
     setMcpSupport: (enabled, harness) => ipcRenderer.invoke('plugins:set-mcp-support', enabled, harness),
     connectMcp: (input, harness) => ipcRenderer.invoke('plugins:connect-mcp', input, harness),
+    setMcpEnabled: (input, harness) => ipcRenderer.invoke('plugins:set-mcp-enabled', input, harness),
     refresh: (harness) => ipcRenderer.invoke('plugins:refresh', harness),
   },
   settings: {
