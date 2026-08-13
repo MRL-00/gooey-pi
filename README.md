@@ -113,7 +113,3 @@ Prime Agent tools, extensions, skills, packages, and terminals run with your OS 
 ## Current scope
 
 GooeyPi targets the local agent workflow. The composer checkout picker lists linked Git worktrees for the active repository, switches the workspace to a selected checkout, and can create a new branch worktree at a user-chosen location. Cloud environment creation, voice dictation, file-picker attachments, and multi-terminal split layouts are intentionally not presented as functional controls. Schedules require a live Prime runtime. Browser annotations are kept for the current inspector session rather than written into remote pages.
-
-## Design provenance
-
-The interaction model was researched from publicly available ChatGPT/Codex Work documentation and screenshots, then implemented with original Prime naming, iconography, colors, and code. See [`docs/reference-sources.md`](docs/reference-sources.md).
