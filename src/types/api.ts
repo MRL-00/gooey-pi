@@ -33,6 +33,15 @@ export interface AppMeta {
   harnesses: Record<HarnessId, HarnessStatus>
 }
 
+export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error' | 'unsupported'
+
+export interface AppUpdateState {
+  phase: AppUpdatePhase
+  version?: string
+  percent?: number
+  message?: string
+}
+
 export interface ProjectRecord {
   id: string
   /** Agent harness this project grant belongs to; grants never cross harnesses. */
@@ -638,6 +647,12 @@ export interface AgentBrowserPointerEvent {
 
 export interface PrimeWorkApi {
   app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
+  updates: {
+    getState(): Promise<AppUpdateState>
+    check(): Promise<AppUpdateState>
+    install(): Promise<boolean>
+    onChanged(callback: (state: AppUpdateState) => void): () => void
+  }
   projects: {
     list(harness?: HarnessId): Promise<ProjectRecord[]>
     listFiles(root: string, harness?: HarnessId): Promise<ProjectFileListing>

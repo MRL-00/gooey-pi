@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentBrowserActivityEvent, AgentBrowserPointerEvent, AgentBrowserState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
+import type { AgentBrowserActivityEvent, AgentBrowserPointerEvent, AgentBrowserState, AppUpdateState, PrimeEventEnvelope, PrimeWorkApi, ProviderAuthEvent, ScheduleChangeEvent, SessionChangeEvent, TerminalDataEvent, TerminalExitEvent } from '../../src/types/api'
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
   if (typeof callback !== 'function') throw new TypeError('callback must be a function')
@@ -16,6 +16,12 @@ const api: PrimeWorkApi = {
     refreshHarnesses: () => ipcRenderer.invoke('app:refresh-harnesses'),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     revealPath: (path) => ipcRenderer.invoke('app:reveal-path', path),
+  },
+  updates: {
+    getState: () => ipcRenderer.invoke('updates:get-state'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    install: () => ipcRenderer.invoke('updates:install'),
+    onChanged: (callback) => subscribe<AppUpdateState>('updates:changed', callback),
   },
   projects: {
     list: (harness) => ipcRenderer.invoke('projects:list', harness),

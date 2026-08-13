@@ -49,6 +49,28 @@ async function rightClick(element: Element) {
 }
 
 describe('sidebar project context menu', () => {
+  it('shows the automatic release control beside Settings and invokes its current action', async () => {
+    const onUpdateAction = vi.fn()
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]} sessions={[session]} activeView="session" updateState={{ phase: 'downloaded', version: '0.2.0' }} onUpdateAction={onUpdateAction}
+          onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
+          onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    const update = container.querySelector('.sidebar__footer .sidebar-update')
+    const settings = container.querySelector('.sidebar__footer button[title="Settings"]')
+    expect(update).not.toBeNull()
+    expect(update?.nextElementSibling).toBe(settings)
+    expect(update?.textContent).toContain('Restart for 0.2.0')
+    expect(update?.querySelector('.lucide-download')).not.toBeNull()
+    await press(update!)
+    expect(onUpdateAction).toHaveBeenCalledOnce()
+  })
+
   it('copies the exact session UUID from the session context menu', async () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })

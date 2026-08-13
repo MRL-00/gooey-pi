@@ -38,4 +38,16 @@ describe('preload project worktree bridge', () => {
       ['pets:sprite', 'gooey-pi'],
     ])
   })
+
+  it('exposes update status, check, and install calls', async () => {
+    const api = electronMocks.api as { updates: { getState(): Promise<unknown>; check(): Promise<unknown>; install(): Promise<unknown> } }
+    await api.updates.getState()
+    await api.updates.check()
+    await api.updates.install()
+    expect(electronMocks.ipcRenderer.invoke.mock.calls).toEqual([
+      ['updates:get-state'],
+      ['updates:check'],
+      ['updates:install'],
+    ])
+  })
 })

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -21,8 +22,8 @@ import {
   SquarePen,
   Trash2,
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useState, type ReactElement } from 'react'
-import type { AppMeta, HarnessId, ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
+import { memo, useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
+import type { AppMeta, AppUpdateState, HarnessId, ProjectRecord, SessionRecord, WorkspaceView } from '@/types/api'
 import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
@@ -38,6 +39,8 @@ export interface SidebarProps {
   activeHarness?: HarnessId
   harnesses?: AppMeta['harnesses'] | null
   clearedAttention?: Record<string, string>
+  updateState?: AppUpdateState
+  onUpdateAction?(): void | Promise<void>
   onSelectHarness?(harness: HarnessId): void
   onSelectProject(project: ProjectRecord): void
   onSelectSession(session: SessionRecord): void
@@ -113,6 +116,20 @@ function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
   return <Mark size={size} />
 }
 
+function updateControlCopy(state: AppUpdateState): { label: string; title: string } {
+  const version = state.version ? ` ${state.version}` : ''
+  switch (state.phase) {
+    case 'checking': return { label: 'Checking for updates', title: 'Checking GitHub Releases for a new GooeyPi version' }
+    case 'available': return { label: `Update${version} found`, title: `GooeyPi${version} is downloading automatically` }
+    case 'downloading': return { label: `Downloading${version} · ${state.percent ?? 0}%`, title: `Downloading GooeyPi${version}` }
+    case 'downloaded': return { label: `Restart for${version}`, title: `Restart GooeyPi and install version${version}` }
+    case 'not-available': return { label: 'GooeyPi is up to date', title: 'Check again for a new GooeyPi release' }
+    case 'error': return { label: 'Update check failed', title: state.message ?? 'Try checking for updates again' }
+    case 'unsupported': return { label: 'Automatic updates', title: state.message ?? 'Automatic updates are available in installed builds' }
+    default: return { label: 'Release updates', title: 'Check for a new GooeyPi release' }
+  }
+}
+
 async function copySessionUuid(id: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     try {
@@ -133,7 +150,7 @@ async function copySessionUuid(id: string): Promise<void> {
   if (!copied) throw new Error('Copy is unavailable')
 }
 
-function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false, platform = 'darwin' }: SidebarProps) {
+function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, updateState = { phase: 'unsupported' }, onUpdateAction, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false, platform = 'darwin' }: SidebarProps) {
   const [query, setQuery] = useState('')
   const [harnessMenuOpen, setHarnessMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -155,6 +172,8 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
   const commandsShortcut = shortcutLabel(platform, ['Primary', 'K'])
   const settingsShortcut = shortcutLabel(platform, ['Primary', ','])
+  const updateCopy = updateControlCopy(updateState)
+  const updateBusy = updateState.phase === 'checking' || updateState.phase === 'available' || updateState.phase === 'downloading'
   useEffect(() => {
     if (!harnessMenuOpen) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.brand-switcher')) setHarnessMenuOpen(false) }
@@ -305,6 +324,10 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
 
       <div className="sidebar__footer">
         <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
+        <button type="button" className={`sidebar-update sidebar-update--${updateState.phase}`} title={updateCopy.title} aria-label={updateCopy.title} aria-live="polite" disabled={updateBusy} onClick={() => { void onUpdateAction?.() }}>
+          <span className="sidebar-update__icon" style={{ '--update-progress': `${updateState.percent ?? 0}%` } as CSSProperties}><Download size={12} /></span>
+          <span>{updateCopy.label}</span>
+        </button>
         <button type="button" title="Settings" className={activeView === 'settings' ? 'is-active' : ''} onClick={() => onNavigate('settings')}><Settings size={15} /><span>Settings</span><kbd>{settingsShortcut}</kbd></button>
       </div>
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}
@@ -322,6 +345,8 @@ export function areSidebarPropsEqual(previous: SidebarProps, next: SidebarProps)
     && previous.activeHarness === next.activeHarness
     && previous.harnesses === next.harnesses
     && previous.clearedAttention === next.clearedAttention
+    && previous.updateState === next.updateState
+    && previous.onUpdateAction === next.onUpdateAction
     && previous.onSelectHarness === next.onSelectHarness
     && previous.onSelectProject === next.onSelectProject
     && previous.onSelectSession === next.onSelectSession
