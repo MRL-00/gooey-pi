@@ -40,14 +40,14 @@
   },
   "dependencies": {
     "node-pty": "^1.0.0",
-    "prime-agent": "file:vendor/prime-agent-0.7.0.tgz",
-    "prime-agent-ai": "file:vendor/prime-agent-ai-0.7.0.tgz",
+    "prime-agent": "file:vendor/prime-agent-0.7.0-gooeypi.1.tgz",
+    "prime-agent-ai": "file:vendor/prime-agent-ai-0.7.0-gooeypi.1.tgz",
     "rrule": "^2.8.1",
     "zeromq": "^6.1.2"
   },
   "overrides": {
     "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",
-    "@earendil-works/pi-ai": "file:vendor/prime-agent-ai-0.7.0.tgz",
+    "@earendil-works/pi-ai": "$prime-agent-ai",
     "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz"
   },
   "devDependencies": {
