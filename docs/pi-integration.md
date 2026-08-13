@@ -45,7 +45,7 @@ Verified against pi 0.84.1 in `--mode rpc`:
 - `sessions/pi.ts` mirrors `sessions/omp.ts`: one bucket level deep, ordering from the filename ISO-timestamp prefix, v3 tree walk on `id`/`parentId`, title from the latest `session_info` entry, `model_change` from split `provider`/`modelId`. JSONL is read-only; catalog constructed with a null executable (no live-CLI overlay).
 - `providers-pi.ts`: `PiModelCatalogService` satisfies `ModelCatalogProvider` via the RPC probe (single-flight, TTL, byte-bounded stdout, kill-on-timeout, sanitized env), mapping to the existing `PrimeModelCatalog` types.
 - Plugins: a pi `PluginService` scopes discovery to `~/.pi/agent/extensions`, `~/.pi/agent/skills`, project `.pi/` roots, and shared `.agents/skills`; installs go through `pi install <source>` (project scope `-l`). MCP: pi core has no native MCP. GooeyPi explicitly supports the third-party `pi-mcp-adapter` extension (`pi install npm:pi-mcp-adapter`, listed on pi.dev's package registry), which reads the standard `mcpServers` schema from `~/.pi/agent/mcp.json` (global) and project `.pi/mcp.json` (its highest-precedence override). The UI offers adapter installation first, the service verifies it is recorded in `~/.pi/agent/settings.json`, and only then may the hardened writer create either config. Other Pi MCP extensions use different schemas and remain CLI-managed rather than being silently treated as compatible.
-- Capability extensions: pi's extension API is the ancestor of OMP's (`(pi) => void`, `pi.registerTool`), so the existing `assets/extensions/omp-work-browser.ts`, `omp-work-schedules.ts`, and `omp-work-ask-user.ts` are injected as-is for pi runtimes via the same `PRIME_WORK_*_EXTENSION_PATH` env contract. Any API drift found during live validation is fixed in the shared extension, not forked.
+- Capability extensions: pi's extension API is the ancestor of OMP's (`(pi) => void`, `pi.registerTool`), so the existing `assets/extensions/omp-work-browser.ts`, `omp-work-schedules.ts`, `omp-work-collaboration.ts`, and `omp-work-ask-user.ts` are injected as-is for pi runtimes via the same `PRIME_WORK_*_EXTENSION_PATH` env contract. The collaboration extension provides app-owned bounded list/read/send/wait tools for same-harness, same-working-directory top-level sessions; it does not use `switch_session` or mutate pi JSONL. Any API drift found during live validation is fixed in the shared extension, not forked.
 - Schedules: records already carry their harness; `'pi'` routes to the pi RPC manager and catalog through the same executor.
 - Renderer: third switcher entry, `HARNESS_*_NAMES.pi`, pi settings card without the service-tier or approval-mode controls.
 
@@ -64,6 +64,7 @@ Same rules as `docs/security.md`, applied to the third harness: argv arrays only
 ## Non-goals (v1)
 
 - A GooeyPi-owned Pi credential store; silently installing an MCP adapter;
-  offline session rename; importing sessions across harnesses; host
-  tools/collab surfaces. MCP OAuth is launched through pi-mcp-adapter's native
+  offline session rename; importing sessions across harnesses; host tools and
+  native pi collab surfaces. GooeyPi-owned top-level session collaboration is
+  documented in `docs/session-collaboration.md`. MCP OAuth is launched through pi-mcp-adapter's native
   `/mcp-auth` command in the active RPC session and remains adapter-owned.

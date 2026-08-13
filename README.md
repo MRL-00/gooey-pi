@@ -10,6 +10,7 @@ GooeyPi is a macOS, Linux, and Windows desktop workspace for [OMP](https://githu
 - Real Prime Agent sessions discovered from `~/.prime/agent/sessions/*.jsonl`
 - One isolated `prime-agent --mode rpc` child per active desktop runtime
 - Streaming Markdown/GFM, reasoning, tool calls/results, abort, follow-up, resume, and session rename/archive/restore
+- `@session` references plus bounded read/send/wait tools so top-level sessions can coordinate by title or copied UUID
 - Persisted multi-folder projects, bounded workspace file trees, and display-only projects inferred from Prime sessions
 - Git status, diffs, stage/unstage, guarded restore, commit, and surfaced command failures
 - Isolated in-app browser with navigation, history, annotations, and external-browser handoff
