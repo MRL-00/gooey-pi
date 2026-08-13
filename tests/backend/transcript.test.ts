@@ -4,8 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readSessionMetadata } from '../../electron/main/sessions/metadata'
 import { readTranscript } from '../../electron/main/sessions/transcript'
+import { configureGooeyPiAgentMessageSigning, encodeGooeyPiAgentMessage, parseGooeyPiAgentMessage } from '../../electron/main/collaboration/message-envelope'
 
 const dirs: string[] = []
+configureGooeyPiAgentMessageSigning(Buffer.alloc(32, 7))
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
 describe('session file record tolerance', () => {
@@ -28,6 +30,38 @@ describe('session file record tolerance', () => {
     const transcript = await readTranscript(file, false)
     expect(transcript).toHaveLength(1)
     expect(transcript[0]).toMatchObject({ id: 'user-1', role: 'user' })
+  })
+})
+
+describe('GooeyPi agent messages', () => {
+  it('persists a bounded envelope and renders it as a native agent message', async () => {
+    const file = makeSessionFile()
+    const envelope = encodeGooeyPiAgentMessage({
+      fromSessionId: '019f0000-0000-7000-8000-000000000001',
+      fromTitle: 'Planner',
+      fromHarness: 'omp',
+      text: 'Please coordinate ownership before editing.',
+    })
+    writeFileSync(file, [
+      JSON.stringify({ type: 'session', id: 'target', cwd: '/project' }),
+      JSON.stringify({ type: 'message', id: 'peer-message', parentId: null, message: { role: 'user', content: envelope } }),
+      '',
+    ].join('\n'))
+
+    expect(parseGooeyPiAgentMessage(envelope)).toMatchObject({ fromTitle: 'Planner', fromHarness: 'omp' })
+    const transcript = await readTranscript(file, false)
+    expect(transcript).toEqual([expect.objectContaining({
+      id: 'peer-message',
+      role: 'agent',
+      agentName: 'Planner',
+      parts: [{ type: 'text', text: 'Please coordinate ownership before editing.' }],
+    })])
+  })
+
+  it('leaves malformed envelopes as ordinary user messages', () => {
+    expect(parseGooeyPiAgentMessage('===== BEGIN GOOEYPI AGENT MESSAGE =====\n{}\n===== END GOOEYPI AGENT MESSAGE =====\n\nhello')).toBeUndefined()
+    const signed = encodeGooeyPiAgentMessage({ fromSessionId: 'source', fromTitle: 'Planner', fromHarness: 'prime', text: 'authentic' })
+    expect(parseGooeyPiAgentMessage(signed.replace('authentic', 'forged'))).toBeUndefined()
   })
 })
 

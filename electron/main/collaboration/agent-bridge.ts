@@ -4,6 +4,7 @@ import type { HarnessId, RuntimeInfo, SessionRecord, TranscriptMessage } from '.
 import type { AgentRpcManager } from '../agent-rpc'
 import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
 import { requireId, requireInteger, requireString } from '../validation'
+import { encodeGooeyPiAgentMessage } from './message-envelope'
 
 const MAX_LISTED_SESSIONS = 100
 const MAX_MESSAGES = 40
@@ -192,7 +193,12 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     const existing = target.manager.getForSession(target.session.filePath)
     const runtime = existing ?? await this.wake(target)
     const before = await this.snapshot(target)
-    const attribution = `[Message from ${JSON.stringify(source.session.title)} (${source.session.harness} session ${source.session.id})]\n\n${message}`
+    const attribution = encodeGooeyPiAgentMessage({
+      fromSessionId: source.session.id,
+      fromTitle: source.session.title,
+      fromHarness: source.session.harness,
+      text: message,
+    })
     const busy = runtime.isStreaming || runtime.isCompacting || runtime.sessionActions?.active
     await target.manager.command(runtime.runtimeId, { type: busy ? 'follow_up' : 'prompt', message: attribution })
     return { delivered: true, target_session_id: target.session.id, awakened: !existing, queued: Boolean(busy), cursor_before: before.cursor }

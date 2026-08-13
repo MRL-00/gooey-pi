@@ -33,3 +33,5 @@ Using Prime's daemon transport only for Prime would create three different seman
 - Routing blocks are stripped from the rendered user transcript. User-supplied routing delimiters are neutralized before GooeyPi adds its own block.
 
 Native Prime subagent messaging, OMP task subagents/relay rooms, and pi extensions remain unchanged. Session collaboration is an additional top-level coordination surface.
+
+Incoming peer prompts use a signed, app-local envelope. The signature survives app restarts and is verified before the transcript can render a user record with native agent-message styling, so ordinary prompt text cannot impersonate another session. The signing key stays in Electron's user-data directory with owner-only permissions and is never exposed to a harness or the renderer.

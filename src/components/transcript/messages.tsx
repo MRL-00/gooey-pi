@@ -1,9 +1,9 @@
-import { memo, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { HarnessId, MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
 import { splitCapabilityRouting } from '@/lib/capability-mentions'
-import { splitSessionRouting } from '@/lib/session-mentions'
+import { routedSessionReferences, splitSessionRouting, type RoutedSessionReference } from '@/lib/session-mentions'
 import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -175,7 +175,50 @@ export const AssistantMessage = memo(
   (previous, next) => previous.message === next.message && previous.harness === next.harness && previous.showReasoning === next.showReasoning && previous.showTools === next.showTools,
 )
 
-function UserText({ text }: { text: string }) {
+function SessionReferenceText({ text, references, onOpen }: { text: string; references: RoutedSessionReference[]; onOpen?(sessionId: string, harness: HarnessId): void }) {
+  if (!references.length) return <InlineText text={text} />
+  const ordered = [...references].sort((left, right) => right.label.length - left.label.length)
+  const lines = text.split('\n')
+  return <>{lines.map((line, lineIndex) => {
+    const parts: ReactNode[] = []
+    let cursor = 0
+    while (cursor < line.length) {
+      let foundIndex = -1
+      let found: RoutedSessionReference | undefined
+      for (let index = cursor; index < line.length; index += 1) {
+        const before = line[index - 1]
+        found = ordered.find((reference) => {
+          const after = line[index + reference.label.length]
+          return (before === undefined || /[\s([{"'`]/.test(before))
+            && line.startsWith(reference.label, index)
+            && (after === undefined || /[\s.,!?;:()[\]{}"'`]/.test(after))
+        })
+        if (found) { foundIndex = index; break }
+      }
+      if (!found || foundIndex < 0) { parts.push(line.slice(cursor)); break }
+      if (foundIndex > cursor) parts.push(line.slice(cursor, foundIndex))
+      const reference = found
+      parts.push(<button
+        key={`${reference.harness}:${reference.sessionId}:${foundIndex}`}
+        type="button"
+        className="session-reference"
+        aria-label={`Open session ${reference.label.slice(1)}`}
+        onClick={() => onOpen?.(reference.sessionId, reference.harness)}
+      >{reference.label}</button>)
+      cursor = foundIndex + reference.label.length
+    }
+    return <Fragment key={`${lineIndex}-${line.slice(0, 12)}`}>{parts}{lineIndex < lines.length - 1 ? <br /> : null}</Fragment>
+  })}</>
+}
+
+function visibleUserText(text: string): string {
+  const terminal = splitTerminalContextBlock(text)
+  const annotations = splitAnnotationBlock(terminal.text)
+  const capability = splitCapabilityRouting(annotations.text)
+  return splitSessionRouting(capability.text).text
+}
+
+function UserText({ text, onOpenSessionReference }: { text: string; onOpenSessionReference?(sessionId: string, harness: HarnessId): void }) {
   // Sent prompts can carry verbose model-facing context blocks. Keep both
   // attachments collapsed and capability routing hidden while preserving the
   // user's own message.
@@ -183,10 +226,11 @@ function UserText({ text }: { text: string }) {
   const annotations = splitAnnotationBlock(terminal.text)
   const capability = splitCapabilityRouting(annotations.text)
   const sessions = splitSessionRouting(capability.text)
+  const references = routedSessionReferences(sessions.block)
   if (!sessions.block && !capability.block && !annotations.block && !terminal.block) return <InlineText text={text} />
   return (
     <>
-      {sessions.text && sessions.text !== '[Page annotations]' && sessions.text !== '[Terminal selection]' ? <InlineText text={sessions.text} /> : null}
+      {sessions.text && sessions.text !== '[Page annotations]' && sessions.text !== '[Terminal selection]' ? <SessionReferenceText text={sessions.text} references={references} onOpen={onOpenSessionReference} /> : null}
       {annotations.block ? (
         <details className="user-annotations">
           <summary>{annotations.count > 0 ? `${annotations.count} page annotation${annotations.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>
@@ -203,13 +247,14 @@ function UserText({ text }: { text: string }) {
   )
 }
 
-export const UserMessage = memo(function UserMessage({ message }: { message: TranscriptMessage }) {
+export const UserMessage = memo(function UserMessage({ message, onOpenSessionReference }: { message: TranscriptMessage; onOpenSessionReference?(sessionId: string, harness: HarnessId): void }) {
+  const copyableText = message.parts.filter((part) => part.type === 'text').map((part) => visibleUserText(part.text)).filter(Boolean).join('\n')
   return (
     <article className="message message--user">
       <div className="user-bubble">
-        {message.parts.map((part, index) => (part.type === 'text' ? <UserText key={index} text={part.text} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null))}
+        {message.parts.map((part, index) => (part.type === 'text' ? <UserText key={index} text={part.text} onOpenSessionReference={onOpenSessionReference} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null))}
       </div>
-      <MessageActions message={message} />
+      <MessageActions message={message} text={copyableText} />
     </article>
   )
 })

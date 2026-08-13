@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentCollaborationBridge } from '../../electron/main/collaboration/agent-bridge'
+import { configureGooeyPiAgentMessageSigning, parseGooeyPiAgentMessage } from '../../electron/main/collaboration/message-envelope'
 import type { AgentRpcManager } from '../../electron/main/agent-rpc'
 import type { HarnessId, RuntimeInfo, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
 const bridges: AgentCollaborationBridge[] = []
+configureGooeyPiAgentMessageSigning(Buffer.alloc(32, 7))
 
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map((bridge) => bridge.stop()))
@@ -23,10 +25,13 @@ const foreign: SessionRecord = {
 const child: SessionRecord = {
   ...target, id: '019f0000-0000-7000-8000-000000000004', filePath: '/sessions/child.jsonl', title: 'Child agent', depth: 1,
 }
+const archived: SessionRecord = {
+  ...target, id: '019f0000-0000-7000-8000-000000000005', filePath: '/sessions/archived.jsonl', title: 'Archived peer', archived: true,
+}
 
 function service(records: SessionRecord[], transcripts: Record<string, TranscriptMessage[]> = {}) {
   return {
-    list: vi.fn(async () => records),
+    list: vi.fn(async (_projectPath?: unknown, includeArchived?: unknown) => includeArchived ? records : records.filter((record) => !record.archived)),
     read: vi.fn(async (filePath: unknown) => transcripts[String(filePath)] ?? []),
   }
 }
@@ -44,7 +49,7 @@ function manager(runtime?: RuntimeInfo) {
 }
 
 async function fixture(live = true) {
-  const primeSessions = service([source, target, foreign, child], {
+  const primeSessions = service([source, target, foreign, child, archived], {
     [target.filePath]: [
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Implement the API.' }] },
       { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'The endpoint is ready.' }] },
@@ -92,6 +97,9 @@ describe('AgentCollaborationBridge', () => {
     const childDenied = await call('read', { target_session_id: child.id })
     expect(childDenied.status).toBe(409)
     expect(childDenied.body.error).toContain('not found in this working directory')
+    const archivedDenied = await call('read', { target_session_id: archived.id })
+    expect(archivedDenied.status).toBe(409)
+    expect(archivedDenied.body.error).toContain('not found in this working directory')
   })
 
   it('delivers attributed messages to a live target and returns a wait cursor', async () => {
@@ -100,9 +108,13 @@ describe('AgentCollaborationBridge', () => {
     expect(sent.status).toBe(200)
     expect(sent.body.result).toMatchObject({ delivered: true, target_session_id: target.id, queued: false })
     expect(sent.body.result).toHaveProperty('cursor_before')
-    expect(primeManager.command).toHaveBeenCalledWith('runtime-target', {
-      type: 'prompt',
-      message: expect.stringContaining(`[Message from "Planner" (prime session ${source.id})]`),
+    expect(primeManager.command).toHaveBeenCalledWith('runtime-target', expect.objectContaining({ type: 'prompt' }))
+    const delivered = (primeManager.command.mock.calls[0] as unknown as [string, { message: string }])[1]
+    expect(parseGooeyPiAgentMessage(delivered.message)).toEqual({
+      fromSessionId: source.id,
+      fromTitle: source.title,
+      fromHarness: source.harness,
+      text: 'Please claim src/api.ts.',
     })
 
     const waited = await call('wait', { target_session_id: target.id, timeout_ms: 100 })

@@ -1,4 +1,4 @@
-import type { SessionRecord } from '@/types/api'
+import type { HarnessId, SessionRecord } from '@/types/api'
 
 export interface SessionMention {
   start: number
@@ -13,6 +13,12 @@ export const SESSION_ROUTING_END = '===== END GOOEYPI SESSION REFERENCES ====='
 export interface SessionRoutingSplit {
   text: string
   block?: string
+}
+
+export interface RoutedSessionReference {
+  label: string
+  sessionId: string
+  harness: HarnessId
 }
 
 const boundaryBefore = (value: string | undefined): boolean => value === undefined || /[\s([{\"'`]/.test(value)
@@ -65,4 +71,23 @@ export function splitSessionRouting(value: string): SessionRoutingSplit {
     text: `${value.slice(0, begin)}${value.slice(end + SESSION_ROUTING_END.length)}`.trimEnd(),
     block: value.slice(begin + SESSION_ROUTING_BEGIN.length, end).trim(),
   }
+}
+
+/** Parses only the bounded reference lines emitted by appendSessionRouting. */
+export function routedSessionReferences(block: string | undefined): RoutedSessionReference[] {
+  if (!block) return []
+  const references: RoutedSessionReference[] = []
+  const seen = new Set<string>()
+  for (const line of block.split('\n').slice(0, 100)) {
+    const match = /^- ("(?:\\.|[^"\\])*"): (prime|omp|pi) session UUID ([a-zA-Z0-9][a-zA-Z0-9._:-]{0,127})\./.exec(line)
+    if (!match) continue
+    let label: unknown
+    try { label = JSON.parse(match[1]) } catch { continue }
+    if (typeof label !== 'string' || !label.startsWith('@') || label.length > 201) continue
+    const key = `${match[2]}:${match[3]}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    references.push({ label, harness: match[2] as HarnessId, sessionId: match[3] })
+  }
+  return references
 }

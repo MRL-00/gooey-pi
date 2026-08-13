@@ -26,6 +26,7 @@ import { AgentScheduleBridge } from './schedules/agent-bridge'
 import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
 import { AgentCollaborationBridge } from './collaboration/agent-bridge'
+import { configureGooeyPiAgentMessageSigning, loadOrCreateGooeyPiAgentMessageKey } from './collaboration/message-envelope'
 import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
 import { piSessionServiceOptions } from './sessions/pi'
@@ -352,7 +353,9 @@ function requestWindow(reason: 'activation' | 'second instance'): void {
 }
 
 async function bootstrap(): Promise<void> {
-  const stateStore = new JsonStateStore(join(app.getPath('userData'), 'prime-work-state.json'))
+  const userDataPath = app.getPath('userData')
+  configureGooeyPiAgentMessageSigning(loadOrCreateGooeyPiAgentMessageKey(join(userDataPath, 'agent-message-signing.key')))
+  const stateStore = new JsonStateStore(join(userDataPath, 'prime-work-state.json'))
   store = stateStore
   const discovery = new HarnessDiscoveryService(() => stateStore.getSettings().runtimePaths)
   const initialHarnesses = await discovery.refresh()

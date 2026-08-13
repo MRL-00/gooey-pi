@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendSessionRouting, findSessionMentions, splitSessionRouting } from '../../src/lib/session-mentions'
+import { appendSessionRouting, findSessionMentions, routedSessionReferences, splitSessionRouting } from '../../src/lib/session-mentions'
 import type { SessionRecord } from '../../src/types/api'
 
 const session = (id: string, title: string): SessionRecord => ({
@@ -25,6 +25,11 @@ describe('session mentions', () => {
     const split = splitSessionRouting(routed)
     expect(split.text).toBe('Coordinate with @API owner and @API owner.')
     expect(split.block).toContain('session_read, session_send, and session_wait')
+    expect(routedSessionReferences(split.block)).toEqual([{
+      label: '@API owner',
+      harness: 'omp',
+      sessionId: '019f0000-0000-7000-8000-000000000001',
+    }])
   })
 
   it('neutralizes user-supplied routing delimiters before adding its own block', () => {
@@ -39,5 +44,10 @@ describe('session mentions', () => {
     const mention = findSessionMentions('Ask @API owner.', [...sessions, duplicate], preferred)[0]
     expect(mention.session.id).toBe(duplicate.id)
     expect(appendSessionRouting('Ask @API owner.', [...sessions, duplicate], preferred)).toContain(`session UUID ${duplicate.id}`)
+  })
+
+  it('ignores malformed or oversized model-facing reference lines', () => {
+    expect(routedSessionReferences('- "@API owner": other session UUID unsafe.')).toEqual([])
+    expect(routedSessionReferences(`- ${JSON.stringify(`@${'x'.repeat(201)}`)}: omp session UUID safe-id.`)).toEqual([])
   })
 })

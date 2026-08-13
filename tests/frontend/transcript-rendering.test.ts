@@ -159,9 +159,12 @@ describe('transcript rendering', () => {
 
   it('hides model-only session UUID routing from the visible user transcript', () => {
     const html = render([{
-      id: 'session-reference', role: 'user', parts: [{ type: 'text', text: 'Coordinate with @API owner.\n\n===== BEGIN GOOEYPI SESSION REFERENCES =====\n- @API owner: prime session UUID secret-uuid.\n===== END GOOEYPI SESSION REFERENCES =====' }],
+      id: 'session-reference', role: 'user', parts: [{ type: 'text', text: 'Coordinate with @API owner.\n\n===== BEGIN GOOEYPI SESSION REFERENCES =====\n- "@API owner": prime session UUID secret-uuid. Use session_read.\n===== END GOOEYPI SESSION REFERENCES =====' }],
     }])
-    expect(html).toContain('Coordinate with @API owner.')
+    expect(html).toContain('Coordinate with ')
+    expect(html).toContain('>@API owner</button>.')
+    expect(html).toContain('class="session-reference"')
+    expect(html).toContain('aria-label="Open session API owner"')
     expect(html).not.toContain('secret-uuid')
     expect(html).not.toContain('GOOEYPI SESSION REFERENCES')
   })

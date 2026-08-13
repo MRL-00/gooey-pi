@@ -144,7 +144,7 @@ The Enter and Ctrl+Enter message actions can be swapped in **Settings → Prime 
 
 ## Data and security
 
-Prime and OMP session/auth/config files remain authoritative. GooeyPi stores only UI settings, project bookmarks, and local archive metadata in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer retains the secure internal `prime-work://` scheme for compatibility rather than using privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
+Prime and OMP session/auth/config files remain authoritative. GooeyPi stores UI settings, project bookmarks, local archive metadata, and an owner-only collaboration-message signing key in Electron's application data directory. It does not rewrite session JSONL. The packaged renderer retains the secure internal `prime-work://` scheme for compatibility rather than using privileged `file://`. Remote pages run in a dedicated `persist:prime-work-browser` partition with Node disabled, no preload, denied permissions, denied popups, and HTTP(S)-only navigation. Renderer IPC is context-isolated, allowlisted, main-frame checked, and path validated.
 
 Prime Agent tools, extensions, skills, packages, and terminals run with your OS user permissions. Review projects, commands, and third-party packages before running them. See [`docs/security.md`](docs/security.md) for the complete trust boundary.
 

@@ -138,6 +138,8 @@
 .message-actions span { margin-left: auto; }
 .message--user .message-actions { justify-content: flex-end; }
 .message--agent { margin: 7px 0 20px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--prime) 22%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--prime-soft) 76%, var(--canvas)); }
+.session-reference { display: inline; margin: 0 1px; padding: 1px 4px; border: 1px solid color-mix(in srgb, var(--prime) 30%, var(--border)); border-radius: 5px; color: var(--prime); background: color-mix(in srgb, var(--prime-soft) 78%, var(--canvas)); font: inherit; font-weight: 600; line-height: inherit; vertical-align: baseline; }
+.session-reference:hover { background: color-mix(in srgb, var(--prime) 13%, var(--canvas)); }
 .agent-message__content .message-actions { margin-top: 5px; margin-bottom: -5px; }
 .agent-message__summary { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--text-secondary); background: transparent; text-align: left; transition: background 130ms ease-out; }
 .agent-message__summary:hover { background: color-mix(in srgb, var(--prime) 7%, transparent); }

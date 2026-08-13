@@ -1015,6 +1015,8 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(userMessage).toBeVisible()
     await expect(userMessage).not.toContainText('019fdf24-cccc-7000-8000-000000000003')
     await expect(userMessage).not.toContainText('GOOEYPI SESSION REFERENCES')
+    await userMessage.getByRole('button', { name: 'Open session Ownership peer fixture' }).click()
+    await expect(page.locator('.session-row-wrap').filter({ hasText: 'Ownership peer fixture' })).toHaveClass(/is-selected/)
   })
 
   test('removes a project from the sidebar through its context menu', async () => {

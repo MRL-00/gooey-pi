@@ -5,6 +5,7 @@ import { SESSION_FILE_RECORD_LIMIT_BYTES } from '../jsonl-limits'
 import { strictJsonLines } from '../jsonl'
 import { isRecord } from '../validation'
 import type { JsonRecord } from './metadata'
+import { parseGooeyPiAgentMessage } from '../collaboration/message-envelope'
 
 const MAX_TRANSCRIPT_GRAPH_BYTES = 16 * 1024 * 1024
 const MAX_TRANSCRIPT_GRAPH_RECORDS = 10_000
@@ -383,6 +384,20 @@ async function readTranscriptWithDialect(dialect: TranscriptDialect, filePath: s
       continue
     }
     const message = isRecord(entry.message) ? entry.message : {}
+    const collaborationMessage = message.role === 'user' ? parseGooeyPiAgentMessage(textFromContent(message.content)) : undefined
+    if (collaborationMessage) {
+      const rawTimestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp
+        : typeof entry.timestamp === 'string' ? entry.timestamp : undefined
+      transcript.push({
+        id: safeId,
+        role: 'agent',
+        timestamp: typeof rawTimestamp === 'string' ? boundedString(rawTimestamp, 128) : rawTimestamp,
+        agentName: boundedString(collaborationMessage.fromTitle, 200),
+        parts: [{ type: 'text', text: boundedString(collaborationMessage.text, MAX_PART_TEXT_CHARS) }],
+      })
+      activeAssistant = undefined
+      continue
+    }
     const role = roleOf(message)
     const rawTimestamp = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' ? message.timestamp
       : typeof entry.timestamp === 'string' ? entry.timestamp : undefined
