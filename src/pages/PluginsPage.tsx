@@ -6,13 +6,13 @@ import { EmptyState, Modal, Segmented } from '@/components/ui'
 
 const MCP_HTTP_HELP: Record<HarnessId, string> = {
   omp: 'OMP loads this MCP endpoint directly when a new session starts.',
-  prime: 'Use the MCP endpoint shown by your local Studio or server. Prime Agent also needs a matching MCP integration skill to expose its tools.',
+  prime: 'Prime Agent MCP connections are owned by Python integration skills, not raw server definitions.',
   pi: 'Pi loads this MCP endpoint through the pi-mcp-adapter extension (pi install npm:pi-mcp-adapter) when a new session starts.',
 }
 
 const MCP_STDIO_HELP: Record<HarnessId, string> = {
   omp: 'OMP starts this stdio MCP server directly in each new session.',
-  prime: 'Local command definitions are saved for package-specific bridges; Prime Agent 0.7 does not expose arbitrary stdio servers by itself.',
+  prime: 'Prime Agent does not expose arbitrary stdio MCP servers.',
   pi: 'Pi starts this stdio MCP server through the pi-mcp-adapter extension (pi install npm:pi-mcp-adapter) in each new session.',
 }
 
@@ -66,6 +66,8 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [askUserUpdating, setAskUserUpdating] = useState(false)
   const [computerUseUpdating, setComputerUseUpdating] = useState(false)
   const [computerUseAlert, setComputerUseAlert] = useState('')
+  const piMcpAdapterInstalled = skills.some((skill) => skill.kind === 'package' && /pi-mcp-adapter/i.test(`${skill.name} ${skill.source ?? ''}`))
+  const canConfigureMcp = harness === 'omp' || harness === 'pi' && piMcpAdapterInstalled
 
   const visible = useMemo(() => skills.map((skill) => skill.id === 'gooeypi-ask-user'
     ? { ...skill, enabled: askUserEnabled }
@@ -77,7 +79,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
 
   const canAdd = addKind === 'repository'
     ? Boolean(source.trim())
-    : Boolean(mcpName.trim() && (mcpTransport === 'http' ? mcpUrl.trim() : mcpCommand.trim()) && (mcpScope !== 'project' || activeProjectPath))
+    : canConfigureMcp && Boolean(mcpName.trim() && (mcpTransport === 'http' ? mcpUrl.trim() : mcpCommand.trim()) && (mcpScope !== 'project' || activeProjectPath))
 
   const add = async () => {
     if (!canAdd) return
@@ -104,7 +106,18 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   }
 
   const selectAddKind = (value: AddKind) => { setAddKind(value); setResult('') }
-  const openAdd = () => { setResult(''); setAddOpen(true) }
+  const openAdd = () => { setResult(''); setAddKind(harness === 'prime' ? 'repository' : 'mcp'); setAddOpen(true) }
+  const installPiMcpAdapter = async () => {
+    setAdding(true)
+    setResult('')
+    try {
+      const response = await onInstall('npm:pi-mcp-adapter')
+      setResult(response.output)
+      if (response.ok) await onRefresh()
+    } finally {
+      setAdding(false)
+    }
+  }
   const toggleAskUser = async () => {
     if (askUserUpdating) return
     setAskUserUpdating(true)
@@ -159,6 +172,8 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
           </p>
         ))}
         {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
+        {harness === 'prime' ? <p className="connection-warning"><ShieldCheck size={13}/> Prime Agent exposes MCP through matching Python integration skills. Add the integration package; raw MCP server definitions are not offered here.</p> : null}
+        {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Install pi-mcp-adapter before adding MCP servers in GooeyPi.</p> : null}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Plugins' : 'Skills'}</h2><span>{visible.length} available</span></div>
         {visible.length ? (
           <div className="directory-list">{visible.map((skill) => (
@@ -189,7 +204,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
               )}
             </article>
           ))}</div>
-        ) : <EmptyState icon={<Sparkles size={23}/>} title="Nothing here yet">Try another filter, connect an MCP server, or add a repository package.</EmptyState>}
+        ) : <EmptyState icon={<Sparkles size={23}/>} title="Nothing here yet">Try another filter or add a capability package supported by {HARNESS_SHORT_NAMES[harness]}.</EmptyState>}
 
         {addOpen ? (
           <Modal
@@ -197,16 +212,23 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             onClose={() => setAddOpen(false)}
             footer={<><button type="button" className="button" onClick={() => setAddOpen(false)}>Cancel</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? 'Saving…' : 'Installing…') : (addKind === 'mcp' ? 'Save server configuration' : 'Install package')}</button></>}
           >
-            <Segmented value={addKind} options={[{ value: 'mcp', label: 'MCP server' }, { value: 'repository', label: 'Repository package' }]} onChange={selectAddKind} label="What to add"/>
+            <Segmented value={addKind} options={harness === 'prime' ? [{ value: 'repository', label: 'Integration package' }] : [{ value: 'mcp', label: 'MCP server' }, { value: 'repository', label: 'Repository package' }]} onChange={selectAddKind} label="What to add"/>
             {addKind === 'repository' ? (
               <div className="add-tool-form">
                 <p className="modal-intro">Install a capability package from a trusted Git repository, npm source, or local package folder. This installs code; it does not connect to a running MCP server.</p>
                 <label className="field"><span>Repository or package source</span><input autoFocus value={source} onChange={(event) => setSource(event.target.value)} placeholder="https://github.com/owner/agent-plugin"/></label>
                 <small className="field-help">Examples: a Git URL, <code>npm:@scope/package</code>, or an absolute local folder path.</small>
               </div>
+            ) : harness === 'pi' && !piMcpAdapterInstalled ? (
+              <div className="add-tool-form">
+                <p className="modal-intro">Pi intentionally has no built-in MCP client. GooeyPi supports the third-party <code>pi-mcp-adapter</code> package and will not write MCP configuration until it is installed.</p>
+                <button type="button" className="button button--primary" disabled={adding} onClick={() => void installPiMcpAdapter()}>{adding ? 'Installing…' : 'Install Pi MCP Adapter'}</button>
+              </div>
             ) : (
               <div className="add-tool-form">
-                <p className="modal-intro">Save the endpoint or command that an MCP integration package will use. This does not install an integration or test the server.</p>
+                <p className="modal-intro">{harness === 'omp'
+                  ? 'Add a basic server to OMP’s native MCP configuration. Advanced OAuth, headers, and environment settings remain available through OMP’s own MCP commands and config.'
+                  : 'Add a server to pi-mcp-adapter’s configuration. This does not start or test the server.'}</p>
                 <label className="field"><span>Server name</span><input autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="my-local-tools"/></label>
                 <div className="field"><span>Connection</span><Segmented value={mcpTransport} options={[{ value: 'http', label: 'Server / Studio URL' }, { value: 'stdio', label: 'Local command' }]} onChange={(value) => setMcpTransport(value as McpTransport)} label="MCP connection type"/></div>
                 {mcpTransport === 'http' ? (

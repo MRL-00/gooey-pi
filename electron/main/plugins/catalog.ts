@@ -268,11 +268,11 @@ function addSettingsMetadata(
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       if (!isRecord(raw)) continue
       const enabled = raw.enabled !== false
-      if (raw.type === 'http' && typeof raw.url === 'string') {
+      if ((raw.type === 'http' || harness === 'pi') && typeof raw.url === 'string') {
         let origin = 'remote HTTP server'
         try { const url = new URL(raw.url); origin = url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : 'remote server' } catch { /* omit invalid and potentially secret URL */ }
         output.push({ id: idFor('mcp', location, name), name, description: `HTTP MCP server at ${origin}`, kind: 'mcp', location, enabled, source: origin })
-      } else if (raw.type === 'stdio' && typeof raw.command === 'string') {
+      } else if ((raw.type === 'stdio' || harness === 'pi') && typeof raw.command === 'string') {
         const command = basename(raw.command).slice(0, 120)
         output.push({ id: idFor('mcp', location, name), name, description: `Local stdio MCP server (${command})`, kind: 'mcp', location, enabled, source: command })
       }

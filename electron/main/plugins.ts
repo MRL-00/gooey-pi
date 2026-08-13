@@ -133,6 +133,13 @@ export class PluginService {
 
   async connectMcp(inputValue: unknown): Promise<ProcessOutcome> {
     const input = validateMcpConnection(inputValue, this.harness)
+    if (this.harness === 'pi' && !await this.piMcpAdapterInstalled()) {
+      return {
+        ok: false,
+        reason: 'blocked',
+        output: 'Pi core does not include MCP. Install GooeyPi\'s supported adapter first: pi install npm:pi-mcp-adapter',
+      }
+    }
     let settingsTarget: string | ProjectSettingsPath
     if (input.scope === 'project') {
       const projectPath = await this.authorizeProject(requireString(input.projectPath, 'projectPath', { min: 1, max: 4096 }))
@@ -149,7 +156,8 @@ export class PluginService {
       schema: 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json',
     } : this.harness === 'pi' ? {
       agentName: 'Pi',
-      successMessage: `Saved MCP server definition “${input.name}”. Start a new Pi session to load it.${await this.piMcpAdapterAdvisory()}`,
+      includeType: false,
+      successMessage: `Saved MCP server definition “${input.name}”. Start a new Pi session to load it through pi-mcp-adapter.`,
     } : undefined
     const mutation = this.settingsMutation.then(() => updateMcpSettings(
       settingsTarget,
@@ -161,25 +169,19 @@ export class PluginService {
     return await mutation
   }
 
-  /**
-   * Pi loads mcp.json through the pi-mcp-adapter extension. The installed
-   * sources recorded in ~/.pi/agent/settings.json are read (bounded, never
-   * written) to warn when the adapter is missing; the write itself proceeds.
-   */
-  private async piMcpAdapterAdvisory(): Promise<string> {
-    const advisory = ' Note: Pi loads MCP servers through the pi-mcp-adapter extension, which is not installed — run: pi install npm:pi-mcp-adapter'
+  /** Pi core has no MCP. Do not write adapter configuration until its package is actually installed. */
+  private async piMcpAdapterInstalled(): Promise<boolean> {
     try {
       const { content, truncated } = await readAtMost(join(this.agentDir, 'settings.json'), MAX_ADAPTER_SETTINGS_BYTES)
-      if (truncated) return advisory
+      if (truncated) return false
       const value = JSON.parse(content) as unknown
-      if (!isRecord(value) || !Array.isArray(value.packages)) return advisory
-      const installed = value.packages.some((raw) => {
+      if (!isRecord(value) || !Array.isArray(value.packages)) return false
+      return value.packages.some((raw) => {
         const source = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : ''
-        return source.includes('pi-mcp-adapter')
+        return /(?:^|[:/@])pi-mcp-adapter(?:$|[#@])/i.test(source)
       })
-      return installed ? '' : advisory
     } catch {
-      return advisory
+      return false
     }
   }
 

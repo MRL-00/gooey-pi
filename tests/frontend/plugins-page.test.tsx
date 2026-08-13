@@ -67,4 +67,41 @@ describe('PluginsPage bundled capability controls', () => {
     expect(setEnabled).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Install Cua Driver before enabling Computer Use.')
   })
+
+  it('does not advertise raw MCP server configuration for Prime Agent', async () => {
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="prime" skills={[]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onConnectMcp={async () => ({ ok: true, output: '' })}
+      />)
+    })
+    expect(container.textContent).toContain('Prime Agent exposes MCP through matching Python integration skills')
+    await act(async () => { container.querySelector<HTMLButtonElement>('.button--primary')!.click() })
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.textContent).toContain('Integration package')
+    expect(dialog?.textContent).not.toContain('Save server configuration')
+  })
+
+  it('offers the supported Pi adapter before allowing MCP configuration', async () => {
+    const install = vi.fn(async () => ({ ok: true, output: 'installed' }))
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="pi" skills={[]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={install}
+        onConnectMcp={async () => ({ ok: true, output: '' })}
+      />)
+    })
+    await act(async () => { container.querySelector<HTMLButtonElement>('.button--primary')!.click() })
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+    const adapterButton = [...dialog!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Install Pi MCP Adapter')
+    expect(adapterButton).toBeTruthy()
+    expect(dialog?.textContent).toContain('Pi intentionally has no built-in MCP client')
+    await act(async () => { adapterButton!.click(); await Promise.resolve(); await Promise.resolve() })
+    expect(install).toHaveBeenCalledWith('npm:pi-mcp-adapter')
+  })
 })

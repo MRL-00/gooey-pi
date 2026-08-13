@@ -800,12 +800,13 @@ describe('PluginService Pi parity', () => {
     expect(catalog.skills.some((item) => item.kind === 'mcp')).toBe(false)
   })
 
-  it('writes native pi mcp.json files at both scopes with the adapter advisory', async () => {
+  it('writes pi-mcp-adapter mcp.json files at both scopes only after the adapter is installed', async () => {
     const root = temp()
     const agentDir = join(root, '.pi', 'agent')
     const project = join(root, 'project')
     mkdirSync(agentDir, { recursive: true })
     mkdirSync(project)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
 
     const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
@@ -813,31 +814,26 @@ describe('PluginService Pi parity', () => {
     await expect(service.connectMcp({ name: 'invalid name', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/unsupported characters/)
 
     expect(user).toMatchObject({ ok: true, output: expect.stringContaining('new Pi session') })
-    expect(user.output).toContain('pi install npm:pi-mcp-adapter')
+    expect(user.output).toContain('through pi-mcp-adapter')
     expect(projectResult.ok).toBe(true)
     const userConfig = JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8'))
     const projectConfig = JSON.parse(readFileSync(join(project, '.pi', 'mcp.json'), 'utf8'))
     expect(userConfig.$schema).toBeUndefined()
-    expect(userConfig.mcpServers['docs:remote']).toEqual({ type: 'http', url: 'https://docs.example/mcp', enabled: true })
-    expect(projectConfig.mcpServers.files).toEqual({ type: 'stdio', command: 'npx', args: ['-y', 'server'], enabled: true })
-    expect(existsSync(join(agentDir, 'settings.json'))).toBe(false)
+    expect(userConfig.mcpServers['docs:remote']).toEqual({ url: 'https://docs.example/mcp', enabled: true })
+    expect(projectConfig.mcpServers.files).toEqual({ command: 'npx', args: ['-y', 'server'], enabled: true })
     expect(existsSync(join(project, '.prime'))).toBe(false)
   })
 
-  it('omits the adapter advisory when settings.json lists pi-mcp-adapter', async () => {
+  it('blocks MCP configuration without pi-mcp-adapter and writes nothing', async () => {
     const root = temp()
     const agentDir = join(root, '.pi', 'agent')
     mkdirSync(agentDir, { recursive: true })
-    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
 
     const result = await service.connectMcp({ name: 'docs', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
 
-    expect(result.ok).toBe(true)
-    expect(result.output).toContain('Saved MCP server definition')
-    expect(result.output).not.toContain('not installed')
-    // The adapter check reads settings.json without rewriting it.
-    expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))).toEqual({ packages: ['npm:pi-mcp-adapter'] })
+    expect(result).toMatchObject({ ok: false, reason: 'blocked', output: expect.stringContaining('pi install npm:pi-mcp-adapter') })
+    expect(existsSync(join(agentDir, 'mcp.json'))).toBe(false)
   })
 
   it('rejects pi project MCP paths that traverse repository symlinks', async () => {
@@ -846,6 +842,7 @@ describe('PluginService Pi parity', () => {
     const project = join(root, 'project')
     const outside = join(root, 'outside')
     mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
     mkdirSync(project)
     mkdirSync(outside)
     symlinkSync(outside, join(project, '.pi'))

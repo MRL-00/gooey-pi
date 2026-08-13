@@ -349,7 +349,7 @@ export async function updateMcpSettings(
   target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
-  options: { agentName?: string; schema?: string; successMessage?: string } = {},
+  options: { agentName?: string; schema?: string; successMessage?: string; includeType?: boolean } = {},
 ): Promise<ProcessOutcome> {
   const agentName = options.agentName ?? 'Prime Agent'
   const settingsPath = typeof target === 'string' ? target : target.path
@@ -366,9 +366,10 @@ export async function updateMcpSettings(
       if (Object.hasOwn(currentServers, input.name)) {
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
+      const includeType = options.includeType !== false
       const config = input.type === 'http'
-        ? { type: 'http', url: input.url, enabled: true }
-        : { type: 'stdio', command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
+        ? { ...(includeType ? { type: 'http' } : {}), url: input.url, enabled: true }
+        : { ...(includeType ? { type: 'stdio' } : {}), command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
       settings.mcpServers = { ...currentServers, [input.name]: config }
       if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
       if (await writeSettingsAtomically(settingsPath, settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
