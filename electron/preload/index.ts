@@ -50,6 +50,7 @@ const api: PrimeWorkApi = {
     setEnabled: (providerId, enabled, harness) => ipcRenderer.invoke('providers:set-enabled', providerId, enabled, harness),
     setDisabled: (providerIds, harness) => ipcRenderer.invoke('providers:set-disabled', providerIds, harness),
     startOAuth: (providerId) => ipcRenderer.invoke('providers:start-oauth', providerId),
+    startMcpOAuth: (server, harness) => ipcRenderer.invoke('providers:start-mcp-oauth', server, harness),
     respondOAuth: (flowId, promptId, value) => ipcRenderer.invoke('providers:respond-oauth', flowId, promptId, value),
     cancelOAuth: (flowId) => ipcRenderer.invoke('providers:cancel-oauth', flowId),
     onAuthEvent: (callback) => subscribe<ProviderAuthEvent>('providers:auth-event', callback),

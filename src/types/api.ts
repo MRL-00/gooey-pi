@@ -628,6 +628,7 @@ export interface PrimeWorkApi {
     setEnabled(providerId: string, enabled: boolean, harness?: HarnessId): Promise<PrimeModelCatalog>
     setDisabled(providerIds: string[], harness?: HarnessId): Promise<PrimeModelCatalog>
     startOAuth(providerId: string): Promise<{ flowId: string }>
+    startMcpOAuth(server: string, harness?: HarnessId): Promise<{ flowId: string }>
     respondOAuth(flowId: string, promptId: string, value?: string): Promise<boolean>
     cancelOAuth(flowId: string): Promise<boolean>
     onAuthEvent(callback: (event: ProviderAuthEvent) => void): () => void

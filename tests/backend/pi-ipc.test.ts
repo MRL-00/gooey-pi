@@ -93,7 +93,7 @@ function buildServices() {
     terminals: serviceStub(),
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -225,6 +225,7 @@ describe('pi harness IPC routing', () => {
       ['providers:save-api-key', ['openai', 'key']],
       ['providers:logout', ['openai']],
       ['providers:start-oauth', ['openai']],
+      ['providers:start-mcp-oauth', ['notion']],
     ] as const) {
       await expect(async () => harness.invoke(channel, ...args, 'pi'), channel).rejects.toThrow('Pi provider authentication is managed by the pi CLI')
     }

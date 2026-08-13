@@ -441,9 +441,11 @@ test.describe('Prime Work desktop smoke', () => {
       || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
     const liveInstall = testInfo.title === 'adds and connects to a harness installed while the app is open'
     const noHarnesses = testInfo.title === 'opens Harness settings from the no-harness recovery prompt'
+    const authenticatedMcp = testInfo.title === 'shows authenticated built-in Prime MCPs in Capabilities'
     let startupError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const fixture = createHermeticFixture(activeSession)
+      if (authenticatedMcp) writeFileSync(join(fixture.home, '.prime', 'agent', 'auth.json'), JSON.stringify({ 'mcp:notion': { type: 'oauth', access: 'fixture-token', refresh: 'fixture-refresh', expires: Date.now() + 3_600_000 } }))
       currentFixture = fixture
       fixtureSessionFile = fixture.sessionFile
       if (liveInstall) renameSync(fixture.ompExecutable, `${fixture.ompExecutable}.pending`)
@@ -1190,7 +1192,7 @@ test.describe('Prime Work desktop smoke', () => {
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('/')
     const options = page.locator('.composer-menu').getByRole('option')
-    await expect(options).toHaveCount(4)
+    await expect(options).toHaveCount(5)
     await expect(composer).toHaveAttribute('aria-expanded', 'true')
     await page.keyboard.press('ArrowDown')
     await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true')
@@ -1199,6 +1201,25 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(composer).toHaveAttribute('aria-expanded', 'false')
     await page.getByRole('button', { name: /^New session/ }).first().click()
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
+  })
+
+  test('routes the Prime MCP slash command to Capabilities without starting an agent turn', async () => {
+    await page.getByRole('button', { name: /^New session/ }).first().click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('/mcp')
+    await expect(page.locator('.composer-menu').getByRole('option', { name: /\/mcp Manage and sign in/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Send message' }).click()
+
+    await expect(page.getByRole('heading', { name: /Extend/ })).toBeVisible()
+    await expect(page.getByText('Manage packages, extensions, MCP servers, and reusable skills for this harness.')).toBeVisible()
+    expect(existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(false)
+  })
+
+  test('shows authenticated built-in Prime MCPs in Capabilities', async () => {
+    await page.getByRole('button', { name: 'Capabilities', exact: true }).click()
+    const notion = page.locator('article').filter({ has: page.getByRole('heading', { name: 'Notion', exact: true }) })
+    await expect(notion).toContainText('Authenticated official MCP integration')
+    await expect(notion.getByLabel('Enabled Notion')).toBeVisible()
   })
 
   test('round-trips a grouped Prime ask_user questionnaire', async () => {

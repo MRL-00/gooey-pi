@@ -39,6 +39,16 @@ export interface WorkspaceActionsDeps {
   reportError(error: unknown): void
 }
 
+export type PrimeMcpCommand = { type: 'open' } | { type: 'login'; server: string }
+
+export function parsePrimeMcpCommand(prompt: string): PrimeMcpCommand | undefined {
+  const value = prompt.trim()
+  if (value === '/mcp') return { type: 'open' }
+  const match = /^\/mcp\s+login\s+([A-Za-z0-9][A-Za-z0-9._ -]{0,63})\s*$/.exec(value)
+  if (!match || ['__proto__', 'prototype', 'constructor'].includes(match[1])) return undefined
+  return { type: 'login', server: match[1] }
+}
+
 /**
  * The workspace mutation handlers, extracted from App. Every callback has a
  * stable identity (created once) and dispatches against the latest render's
@@ -169,7 +179,23 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
 
   const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
-    const { bridge, sessions, workspace, provider, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, reportError } = getDeps()
+    const { bridge, sessions, workspace, provider, settingsState, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, setView, setToast, reportError } = getDeps()
+    const mcpCommand = images.length === 0 && settingsState.settings.activeHarness === 'prime' ? parsePrimeMcpCommand(prompt) : undefined
+    if (mcpCommand?.type === 'open') {
+      setView('plugins')
+      setToast('Manage MCP integrations in Capabilities.')
+      return
+    }
+    if (mcpCommand?.type === 'login') {
+      try {
+        await provider.startMcpOAuth(mcpCommand.server)
+        setToast(`Opening ${mcpCommand.server} sign-in…`)
+      } catch (error) {
+        reportError(error)
+        throw error
+      }
+      return
+    }
     const currentWorkspace = workspace.workspaceRef.current
     const currentRuntime = workspace.runtime
     const currentOwner = workspace.runtimeOwnerRef.current

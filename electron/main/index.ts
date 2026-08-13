@@ -543,7 +543,7 @@ async function bootstrap(): Promise<void> {
       id: 'prime-work-browser', name: 'Browser',
       description: 'Drive the in-app browser for this thread: tabs, navigation, clicks, typing, and screenshots.',
       kind: 'skill', location: 'system', path: browserSkillPath, enabled: true,
-    }, await computerUseSkill()],
+    }, await computerUseSkill(), ...providers.mcpCapabilities()],
   })
   const ompPlugins = new PluginService(ompExecutable, (path) => ompProjects.authorizeProjectRoot(path), {
     harness: 'omp',

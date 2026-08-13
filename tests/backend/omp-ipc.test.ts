@@ -77,7 +77,7 @@ function buildServices() {
     terminals: serviceStub(),
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled) => catalog('prime', disabled)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -284,6 +284,11 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']))
   })
 
+  it('routes Prime MCP OAuth through the desktop auth service', async () => {
+    await expect(harness.invoke('providers:start-mcp-oauth', 'notion', 'prime')).resolves.toEqual({ flowId: 'mcp-flow' })
+    expect(harness.services.providers.startMcpOAuth).toHaveBeenCalledWith('notion')
+  })
+
   it('stores OMP provider visibility in desktop settings without mutating OMP', async () => {
     await expect(harness.invoke('providers:set-enabled', 'openai', false, 'omp')).resolves.toMatchObject({
       from: 'omp',
@@ -303,6 +308,7 @@ describe('harness-aware IPC routing', () => {
       ['providers:save-api-key', ['openai', 'key']],
       ['providers:logout', ['openai']],
       ['providers:start-oauth', ['openai']],
+      ['providers:start-mcp-oauth', ['notion']],
     ] as const) {
       await expect(async () => harness.invoke(channel, ...args, 'omp'), channel).rejects.toThrow('managed by the omp CLI')
     }

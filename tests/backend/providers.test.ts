@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
 
 const dirs: string[] = []
@@ -201,5 +201,68 @@ describe('Prime provider adapter', () => {
 
   it('rejects OAuth for providers that do not own an OAuth flow', async () => {
     await expect(service().startOAuth('openai')).rejects.toThrow('requires api_key authentication')
+  })
+
+  it('starts built-in MCP OAuth through Prime Agent credential storage', async () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+    }
+    const login = vi.fn(async () => undefined)
+    internals.authStorage.login = login
+
+    const flow = await providerService.startMcpOAuth('notion')
+    expect(flow.flowId).toBeTruthy()
+    expect(login).toHaveBeenCalledWith('mcp:notion', expect.any(Object))
+  })
+
+  it('surfaces built-in MCP connection state without exposing credentials', () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { set(providerId: string, credential: unknown): void }
+    }
+    expect(providerService.mcpCapabilities()).toContainEqual(expect.objectContaining({ name: 'Notion', kind: 'mcp', location: 'bundled', enabled: false }))
+    internals.authStorage.set('mcp:notion', { type: 'oauth', access: 'secret-token', refresh: 'refresh-token', expires: Date.now() + 60_000 })
+    const capabilities = providerService.mcpCapabilities()
+    expect(capabilities).toContainEqual(expect.objectContaining({ id: 'prime-mcp-notion', name: 'Notion', enabled: true }))
+    expect(JSON.stringify(capabilities)).not.toContain('secret-token')
+  })
+
+  it('registers a configured custom Prime MCP OAuth server before login', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-provider-'))
+    dirs.push(dir)
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({
+      mcpServers: { acme: { type: 'http', url: 'https://acme.example/mcp', oauth: true } },
+    }))
+    const providerService = new PrimeProviderService({
+      agentDir: dir,
+      authPath: join(dir, 'auth.json'),
+      modelsPath: join(dir, 'models.json'),
+    })
+    const internals = providerService as unknown as {
+      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+    }
+    const login = vi.fn(async () => undefined)
+    internals.authStorage.login = login
+
+    await providerService.startMcpOAuth('acme')
+    expect(login).toHaveBeenCalledWith('mcp:acme', expect.any(Object))
+  })
+
+  it('rejects unknown and non-OAuth MCP login targets', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-provider-'))
+    dirs.push(dir)
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({
+      mcpServers: { local: { type: 'http', url: 'https://local.example/mcp', enabled: true } },
+    }))
+    const providerService = new PrimeProviderService({
+      agentDir: dir,
+      authPath: join(dir, 'auth.json'),
+      modelsPath: join(dir, 'models.json'),
+    })
+
+    await expect(providerService.startMcpOAuth('missing')).rejects.toThrow('Unknown MCP integration')
+    await expect(providerService.startMcpOAuth('local')).rejects.toThrow('not configured for OAuth')
+    await expect(providerService.startMcpOAuth('../notion')).rejects.toThrow('unsupported characters')
   })
 })

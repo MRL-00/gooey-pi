@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import type {
   BrowserAnnotation,
   GitWorktree,
+  HarnessId,
   MessageEnterAction,
   PrimeContextUsage,
   PrimeModelDescriptor,
@@ -43,6 +44,7 @@ interface ComposerProps {
   agentName?: string
   /** Active harness short name for inline copy ("Prime" / "OMP"). */
   shortName?: string
+  harness?: HarnessId
   imageInputSupported: boolean
   /** Primary action for Enter; Ctrl/Cmd+Enter selects the opposite action. */
   messageEnterAction?: MessageEnterAction
@@ -85,6 +87,11 @@ const commands = [
   { command: '/plan', detail: 'Create an implementation plan' },
   { command: '/compact', detail: 'Compact session context' },
   { command: '/status', detail: 'Show runtime status' },
+]
+
+const primeCommands = [
+  ...commands,
+  { command: '/mcp', detail: 'Manage and sign in to MCP integrations' },
 ]
 
 const reasoningLabels: Record<PrimeThinkingLevel, string> = {
@@ -133,6 +140,7 @@ export const Composer = memo(function Composer({
   fastAvailable,
   agentName = 'Prime Agent',
   shortName = 'Prime',
+  harness = 'prime',
   imageInputSupported,
   messageEnterAction = 'queue',
   contextUsage,
@@ -389,7 +397,7 @@ export const Composer = memo(function Composer({
 
   const suggestions =
     menu === 'command'
-      ? commands
+      ? (harness === 'prime' ? primeCommands : commands)
           .filter((item) => item.command.startsWith(value))
           .map((item) => ({
             key: item.command,

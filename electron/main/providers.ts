@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { AuthStorage, ModelRegistry, VERSION } from 'prime-agent'
+import { dirname } from 'node:path'
+import { AuthStorage, ModelRegistry, SettingsManager, VERSION } from 'prime-agent'
 import { getSupportedThinkingLevels, supportsFastMode } from 'prime-agent-ai'
+import { BUILTIN_MCP_CATALOG, createMcpOAuthProvider, getCatalogEntry, registerBuiltinMcpOAuthProviders } from '@earendil-works/pi-ai/mcp'
+import { registerOAuthProvider } from '@earendil-works/pi-ai/oauth'
 import type { Api, Model } from 'prime-agent-ai'
-import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor, ProviderAuthEvent, ProviderAuthMethod, ProviderAuthSource } from '../../src/types/api'
+import type { PrimeModelCatalog, PrimeModelDescriptor, PrimeProviderDescriptor, ProviderAuthEvent, ProviderAuthMethod, ProviderAuthSource, SkillRecord } from '../../src/types/api'
 import { requireString, requireWebUrl } from './validation'
 
 const CATALOG_TTL_MS = 30_000
@@ -87,14 +90,33 @@ export class PrimeProviderService {
   private readonly flows = new Map<string, OAuthFlow>()
   private eventSink: (event: ProviderAuthEvent) => void = () => undefined
   private readonly openExternal: (url: string) => Promise<void>
+  private readonly agentDir: string | undefined
 
-  constructor(options: { authPath?: string; modelsPath?: string; openExternal?: (url: string) => Promise<void> } = {}) {
+  constructor(options: { agentDir?: string; authPath?: string; modelsPath?: string; openExternal?: (url: string) => Promise<void> } = {}) {
     this.authStorage = AuthStorage.create(options.authPath, options.authPath ? { usePrimeCliConfig: false } : undefined)
     this.registry = ModelRegistry.create(this.authStorage, options.modelsPath)
     this.openExternal = options.openExternal ?? (async () => undefined)
+    this.agentDir = options.agentDir ?? (options.authPath ? dirname(options.authPath) : undefined)
   }
 
   setEventSink(sink: (event: ProviderAuthEvent) => void): void { this.eventSink = sink }
+
+  mcpCapabilities(): SkillRecord[] {
+    return BUILTIN_MCP_CATALOG.map((integration) => {
+      const enabled = this.authStorage.get(`mcp:${integration.server}`) !== undefined
+      return {
+        id: `prime-mcp-${integration.server}`,
+        name: integration.label,
+        description: enabled
+          ? `Authenticated official MCP integration at ${new URL(integration.url).origin}`
+          : `Official MCP integration at ${new URL(integration.url).origin}. Sign in with /mcp login ${integration.server}.`,
+        kind: 'mcp',
+        location: 'bundled',
+        enabled,
+        source: new URL(integration.url).origin,
+      }
+    })
+  }
 
   async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
@@ -198,6 +220,35 @@ export class PrimeProviderService {
   async startOAuth(rawProviderId: unknown): Promise<{ flowId: string }> {
     const providerId = requireString(rawProviderId, 'providerId', { min: 1, max: 128, trim: true })
     await this.requireProvider(providerId, 'oauth')
+    return this.startOAuthFlow(providerId)
+  }
+
+  async startMcpOAuth(rawServer: unknown): Promise<{ flowId: string }> {
+    const server = requireString(rawServer, 'MCP server', { min: 1, max: 64, trim: true })
+    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(server) || ['__proto__', 'prototype', 'constructor'].includes(server)) {
+      throw new TypeError('MCP server name contains unsupported characters')
+    }
+
+    // Model-catalog refreshes reset the global OAuth registry, so restore the
+    // built-in MCP providers immediately before resolving this login.
+    registerBuiltinMcpOAuthProviders()
+    const settings = SettingsManager.create(process.cwd(), this.agentDir)
+    const configured = settings.getMcpServers()?.[server]
+    if (configured) {
+      if (configured.type !== 'http' || configured.oauth !== true) throw new Error(`MCP server ${server} is not configured for OAuth`)
+      registerOAuthProvider(createMcpOAuthProvider({ server, label: server, url: requireWebUrl(configured.url) }))
+    } else if (!getCatalogEntry(server)) {
+      throw new Error(`Unknown MCP integration: ${server}`)
+    }
+
+    const providerId = `mcp:${server}`
+    if (!this.authStorage.getOAuthProviders().some((provider) => provider.id === providerId)) {
+      throw new Error(`Unknown MCP integration: ${server}`)
+    }
+    return this.startOAuthFlow(providerId)
+  }
+
+  private startOAuthFlow(providerId: string): { flowId: string } {
     if (this.flows.size >= 2) throw new Error('Too many provider login flows are active')
     if ([...this.flows.values()].some((flow) => flow.providerId === providerId)) throw new Error('This provider login is already active')
     const id = randomUUID()

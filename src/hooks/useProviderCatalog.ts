@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { HarnessId, PrimeModelCatalog, PrimeModelDescriptor, PrimeThinkingLevel, PrimeWorkApi, ProviderAuthEvent, RuntimeInfo } from '@/types/api'
 
-type ActiveProviderAuthEvent = Extract<ProviderAuthEvent, { type: 'auth' | 'progress' | 'prompt' | 'select' }>
+type ActiveProviderAuthEvent = Exclude<ProviderAuthEvent, { type: 'cancelled' }>
 
 /** Stable fallback identities so consumers can memoize on prop equality. */
 const DEFAULT_REASONING_LEVELS: PrimeThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -120,13 +120,12 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
     if (!bridge) return
     return bridge.providers.onAuthEvent((event) => {
       if (event.type === 'complete') {
-        setAuthEvent(null)
+        setAuthEvent(event)
         void refresh(true).catch(reportError)
       } else if (event.type === 'cancelled') {
         setAuthEvent(null)
       } else if (event.type === 'error') {
-        setAuthEvent(null)
-        reportError(event.error)
+        setAuthEvent(event)
       } else if (event.type === 'auth' || event.type === 'progress' || event.type === 'prompt' || event.type === 'select') {
         setAuthEvent(event)
       }
@@ -232,6 +231,11 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
     await bridge.providers.startOAuth(providerId)
   }, [bridge])
 
+  const startMcpOAuth = useCallback(async (server: string) => {
+    if (!bridge) throw new Error('MCP integrations can only be configured in the desktop app.')
+    await bridge.providers.startMcpOAuth(server, 'prime')
+  }, [bridge])
+
   const respondOAuth = useCallback((promptId: string, value?: string) => {
     if (!bridge || !authEvent) return
     void bridge.providers.respondOAuth(authEvent.flowId, promptId, value).catch(reportError)
@@ -245,6 +249,6 @@ export function useProviderCatalog({ bridge, ready = true, harness = 'prime', ru
   return {
     model, effort, fast, catalog, authEvent, selectedModel, reasoningLevels, modelsByProvider,
     refresh, changeModel, changeEffort, changeFast,
-    saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, startOAuth, respondOAuth, cancelOAuth,
+    saveApiKey, logout, setEnabled, setAllEnabled, setAllDisabled, startOAuth, startMcpOAuth, respondOAuth, cancelOAuth,
   }
 }
