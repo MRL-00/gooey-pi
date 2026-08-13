@@ -6,6 +6,7 @@ import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { BROWSER_PARTITION, type AppMeta, type AppUpdateState, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent } from '../../src/types/api'
 import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
+import { installApplicationMenu } from './application-menu'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { CuaDriverService } from './cua-driver'
@@ -824,6 +825,7 @@ async function bootstrap(): Promise<void> {
       renderer.send('updates:changed', state)
     }
   })
+  installApplicationMenu({ appName: 'GooeyPi', checkForUpdates: () => { void updates.check() } })
   await ensureWindow()
   updates.start()
 }
