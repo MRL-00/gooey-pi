@@ -139,7 +139,8 @@ describe('PluginsPage bundled capability controls', () => {
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Pi MCP Adapter"]')!
     await act(async () => { toggle.click(); await Promise.resolve(); await Promise.resolve() })
     expect(setMcpSupport).toHaveBeenCalledWith(true)
-    expect(refresh).toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Pi MCP Adapter installed.')
   })
 
   it('greys out Pi MCP until its adapter is enabled and opens the extension form separately', async () => {

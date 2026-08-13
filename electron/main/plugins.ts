@@ -133,7 +133,12 @@ export class PluginService {
       // The Prime CLI does not participate in Prime Work's settings lock. Holding
       // it around the subprocess still coordinates package installs launched by
       // this app with MCP updates from every PluginService instance.
-      const release = await acquireSettingsLock(settingsPath)
+      // Pi owns the settings.json lock while `pi install` is running. Taking
+      // that same lock here makes the child deadlock against GooeyPi. Keep a
+      // separate app coordination lock so multiple GooeyPi windows serialize
+      // package mutations while Pi remains free to protect its own settings.
+      const lockPath = this.harness === 'pi' ? `${settingsPath}.gooeypi` : settingsPath
+      const release = await acquireSettingsLock(lockPath)
       try {
         return this.harness === 'omp'
           ? await executeOmpPluginInstall(agentPath, source)
@@ -166,7 +171,8 @@ export class PluginService {
       : undefined
     const settingsPath = projectSettings?.path ?? join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
-      const release = await acquireSettingsLock(settingsPath, projectSettings?.verify)
+      const lockPath = this.harness === 'pi' ? `${settingsPath}.gooeypi` : settingsPath
+      const release = await acquireSettingsLock(lockPath, projectSettings?.verify)
       try {
         return this.harness === 'pi'
           ? await executePiPluginInstall(agentPath, input.source, safeProjectPath)
@@ -192,7 +198,7 @@ export class PluginService {
     if (!agentPath) return { ok: false, reason: 'blocked', output: 'Pi executable was not found' }
     const settingsPath = join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
-      const release = await acquireSettingsLock(settingsPath)
+      const release = await acquireSettingsLock(`${settingsPath}.gooeypi`)
       try { return await executePiPluginRemove(agentPath, installedSource) } finally { await release() }
     })
     this.settingsMutation = operation.then(() => undefined, () => undefined)

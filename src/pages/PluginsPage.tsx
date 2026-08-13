@@ -83,6 +83,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [computerUseAlert, setComputerUseAlert] = useState('')
   const [mcpSupportUpdating, setMcpSupportUpdating] = useState(false)
   const [mcpSupportAlert, setMcpSupportAlert] = useState('')
+  const [mcpSupportNotice, setMcpSupportNotice] = useState('')
   const piMcpAdapterInstalled = skills.some((skill) => skill.id === 'gooeypi-pi-mcp' && skill.enabled)
   const canConfigureMcp = harness === 'omp' || harness === 'pi' && piMcpAdapterInstalled
 
@@ -169,12 +170,19 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   }
   const toggleMcpSupport = async (skill: SkillRecord) => {
     if (mcpSupportUpdating) return
+    const enabling = !skill.enabled
     setMcpSupportUpdating(true)
     setMcpSupportAlert('')
+    setMcpSupportNotice(enabling ? 'Installing Pi MCP Adapter…' : 'Removing Pi MCP Adapter…')
     try {
-      const response = await onSetMcpSupport(!skill.enabled)
-      if (!response.ok) setMcpSupportAlert(response.output)
-      await onRefresh()
+      const response = await onSetMcpSupport(enabling)
+      if (!response.ok) {
+        const busy = /lock file is already being held|settings are busy/i.test(response.output)
+        setMcpSupportAlert(busy ? 'Pi settings are busy. Close any other Pi package operation and try again.' : response.output)
+        setMcpSupportNotice('')
+      } else {
+        setMcpSupportNotice(enabling ? 'Pi MCP Adapter installed.' : 'Pi MCP Adapter removed.')
+      }
     } finally {
       setMcpSupportUpdating(false)
     }
@@ -208,6 +216,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
         ))}
         {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
         {mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
+        {mcpSupportNotice ? <p className="connection-warning" role="status">{mcpSupportUpdating ? <RefreshCw className="spin" size={13}/> : <ShieldCheck size={13}/>} {mcpSupportNotice}</p> : null}
         {harness === 'prime' ? <p className="connection-warning"><ShieldCheck size={13}/> Prime MCP integrations require a matching Python skill package and an HTTP server definition. GooeyPi installs both through one guided flow.</p> : null}
         {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Enable Pi MCP Adapter below before adding servers.</p> : null}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Capabilities' : 'Skills'}</h2><span>{visible.length} available</span></div>
@@ -244,7 +253,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                   disabled={mcpSupportUpdating}
                   title={skill.enabled ? 'Disabling removes the adapter package but keeps server definitions and credentials.' : 'Enabling installs npm:pi-mcp-adapter through Pi.'}
                   onClick={() => void toggleMcpSupport(skill)}
-                >{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
+                >{mcpSupportUpdating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
               ) : (
                 <span className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Enabled' : 'Unavailable'} ${skill.name}`}>{skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</span>
               )}
