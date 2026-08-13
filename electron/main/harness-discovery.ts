@@ -30,7 +30,7 @@ export async function probeHarnessExecutable(executable: string): Promise<Harnes
   try {
     const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 16 * 1024 })
     if (result.code !== 0 || result.timedOut || result.outputExceeded) return { runnable: false, version: null }
-    const token = result.stdout.trim().split(/\s+/).at(-1) ?? ''
+    const token = (result.stdout.trim() || result.stderr.trim()).split(/\s+/).at(-1) ?? ''
     const version = token && token.length <= 128 && !hasControlCharacter(token) ? token : null
     return { runnable: true, version }
   } catch { return { runnable: false, version: null } }

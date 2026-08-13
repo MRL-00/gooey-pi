@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { emptySessionActionSnapshot, parseSessionActionSnapshot } from '../../../src/lib/session-actions'
 import { RPC_READ_FRAME_LIMIT_BYTES } from '../jsonl-limits'
-import { killProcessTree, safeChildEnvironment, waitForProcessExit } from '../process-utils'
+import { executableChildEnvironment, killProcessTree, safeChildEnvironment, waitForProcessExit } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
@@ -98,7 +98,7 @@ export class RpcRuntime {
     // Every harness child is spawned with the authorized cwd as its working
     // directory. Adapters that declare spawnsInCwd (pi has no --cwd flag and
     // buckets its sessions by the process working directory) depend on this.
-    this.child = spawn(executable, args, { cwd, env: safeChildEnvironment(extraEnvironment), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
+    this.child = spawn(executable, args, { cwd, env: executableChildEnvironment(executable, safeChildEnvironment(extraEnvironment)), shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
       this.child,
       (line) => this.handleLine(line),

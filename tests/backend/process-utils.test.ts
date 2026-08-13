@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -22,6 +23,27 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
+  it('runs an env-node CLI beside its interpreter under a Finder-style minimal PATH', async () => {
+    const dir = temp()
+    const executable = join(dir, 'pi')
+    symlinkSync(process.execPath, join(dir, 'node'))
+    writeFileSync(executable, '#!/usr/bin/env node\nprocess.stdout.write("0.84.1\\n")\n')
+    chmodSync(executable, 0o755)
+
+    const result = await runProcess(executable, ['--version'], {
+      env: { HOME: dir, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toBe('0.84.1\n')
+    expect(executableChildEnvironment(executable, { PATH: '/usr/bin' }).PATH).toBe(`${dir}:/usr/bin`)
+
+    const primeExecutable = join(dir, 'prime-agent')
+    writeFileSync(primeExecutable, '#!/usr/bin/env node\nprocess.stderr.write("0.7.2\\n")\n')
+    chmodSync(primeExecutable, 0o755)
+    await expect(probeHarnessExecutable(primeExecutable)).resolves.toEqual({ runnable: true, version: '0.7.2' })
+  })
+
   it('uses a combined output budget and explicitly reports truncation with independent kill escalation', async () => {
     const started = Date.now()
     const result = await runProcess(process.execPath, ['-e', `

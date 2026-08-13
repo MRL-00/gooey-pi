@@ -4,7 +4,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
-import { killProcessTree, resolveExecutable, runProcess, safeChildEnvironment, waitForProcessExit, type ExecutableSource } from './process-utils'
+import { executableChildEnvironment, killProcessTree, resolveExecutable, runProcess, waitForProcessExit, type ExecutableSource } from './process-utils'
 import { requireString } from './validation'
 
 const CATALOG_TTL_MS = 30_000
@@ -111,7 +111,7 @@ function runModelProbe(executable: string, options: { timeoutMs: number; maxOutp
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ['--mode', 'rpc', '--no-session', '--offline'], {
       cwd: tmpdir(),
-      env: safeChildEnvironment(),
+      env: executableChildEnvironment(executable),
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -355,7 +355,6 @@ export class PiModelCatalogService implements ModelCatalogProvider {
       const result = await runProcess(executable, ['--version'], {
         timeoutMs: this.timeoutMs,
         maxBytes: VERSION_MAX_OUTPUT_BYTES,
-        env: safeChildEnvironment(),
       })
       const match = result.code === 0 && !result.timedOut && !result.outputExceeded
         ? result.stdout.trim().match(/^v?([0-9][0-9A-Za-z.+-]{0,63})$/)

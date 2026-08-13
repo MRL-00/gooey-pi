@@ -193,6 +193,35 @@ export function safeChildEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
   return env
 }
 
+/**
+ * Makes an absolute executable's own directory available to `/usr/bin/env`
+ * shebangs without evaluating a shell profile. Finder-launched macOS apps get
+ * a minimal PATH, while npm-installed Pi-family CLIs commonly use
+ * `#!/usr/bin/env node` with `node` beside the CLI shim.
+ */
+export function executableChildEnvironment(
+  executable: string,
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  platform = process.platform,
+): NodeJS.ProcessEnv {
+  const result = { ...env }
+  if (!isAbsolutePathForPlatform(executable, platform)) return result
+  const pathApi = platform === 'win32' ? win32 : posix
+  const pathKey = platform === 'win32' && result.Path !== undefined ? 'Path' : 'PATH'
+  const executableDirectory = pathApi.dirname(executable)
+  const separator = platform === 'win32' ? ';' : delimiter
+  const directories = [executableDirectory, ...(result[pathKey] ?? '').split(separator)]
+  const seen = new Set<string>()
+  result[pathKey] = directories.filter((directory) => {
+    if (!directory) return false
+    const key = platform === 'win32' ? directory.toLowerCase() : directory
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).join(separator)
+  return result
+}
+
 export function restrictedGitEnvironment(): NodeJS.ProcessEnv {
   // Git is invoked for repository-derived work, so inherit only process-location
   // values rather than credentials, provider tokens, signing agents, or Git's
@@ -384,7 +413,7 @@ export function runProcess(file: string, args: readonly string[], options: {
   return processAdmission.run(() => new Promise((resolve, reject) => {
     const child = spawn(file, [...args], {
       cwd: options.cwd,
-      env: options.env ?? safeChildEnvironment(),
+      env: executableChildEnvironment(file, options.env ?? safeChildEnvironment()),
       shell: false,
       stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
