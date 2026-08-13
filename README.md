@@ -40,21 +40,9 @@ GooeyPi never stores provider API keys. Authentication remains owned by the acti
 
 ### Ask the user from an agent turn
 
-GooeyPi includes `ask_user` in every installation and injects it into interactive Prime, OMP, and Pi runtimes by default. Use the **Plugins → Ask user** control to disable or re-enable it universally. GooeyPi restarts idle runtime children immediately; a busy child finishes its current turn before the new setting takes effect. Scheduled tasks never receive this UI-blocking tool.
+GooeyPi includes `ask_user` in every installation as an optional native capability. It is off by default on fresh installs; use the **Capabilities → Ask user** control to enable or disable it universally for Prime, OMP, and Pi. GooeyPi restarts idle runtime children immediately; a busy child finishes its current turn before the new setting takes effect. Scheduled tasks never receive this UI-blocking tool.
 
-The standalone [Prime Agent Plugins](https://github.com/am-will/prime-agent-plugins) collection remains available for direct CLI use:
-
-```bash
-prime-agent package install https://github.com/am-will/prime-agent-plugins
-```
-
-The same collection works with base Pi outside GooeyPi:
-
-```bash
-pi install https://github.com/am-will/prime-agent-plugins
-```
-
-When GooeyPi launches a runtime, an installed standalone copy automatically defers to GooeyPi's bundled copy, preventing duplicate tool registration. The tool supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
+The tool supports one-to-five questions per call, one shared context field per question, a single `Other` choice, and grouped GUI/TUI questionnaire responses. Non-interactive modes such as print/JSON do not have a question UI.
 
 ## Develop
 

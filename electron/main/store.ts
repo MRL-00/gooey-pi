@@ -48,7 +48,7 @@ export function defaultSettings(): AppSettings {
     runtimePaths: { prime: '', omp: '', pi: '' },
     enabledHarnesses: ['omp', 'prime', 'pi'],
     telemetry: false,
-    askUserEnabled: true,
+    askUserEnabled: false,
     browserEnabled: true,
     computerUseEnabled: false,
     disabledProviders: [],

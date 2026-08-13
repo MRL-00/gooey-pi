@@ -1122,9 +1122,11 @@ test.describe('Prime Work desktop smoke', () => {
       if (destination === 'Capabilities') {
         await expect(page.locator('.feature-strip')).toHaveCount(0)
         await expect(page.locator('.directory-tools')).toBeVisible()
-        const askUserToggle = page.getByRole('button', { name: 'Disable Ask user' })
-        await expect(askUserToggle).toHaveAttribute('aria-pressed', 'true')
+        const askUserToggle = page.getByRole('button', { name: 'Enable Ask user' })
+        await expect(askUserToggle).toHaveAttribute('aria-pressed', 'false')
         await askUserToggle.click()
+        await expect(page.getByRole('button', { name: 'Disable Ask user' })).toHaveAttribute('aria-pressed', 'true')
+        await page.getByRole('button', { name: 'Disable Ask user' }).click()
         const askUserConfirmation = page.getByRole('dialog', { name: 'Disable Ask user?' })
         await expect(askUserConfirmation).toContainText('Are you sure?')
         await askUserConfirmation.getByRole('button', { name: 'Yes, disable' }).click()
@@ -1339,6 +1341,7 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('round-trips a grouped Prime ask_user questionnaire', async () => {
+    await page.evaluate(() => window.prime.settings.update({ askUserEnabled: true }))
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('Ask me two questions')
     await composer.press('Enter')
@@ -1390,6 +1393,7 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('injects ask_user into OMP and answers its grouped questionnaire in the app', async () => {
+    await page.evaluate(() => window.prime.settings.update({ askUserEnabled: true }))
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
@@ -1424,6 +1428,7 @@ test.describe('Prime Work desktop smoke', () => {
   })
 
   test('injects ask_user into Pi and answers its grouped questionnaire in the app', async () => {
+    await page.evaluate(() => window.prime.settings.update({ askUserEnabled: true }))
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()

@@ -33,6 +33,18 @@ const realFileSystem: JsonStateStoreFileSystem = {
 }
 
 describe('JsonStateStore', () => {
+  it('keeps ask_user off on a fresh install and preserves an explicit opt-in', async () => {
+    const dir = makeDirectory()
+    const path = join(dir, 'state.json')
+    const store = new JsonStateStore(path)
+    expect(store.getSettings().askUserEnabled).toBe(false)
+
+    await store.update((state) => { state.settings.askUserEnabled = true })
+    await store.beginShutdown()
+
+    expect(new JsonStateStore(path).getSettings().askUserEnabled).toBe(true)
+  })
+
   it('serializes concurrent updates without losing data', async () => {
     const dir = makeDirectory()
     const path = join(dir, 'state.json')
@@ -340,7 +352,7 @@ describe('JsonStateStore', () => {
     expect(state.projects.map((project) => project.harness)).toEqual(['prime'])
     expect(state.settings.activeHarness).toBe('prime')
     expect(state.settings.ompApprovalMode).toBe('inherit')
-    expect(state.settings.askUserEnabled).toBe(true)
+    expect(state.settings.askUserEnabled).toBe(false)
   })
 
   it('keeps valid harness fields and resets hostile ones to defaults', () => {
