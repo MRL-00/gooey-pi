@@ -49,7 +49,7 @@ describe('DesktopPet', () => {
     expect(container.querySelector('.desktop-pet--idle')).not.toBeNull()
   })
 
-  it('pops up a dismiss drawer and turns off the pet when dropped on its red target', async () => {
+  it('pre-mounts the dismiss drawer and turns off the pet when dropped on its red target', async () => {
     const onDismiss = vi.fn()
     const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains('pet-dismiss-drawer__hitbox')) return { x: 161, y: 390, top: 390, right: 239, bottom: 468, left: 161, width: 78, height: 78, toJSON: () => ({}) }
@@ -57,19 +57,25 @@ describe('DesktopPet', () => {
     })
     await act(async () => { root.render(<DesktopPet pets={pets} petId="gooey-pi" agentBusy={false} reduceMotion={false} voiceActive={false} onDismiss={onDismiss} />); await Promise.resolve() })
     const pet = container.querySelector<HTMLElement>('.desktop-pet__drag-target')!
+    const dismissDrawer = document.body.querySelector('.pet-dismiss-drawer')!
+    expect(dismissDrawer.classList.contains('is-visible')).toBe(false)
+    expect(dismissDrawer.getAttribute('aria-hidden')).toBe('true')
     const pointer = (type: string, x: number, y: number) => {
       const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 })
       Object.defineProperty(event, 'pointerId', { value: 11 })
       return event
     }
     act(() => pet.dispatchEvent(pointer('pointerdown', 100, 100)))
-    expect(document.body.querySelector('.pet-dismiss-drawer')).not.toBeNull()
+    expect(document.body.querySelector('.pet-dismiss-drawer')).toBe(dismissDrawer)
+    expect(dismissDrawer.classList.contains('is-visible')).toBe(true)
+    expect(dismissDrawer.hasAttribute('aria-hidden')).toBe(false)
     act(() => pet.dispatchEvent(pointer('pointermove', 200, 429)))
-    expect(document.body.querySelector('.pet-dismiss-drawer')?.classList.contains('is-armed')).toBe(true)
-    expect(document.body.querySelector('.pet-dismiss-drawer')?.getAttribute('aria-label')).toBe('Release to hide desktop pet')
+    expect(dismissDrawer.classList.contains('is-armed')).toBe(true)
+    expect(dismissDrawer.getAttribute('aria-label')).toBe('Release to hide desktop pet')
     act(() => pet.dispatchEvent(pointer('pointerup', 200, 429)))
     expect(onDismiss).toHaveBeenCalledTimes(1)
-    expect(document.body.querySelector('.pet-dismiss-drawer')).toBeNull()
+    expect(document.body.querySelector('.pet-dismiss-drawer')).toBe(dismissDrawer)
+    expect(dismissDrawer.classList.contains('is-visible')).toBe(false)
     bounds.mockRestore()
   })
 

@@ -221,8 +221,13 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       </div>
       {voiceError ? <p className="desktop-pet__voice-error" role="alert">{voiceError}</p> : null}
       {children}
-      {dragging && onDismiss ? createPortal(
-        <div className={`pet-dismiss-drawer${dismissArmed ? ' is-armed' : ''}`} role="status" aria-label={dismissArmed ? 'Release to hide desktop pet' : 'Drag here to hide desktop pet'}>
+      {onDismiss ? createPortal(
+        <div
+          className={`pet-dismiss-drawer${dragging ? ' is-visible' : ''}${dismissArmed ? ' is-armed' : ''}`}
+          role={dragging ? 'status' : undefined}
+          aria-hidden={dragging ? undefined : true}
+          aria-label={dragging ? (dismissArmed ? 'Release to hide desktop pet' : 'Drag here to hide desktop pet') : undefined}
+        >
           <span ref={dismissTargetRef} className="pet-dismiss-drawer__hitbox" aria-hidden="true" />
           <span className="pet-dismiss-drawer__visual">
             <span className="pet-dismiss-drawer__target"><X size={28} strokeWidth={2.7} /></span>
