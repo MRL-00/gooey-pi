@@ -1220,10 +1220,8 @@ test.describe('Prime Work desktop smoke', () => {
     const completedRow = page.locator('.session-row-wrap--complete').first()
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
-    const companionBadge = page.getByRole('status', { name: 'A session turn ended or needs attention' })
-    await expect(companionBadge).toBeVisible()
+    await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
     await completedRow.locator('.session-row').click()
-    await expect(companionBadge).toHaveCount(0)
   })
 
   test('injects ask_user into OMP and answers its grouped questionnaire in the app', async () => {

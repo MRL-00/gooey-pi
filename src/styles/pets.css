@@ -14,11 +14,8 @@
 .pet-orb.is-reduced-motion, .pet-orb.is-reduced-motion::after { animation: none; }
 
 .desktop-pet { position: fixed; z-index: 120; width: var(--pet-surface-width, 96px); min-height: var(--pet-surface-min-height, 122px); display: flex; align-items: center; flex-direction: column; color: var(--text); user-select: none; filter: drop-shadow(0 12px 14px color-mix(in srgb, #000 20%, transparent)); }
-.session-attention-badge { position: absolute; z-index: 4; width: 22px; height: 22px; display: grid; place-items: center; border: 3px solid var(--canvas); border-radius: 50%; color: #fff; background: var(--danger); box-shadow: 0 2px 5px color-mix(in srgb, #000 28%, transparent), 0 0 12px color-mix(in srgb, var(--danger) 68%, transparent); font-size: 12px; font-weight: 800; line-height: 1; pointer-events: none; }
 .desktop-pet__drag-target { width: calc(var(--pet-avatar-size, 72px) + 16px); min-height: var(--pet-avatar-size, 72px); display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding: 0 8px; border-radius: 18px; outline: 0; touch-action: none; cursor: grab; }
 .desktop-pet__avatar { position: relative; display: inline-flex; }
-.desktop-pet__avatar > .session-attention-badge { top: -5px; right: -5px; }
-.voice-orb__drag > .session-attention-badge { top: 14px; right: 9px; }
 .desktop-pet__drag-target:active { cursor: grabbing; }
 .desktop-pet__drag-target:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; background: color-mix(in srgb, var(--surface-raised) 52%, transparent); }
 .desktop-pet--running-left .desktop-pet__drag-target { transform: rotate(-3deg); }

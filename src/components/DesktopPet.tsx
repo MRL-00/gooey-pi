@@ -44,11 +44,10 @@ export interface DesktopPetProps {
   onDismiss?(): void
   focusVoiceControl?: boolean
   onVoiceControlFocused?(): void
-  hasSessionNotification?: boolean
   children?: ReactNode
 }
 
-export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, onDismiss, focusVoiceControl = false, onVoiceControlFocused, hasSessionNotification = false, children }: DesktopPetProps) {
+export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, petSize = 75, voiceActivity, voiceMuted = false, voiceStatus, voiceError, onOpenVoice, onToggleVoiceMute, onCloseVoice, onDismiss, focusVoiceControl = false, onVoiceControlFocused, children }: DesktopPetProps) {
   const normalizedPetSize = Math.max(50, Math.min(125, Math.round(petSize)))
   const avatarSize = Math.round(96 * normalizedPetSize / 100)
   const surfaceWidth = Math.max(112, avatarSize + 24)
@@ -212,7 +211,6 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       >
         <span className="desktop-pet__avatar">
           <PetAvatar pet={pet} pets={pets} activity={activity} size={avatarSize} reduceMotion={reduceMotion} />
-          {hasSessionNotification ? <span className="session-attention-badge" role="status" aria-label="A session turn ended or needs attention" title="A session turn ended or needs attention">!</span> : null}
         </span>
       </div>
       {voiceActive && voiceStatus ? <span className="desktop-pet__voice-status" role="status">{voiceStatus}</span> : null}
