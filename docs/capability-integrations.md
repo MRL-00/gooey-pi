@@ -31,8 +31,9 @@ The app labels this surface **Capabilities** for every harness. Its Add button
 first opens a capability-type chooser, then a type-specific form: **Add MCP**,
 **Add Plugin** (OMP) or **Add Package** (Prime/Pi), and **Add Extension**. Pi's
 MCP choice remains visible but disabled until its **Pi MCP Adapter** toggle is
-enabled. Package/plugin and extension forms warn that third-party code may use
-CLI-only APIs and link directly to GooeyPi's GitHub issue form for failures.
+enabled. The initial Add chooser warns that third-party code may use CLI-only
+APIs and links directly to GooeyPi's GitHub issue form for failures; the base
+Capabilities screen and the follow-up forms do not repeat that notice.
 
 ## Product behavior
 

@@ -162,16 +162,17 @@ describe('PluginsPage bundled capability controls', () => {
     const addMcp = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add MCP'))!
     expect(addMcp.disabled).toBe(true)
     expect(addMcp.textContent).toContain('Enable Pi MCP Adapter first')
+    expect(dialog.textContent).toContain('Not every third-party package, plugin, or extension will work in GooeyPi')
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'create a GitHub issue')!.click() })
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/am-will/gooey-pi/issues/new')
 
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add Package'))!.click() })
-    expect(dialog.textContent).toContain('Not every third-party package will work in GooeyPi')
+    expect(dialog.textContent).not.toContain('Not every third-party')
     await act(async () => { dialog.querySelector<HTMLButtonElement>('.modal__footer .button')!.click() })
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add Extension'))!.click() })
     expect(dialog.textContent).toContain('Extension file')
     expect(dialog.textContent).toContain('native package manager')
-    expect(dialog.textContent).toContain('Not every third-party extension will work in GooeyPi')
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'create a GitHub issue')!.click() })
-    expect(openExternal).toHaveBeenCalledWith('https://github.com/am-will/gooey-pi/issues/new')
+    expect(dialog.textContent).not.toContain('Not every third-party')
     changeInput(dialog.querySelector<HTMLInputElement>('input')!, '/tmp/example.ts')
     const install = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Install extension')!
     await act(async () => { install.click(); await Promise.resolve(); await Promise.resolve() })

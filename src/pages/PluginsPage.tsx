@@ -271,6 +271,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                 <button type="button" onClick={() => selectAddKind('extension')}>
                   <span><FileCode2 size={17}/></span><span><strong>Add Extension</strong><small>Install one local JavaScript or TypeScript extension module for {HARNESS_SHORT_NAMES[harness]}.</small></span><ChevronRight size={15}/>
                 </button>
+                <p className="capability-compatibility-note"><AlertTriangle size={13}/><span>Not every third-party package, plugin, or extension will work in GooeyPi. If something fails, <button type="button" onClick={() => onOpenExternal(GITHUB_ISSUES_URL)}>create a GitHub issue</button>.</span></p>
               </div>
             ) : addKind === 'bundle' ? (
               <div className="add-tool-form">
@@ -307,7 +308,6 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                 <p className="connection-warning"><ShieldCheck size={13}/> Only connect servers you trust. MCP tools can read data or run actions with your user permissions.</p>
               </div>
             )}
-            {addKind === 'bundle' || addKind === 'extension' ? <p className="capability-compatibility-note"><AlertTriangle size={13}/><span>Not every third-party {addKind === 'bundle' ? (harness === 'omp' ? 'plugin' : 'package') : 'extension'} will work in GooeyPi. If something fails, <button type="button" onClick={() => onOpenExternal(GITHUB_ISSUES_URL)}>create a GitHub issue</button>.</span></p> : null}
             {result ? <pre className="install-output" role="status">{result}</pre> : null}
             {loginCommand ? <div className="add-tool-form"><button type="button" className="button button--primary" disabled={!activeProjectPath} onClick={() => void onRunMcpCommand(loginCommand)}>Open session and sign in</button>{!activeProjectPath ? <small className="field-help">Open a project first, then run <code>{loginCommand}</code> in its session.</small> : <small className="field-help">Runs <code>{loginCommand}</code> through {HARNESS_SHORT_NAMES[harness]} so it owns the OAuth flow and credentials.</small>}</div> : null}
           </Modal>
