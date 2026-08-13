@@ -1126,9 +1126,7 @@ test.describe('Prime Work desktop smoke', () => {
     await addDialog.getByLabel('Server name').fill('docs')
     await addDialog.getByLabel('Server URL').fill('https://docs.example/mcp')
     await addDialog.getByLabel('Authentication').selectOption('oauth')
-    await addDialog.getByRole('button', { name: 'Save server configuration' }).click()
-    await expect(addDialog.getByText(/Saved MCP server definition/)).toBeVisible()
-    await addDialog.getByRole('button', { name: 'Open session and sign in' }).click()
+    await addDialog.getByRole('button', { name: 'Save and log in' }).click()
     const promptPath = join(fixtureRoot, 'pi-prompt-args.json')
     await expect.poll(() => existsSync(promptPath) ? JSON.parse(readFileSync(promptPath, 'utf8')).message : null).toBe('/mcp-auth docs')
 
