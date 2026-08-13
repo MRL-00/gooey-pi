@@ -112,7 +112,9 @@ Same rules as `docs/security.md`, applied to the second harness: argv arrays onl
 
 ## Non-goals (v1)
 
-- OMP OAuth/login flows in-app (RPC `login` exists; deferred).
+- A GooeyPi-owned OMP credential store. MCP OAuth is launched through OMP's
+  native `/mcp reauth` command in the active RPC session; OMP keeps ownership
+  of profile-scoped credentials.
 - Prime heartbeat RPC tools on OMP; OMP schedules use the local extension bridge instead.
 - Host tools / host URI schemes, subagent transcript streaming, collab sessions, handoff — protocol supports them; UI later.
 - Importing sessions across harnesses (`--from-claude`/`--from-codex` style).

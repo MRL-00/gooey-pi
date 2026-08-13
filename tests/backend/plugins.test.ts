@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
-import { executePiPluginInstall } from '../../electron/main/plugins/package-execution'
+import { executePiPluginInstall, executePiPluginRemove } from '../../electron/main/plugins/package-execution'
 import { ProjectService } from '../../electron/main/projects'
 import { JsonStateStore } from '../../electron/main/store'
 
@@ -374,6 +374,22 @@ describe('PluginService discovery', () => {
 })
 
 describe('PluginService MCP connections', () => {
+  it('writes Prime HTTP auth fields and rejects unsupported stdio integrations', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    await service.connectMcp({ name: 'oauth-service', scope: 'user', type: 'http', url: 'https://oauth.example/mcp', auth: 'oauth' })
+    await service.connectMcp({ name: 'token-service', scope: 'user', type: 'http', url: 'https://token.example/mcp', auth: 'bearer', bearerTokenEnvVar: 'ACME_MCP_TOKEN' })
+
+    const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.mcpServers['oauth-service']).toEqual({ type: 'http', url: 'https://oauth.example/mcp', oauth: true, enabled: true })
+    expect(settings.mcpServers['token-service']).toEqual({ type: 'http', url: 'https://token.example/mcp', bearerTokenEnvVar: 'ACME_MCP_TOKEN', enabled: true })
+    await expect(service.connectMcp({ name: 'local', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/remote HTTP/)
+    await expect(service.connectMcp({ name: 'bad-env', scope: 'user', type: 'http', url: 'https://bad.example/mcp', auth: 'bearer', bearerTokenEnvVar: 'BAD-NAME' })).rejects.toThrow(/environment variable is invalid/)
+  })
+
   it('keeps project settings preparation free of synchronous fs syscalls', () => {
     // renameSync is the one deliberate exception (kept adjacent to its identity
     // checks); everything else in the settings path must be fs/promises.
@@ -404,7 +420,7 @@ describe('PluginService MCP connections', () => {
     expect(record?.description).not.toContain('/mcp')
   })
 
-  it('connects a stdio MCP server at project scope with argv kept separate', async () => {
+  it('connects a Prime HTTP MCP server at project scope', async () => {
     const root = temp()
     const agentDir = join(root, 'agent')
     const project = join(root, 'project')
@@ -418,19 +434,13 @@ describe('PluginService MCP connections', () => {
       name: 'project-files',
       scope: 'project',
       projectPath: project,
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', project],
+      type: 'http',
+      url: 'https://project-files.example/mcp',
     })
 
     expect(response.ok).toBe(true)
     const settings = JSON.parse(readFileSync(join(project, '.prime', 'agent', 'settings.json'), 'utf8'))
-    expect(settings.mcpServers['project-files']).toEqual({
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', project],
-      enabled: true,
-    })
+    expect(settings.mcpServers['project-files']).toEqual({ type: 'http', url: 'https://project-files.example/mcp', enabled: true })
     expect((await service.list(project)).skills.find((item) => item.name === 'project-files')).toMatchObject({ kind: 'mcp', location: 'project' })
   })
 
@@ -481,7 +491,7 @@ describe('PluginService MCP connections', () => {
     }
 
     await expect(service.connectMcp({
-      name: 'escaped', scope: 'project', projectPath: project, type: 'stdio', command: 'safe-command',
+      name: 'escaped', scope: 'project', projectPath: project, type: 'http', url: 'https://escaped.example/mcp',
     })).rejects.toThrow(/configuration directory changed/)
 
     expect(substituted).toBe(true)
@@ -497,7 +507,7 @@ describe('PluginService MCP connections', () => {
     const service = new PluginService(null, async (path) => resolve(path), { agentDir })
 
     await expect(service.connectMcp({ name: 'secret', scope: 'user', type: 'http', url: 'https://token@example.test/mcp' })).rejects.toThrow(/credentials/)
-    const duplicate = await service.connectMcp({ name: 'existing', scope: 'user', type: 'stdio', command: 'other' })
+    const duplicate = await service.connectMcp({ name: 'existing', scope: 'user', type: 'http', url: 'https://other.example/mcp' })
     expect(duplicate.ok).toBe(false)
     expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')).mcpServers.existing.command).toBe('safe')
   })
@@ -511,15 +521,15 @@ describe('PluginService MCP connections', () => {
     const second = new PluginService(null, async (path) => resolve(path), { agentDir })
 
     const responses = await Promise.all([
-      first.connectMcp({ name: 'first', scope: 'user', type: 'stdio', command: 'first-command' }),
-      second.connectMcp({ name: 'second', scope: 'user', type: 'stdio', command: 'second-command' }),
+      first.connectMcp({ name: 'first', scope: 'user', type: 'http', url: 'https://first.example/mcp' }),
+      second.connectMcp({ name: 'second', scope: 'user', type: 'http', url: 'https://second.example/mcp' }),
     ])
 
     expect(responses.every((response) => response.ok)).toBe(true)
     const settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
     expect(settings.defaultModel).toBe('test/model')
-    expect(settings.mcpServers.first.command).toBe('first-command')
-    expect(settings.mcpServers.second.command).toBe('second-command')
+    expect(settings.mcpServers.first.url).toBe('https://first.example/mcp')
+    expect(settings.mcpServers.second.url).toBe('https://second.example/mcp')
   })
 
   it('recovers a lock only after its recorded owner has exited', async () => {
@@ -545,10 +555,10 @@ describe('PluginService MCP connections', () => {
     }))
     const service = new PluginService(null, async (path) => resolve(path), { agentDir })
 
-    const response = await service.connectMcp({ name: 'after-crash', scope: 'user', type: 'stdio', command: 'safe-command' })
+    const response = await service.connectMcp({ name: 'after-crash', scope: 'user', type: 'http', url: 'https://after-crash.example/mcp' })
 
     expect(response.ok).toBe(true)
-    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers['after-crash'].command).toBe('safe-command')
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers['after-crash'].url).toBe('https://after-crash.example/mcp')
     expect(() => readFileSync(join(lockPath, 'owner.json'))).toThrow()
   })
 
@@ -570,10 +580,10 @@ describe('PluginService MCP connections', () => {
       return original(path)
     }
 
-    expect((await service.connectMcp({ name: 'merged', scope: 'user', type: 'stdio', command: 'safe-command' })).ok).toBe(true)
+    expect((await service.connectMcp({ name: 'merged', scope: 'user', type: 'http', url: 'https://merged.example/mcp' })).ok).toBe(true)
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
     expect(settings.changedByCli).toBe(true)
-    expect(settings.mcpServers.merged.command).toBe('safe-command')
+    expect(settings.mcpServers.merged.url).toBe('https://merged.example/mcp')
   })
 
   it('retries multiple non-cooperating writer conflicts and merges the latest snapshot', async () => {
@@ -594,11 +604,11 @@ describe('PluginService MCP connections', () => {
       return original(path)
     }
 
-    expect((await service.connectMcp({ name: 'after-retries', scope: 'user', type: 'stdio', command: 'safe-command' })).ok).toBe(true)
+    expect((await service.connectMcp({ name: 'after-retries', scope: 'user', type: 'http', url: 'https://after-retries.example/mcp' })).ok).toBe(true)
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
     expect(conflicts).toBe(2)
     expect(settings.externalRevision).toBe(2)
-    expect(settings.mcpServers['after-retries'].command).toBe('safe-command')
+    expect(settings.mcpServers['after-retries'].url).toBe('https://after-retries.example/mcp')
   })
 
   it('fails after bounded conflicts without replacing the external writer snapshot', async () => {
@@ -617,7 +627,7 @@ describe('PluginService MCP connections', () => {
       return original(path)
     }
 
-    await expect(service.connectMcp({ name: 'never-written', scope: 'user', type: 'stdio', command: 'safe-command' }))
+    await expect(service.connectMcp({ name: 'never-written', scope: 'user', type: 'http', url: 'https://never-written.example/mcp' }))
       .rejects.toThrow(/changed repeatedly/)
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
     expect(externalRevision).toBe(4)
@@ -647,14 +657,14 @@ const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(installStarted)},'
     expect(existsSync(installStarted)).toBe(true)
     const [installed, connected] = await Promise.all([
       installPromise,
-      connector.connectMcp({ name: 'after-package', scope: 'user', type: 'stdio', command: 'safe-command' }),
+      connector.connectMcp({ name: 'after-package', scope: 'user', type: 'http', url: 'https://after-package.example/mcp' }),
     ])
 
     expect(installed.ok).toBe(true)
     expect(connected.ok).toBe(true)
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
     expect(settings.packageInstalled).toBe(true)
-    expect(settings.mcpServers['after-package'].command).toBe('safe-command')
+    expect(settings.mcpServers['after-package'].url).toBe('https://after-package.example/mcp')
   })
 
 })
@@ -713,7 +723,8 @@ describe('PluginService OMP parity', () => {
     mkdirSync(project)
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'omp' })
 
-    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
+    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp', auth: 'oauth' })
+    await service.connectMcp({ name: 'token', scope: 'user', type: 'http', url: 'https://token.example/mcp', auth: 'bearer', bearerTokenEnvVar: 'OMP_MCP_TOKEN' })
     const projectResult = await service.connectMcp({ name: 'files', scope: 'project', projectPath: project, type: 'stdio', command: 'npx', args: ['-y', 'server'] })
     await expect(service.connectMcp({ name: 'invalid name', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/unsupported characters/)
 
@@ -723,6 +734,7 @@ describe('PluginService OMP parity', () => {
     const projectConfig = JSON.parse(readFileSync(join(project, '.omp', 'mcp.json'), 'utf8'))
     expect(userConfig.$schema).toContain('can1357/oh-my-pi')
     expect(userConfig.mcpServers['docs:remote']).toEqual({ type: 'http', url: 'https://docs.example/mcp', enabled: true })
+    expect(userConfig.mcpServers.token).toEqual({ type: 'http', url: 'https://token.example/mcp', headers: { Authorization: 'Bearer ${OMP_MCP_TOKEN}' }, enabled: true })
     expect(projectConfig.mcpServers.files).toEqual({ type: 'stdio', command: 'npx', args: ['-y', 'server'], enabled: true })
     expect(existsSync(join(project, '.prime'))).toBe(false)
   })
@@ -741,6 +753,9 @@ describe('PluginService OMP parity', () => {
 
     expect(result.ok).toBe(true)
     expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['plugin', 'install', '@scope/example-plugin', '--json'])
+
+    await service.install('code-review@official')
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['plugin', 'install', 'code-review@official', '--json'])
   })
 })
 
@@ -781,6 +796,7 @@ describe('PluginService Pi parity', () => {
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-tool', kind: 'extension', location: 'user', description: 'Pi extension' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'project-tool', kind: 'extension', location: 'project', description: 'Pi extension' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'installed-package', kind: 'package', description: 'Pi capability package from npm:installed-package' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', name: 'MCP | Pi MCP Adapter', enabled: false }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'docs', kind: 'mcp', location: 'user' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))
     // settings.json is not an MCP source for pi; only mcp.json entries surface.
@@ -809,7 +825,8 @@ describe('PluginService Pi parity', () => {
     writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
     const service = new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'pi' })
 
-    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp' })
+    const user = await service.connectMcp({ name: 'docs:remote', scope: 'user', type: 'http', url: 'https://docs.example/mcp', auth: 'oauth' })
+    await service.connectMcp({ name: 'token', scope: 'user', type: 'http', url: 'https://token.example/mcp', auth: 'bearer', bearerTokenEnvVar: 'PI_MCP_TOKEN' })
     const projectResult = await service.connectMcp({ name: 'files', scope: 'project', projectPath: project, type: 'stdio', command: 'npx', args: ['-y', 'server'] })
     await expect(service.connectMcp({ name: 'invalid name', scope: 'user', type: 'stdio', command: 'npx' })).rejects.toThrow(/unsupported characters/)
 
@@ -819,7 +836,8 @@ describe('PluginService Pi parity', () => {
     const userConfig = JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8'))
     const projectConfig = JSON.parse(readFileSync(join(project, '.pi', 'mcp.json'), 'utf8'))
     expect(userConfig.$schema).toBeUndefined()
-    expect(userConfig.mcpServers['docs:remote']).toEqual({ url: 'https://docs.example/mcp', enabled: true })
+    expect(userConfig.mcpServers['docs:remote']).toEqual({ url: 'https://docs.example/mcp', auth: 'oauth', enabled: true })
+    expect(userConfig.mcpServers.token).toEqual({ url: 'https://token.example/mcp', auth: 'bearer', bearerTokenEnv: 'PI_MCP_TOKEN', enabled: true })
     expect(projectConfig.mcpServers.files).toEqual({ command: 'npx', args: ['-y', 'server'], enabled: true })
     expect(existsSync(join(project, '.prime'))).toBe(false)
   })
@@ -872,6 +890,40 @@ describe('PluginService Pi parity', () => {
     const missing = new PluginService(null, async (path) => resolve(path), { agentDir, harness: 'pi' })
     expect(await missing.install('npm:@scope/example-plugin')).toEqual({ ok: false, reason: 'blocked', output: 'Pi executable was not found' })
     await expect(service.install('--registry=https://evil.test')).rejects.toThrow(/Invalid package source/)
+  })
+
+  it('uses Pi install/remove for the MCP adapter toggle and preserves MCP config', async () => {
+    const root = temp()
+    const agentDir = join(root, '.pi', 'agent')
+    const executable = join(root, 'pi.cjs')
+    const capture = join(root, 'argv.json')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
+    writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { docs: { url: 'https://docs.example/mcp' } } }))
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2))); process.stdout.write('ok\\n')\n`)
+    chmodSync(executable, 0o755)
+    const service = new PluginService(executable, async (path) => resolve(path), { agentDir, harness: 'pi' })
+
+    expect((await service.list()).skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', enabled: true, source: 'npm:pi-mcp-adapter' }))
+    expect((await service.setMcpSupport(false)).ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['remove', 'npm:pi-mcp-adapter'])
+    expect(JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8')).mcpServers.docs).toBeTruthy()
+
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: [] }))
+    expect((await service.setMcpSupport(true)).ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['install', 'npm:pi-mcp-adapter'])
+    await expect(service.setMcpSupport('yes')).rejects.toThrow(/boolean/)
+  })
+
+  it('runs the Pi remove command with a bounded argv result', async () => {
+    const root = temp()
+    const executable = join(root, 'pi.cjs')
+    const capture = join(root, 'argv.json')
+    writeFileSync(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2))); process.stdout.write('removed\\n')\n`)
+    chmodSync(executable, 0o755)
+
+    expect((await executePiPluginRemove(executable, 'npm:pi-mcp-adapter')).ok).toBe(true)
+    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['remove', 'npm:pi-mcp-adapter'])
   })
 
   it('bounds and sanitizes untrusted pi CLI output', async () => {

@@ -63,4 +63,7 @@ Same rules as `docs/security.md`, applied to the third harness: argv arrays only
 
 ## Non-goals (v1)
 
-- Pi auth flows in-app; silently installing an MCP adapter; offline session rename; importing sessions across harnesses; host tools/collab surfaces.
+- A GooeyPi-owned Pi credential store; silently installing an MCP adapter;
+  offline session rename; importing sessions across harnesses; host
+  tools/collab surfaces. MCP OAuth is launched through pi-mcp-adapter's native
+  `/mcp-auth` command in the active RPC session and remains adapter-owned.

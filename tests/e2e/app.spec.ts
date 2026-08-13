@@ -330,6 +330,17 @@ const fs = require('node:fs')
 const readline = require('node:readline')
 const args = process.argv.slice(2)
 if (args.includes('--version')) { process.stdout.write('0.84.1\\n'); process.exit(0) }
+if (args[0] === 'install' || args[0] === 'remove') {
+  const settingsPath = require('node:path').join(process.env.HOME, '.pi', 'agent', 'settings.json')
+  fs.mkdirSync(require('node:path').dirname(settingsPath), { recursive: true })
+  let settings = {}
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) } catch {}
+  const packages = Array.isArray(settings.packages) ? settings.packages.filter((source) => source !== args[1]) : []
+  if (args[0] === 'install') packages.push(args[1])
+  fs.writeFileSync(settingsPath, JSON.stringify({ ...settings, packages }))
+  process.stdout.write(args[0] === 'install' ? 'installed\\n' : 'removed\\n')
+  process.exit(0)
+}
 if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') process.exit(2)
 if (!args.includes('--no-session')) fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'pi-runtime-args.json'))}, JSON.stringify({ args, cwd: process.cwd() }))
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
@@ -624,7 +635,7 @@ test.describe('Prime Work desktop smoke', () => {
     app = await electron.launch({
       args: ['.', `--user-data-dir=${currentFixture.userData}`],
       cwd: process.cwd(),
-      env: hermeticEnvironment(currentFixture.home, currentFixture.executable, currentFixture.ompExecutable, currentFixture.piExecutable, false) as Record<string, string>,
+      env: hermeticEnvironment(currentFixture.home, currentFixture.executable, currentFixture.ompExecutable, currentFixture.piExecutable, currentFixture.cuaExecutable, false) as Record<string, string>,
       timeout: 20_000,
     })
     app.context().on('page', attachDiagnostics)
@@ -1014,11 +1025,13 @@ test.describe('Prime Work desktop smoke', () => {
         await computerUseToggle.click()
         await expect(page.getByRole('button', { name: 'Disable Computer Use | TryCUA' })).toHaveAttribute('aria-pressed', 'true')
         await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.computerUseEnabled).toBe(true)
-        await expect(page.getByText(/Prime Agent exposes MCP through matching Python integration skills/)).toBeVisible()
+        await expect(page.getByText(/Prime MCP integrations require a matching Python skill package/)).toBeVisible()
         await page.getByRole('button', { name: 'Add', exact: true }).click()
         const addDialog = page.getByRole('dialog', { name: 'Add tools to Prime' })
-        await expect(addDialog.getByText('Integration package', { exact: true })).toBeVisible()
-        await expect(addDialog.getByText('MCP server', { exact: true })).toHaveCount(0)
+        await expect(addDialog.getByText('MCP integration', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('Prime package', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('Integration package source', { exact: true })).toBeVisible()
+        await expect(addDialog.getByText('Local command', { exact: true })).toHaveCount(0)
         await addDialog.getByRole('button', { name: 'Cancel' }).click()
       }
     }
@@ -1040,6 +1053,23 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Meta+K')
     await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
     await page.keyboard.press('Escape')
+  })
+
+  test('installs and removes Pi MCP support from its directory toggle', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
+    await page.getByRole('button', { name: 'Plugins & skills' }).click()
+
+    const enable = page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })
+    await expect(enable).toHaveAttribute('aria-pressed', 'false')
+    await enable.click()
+    await expect(page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'true')
+    const settingsPath = join(fixtureRoot, 'home', '.pi', 'agent', 'settings.json')
+    await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
+
+    await page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' }).click()
+    await expect(page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).not.toContain('npm:pi-mcp-adapter')
   })
 
   test('keeps transcript text from showing through the composer disclaimer', async () => {

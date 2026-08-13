@@ -4,9 +4,10 @@ import type { ProcessOutcome } from '../../../src/types/api'
 import { processOutcome, runProcess } from '../process-utils'
 import { requireString, stripAnsi } from '../validation'
 
-export function validatePackageSource(value: unknown): string {
+export function validatePackageSource(value: unknown, options: { allowOmpMarketplaceTarget?: boolean } = {}): string {
   const source = requireString(value, 'package source', { min: 1, max: 2_048, trim: true })
   if (source.startsWith('-') || /[\r\n\u2028\u2029]/.test(source)) throw new TypeError('Invalid package source')
+  if (options.allowOmpMarketplaceTarget && /^[a-z0-9][a-z0-9.-]{0,63}@[a-z0-9][a-z0-9.-]{0,63}$/i.test(source)) return source
   if (source.startsWith('npm:')) {
     if (!/^npm:(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?:@[^\s]+)?$/i.test(source)) throw new TypeError('Invalid npm package source')
     return source
@@ -57,5 +58,10 @@ export async function executeOmpPluginInstall(ompPath: string, source: string): 
 // passed verbatim like Prime's `package install` (pi is Prime's ancestor CLI).
 export async function executePiPluginInstall(piPath: string, source: string): Promise<ProcessOutcome> {
   const result = await runProcess(piPath, ['install', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
+}
+
+export async function executePiPluginRemove(piPath: string, source: string): Promise<ProcessOutcome> {
+  const result = await runProcess(piPath, ['remove', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }

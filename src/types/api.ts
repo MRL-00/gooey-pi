@@ -261,7 +261,7 @@ export type McpConnectionInput = {
   scope: 'user' | 'project'
   projectPath?: string
 } & (
-  | { type: 'http'; url: string }
+  | { type: 'http'; url: string; auth?: 'none' | 'oauth' | 'bearer'; bearerTokenEnvVar?: string }
   | { type: 'stdio'; command: string; args?: string[] }
 )
 
@@ -653,6 +653,7 @@ export interface PrimeWorkApi {
   plugins: {
     list(projectPath?: string, harness?: HarnessId): Promise<PluginCatalog>
     install(source: string, harness?: HarnessId): Promise<ProcessOutcome>
+    setMcpSupport(enabled: boolean, harness?: HarnessId): Promise<ProcessOutcome>
     connectMcp(input: McpConnectionInput, harness?: HarnessId): Promise<ProcessOutcome>
     refresh(harness?: HarnessId): Promise<PluginCatalog>
   }

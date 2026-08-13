@@ -295,6 +295,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('plugins:list', (_event, projectPath, harness) => pluginsFor(requireHarness(harness)).list(projectPath))
   handle('plugins:install', (_event, source, harness) => pluginsFor(requireHarness(harness)).install(source))
+  handle('plugins:set-mcp-support', (_event, enabled, harness) => pluginsFor(requireHarness(harness)).setMcpSupport(enabled))
   handle('plugins:connect-mcp', (_event, input, harness) => pluginsFor(requireHarness(harness)).connectMcp(input))
   handle('plugins:refresh', (_event, harness) => pluginsFor(requireHarness(harness)).refresh())
 

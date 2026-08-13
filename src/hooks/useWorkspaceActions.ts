@@ -345,6 +345,15 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Package installation is available in the desktop app.' }
     try { return await bridge.plugins.install(source, settingsState.settings.activeHarness) } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
+  const setMcpSupport = async (enabled: boolean) => {
+    const { bridge, pluginSkills, reportError, settingsState } = getDeps()
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'MCP support can only be changed in the desktop app.' }
+    try {
+      const response = await bridge.plugins.setMcpSupport(enabled, settingsState.settings.activeHarness)
+      if (response.ok) await pluginSkills.refresh()
+      return response
+    } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
+  }
   const connectMcp = async (input: McpConnectionInput) => {
     const { bridge, activeProject, pluginSkills, reportError, settingsState } = getDeps()
     if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'MCP connections are available in the desktop app.' }
@@ -407,7 +416,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   return {
     grantProject, persistPanel, toggleSidebar, toggleInspector, toggleTerminal,
     selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived,
-    addProject, removeProject, sendPrompt, stopRuntime, installSkill, connectMcp,
+    addProject, removeProject, sendPrompt, stopRuntime, installSkill, setMcpSupport, connectMcp,
     createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
     openBrowser, openChanges,
   }

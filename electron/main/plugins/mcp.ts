@@ -277,9 +277,16 @@ export function validateMcpConnection(value: unknown, harness: HarnessId = 'prim
     try { url = new URL(urlValue) } catch { throw new TypeError('MCP server URL is invalid') }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('MCP server URL must use http or https')
     if (url.username || url.password) throw new TypeError('MCP server URL credentials are not allowed')
-    return { name, scope, projectPath, type: 'http', url: url.toString() }
+    const auth = value.auth ?? 'none'
+    if (auth !== 'none' && auth !== 'oauth' && auth !== 'bearer') throw new TypeError('MCP authentication must be none, oauth, or bearer')
+    const bearerTokenEnvVar = auth === 'bearer'
+      ? requireString(value.bearerTokenEnvVar, 'Bearer token environment variable', { min: 1, max: 128, trim: true })
+      : undefined
+    if (bearerTokenEnvVar && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(bearerTokenEnvVar)) throw new TypeError('Bearer token environment variable is invalid')
+    return { name, scope, projectPath, type: 'http', url: url.toString(), auth, bearerTokenEnvVar }
   }
   if (value.type === 'stdio') {
+    if (harness === 'prime') throw new TypeError('Prime Agent MCP integrations support remote HTTP servers only')
     const command = requireString(value.command, 'MCP command', { min: 1, max: 2_048, trim: true })
     if (command.startsWith('-') || /[\0\r\n\u2028\u2029]/.test(command)) throw new TypeError('MCP command is invalid')
     if (value.args !== undefined && !Array.isArray(value.args)) throw new TypeError('MCP arguments must be a list')
@@ -349,7 +356,7 @@ export async function updateMcpSettings(
   target: string | ProjectSettingsPath,
   input: McpConnectionInput,
   fingerprint: FingerprintSettings = settingsFingerprint,
-  options: { agentName?: string; schema?: string; successMessage?: string; includeType?: boolean } = {},
+  options: { agentName?: string; harness?: HarnessId; schema?: string; successMessage?: string; includeType?: boolean } = {},
 ): Promise<ProcessOutcome> {
   const agentName = options.agentName ?? 'Prime Agent'
   const settingsPath = typeof target === 'string' ? target : target.path
@@ -367,8 +374,17 @@ export async function updateMcpSettings(
         return { ok: false, reason: 'blocked', output: `An MCP server named “${input.name}” already exists in this scope.` }
       }
       const includeType = options.includeType !== false
+      const auth = input.type === 'http' ? input.auth ?? 'none' : 'none'
+      const authConfig = input.type !== 'http' || auth === 'none' ? {}
+        : options.harness === 'prime'
+          ? auth === 'oauth' ? { oauth: true } : { bearerTokenEnvVar: input.bearerTokenEnvVar }
+          : options.harness === 'pi'
+            ? auth === 'oauth' ? { auth: 'oauth' } : { auth: 'bearer', bearerTokenEnv: input.bearerTokenEnvVar }
+            : auth === 'oauth'
+              ? {}
+              : { headers: { Authorization: ['Bearer ${', input.bearerTokenEnvVar, '}'].join('') } }
       const config = input.type === 'http'
-        ? { ...(includeType ? { type: 'http' } : {}), url: input.url, enabled: true }
+        ? { ...(includeType ? { type: 'http' } : {}), url: input.url, ...authConfig, enabled: true }
         : { ...(includeType ? { type: 'stdio' } : {}), command: input.command, ...(input.args?.length ? { args: input.args } : {}), enabled: true }
       settings.mcpServers = { ...currentServers, [input.name]: config }
       if (options.schema && settings.$schema === undefined) settings.$schema = options.schema
