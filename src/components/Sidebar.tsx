@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Copy,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -108,6 +109,26 @@ const HARNESS_MARKS: Record<HarnessId, (props: { size?: number }) => ReactElemen
 function HarnessMark({ harness, size }: { harness: HarnessId; size: number }) {
   const Mark = HARNESS_MARKS[harness]
   return <Mark size={size} />
+}
+
+async function copySessionUuid(id: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(id)
+      return
+    } catch {
+      // Fall back to the document copy command when clipboard permission is unavailable.
+    }
+  }
+  const input = document.createElement('textarea')
+  input.value = id
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  document.body.append(input)
+  input.select()
+  const copied = document.execCommand('copy')
+  input.remove()
+  if (!copied) throw new Error('Copy is unavailable')
 }
 
 function SidebarView({ projects, sessions, activeProjectId, activeSessionId, activeView, activeHarness = 'omp', harnesses, clearedAttention = {}, onSelectHarness, onSelectProject, onSelectSession, onNavigate, onNewSession, onAddProject, onRemoveProject, onClose, onOpenPalette, onRenameSession, onArchiveSession, overlay = false }: SidebarProps) {
@@ -265,7 +286,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
                         }}
                       >{archiveTarget?.id === session.id ? <Check size={13} /> : <Archive size={13}/>}</IconButton>
                       <IconButton size="small" className="session-row__more" label={`Session options for ${session.title}`} onClick={() => setSessionMenu((current) => current === session.id ? null : session.id)}><MoreHorizontal size={13}/></IconButton>
-                      {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
+                      {sessionMenu === session.id ? <div className="session-row__menu" aria-label="Session options"><button type="button" onClick={() => { void copySessionUuid(session.id); setSessionMenu(null) }}><Copy size={12}/> Copy session UUID</button><button type="button" onClick={() => { setRenameTarget(session); setRenameValue(session.title); setSessionMenu(null) }}><SquarePen size={12}/> Rename</button></div> : null}
                     </div>
                   ))}
                   {projectSessions.length === 0 ? <button type="button" title={`New session in ${project.name}`} className="session-row session-row--empty" onClick={() => { setProjectMenu(null); onNewSession(project) }}><NotebookPen size={12} /> New session</button> : null}

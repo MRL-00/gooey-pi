@@ -157,6 +157,15 @@ describe('transcript rendering', () => {
     expect(html).not.toContain('src="data:image/png;base64,truncated"')
   })
 
+  it('hides model-only session UUID routing from the visible user transcript', () => {
+    const html = render([{
+      id: 'session-reference', role: 'user', parts: [{ type: 'text', text: 'Coordinate with @API owner.\n\n===== BEGIN GOOEYPI SESSION REFERENCES =====\n- @API owner: prime session UUID secret-uuid.\n===== END GOOEYPI SESSION REFERENCES =====' }],
+    }])
+    expect(html).toContain('Coordinate with @API owner.')
+    expect(html).not.toContain('secret-uuid')
+    expect(html).not.toContain('GOOEYPI SESSION REFERENCES')
+  })
+
   it('renders goal summaries as collapsed disclosures rather than system errors', () => {
     const html = render([{
       id: 'goal',

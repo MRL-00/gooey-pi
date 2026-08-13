@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronRight, Copy, Target } from 'lucide-react'
 import type { HarnessId, MessagePart, TranscriptMessage } from '@/types/api'
 import { splitAnnotationBlock } from '@/lib/browser-annotations'
 import { splitCapabilityRouting } from '@/lib/capability-mentions'
+import { splitSessionRouting } from '@/lib/session-mentions'
 import { splitTerminalContextBlock } from '@/lib/terminal-context'
 import { boundText } from '@/lib/render-bounds'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -181,10 +182,11 @@ function UserText({ text }: { text: string }) {
   const terminal = splitTerminalContextBlock(text)
   const annotations = splitAnnotationBlock(terminal.text)
   const capability = splitCapabilityRouting(annotations.text)
-  if (!capability.block && !annotations.block && !terminal.block) return <InlineText text={text} />
+  const sessions = splitSessionRouting(capability.text)
+  if (!sessions.block && !capability.block && !annotations.block && !terminal.block) return <InlineText text={text} />
   return (
     <>
-      {capability.text && capability.text !== '[Page annotations]' && capability.text !== '[Terminal selection]' ? <InlineText text={capability.text} /> : null}
+      {sessions.text && sessions.text !== '[Page annotations]' && sessions.text !== '[Terminal selection]' ? <InlineText text={sessions.text} /> : null}
       {annotations.block ? (
         <details className="user-annotations">
           <summary>{annotations.count > 0 ? `${annotations.count} page annotation${annotations.count === 1 ? '' : 's'}` : 'Page annotations'}</summary>

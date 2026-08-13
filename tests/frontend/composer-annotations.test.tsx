@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import { Composer } from '../../src/components/Composer'
 import { groupModelsByProvider } from '../../src/hooks/useProviderCatalog'
-import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage, TerminalPromptContext, TerminalSelectionContext } from '../../src/types/api'
+import type { BrowserAnnotation, PrimeModelDescriptor, PrimeProviderDescriptor, PromptDeliveryIntent, PromptImage, SessionRecord, TerminalPromptContext, TerminalSelectionContext } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -73,9 +73,10 @@ interface RenderOptions {
   terminalSelection?: TerminalSelectionContext
   getTerminalContext?: () => TerminalPromptContext | undefined
   onClearTerminalSelection?: Mock<() => void>
+  sessions?: SessionRecord[]
 }
 
-function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn(), terminalSelection, getTerminalContext, onClearTerminalSelection = vi.fn() }: RenderOptions = {}) {
+function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async () => undefined), onRemoveAnnotation = vi.fn(), onClearAnnotations = vi.fn(), terminalSelection, getTerminalContext, onClearTerminalSelection = vi.fn(), sessions = [] }: RenderOptions = {}) {
   act(() =>
     root.render(
       <Composer
@@ -91,6 +92,7 @@ function renderComposer({ annotations = [], sendSignal = 0, onSend = vi.fn(async
         imageInputSupported
         messageEnterAction="queue"
         skills={[]}
+        sessions={sessions}
         annotations={annotations}
         terminalSelection={terminalSelection}
         getTerminalContext={getTerminalContext}
@@ -124,6 +126,27 @@ const clickSend = async () => {
     await Promise.resolve()
   })
 }
+
+describe('Composer session mentions', () => {
+  it('suggests sidebar sessions by title and sends a stable UUID routing block', async () => {
+    const sessions: SessionRecord[] = [{
+      id: '019f0000-0000-7000-8000-000000000002', harness: 'pi', filePath: '/sessions/api.jsonl', projectPath: '/project', title: 'API owner',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'running', depth: 0,
+    }]
+    const { onSend } = renderComposer({ sessions })
+    await setDraft('Coordinate with @API')
+    const option = [...container.querySelectorAll('[role="option"]')].find((item) => item.textContent?.includes('@API owner')) as HTMLButtonElement
+    expect(option).toBeDefined()
+    await act(async () => option.click())
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Coordinate with @API owner ')
+    await clickSend()
+
+    const [prompt] = onSend.mock.calls[0]
+    expect(prompt.startsWith('Coordinate with @API owner\n\n')).toBe(true)
+    expect(prompt).toContain('pi session UUID 019f0000-0000-7000-8000-000000000002')
+    expect(prompt).toContain('Use session_read, session_send, and session_wait')
+  })
+})
 
 describe('Composer annotation attachment', () => {
   it('auto-attaches a chip showing the annotation count while any exist', () => {

@@ -14,6 +14,7 @@ import type {
   PromptDeliveryIntent,
   PromptImage,
   QueuedPrompt,
+  SessionRecord,
   SkillRecord,
   TerminalPromptContext,
   TerminalSelectionContext,
@@ -22,6 +23,7 @@ import type {
 import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { appendCapabilityRouting, findCapabilityMentions } from '@/lib/capability-mentions'
 import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
+import { appendSessionRouting, findSessionMentions } from '@/lib/session-mentions'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { useDictation } from '@/hooks/useDictation'
@@ -52,6 +54,8 @@ interface ComposerProps {
   voice?: PrimeWorkApi['voice'] | null
   transcriptionProvider?: VoiceTranscriptionProvider
   skills: SkillRecord[]
+  /** Other sidebar sessions in the active project, available as @title references. */
+  sessions?: SessionRecord[]
   /** Browser annotations auto-attach as a composer attachment while any exist. */
   annotations?: BrowserAnnotation[]
   /** The active terminal is visible as context; selected text expands this attachment. */
@@ -147,6 +151,7 @@ export const Composer = memo(function Composer({
   voice,
   transcriptionProvider = 'openai-live',
   skills,
+  sessions = [],
   annotations = EMPTY_ANNOTATIONS,
   terminalSelection,
   getTerminalContext,
@@ -170,7 +175,8 @@ export const Composer = memo(function Composer({
   onClearTerminalSelection = noop,
 }: ComposerProps) {
   const [value, setValue] = useState(takeComposerDraft)
-  const [menu, setMenu] = useState<'add' | 'skill' | 'command' | null>(null)
+  const [menu, setMenu] = useState<'add' | 'mention' | 'command' | null>(null)
+  const [sessionReferenceIds, setSessionReferenceIds] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [images, setImages] = useState<ComposerImage[]>([])
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
@@ -194,24 +200,35 @@ export const Composer = memo(function Composer({
   annotationsRef.current = annotations
   const mountedRef = useRef(true)
   const enabledSkills = useMemo(() => skills.filter((skill) => skill.enabled), [skills])
-  const suggestedSkills = enabledSkills.slice(0, 6)
   const capabilityMentions = useMemo(() => findCapabilityMentions(value, enabledSkills), [enabledSkills, value])
+  const sessionMentions = useMemo(() => findSessionMentions(value, sessions, sessionReferenceIds), [sessionReferenceIds, sessions, value])
   const highlightedValue = useMemo(() => {
-    if (!capabilityMentions.length) return value
+    const mentions = [...sessionMentions, ...capabilityMentions]
+      .sort((left, right) => left.start - right.start)
+      .filter((mention, index, all) => index === 0 || mention.start >= all[index - 1].end)
+    if (!mentions.length) return value
     const parts: ReactNode[] = []
     let cursor = 0
-    for (const mention of capabilityMentions) {
+    for (const mention of mentions) {
       if (mention.start > cursor) parts.push(value.slice(cursor, mention.start))
-      parts.push(<mark key={`${mention.start}:${mention.skill.id}`}>{mention.text}</mark>)
+      parts.push(<mark key={`${mention.start}:${mention.end}`}>{mention.text}</mark>)
       cursor = mention.end
     }
     if (cursor < value.length) parts.push(value.slice(cursor))
     return parts
-  }, [capabilityMentions, value])
+  }, [capabilityMentions, sessionMentions, value])
 
   useEffect(() => {
-    setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : value.endsWith('@') ? 'skill' : null)
+    setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : /(?:^|\s)@([^@\n]*)$/.test(value) ? 'mention' : null)
   }, [value])
+  useEffect(() => {
+    setSessionReferenceIds((current) => {
+      if (!current.size) return current
+      const mentionedTitles = new Set(findSessionMentions(value, sessions, current).map(({ session }) => session.title.trim().toLocaleLowerCase()))
+      const next = new Map([...current].filter(([title]) => mentionedTitles.has(title)))
+      return next.size === current.size ? current : next
+    })
+  }, [sessions, value])
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -289,7 +306,12 @@ export const Composer = memo(function Composer({
     const submittedImages = currentImages.map(({ type, data, mimeType }) => ({ type, data, mimeType }))
     // Recognized @ mentions carry explicit routing semantics; annotations then
     // ride along inside the prompt as their own delimited plain-text block.
-    const promptWithCapabilities = appendCapabilityRouting(prompt, enabledSkills)
+    const referencedSessions = findSessionMentions(prompt, sessions, sessionReferenceIds)
+    const sessionTitles = new Set(referencedSessions.map(({ session }) => session.title.trim().toLocaleLowerCase()))
+    const promptWithSessions = appendSessionRouting(prompt, sessions, sessionReferenceIds)
+    // If a session and capability share a display name, the session chosen
+    // from the combined menu wins instead of silently routing both.
+    const promptWithCapabilities = appendCapabilityRouting(promptWithSessions, enabledSkills.filter((skill) => !sessionTitles.has(skill.name.trim().toLocaleLowerCase())))
     const promptWithAnnotations = appendAnnotationsToPrompt(promptWithCapabilities, currentAnnotations)
     const promptWithContext = appendTerminalContextToPrompt(promptWithAnnotations, currentTerminalContext)
     const frame = `${JSON.stringify({ type: intent === 'steer' ? 'steer' : 'follow_up', message: promptWithContext, ...(submittedImages.length ? { images: submittedImages } : {}), id: '00000000-0000-0000-0000-000000000000' })}\n`
@@ -394,6 +416,25 @@ export const Composer = memo(function Composer({
     setMenu(null)
     textarea?.focus()
   }
+  const insertMention = (label: string, session?: SessionRecord) => {
+    const textarea = textareaRef.current
+    const match = /(?:^|\s)@([^@\n]*)$/.exec(value)
+    if (!match) { insert(`@${label} `); return }
+    const query = match[1]
+    const start = value.length - query.length
+    if (textarea) {
+      textarea.setRangeText(`${label} `, start, value.length, 'end')
+      setValue(textarea.value)
+    } else setValue(`${value.slice(0, start)}${label} `)
+    if (session) {
+      const key = session.title.trim().toLocaleLowerCase()
+      setSessionReferenceIds((current) => new Map(current).set(key, session.id))
+    }
+    setMenu(null)
+    textarea?.focus()
+  }
+
+  const mentionQuery = /(?:^|\s)@([^@\n]*)$/.exec(value)?.[1]?.toLocaleLowerCase().trim() ?? ''
 
   const suggestions =
     menu === 'command'
@@ -410,10 +451,25 @@ export const Composer = memo(function Composer({
               textareaRef.current?.focus()
             },
           }))
-      : menu === 'skill'
-        ? suggestedSkills.map((skill) => ({ key: skill.id, label: `@${skill.name}`, detail: skill.description, icon: <AtSign size={14} />, choose: () => insert(`${skill.name} `) }))
+      : menu === 'mention'
+        ? [
+            ...sessions.filter((session) => session.title.toLocaleLowerCase().includes(mentionQuery)).slice(0, 6).map((session) => ({
+              key: `session:${session.harness}:${session.id}`,
+              label: `@${session.title}`,
+              detail: `${session.harness.toUpperCase()} session · ${session.status}`,
+              icon: <MessageCirclePlus size={14} />,
+              choose: () => insertMention(session.title, session),
+            })),
+            ...enabledSkills.filter((skill) => skill.name.toLocaleLowerCase().includes(mentionQuery)).slice(0, 6).map((skill) => ({
+              key: `skill:${skill.id}`,
+              label: `@${skill.name}`,
+              detail: skill.description,
+              icon: <AtSign size={14} />,
+              choose: () => insertMention(skill.name),
+            })),
+          ].slice(0, 8)
         : menu === 'add'
-          ? [{ key: 'mention', label: 'Mention a skill', detail: 'Add an enabled Prime capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
+          ? [{ key: 'mention', label: 'Mention a session or skill', detail: 'Reference sidebar work or an enabled capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
           : []
 
   useEffect(() => {
@@ -486,7 +542,7 @@ export const Composer = memo(function Composer({
             value={value}
             disabled={disabled || loading}
             rows={2}
-            placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? `Starting ${shortName}…` : `Ask ${shortName} anything, @ for skills, / for commands`}
+            placeholder={disabled ? 'Add a project to begin' : loading ? 'Loading session…' : submitting ? `Starting ${shortName}…` : `Ask ${shortName} anything, @ for sessions and skills, / for commands`}
             aria-label={`Message ${shortName}`}
             role="combobox"
             aria-autocomplete="list"
@@ -546,7 +602,7 @@ export const Composer = memo(function Composer({
           />
         </div>
         {menu && suggestions.length ? (
-          <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'skill' ? 'Skills' : 'Add context'}>
+          <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'mention' ? 'Sessions and skills' : 'Add context'}>
             {suggestions.map((suggestion, index) => (
               <button
                 id={`${menuId}-option-${index}`}

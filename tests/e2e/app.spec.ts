@@ -114,6 +114,11 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
     JSON.stringify({ type: 'message', id: 'primary-message', parentId: null, message: { role: 'user', content: 'Primary workspace fixture', timestamp: '2025-01-01T00:00:00.000Z' } }),
     '',
   ].join('\n'))
+  writeFileSync(join(sessions, 'collaboration-peer.jsonl'), [
+    JSON.stringify({ type: 'session', id: '019fdf24-cccc-7000-8000-000000000003', cwd: canonicalSecondary, timestamp: '2024-01-01T00:00:00.000Z' }),
+    JSON.stringify({ type: 'message', id: 'collaboration-peer-message', parentId: null, message: { role: 'user', content: 'Ownership peer fixture', timestamp: '2024-01-01T00:00:00.000Z' } }),
+    '',
+  ].join('\n'))
   const identity = (path: string) => {
     const info = lstatSync(path, { bigint: true })
     return {
@@ -971,6 +976,47 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.session-row-wrap.is-selected')).toHaveCount(0)
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
+
+  test('copies a session id and routes an @session mention without exposing its UUID block', async () => {
+    await page.evaluate(() => {
+      const target = window as Window & { __copiedSessionId?: string }
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (text: string) => { target.__copiedSessionId = text } },
+      })
+    })
+    const selected = page.locator('.session-row-wrap.is-selected .session-row')
+    await selected.click({ button: 'right' })
+    const sessionMenu = page.getByLabel('Session options')
+    await sessionMenu.getByRole('button', { name: 'Copy session UUID' }).click()
+    await expect.poll(() => page.evaluate(() => (window as Window & { __copiedSessionId?: string }).__copiedSessionId)).toBe('fixture-session')
+
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('Coordinate with @Ownership')
+    const reference = page.getByRole('option', { name: /@Ownership peer fixture/ })
+    await expect(reference).toBeVisible()
+    await reference.click()
+    await composer.fill(`${await composer.inputValue()}about ownership`)
+    await composer.press('Enter')
+
+    const marker = join(fixtureRoot, 'prompt-args.json')
+    await expect.poll(() => existsSync(marker)).toBe(true)
+    const sent = JSON.parse(readFileSync(marker, 'utf8')) as { message: string }
+    expect(sent.message).toContain('Coordinate with @Ownership peer fixture about ownership')
+    expect(sent.message).toContain('prime session UUID 019fdf24-cccc-7000-8000-000000000003')
+    expect(sent.message).toContain('===== BEGIN GOOEYPI SESSION REFERENCES =====')
+    appendFileSync(fixtureSessionFile, `${JSON.stringify({
+      type: 'message', id: 'fixture-session-reference', parentId: 'fixture-goal-summary', timestamp: new Date().toISOString(),
+      message: { role: 'user', content: sent.message, timestamp: new Date().toISOString() },
+    })}\n`)
+    await page.locator('.session-row-wrap').filter({ hasText: 'Ownership peer fixture' }).locator('.session-row').click()
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const userMessage = page.locator('.message--user').filter({ hasText: 'Coordinate with @Ownership peer fixture about ownership' })
+    await expect(userMessage).toBeVisible()
+    await expect(userMessage).not.toContainText('019fdf24-cccc-7000-8000-000000000003')
+    await expect(userMessage).not.toContainText('GOOEYPI SESSION REFERENCES')
+  })
+
   test('removes a project from the sidebar through its context menu', async () => {
     const projectRow = page.locator('.project-row').first()
     await expect(projectRow).toBeVisible()

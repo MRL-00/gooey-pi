@@ -49,6 +49,26 @@ async function rightClick(element: Element) {
 }
 
 describe('sidebar project context menu', () => {
+  it('copies the exact session UUID from the session context menu', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]} sessions={[session]} activeView="session"
+          onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
+          onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    await rightClick(container.querySelector('.session-row')!)
+    const copy = [...container.querySelectorAll('[aria-label="Session options"] button')].find((button) => button.textContent?.includes('Copy session UUID'))
+    expect(copy).toBeDefined()
+    await press(copy!)
+    expect(writeText).toHaveBeenCalledWith(session.id)
+  })
+
   it('offers a confirmed remove action without deleting the project folder', async () => {
     const onRemoveProject = vi.fn()
     await act(async () => {
