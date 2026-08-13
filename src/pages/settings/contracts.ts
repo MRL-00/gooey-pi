@@ -33,8 +33,6 @@ export const SETTINGS_FIELD_SECTIONS = {
   enabledHarnesses: 'agent',
   telemetry: 'privacy',
   askUserEnabled: 'agent',
-  cuaDriverMcpEnabled: 'agent',
-  computerUseEnabled: 'agent',
   disabledProviders: 'providers',
   ompDisabledProviders: 'providers',
   piDisabledProviders: 'providers',

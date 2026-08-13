@@ -18,7 +18,7 @@ interface PluginServiceOptions {
   harness?: HarnessId
   agentDir?: string
   discover?: PluginDiscovery
-  builtInSkills?: SkillRecord[] | (() => SkillRecord[] | Promise<SkillRecord[]>)
+  builtInSkills?: SkillRecord[] | (() => SkillRecord[])
 }
 
 const MAX_ADAPTER_SETTINGS_BYTES = 4 * 1024 * 1024
@@ -50,7 +50,7 @@ export class PluginService {
   private readonly discoveryInFlight = createSingleFlight<string, PluginCatalog>()
   private readonly agentDir: string
   private readonly discoverCatalog: PluginDiscovery
-  private readonly builtInSkills: () => SkillRecord[] | Promise<SkillRecord[]>
+  private readonly builtInSkills: () => SkillRecord[]
   private readonly harness: HarnessId
 
   constructor(
@@ -81,12 +81,8 @@ export class PluginService {
   private async discover(safeProjectPath: string | undefined, ownerKey: string): Promise<PluginCatalog> {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, resolveExecutable(this.agentPath), this.harness)
-    const builtInSkills = await this.builtInSkills()
-    const hidesManagedCuaServer = builtInSkills.some((item) => item.id === 'gooeypi-cua-driver-mcp')
-    const combined = [...builtInSkills, ...result.skills.filter((item) => (
-      !builtInSkills.some((builtIn) => builtIn.id === item.id)
-      && !(hidesManagedCuaServer && item.kind === 'mcp' && item.name === 'gooeypi-cua-driver')
-    ))]
+    const builtInSkills = this.builtInSkills()
+    const combined = [...builtInSkills, ...result.skills.filter((item) => !builtInSkills.some((builtIn) => builtIn.id === item.id))]
     const knownPaths = combined.flatMap((item) => item.path ? [item.path] : []).slice(0, MAX_KNOWN_PATHS_PER_OWNER)
     // Delete-then-set keeps insertion order as LRU order for owner eviction.
     this.knownPathsByOwner.delete(ownerKey)

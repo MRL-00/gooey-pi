@@ -77,11 +77,7 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
       args.push('--model', input.modelId)
     }
     if (input.thinking) args.push('--thinking', input.thinking)
-    for (const skillPath of [
-      input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH,
-      input.environment.PRIME_WORK_BROWSER_SKILL_PATH,
-      input.environment.GOOEYPI_CUA_DRIVER_SKILL_PATH,
-    ]) {
+    for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
     for (const extensionPath of [

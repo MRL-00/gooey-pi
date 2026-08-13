@@ -341,8 +341,6 @@ describe('JsonStateStore', () => {
     expect(state.settings.activeHarness).toBe('prime')
     expect(state.settings.ompApprovalMode).toBe('inherit')
     expect(state.settings.askUserEnabled).toBe(true)
-    expect(state.settings.cuaDriverMcpEnabled).toBe(false)
-    expect(state.settings.computerUseEnabled).toBe(false)
   })
 
   it('keeps valid harness fields and resets hostile ones to defaults', () => {

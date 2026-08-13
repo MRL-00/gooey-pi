@@ -14,8 +14,7 @@ import type { SessionService } from './sessions'
 import type { TerminalService } from './terminal'
 import type { VoiceService } from './voice'
 import type { AgentBrowserService } from './browser/agent-service'
-import type { CuaDriverService } from './cua-driver'
-import { isRecord, requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
+import { requireExistingPath, requireRecord, requireString, requireWebUrl } from './validation'
 
 interface Services {
   meta: AppMeta
@@ -28,7 +27,6 @@ interface Services {
   plugins: PluginService
   providers: PrimeProviderService
   settings: SettingsService
-  cuaDriver: CuaDriverService
   heartbeats: HeartbeatService
   schedules: AutomationService
   browser: AgentBrowserService
@@ -300,43 +298,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('settings:get', () => services.settings.get())
   handle('settings:update', async (event, patch) => {
-    const previous = services.settings.get()
-    const patchRecord = isRecord(patch) ? patch : {}
-    const requestedMcpEnabled = typeof patchRecord.cuaDriverMcpEnabled === 'boolean'
-      ? patchRecord.cuaDriverMcpEnabled
-      : previous.cuaDriverMcpEnabled
-    let requestedComputerUseEnabled = typeof patchRecord.computerUseEnabled === 'boolean'
-      ? patchRecord.computerUseEnabled
-      : previous.computerUseEnabled
-    if (!requestedMcpEnabled && patchRecord.computerUseEnabled === true) {
-      throw new Error('Enable the CUA Driver MCP extension before enabling Computer Use.')
-    }
-    if (!requestedMcpEnabled) requestedComputerUseEnabled = false
-    if ((requestedMcpEnabled && !previous.cuaDriverMcpEnabled)
-      || (requestedComputerUseEnabled && !previous.computerUseEnabled)) {
-      await services.cuaDriver.requireAvailable()
-    }
-    const normalizedPatch = isRecord(patch) && patchRecord.cuaDriverMcpEnabled === false
-      ? { ...patchRecord, computerUseEnabled: false }
-      : patch
-    const previousEffective = previous.cuaDriverMcpEnabled && previous.computerUseEnabled
-    const nextEffective = requestedMcpEnabled && requestedComputerUseEnabled
-    if (nextEffective !== previousEffective) await services.cuaDriver.setEnabled(nextEffective)
-    let settings: ReturnType<SettingsService['get']>
-    try {
-      settings = await services.settings.update(normalizedPatch)
-    } catch (error) {
-      if (nextEffective !== previousEffective) {
-        try { await services.cuaDriver.setEnabled(previousEffective) } catch (rollbackError) {
-          throw new AggregateError([error, rollbackError], 'Settings update failed and the CUA Driver integration could not be restored')
-        }
-      }
-      throw error
-    }
+    const askUserEnabled = services.settings.get().askUserEnabled
+    const settings = await services.settings.update(patch)
     event.sender.setZoomFactor(settings.interfaceFontScale / 100)
-    if (settings.askUserEnabled !== previous.askUserEnabled
-      || settings.cuaDriverMcpEnabled !== previous.cuaDriverMcpEnabled
-      || settings.computerUseEnabled !== previous.computerUseEnabled) {
+    if (settings.askUserEnabled !== askUserEnabled) {
       await Promise.all([
         services.agents.requestRuntimeEnvironmentRefresh(),
         services.omp.agents.requestRuntimeEnvironmentRefresh(),
