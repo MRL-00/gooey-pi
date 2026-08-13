@@ -333,6 +333,12 @@ describe('GitHub Release publication', () => {
   test('selects an exact enabled platform set', () => {
     expect(parseReleasePlatforms('mac,linux')).toEqual(['mac', 'linux'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['mac', 'linux'])).not.toContain('GooeyPi-0.2.0-win-x64.exe')
+    expect(expectedGitHubReleaseAssets('0.2.0', ['linux'])).toEqual([
+      'GooeyPi-0.2.0-linux-amd64.deb',
+      'GooeyPi-0.2.0-linux-x64.pacman',
+      'GooeyPi-0.2.0-linux-x86_64.AppImage',
+      'GooeyPi-0.2.0-linux-x86_64.rpm',
+    ])
     expect(() => parseReleasePlatforms('mac,mac')).toThrow(/duplicates/)
     expect(() => parseReleasePlatforms('mac,android')).toThrow(/Unsupported/)
   })

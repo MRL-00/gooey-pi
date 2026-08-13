@@ -22,7 +22,7 @@ export function parseReleasePlatforms(value = RELEASE_PLATFORMS.join(',')) {
 export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFORMS) {
   const assets = {
     mac: [`GooeyPi-${version}-arm64.dmg`, `GooeyPi-${version}-arm64.zip`, `GooeyPi-${version}-x64.dmg`, `GooeyPi-${version}-x64.zip`],
-    linux: [`GooeyPi-${version}-linux-x64.AppImage`, `GooeyPi-${version}-linux-x64.deb`, `GooeyPi-${version}-linux-x64.pacman`, `GooeyPi-${version}-linux-x64.rpm`],
+    linux: [`GooeyPi-${version}-linux-x86_64.AppImage`, `GooeyPi-${version}-linux-amd64.deb`, `GooeyPi-${version}-linux-x64.pacman`, `GooeyPi-${version}-linux-x86_64.rpm`],
     win: [`GooeyPi-${version}-win-x64.exe`, `GooeyPi-${version}-win-x64.zip`],
   }
   return platforms.flatMap((platform) => assets[platform]).sort()
