@@ -1025,7 +1025,7 @@ test.describe('Prime Work desktop smoke', () => {
         await computerUseToggle.click()
         await expect(page.getByRole('button', { name: 'Disable Computer Use | TryCUA' })).toHaveAttribute('aria-pressed', 'true')
         await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.computerUseEnabled).toBe(true)
-        await expect(page.getByText(/Prime MCP integrations require a matching Python skill package/)).toBeVisible()
+        await expect(page.getByText(/Prime MCP integrations require a matching Python skill package/)).toHaveCount(0)
         await page.getByRole('button', { name: 'Add', exact: true }).click()
         const addDialog = page.getByRole('dialog', { name: 'Add a Prime capability' })
         await expect(addDialog.getByText('Add MCP', { exact: true })).toBeVisible()
@@ -1035,6 +1035,7 @@ test.describe('Prime Work desktop smoke', () => {
         await addDialog.getByRole('button', { name: /Add MCP/ }).click()
         const mcpDialog = page.getByRole('dialog', { name: 'Add MCP server' })
         await expect(mcpDialog.getByText(/Not every third-party/)).toHaveCount(0)
+        await expect(mcpDialog.getByText(/Prime MCP integrations require a matching Python skill package/)).toBeVisible()
         await expect(mcpDialog.getByText('Integration package source', { exact: true })).toBeVisible()
         await expect(mcpDialog.getByText('Local command', { exact: true })).toHaveCount(0)
         await mcpDialog.getByRole('button', { name: 'Close' }).click()
@@ -1063,7 +1064,7 @@ test.describe('Prime Work desktop smoke', () => {
   test('installs and removes Pi MCP support from its directory toggle', async () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
-    await page.getByRole('button', { name: 'Capabilities' }).click()
+    await page.getByRole('button', { name: 'Capabilities', exact: true }).click()
 
     const enable = page.getByRole('button', { name: 'Enable Pi MCP Adapter' })
     await expect(enable).toHaveAttribute('aria-pressed', 'false')
@@ -1071,6 +1072,14 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'Disable Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'true')
     const settingsPath = join(fixtureRoot, 'home', '.pi', 'agent', 'settings.json')
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
+    await expect(page.getByRole('status').filter({ hasText: 'Pi MCP Adapter installed.' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Pi Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /Prime Work/ }).click()
+    await expect(page.getByText('Pi MCP Adapter installed.')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
+    await expect(page.getByRole('heading', { name: 'Extend Pi' })).toBeVisible()
 
     await page.getByRole('button', { name: 'Add', exact: true }).click()
     const chooser = page.getByRole('dialog', { name: 'Add a Pi capability' })

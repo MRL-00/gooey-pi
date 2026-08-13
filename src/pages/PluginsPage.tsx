@@ -215,9 +215,8 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
           </p>
         ))}
         {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
-        {mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
-        {mcpSupportNotice ? <p className="connection-warning" role="status">{mcpSupportUpdating ? <RefreshCw className="spin" size={13}/> : <ShieldCheck size={13}/>} {mcpSupportNotice}</p> : null}
-        {harness === 'prime' ? <p className="connection-warning"><ShieldCheck size={13}/> Prime MCP integrations require a matching Python skill package and an HTTP server definition. GooeyPi installs both through one guided flow.</p> : null}
+        {harness === 'pi' && mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
+        {harness === 'pi' && mcpSupportNotice ? <p className="connection-warning" role="status">{mcpSupportUpdating ? <RefreshCw className="spin" size={13}/> : <ShieldCheck size={13}/>} {mcpSupportNotice}</p> : null}
         {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Enable Pi MCP Adapter below before adding servers.</p> : null}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Capabilities' : 'Skills'}</h2><span>{visible.length} available</span></div>
         {visible.length ? (
@@ -301,7 +300,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             ) : (
               <div className="add-tool-form">
                 <p className="modal-intro">{harness === 'prime'
-                  ? 'Install a trusted Prime package containing the matching Python-backed integration skill, then save its HTTP server definition.'
+                  ? 'Prime MCP integrations require a matching Python skill package and an HTTP server definition. GooeyPi installs both through one guided flow.'
                   : harness === 'omp'
                   ? 'Add a basic server to OMP’s native MCP configuration. Advanced OAuth, headers, and environment settings remain available through OMP’s own MCP commands and config.'
                   : 'Add a server to pi-mcp-adapter’s configuration. This does not start or test the server.'}</p>

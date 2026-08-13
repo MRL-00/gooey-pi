@@ -92,13 +92,15 @@ describe('PluginsPage bundled capability controls', () => {
         onConnectMcp={connect}
       />)
     })
-    expect(container.textContent).toContain('matching Python skill package')
+    expect(container.textContent).not.toContain('Prime MCP integrations require a matching Python skill package')
     await act(async () => { container.querySelector<HTMLButtonElement>('.button--primary')!.click() })
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
     expect(dialog?.textContent).toContain('Add MCP')
     expect(dialog?.textContent).toContain('Add Package')
     expect(dialog?.textContent).toContain('Add Extension')
+    expect(dialog?.textContent).not.toContain('Prime MCP integrations require a matching Python skill package')
     await act(async () => { [...dialog!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add MCP'))!.click() })
+    expect(dialog?.textContent).toContain('Prime MCP integrations require a matching Python skill package and an HTTP server definition. GooeyPi installs both through one guided flow.')
     expect(dialog?.textContent).toContain('Integration package source')
     expect(dialog?.textContent).not.toContain('Local command')
     const inputs = dialog!.querySelectorAll<HTMLInputElement>('input')
@@ -141,6 +143,20 @@ describe('PluginsPage bundled capability controls', () => {
     expect(setMcpSupport).toHaveBeenCalledWith(true)
     expect(refresh).not.toHaveBeenCalled()
     expect(container.querySelector('[role="status"]')?.textContent).toContain('Pi MCP Adapter installed.')
+
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="prime" skills={[]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={refresh} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })}
+        onSetMcpSupport={setMcpSupport} onRunMcpCommand={async () => undefined}
+        onConnectMcp={async () => ({ ok: true, output: '' })}
+      />)
+    })
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.textContent).not.toContain('Pi MCP Adapter installed.')
   })
 
   it('greys out Pi MCP until its adapter is enabled and opens the extension form separately', async () => {
