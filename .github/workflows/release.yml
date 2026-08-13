@@ -160,6 +160,10 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install pacman packaging dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libarchive-tools
       - run: npm ci
       - run: npm run package:linux -- --skip-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

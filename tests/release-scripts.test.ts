@@ -286,6 +286,7 @@ describe('release preflight', () => {
     expect(releaseWorkflow).toContain("needs.package-windows.result == 'skipped'")
     expect(releaseWorkflow).toContain('--platforms "$platforms"')
     expect(releaseWorkflow).toContain('release/linux/**/*.pacman')
+    expect(releaseWorkflow).toContain('sudo apt-get install --yes libarchive-tools')
     expect(ciWorkflow).not.toMatch(/path: release\/(mac|linux|win)\/\s*$/m)
   })
 
