@@ -1073,7 +1073,7 @@ describe('PluginService Pi parity', () => {
     expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['install', '-l', realpathSync(extension)], cwd: realpathSync(project) })
   })
 
-  it('uses Pi install/remove for the MCP adapter toggle and preserves MCP config', async () => {
+  it('installs the Pi MCP adapter once, then disables and restores it without removing files or MCP config', async () => {
     const root = temp()
     const agentDir = join(root, '.pi', 'agent')
     const executable = join(root, 'pi.cjs')
@@ -1088,12 +1088,18 @@ describe('PluginService Pi parity', () => {
 
     expect((await service.list()).skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', enabled: true, source: 'npm:pi-mcp-adapter' }))
     expect((await service.setMcpSupport(false)).ok).toBe(true)
-    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['remove', 'npm:pi-mcp-adapter'], nativeLock: false, gooeypiLock: true })
+    let settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(settings.packages).toEqual([{ source: 'npm:pi-mcp-adapter', extensions: [], skills: [], prompts: [], themes: [] }])
+    expect(settings.gooeypiDisabledPackages).toEqual({ 'npm:pi-mcp-adapter': 'npm:pi-mcp-adapter' })
+    expect((await service.list()).skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', enabled: false, source: 'npm:pi-mcp-adapter' }))
+    expect(existsSync(capture)).toBe(false)
     expect(JSON.parse(readFileSync(join(agentDir, 'mcp.json'), 'utf8')).mcpServers.docs).toBeTruthy()
 
-    writeFileSync(settingsPath, JSON.stringify({ packages: [] }))
     expect((await service.setMcpSupport(true)).ok).toBe(true)
-    expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['install', 'npm:pi-mcp-adapter'], nativeLock: false, gooeypiLock: true })
+    settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(settings.packages).toEqual(['npm:pi-mcp-adapter'])
+    expect(settings.gooeypiDisabledPackages).toBeUndefined()
+    expect(existsSync(capture)).toBe(false)
     await expect(service.setMcpSupport('yes')).rejects.toThrow(/boolean/)
   })
 

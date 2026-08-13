@@ -24,6 +24,11 @@ interface PluginServiceOptions {
   protectedMcpServers?: Readonly<Record<string, string>>
 }
 
+interface PiMcpAdapterState {
+  source: string
+  enabled: boolean
+}
+
 const MAX_ADAPTER_SETTINGS_BYTES = 4 * 1024 * 1024
 
 const MAX_CONCURRENT_PLUGIN_DISCOVERIES = 2
@@ -117,17 +122,17 @@ export class PluginService {
     if (safeProjectPath) this.lastProjectPath = safeProjectPath
     const result = await this.discoverCatalog(this.agentDir, safeProjectPath, resolveExecutable(this.agentPath), this.harness)
     const builtInSkills = await this.builtInSkills()
-    const piMcpSource = this.harness === 'pi' ? await this.piMcpAdapterSource() : undefined
+    const piMcpState = this.harness === 'pi' ? await this.piMcpAdapterState() : undefined
     const harnessCapabilities: SkillRecord[] = this.harness === 'pi' ? [{
       id: 'gooeypi-pi-mcp',
       name: 'Pi MCP Adapter',
-      description: piMcpSource
-        ? 'MCP support is installed through Pi’s pi-mcp-adapter extension package.'
+      description: piMcpState
+        ? `MCP support is installed through Pi’s pi-mcp-adapter extension package${piMcpState.enabled ? '.' : ' and is currently disabled.'}`
         : 'Install Pi’s supported MCP adapter extension, then add and authenticate MCP servers.',
       kind: 'extension',
       location: 'system',
-      enabled: Boolean(piMcpSource),
-      source: piMcpSource ?? 'npm:pi-mcp-adapter',
+      enabled: piMcpState?.enabled ?? false,
+      source: piMcpState?.source ?? 'npm:pi-mcp-adapter',
     }] : []
     const discovered = this.harness === 'pi'
       ? result.skills.filter((item) => !(item.kind === 'package' && /(?:^|[:/@])pi-mcp-adapter(?:$|[#@])/i.test(`${item.name} ${item.source ?? ''}`)))
@@ -225,18 +230,24 @@ export class PluginService {
   async setMcpSupport(enabledValue: unknown): Promise<ProcessOutcome> {
     if (this.harness !== 'pi') return { ok: false, reason: 'blocked', output: `${HARNESSES[this.harness].agentName} does not use an MCP support toggle.` }
     if (typeof enabledValue !== 'boolean') throw new TypeError('MCP support state must be a boolean')
-    const installedSource = await this.piMcpAdapterSource()
+    const adapter = await this.piMcpAdapterState()
     if (enabledValue) {
-      if (installedSource) return { ok: true, output: 'Pi MCP Adapter is already enabled.' }
-      return await this.install('npm:pi-mcp-adapter')
+      if (adapter?.enabled) return { ok: true, output: 'Pi MCP Adapter is already enabled.' }
+      if (!adapter) return await this.install('npm:pi-mcp-adapter')
+    } else {
+      if (!adapter || !adapter.enabled) return { ok: true, output: 'Pi MCP Adapter is already disabled.' }
     }
-    if (!installedSource) return { ok: true, output: 'Pi MCP Adapter is already disabled.' }
-    const agentPath = resolveExecutable(this.agentPath)
-    if (!agentPath) return { ok: false, reason: 'blocked', output: 'Pi executable was not found' }
     const settingsPath = join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
       const release = await acquireSettingsLock(`${settingsPath}.gooeypi`)
-      try { return await executePiPluginRemove(agentPath, installedSource) } finally { await release() }
+      try {
+        return await updatePackageState(settingsPath, {
+          source: adapter!.source,
+          action: enabledValue ? 'enable' : 'disable',
+        }, (path) => this.settingsFingerprint(path), { agentName: 'Pi' })
+      } finally {
+        await release()
+      }
     })
     this.settingsMutation = operation.then(() => undefined, () => undefined)
     return await operation
@@ -378,7 +389,7 @@ export class PluginService {
   }
 
   /** Pi core has no MCP. Do not write adapter configuration until its package is actually installed. */
-  private async piMcpAdapterSource(): Promise<string | undefined> {
+  private async piMcpAdapterState(): Promise<PiMcpAdapterState | undefined> {
     try {
       const { content, truncated } = await readAtMost(join(this.agentDir, 'settings.json'), MAX_ADAPTER_SETTINGS_BYTES)
       if (truncated) return undefined
@@ -386,7 +397,10 @@ export class PluginService {
       if (!isRecord(value) || !Array.isArray(value.packages)) return undefined
       for (const raw of value.packages) {
         const source = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : ''
-        if (/(?:^|[:/@])pi-mcp-adapter(?:$|[#@])/i.test(source)) return source
+        if (!/(?:^|[:/@])pi-mcp-adapter(?:$|[#@])/i.test(source)) continue
+        const enabled = typeof raw === 'string' || !['extensions', 'skills', 'prompts', 'themes']
+          .every((key) => Array.isArray(raw[key]) && raw[key].length === 0)
+        return { source, enabled }
       }
       return undefined
     } catch {
@@ -394,7 +408,7 @@ export class PluginService {
     }
   }
 
-  private async piMcpAdapterInstalled(): Promise<boolean> { return Boolean(await this.piMcpAdapterSource()) }
+  private async piMcpAdapterInstalled(): Promise<boolean> { return (await this.piMcpAdapterState())?.enabled === true }
 
   refresh(): Promise<PluginCatalog> {
     const projectPath = this.lastProjectPath

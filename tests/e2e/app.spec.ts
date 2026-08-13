@@ -1099,7 +1099,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('installs and removes Pi MCP support from its directory toggle', async () => {
+  test('installs, disables, and restores Pi MCP support from its directory toggle', async () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
     await page.getByRole('button', { name: 'Capabilities', exact: true }).click()
@@ -1137,7 +1137,13 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(confirmation).toContainText('Are you sure?')
     await confirmation.getByRole('button', { name: 'Yes, disable' }).click()
     await expect(page.getByRole('button', { name: 'Enable Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')
-    await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).not.toContain('npm:pi-mcp-adapter')
+    await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toEqual([
+      { source: 'npm:pi-mcp-adapter', extensions: [], skills: [], prompts: [], themes: [] },
+    ])
+
+    await page.getByRole('button', { name: 'Enable Pi MCP Adapter' }).click()
+    await expect(page.getByRole('button', { name: 'Disable Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
   })
 
   test('keeps transcript text from showing through the composer disclaimer', async () => {
