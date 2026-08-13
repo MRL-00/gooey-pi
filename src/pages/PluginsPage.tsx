@@ -29,6 +29,7 @@ const PACKAGE_HELP: Record<HarnessId, string> = {
   pi: 'Install a Pi package containing extensions, skills, prompts, or themes with Pi’s package manager.',
 }
 const GITHUB_ISSUES_URL = 'https://github.com/am-will/gooey-pi/issues/new'
+const PRIME_MCP_DOCS_URL = 'https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/mcp-integrations.md'
 
 function SkillIcon({ skill }: { skill: SkillRecord }) {
   const common = { size: 16 }
@@ -82,6 +83,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
   const [mcpBearerEnv, setMcpBearerEnv] = useState('')
   const [result, setResult] = useState('')
   const [loginCommand, setLoginCommand] = useState('')
+  const [loginServer, setLoginServer] = useState('')
   const [adding, setAdding] = useState(false)
   const [askUserUpdating, setAskUserUpdating] = useState(false)
   const [browserUpdating, setBrowserUpdating] = useState(false)
@@ -117,11 +119,21 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
       && (mcpScope !== 'project' || activeProjectPath),
     )
 
+  const mcpLoginCommand = (name: string) => harness === 'prime'
+    ? `/mcp login ${name}`
+    : harness === 'omp' ? `/mcp reauth ${name}` : `/mcp-auth ${name}`
+
+  const startMcpLogin = async (name: string, command: string) => {
+    if (harness === 'prime') await onConnectBundledMcp(name)
+    else await onRunMcpCommand(command)
+  }
+
   const add = async () => {
     if (!canAdd) return
     setAdding(true)
     setResult('')
     setLoginCommand('')
+    setLoginServer('')
     try {
       if (addKind === 'mcp' && harness === 'prime') {
         const installed = await onInstall(source.trim())
@@ -137,22 +149,33 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
           : { name: mcpName.trim(), scope: mcpScope, projectPath: mcpScope === 'project' ? activeProjectPath : undefined, type: 'stdio', command: mcpCommand.trim(), args: mcpArgs.split('\n').map((arg) => arg.trim()).filter(Boolean) })
       setResult(response.output)
       if (response.ok) {
+        const serverName = mcpName.trim()
+        const login = mcpLoginCommand(serverName)
         setSource('')
         setMcpName('')
         setMcpUrl('')
         setMcpCommand('')
         setMcpArgs('')
         setMcpBearerEnv('')
-        if (addKind === 'mcp' && mcpAuth === 'oauth') setLoginCommand(harness === 'prime' ? `/mcp login ${mcpName.trim()}` : harness === 'omp' ? `/mcp reauth ${mcpName.trim()}` : `/mcp-auth ${mcpName.trim()}`)
-        if (addKind === 'bundle') await onRefresh()
+        if (addKind === 'mcp' && mcpAuth === 'oauth') {
+          setLoginCommand(login)
+          setLoginServer(serverName)
+          try {
+            await startMcpLogin(serverName, login)
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            setResult(`${response.output}\n\nSaved, but login could not start: ${detail}`)
+          }
+        }
+        if (addKind === 'mcp' || addKind === 'bundle') await onRefresh()
       }
     } finally {
       setAdding(false)
     }
   }
 
-  const selectAddKind = (value: AddKind | null) => { setAddKind(value); setSource(''); setResult(''); setLoginCommand('') }
-  const openAdd = () => { setResult(''); setLoginCommand(''); setAddKind(null); setMcpTransport('http'); setAddOpen(true) }
+  const selectAddKind = (value: AddKind | null) => { setAddKind(value); setSource(''); setResult(''); setLoginCommand(''); setLoginServer('') }
+  const openAdd = () => { setResult(''); setLoginCommand(''); setLoginServer(''); setAddKind(null); setMcpTransport('http'); setAddOpen(true) }
   const setAskUser = async (enabled: boolean) => {
     if (askUserUpdating) return
     setAskUserUpdating(true)
@@ -300,7 +323,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             title={addKind ? `Add ${addKind === 'mcp' ? 'MCP server' : addKind === 'extension' ? 'extension' : PACKAGE_LABELS[harness].toLowerCase()}` : `Add a ${HARNESS_SHORT_NAMES[harness]} capability`}
             onClose={() => setAddOpen(false)}
             footer={addKind
-              ? <><button type="button" className="button" onClick={() => selectAddKind(null)}><ArrowLeft size={13}/> Back</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? 'Saving…' : 'Installing…') : (addKind === 'mcp' ? 'Save server configuration' : addKind === 'extension' ? 'Install extension' : `Install ${harness === 'omp' ? 'plugin' : 'package'}`)}</button></>
+              ? <><button type="button" className="button" onClick={() => selectAddKind(null)}><ArrowLeft size={13}/> Back</button><button type="button" className="button button--primary" disabled={!canAdd || adding} onClick={() => void add()}>{adding ? (addKind === 'mcp' ? mcpAuth === 'oauth' ? 'Saving and opening login…' : 'Saving…' : 'Installing…') : (addKind === 'mcp' ? mcpAuth === 'oauth' ? 'Save and log in' : 'Save server configuration' : addKind === 'extension' ? 'Install extension' : `Install ${harness === 'omp' ? 'plugin' : 'package'}`)}</button></>
               : <button type="button" className="button" onClick={() => setAddOpen(false)}>Cancel</button>}
           >
             {addKind === null ? (
@@ -339,11 +362,11 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                   : harness === 'omp'
                   ? 'Add a basic server to OMP’s native MCP configuration. Advanced OAuth, headers, and environment settings remain available through OMP’s own MCP commands and config.'
                   : 'Add a server to pi-mcp-adapter’s configuration. This does not start or test the server.'}</p>
-                {harness === 'prime' ? <><label className="field"><span>Integration package source</span><input autoFocus value={source} onChange={(event) => setSource(event.target.value)} placeholder="npm:@scope/prime-integration"/></label><small className="field-help">The package must provide a Python-backed skill whose integration name matches the server name.</small></> : null}
+                {harness === 'prime' ? <><label className="field"><span>Integration package source</span><input autoFocus value={source} onChange={(event) => setSource(event.target.value)} placeholder="npm:@scope/prime-integration"/></label><small className="field-help">Enter a Prime package source such as an npm package, Git URL, or local path—not the MCP server URL. It must provide a Python-backed skill whose integration name matches the server name. <button type="button" className="inline-help-link" onClick={() => onOpenExternal(PRIME_MCP_DOCS_URL)}>How Prime MCP integrations work</button></small></> : null}
                 <label className="field"><span>Server name</span><input autoFocus value={mcpName} onChange={(event) => setMcpName(event.target.value)} placeholder="my-local-tools"/></label>
                 {harness === 'prime' ? null : <div className="field"><span>Connection</span><Segmented value={mcpTransport} options={[{ value: 'http', label: 'Server / Studio URL' }, { value: 'stdio', label: 'Local command' }]} onChange={(value) => setMcpTransport(value as McpTransport)} label="MCP connection type"/></div>}
                 {mcpTransport === 'http' ? (
-                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="https://example.com/mcp"/></label><small className="field-help">{MCP_HTTP_HELP[harness]}</small><label className="field"><span>Authentication</span><select value={mcpAuth} onChange={(event) => setMcpAuth(event.target.value as McpAuth)}><option value="none">None / configured by server</option><option value="oauth">OAuth — sign in after saving</option><option value="bearer">Bearer token from environment</option></select></label>{mcpAuth === 'bearer' ? <><label className="field"><span>Token environment variable</span><input value={mcpBearerEnv} onChange={(event) => setMcpBearerEnv(event.target.value)} placeholder="MY_MCP_TOKEN"/></label><small className="field-help">GooeyPi stores only this variable name. Set the token in the environment that launches the app.</small></> : null}</>
+                  <><label className="field"><span>Server URL</span><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} inputMode="url" placeholder="https://example.com/mcp"/></label><small className="field-help">{MCP_HTTP_HELP[harness]}</small><label className="field"><span>Authentication</span><select value={mcpAuth} onChange={(event) => setMcpAuth(event.target.value as McpAuth)}><option value="none">None / configured by server</option><option value="oauth">OAuth — save and log in</option><option value="bearer">Bearer token from environment</option></select></label>{mcpAuth === 'bearer' ? <><label className="field"><span>Token environment variable</span><input value={mcpBearerEnv} onChange={(event) => setMcpBearerEnv(event.target.value)} placeholder="MY_MCP_TOKEN"/></label><small className="field-help">GooeyPi stores only this variable name. Set the token in the environment that launches the app.</small></> : null}</>
                 ) : (
                   <><p className="field-help">{MCP_STDIO_HELP[harness]}</p><label className="field"><span>Executable</span><input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} placeholder="npx"/></label><label className="field"><span>Arguments <small>(one per line)</small></span><textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/project'}/></label></>
                 )}
@@ -352,7 +375,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
               </div>
             )}
             {result ? <pre className="install-output" role="status">{result}</pre> : null}
-            {loginCommand ? <div className="add-tool-form"><button type="button" className="button button--primary" disabled={!activeProjectPath} onClick={() => void onRunMcpCommand(loginCommand)}>Open session and sign in</button>{!activeProjectPath ? <small className="field-help">Open a project first, then run <code>{loginCommand}</code> in its session.</small> : <small className="field-help">Runs <code>{loginCommand}</code> through {HARNESS_SHORT_NAMES[harness]} so it owns the OAuth flow and credentials.</small>}</div> : null}
+            {loginCommand ? <div className="add-tool-form"><button type="button" className="button button--primary" disabled={harness !== 'prime' && !activeProjectPath} onClick={() => void startMcpLogin(loginServer, loginCommand)}>Try sign in again</button>{harness !== 'prime' && !activeProjectPath ? <small className="field-help">Open a project first, then run <code>{loginCommand}</code> in its session.</small> : <small className="field-help">Login should open automatically. If it does not, retry here or run <code>{loginCommand}</code> later.</small>}</div> : null}
           </Modal>
         ) : null}
       </div>

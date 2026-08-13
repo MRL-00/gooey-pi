@@ -2,10 +2,13 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
+import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys, resolveMcpOAuthDiscovery } from '../../electron/main/providers'
 
 const dirs: string[] = []
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllGlobals()
+})
 
 function service(): PrimeProviderService {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-providers-'))
@@ -29,6 +32,26 @@ function serviceWithModels(config: unknown): PrimeProviderService {
 }
 
 describe('Prime provider adapter', () => {
+  it('follows MCP protected-resource metadata to its OAuth server and scopes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('', {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer error="invalid_request", resource_metadata="https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp?read_only=true"' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        authorization_servers: ['https://api.supabase.com'],
+        scopes_supported: ['organizations:read', 'projects:read', 'database:read'],
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(resolveMcpOAuthDiscovery('https://mcp.supabase.com/mcp?read_only=true')).resolves.toEqual({
+      url: 'https://api.supabase.com/',
+      scopes: 'organizations:read projects:read database:read',
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://mcp.supabase.com/mcp?read_only=true', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp?read_only=true', expect.objectContaining({ method: 'GET' }))
+  })
+
   it('keeps configured ChatGPT subscription models selectable when discovery returns no models', () => {
     const result = resolveAvailableModelKeys(
       [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'anthropic', id: 'claude-sonnet-5' }],
@@ -254,13 +277,13 @@ describe('Prime provider adapter', () => {
       modelsPath: join(dir, 'models.json'),
     })
     const internals = providerService as unknown as {
-      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+      startOAuthFlow(providerId: string): { flowId: string }
     }
-    const login = vi.fn(async () => undefined)
-    internals.authStorage.login = login
+    const startOAuthFlow = vi.fn(() => ({ flowId: 'custom-mcp-flow' }))
+    internals.startOAuthFlow = startOAuthFlow
 
-    await providerService.startMcpOAuth('acme')
-    expect(login).toHaveBeenCalledWith('mcp:acme', expect.any(Object))
+    await expect(providerService.startMcpOAuth('acme')).resolves.toEqual({ flowId: 'custom-mcp-flow' })
+    expect(startOAuthFlow).toHaveBeenCalledWith('mcp:acme')
   })
 
   it('rejects unknown and non-OAuth MCP login targets', async () => {

@@ -1,0 +1,12 @@
+{
+  "name": "gooeypi-prime-supabase",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prime Agent Python integration for Supabase's official hosted MCP server.",
+  "license": "MIT",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

@@ -391,7 +391,10 @@ async function bootstrap(): Promise<void> {
   // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
 
-  const providers = new PrimeProviderService({ openExternal: async (url) => { await shell.openExternal(url, { activate: true }) } })
+  const providers = new PrimeProviderService({
+    agentDir: join(homedir(), '.prime', 'agent'),
+    openExternal: async (url) => { await shell.openExternal(url, { activate: true }) },
+  })
   providerService = providers
   const disabledProviders = () => new Set(stateStore.getSettings().disabledProviders)
   const ompDisabledProviders = () => new Set(stateStore.getSettings().ompDisabledProviders)

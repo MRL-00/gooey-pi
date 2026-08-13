@@ -130,14 +130,12 @@ export class PluginService {
     // tracks installs through its plugin lock file.
     const settingsPath = this.harness === 'omp' ? join(this.agentDir, '..', 'plugins', 'omp-plugins.lock.json') : join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
-      // The Prime CLI does not participate in Prime Work's settings lock. Holding
-      // it around the subprocess still coordinates package installs launched by
-      // this app with MCP updates from every PluginService instance.
-      // Pi owns the settings.json lock while `pi install` is running. Taking
-      // that same lock here makes the child deadlock against GooeyPi. Keep a
-      // separate app coordination lock so multiple GooeyPi windows serialize
-      // package mutations while Pi remains free to protect its own settings.
-      const lockPath = this.harness === 'pi' ? `${settingsPath}.gooeypi` : settingsPath
+      // Prime and Pi own the settings.json lock while their package commands are
+      // running. Taking that same lock here makes the child fail or deadlock
+      // against GooeyPi. Keep a separate app coordination lock so multiple
+      // GooeyPi windows serialize package mutations while the CLI remains free
+      // to protect its own settings file.
+      const lockPath = this.harness === 'omp' ? settingsPath : `${settingsPath}.gooeypi`
       const release = await acquireSettingsLock(lockPath)
       try {
         return this.harness === 'omp'
@@ -171,7 +169,7 @@ export class PluginService {
       : undefined
     const settingsPath = projectSettings?.path ?? join(this.agentDir, 'settings.json')
     const operation = this.settingsMutation.then(async () => {
-      const lockPath = this.harness === 'pi' ? `${settingsPath}.gooeypi` : settingsPath
+      const lockPath = `${settingsPath}.gooeypi`
       const release = await acquireSettingsLock(lockPath, projectSettings?.verify)
       try {
         return this.harness === 'pi'
@@ -235,12 +233,21 @@ export class PluginService {
       includeType: false,
       successMessage: `Saved MCP server definition “${input.name}”. Start a new Pi session to load it through pi-mcp-adapter.`,
     } : { harness: this.harness }
-    const mutation = this.settingsMutation.then(() => updateMcpSettings(
-      settingsTarget,
-      input,
-      (path) => this.settingsFingerprint(path),
-      options,
-    ))
+    const settingsPath = typeof settingsTarget === 'string' ? settingsTarget : settingsTarget.path
+    const verify = typeof settingsTarget === 'string' ? undefined : settingsTarget.verify
+    const mutation = this.settingsMutation.then(async () => {
+      const release = await acquireSettingsLock(`${settingsPath}.gooeypi`, verify)
+      try {
+        return await updateMcpSettings(
+          settingsTarget,
+          input,
+          (path) => this.settingsFingerprint(path),
+          options,
+        )
+      } finally {
+        await release()
+      }
+    })
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
   }
@@ -258,12 +265,21 @@ export class PluginService {
       settingsTarget = join(this.agentDir, this.harness === 'prime' ? 'settings.json' : 'mcp.json')
     }
     const agentName = HARNESSES[this.harness].agentName
-    const mutation = this.settingsMutation.then(() => updateMcpState(
-      settingsTarget,
-      input,
-      (path) => this.settingsFingerprint(path),
-      { agentName },
-    ))
+    const settingsPath = typeof settingsTarget === 'string' ? settingsTarget : settingsTarget.path
+    const verify = typeof settingsTarget === 'string' ? undefined : settingsTarget.verify
+    const mutation = this.settingsMutation.then(async () => {
+      const release = await acquireSettingsLock(`${settingsPath}.gooeypi`, verify)
+      try {
+        return await updateMcpState(
+          settingsTarget,
+          input,
+          (path) => this.settingsFingerprint(path),
+          { agentName },
+        )
+      } finally {
+        await release()
+      }
+    })
     this.settingsMutation = mutation.then(() => undefined, () => undefined)
     return await mutation
   }
