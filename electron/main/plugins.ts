@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { CapabilityMutationInput, HarnessId, PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
+import type { HarnessId, PluginCatalog, ProcessOutcome, SkillRecord } from '../../src/types/api'
 import { HARNESSES } from './harness'
 import { createAdmissionQueue, createSingleFlight } from './lib/async'
 import { resolveExecutable, type ExecutableSource } from './process-utils'

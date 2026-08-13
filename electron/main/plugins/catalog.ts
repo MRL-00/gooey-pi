@@ -62,18 +62,6 @@ async function markdownMetadata(path: string): Promise<{ name?: string; descript
   return { name, description: description.slice(0, 500) }
 }
 
-function safeSource(source: string): string {
-  try {
-    const parsed = new URL(source.replace(/^git:/, ''))
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      parsed.username = ''; parsed.password = ''; parsed.search = ''; parsed.hash = ''
-      return parsed.origin
-    }
-    if (parsed.protocol === 'ssh:' || parsed.protocol === 'git:') return `${parsed.protocol}//${parsed.hostname}${parsed.pathname}`
-  } catch { /* npm, shorthand, or local source */ }
-  return source.slice(0, 1_000)
-}
-
 function normalizedPackageSlug(source: string): string {
   let value = source.trim().replace(/^(?:npm:|git:)/i, '').replace(/[?#].*$/, '').replace(/\.git$/i, '')
   value = value.replace(/\/+$/, '').slice(value.lastIndexOf('/') + 1).replace(/@[^@/]+$/, '')

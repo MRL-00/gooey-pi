@@ -67,7 +67,7 @@ interface PluginsPageProps {
   onRunMcpCommand(command: string): Promise<void>
 }
 
-export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, browserEnabled, onSetBrowserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onSetMcpEnabled, onMutateCapability = async () => ({ ok: false, output: 'Capability changes are unavailable.' }), onConnectBundledMcp, onDisconnectBundledMcp, onRunMcpCommand }: PluginsPageProps) {
+export function PluginsPage({ harness, skills, warnings, loading, activeProjectPath, askUserEnabled, onSetAskUserEnabled, browserEnabled, onSetBrowserEnabled, computerUseEnabled, onSetComputerUseEnabled, onOpenExternal, onRefresh, onInstall, onInstallExtension, onSetMcpSupport, onConnectMcp, onSetMcpEnabled, onMutateCapability = async () => ({ ok: false, output: 'Capability changes are unavailable.' }), onConnectBundledMcp, onRunMcpCommand }: PluginsPageProps) {
   const [tab, setTab] = useState<DirectoryTab>('plugins')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -214,7 +214,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
       setComputerUseUpdating(false)
     }
   }
-  const setMcpSupport = async (skill: SkillRecord, enabling: boolean) => {
+  const setMcpSupport = async (_skill: SkillRecord, enabling: boolean) => {
     if (mcpSupportUpdating) return
     setMcpSupportUpdating(true)
     setMcpSupportAlert('')
