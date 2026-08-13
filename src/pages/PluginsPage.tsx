@@ -28,6 +28,7 @@ const PACKAGE_HELP: Record<HarnessId, string> = {
   omp: 'Install an OMP plugin bundle with OMP’s native plugin manager. Marketplace targets use name@marketplace.',
   pi: 'Install a Pi package containing extensions, skills, prompts, or themes with Pi’s package manager.',
 }
+const GITHUB_ISSUES_URL = 'https://github.com/am-will/gooey-pi/issues/new'
 
 function SkillIcon({ skill }: { skill: SkillRecord }) {
   const common = { size: 16 }
@@ -208,7 +209,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
         {computerUseAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {computerUseAlert}</p> : null}
         {mcpSupportAlert ? <p className="page-inline-error" role="alert"><AlertTriangle size={13}/> {mcpSupportAlert}</p> : null}
         {harness === 'prime' ? <p className="connection-warning"><ShieldCheck size={13}/> Prime MCP integrations require a matching Python skill package and an HTTP server definition. GooeyPi installs both through one guided flow.</p> : null}
-        {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Enable MCP | Pi MCP Adapter below before adding servers.</p> : null}
+        {harness === 'pi' && !piMcpAdapterInstalled ? <p className="connection-warning"><ShieldCheck size={13}/> Pi core has no MCP client. Enable Pi MCP Adapter below before adding servers.</p> : null}
         <div className="directory-heading"><h2>{filter === 'installed' ? 'Installed' : tab === 'plugins' ? 'Capabilities' : 'Skills'}</h2><span>{visible.length} available</span></div>
         {visible.length ? (
           <div className="directory-list">{visible.map((skill) => (
@@ -238,7 +239,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                 <button
                   type="button"
                   className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'}
-                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} MCP | Pi MCP Adapter`}
+                  aria-label={`${skill.enabled ? 'Disable' : 'Enable'} Pi MCP Adapter`}
                   aria-pressed={skill.enabled}
                   disabled={mcpSupportUpdating}
                   title={skill.enabled ? 'Disabling removes the adapter package but keeps server definitions and credentials.' : 'Enabling installs npm:pi-mcp-adapter through Pi.'}
@@ -262,7 +263,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
             {addKind === null ? (
               <div className="capability-choice-list">
                 <button type="button" disabled={harness === 'pi' && !piMcpAdapterInstalled} onClick={() => selectAddKind('mcp')}>
-                  <span><Globe2 size={17}/></span><span><strong>Add MCP</strong><small>{harness === 'pi' && !piMcpAdapterInstalled ? 'Enable MCP | Pi MCP Adapter first' : harness === 'prime' ? 'Install the matching integration and add its server' : 'Connect a server using this harness’s MCP format'}</small></span><ChevronRight size={15}/>
+                  <span><Globe2 size={17}/></span><span><strong>Add MCP</strong><small>{harness === 'pi' && !piMcpAdapterInstalled ? 'Enable Pi MCP Adapter first' : harness === 'prime' ? 'Install the matching integration and add its server' : 'Connect a server using this harness’s MCP format'}</small></span><ChevronRight size={15}/>
                 </button>
                 <button type="button" onClick={() => selectAddKind('bundle')}>
                   <span><Package size={17}/></span><span><strong>Add {harness === 'omp' ? 'Plugin' : 'Package'}</strong><small>{PACKAGE_HELP[harness]}</small></span><ChevronRight size={15}/>
@@ -306,6 +307,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
                 <p className="connection-warning"><ShieldCheck size={13}/> Only connect servers you trust. MCP tools can read data or run actions with your user permissions.</p>
               </div>
             )}
+            {addKind === 'bundle' || addKind === 'extension' ? <p className="capability-compatibility-note"><AlertTriangle size={13}/><span>Not every third-party {addKind === 'bundle' ? (harness === 'omp' ? 'plugin' : 'package') : 'extension'} will work in GooeyPi. If something fails, <button type="button" onClick={() => onOpenExternal(GITHUB_ISSUES_URL)}>create a GitHub issue</button>.</span></p> : null}
             {result ? <pre className="install-output" role="status">{result}</pre> : null}
             {loginCommand ? <div className="add-tool-form"><button type="button" className="button button--primary" disabled={!activeProjectPath} onClick={() => void onRunMcpCommand(loginCommand)}>Open session and sign in</button>{!activeProjectPath ? <small className="field-help">Open a project first, then run <code>{loginCommand}</code> in its session.</small> : <small className="field-help">Runs <code>{loginCommand}</code> through {HARNESS_SHORT_NAMES[harness]} so it owns the OAuth flow and credentials.</small>}</div> : null}
           </Modal>

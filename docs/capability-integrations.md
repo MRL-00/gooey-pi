@@ -30,7 +30,9 @@ the same way. This document defines the product contract for that surface.
 The app labels this surface **Capabilities** for every harness. Its Add button
 first opens a capability-type chooser, then a type-specific form: **Add MCP**,
 **Add Plugin** (OMP) or **Add Package** (Prime/Pi), and **Add Extension**. Pi's
-MCP choice remains visible but disabled until its adapter toggle is enabled.
+MCP choice remains visible but disabled until its **Pi MCP Adapter** toggle is
+enabled. Package/plugin and extension forms warn that third-party code may use
+CLI-only APIs and link directly to GooeyPi's GitHub issue form for failures.
 
 ## Product behavior
 
@@ -60,7 +62,7 @@ remain accepted where the OMP CLI accepts them.
 
 ### Pi
 
-Pi core has no MCP client. GooeyPi shows **MCP | Pi MCP Adapter** as a real
+Pi core has no MCP client. GooeyPi shows **Pi MCP Adapter** as a real
 toggle whose state is derived from Pi's installed packages. Enabling it runs
 `pi install npm:pi-mcp-adapter`; disabling it runs `pi remove` for the recorded
 adapter source. Disabling does not delete MCP definitions or credentials, so a

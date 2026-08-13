@@ -122,7 +122,7 @@ describe('PluginsPage bundled capability controls', () => {
     const setMcpSupport = vi.fn(async () => ({ ok: true, output: 'installed' }))
     const refresh = vi.fn(async () => undefined)
     const piMcp: SkillRecord = {
-      id: 'gooeypi-pi-mcp', name: 'MCP | Pi MCP Adapter', description: 'Install the adapter.',
+      id: 'gooeypi-pi-mcp', name: 'Pi MCP Adapter', description: 'Install the adapter.',
       kind: 'extension', location: 'system', enabled: false, source: 'npm:pi-mcp-adapter',
     }
     await act(async () => {
@@ -136,7 +136,7 @@ describe('PluginsPage bundled capability controls', () => {
         onConnectMcp={async () => ({ ok: true, output: '' })}
       />)
     })
-    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Enable MCP | Pi MCP Adapter"]')!
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Pi MCP Adapter"]')!
     await act(async () => { toggle.click(); await Promise.resolve(); await Promise.resolve() })
     expect(setMcpSupport).toHaveBeenCalledWith(true)
     expect(refresh).toHaveBeenCalled()
@@ -144,11 +144,12 @@ describe('PluginsPage bundled capability controls', () => {
 
   it('greys out Pi MCP until its adapter is enabled and opens the extension form separately', async () => {
     const installExtension = vi.fn(async () => ({ ok: true, output: 'installed extension' }))
+    const openExternal = vi.fn()
     await act(async () => {
       root.render(<PluginsPage
         harness="pi" skills={[]} warnings={[]} loading={false} activeProjectPath="/repo"
         askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
-        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={openExternal}
         onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={installExtension}
         onSetMcpSupport={async () => ({ ok: true, output: '' })} onRunMcpCommand={async () => undefined}
@@ -160,11 +161,17 @@ describe('PluginsPage bundled capability controls', () => {
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
     const addMcp = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add MCP'))!
     expect(addMcp.disabled).toBe(true)
-    expect(addMcp.textContent).toContain('Enable MCP | Pi MCP Adapter first')
+    expect(addMcp.textContent).toContain('Enable Pi MCP Adapter first')
 
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add Package'))!.click() })
+    expect(dialog.textContent).toContain('Not every third-party package will work in GooeyPi')
+    await act(async () => { dialog.querySelector<HTMLButtonElement>('.modal__footer .button')!.click() })
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Add Extension'))!.click() })
     expect(dialog.textContent).toContain('Extension file')
     expect(dialog.textContent).toContain('native package manager')
+    expect(dialog.textContent).toContain('Not every third-party extension will work in GooeyPi')
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'create a GitHub issue')!.click() })
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/am-will/gooey-pi/issues/new')
     changeInput(dialog.querySelector<HTMLInputElement>('input')!, '/tmp/example.ts')
     const install = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Install extension')!
     await act(async () => { install.click(); await Promise.resolve(); await Promise.resolve() })

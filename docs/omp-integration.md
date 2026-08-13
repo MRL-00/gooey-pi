@@ -8,7 +8,7 @@ This document is the working spec for adding OMP (`omp`, [omp.sh](https://omp.sh
 - Switching harness swaps the whole workspace context: each harness has its own granted projects, session catalog, model catalog, and runtimes. Settings gain an `activeHarness` field; the choice persists.
 - All existing features work on OMP where the harness supports them: streaming transcripts, steering/follow-ups, abort, model + thinking selection, compaction, session resume/switch/rename/fork(branch), extension-UI dialogs (which is also how OMP surfaces **tool approval prompts**), browser capability bridge, git/terminal (harness-agnostic already).
 - Scheduled tasks are available in both harnesses. Prime retains its heartbeat tools; OMP receives an injected scheduled-task extension backed by Prime Work's local schedule service and executor. Still Prime-only: daemon-socket follow-up to out-of-app sessions and provider OAuth management. OMP credentials remain CLI-owned; Prime Work keeps a separate `ompDisabledProviders` list that only controls which providers appear in its OMP model picker.
-- Plugins & skills is harness-scoped but available in the same place for both. OMP uses its native plugin manager (`omp plugin install`), user/project plugin roots, `.omp/skills` plus shared `.agents/skills`, and OMP-native `mcp.json`; Prime's package and settings behavior is unchanged.
+- Capabilities is harness-scoped but available in the same place for both. OMP uses its native plugin manager (`omp plugin install`), user/project plugin roots, `.omp/skills` plus shared `.agents/skills`, and OMP-native `mcp.json`; Prime's package and settings behavior is unchanged.
 
 ## OMP facts (verified on this machine, omp 17.2.11)
 

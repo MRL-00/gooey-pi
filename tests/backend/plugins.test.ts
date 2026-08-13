@@ -836,7 +836,7 @@ describe('PluginService Pi parity', () => {
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-tool', kind: 'extension', location: 'user', description: 'Pi extension' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'project-tool', kind: 'extension', location: 'project', description: 'Pi extension' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'installed-package', kind: 'package', description: 'Pi capability package from npm:installed-package' }))
-    expect(catalog.skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', name: 'MCP | Pi MCP Adapter', enabled: false }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ id: 'gooeypi-pi-mcp', name: 'Pi MCP Adapter', enabled: false }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'docs', kind: 'mcp', location: 'user' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))
     // settings.json is not an MCP source for pi; only mcp.json entries surface.

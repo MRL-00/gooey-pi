@@ -86,7 +86,7 @@ export class PluginService {
     const piMcpSource = this.harness === 'pi' ? await this.piMcpAdapterSource() : undefined
     const harnessCapabilities: SkillRecord[] = this.harness === 'pi' ? [{
       id: 'gooeypi-pi-mcp',
-      name: 'MCP | Pi MCP Adapter',
+      name: 'Pi MCP Adapter',
       description: piMcpSource
         ? 'MCP support is installed through Pi’s pi-mcp-adapter extension package.'
         : 'Install Pi’s supported MCP adapter extension, then add and authenticate MCP servers.',

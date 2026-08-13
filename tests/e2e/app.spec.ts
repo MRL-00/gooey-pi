@@ -1062,10 +1062,10 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
     await page.getByRole('button', { name: 'Capabilities' }).click()
 
-    const enable = page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })
+    const enable = page.getByRole('button', { name: 'Enable Pi MCP Adapter' })
     await expect(enable).toHaveAttribute('aria-pressed', 'false')
     await enable.click()
-    await expect(page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('button', { name: 'Disable Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'true')
     const settingsPath = join(fixtureRoot, 'home', '.pi', 'agent', 'settings.json')
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).toContain('npm:pi-mcp-adapter')
 
@@ -1084,8 +1084,8 @@ test.describe('Prime Work desktop smoke', () => {
 
     await page.getByRole('button', { name: 'Capabilities' }).click()
 
-    await page.getByRole('button', { name: 'Disable MCP | Pi MCP Adapter' }).click()
-    await expect(page.getByRole('button', { name: 'Enable MCP | Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')
+    await page.getByRole('button', { name: 'Disable Pi MCP Adapter' }).click()
+    await expect(page.getByRole('button', { name: 'Enable Pi MCP Adapter' })).toHaveAttribute('aria-pressed', 'false')
     await expect.poll(() => JSON.parse(readFileSync(settingsPath, 'utf8')).packages).not.toContain('npm:pi-mcp-adapter')
   })
 
