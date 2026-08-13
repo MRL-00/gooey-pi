@@ -299,8 +299,6 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     const before = await this.snapshot(target)
     const attribution = encodeGooeyPiAgentMessage({
       fromSessionId: source.session.id,
-      fromTitle: source.session.title,
-      fromHarness: source.session.harness,
       text: message,
     })
     const busy = runtime.isStreaming || runtime.isCompacting || runtime.sessionActions?.active

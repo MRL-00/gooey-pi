@@ -149,10 +149,19 @@ describe('AgentCollaborationBridge', () => {
     const delivered = (primeManager.command.mock.calls[0] as unknown as [string, { message: string }])[1]
     expect(delivered.message).toContain(`"from_session_id":"${source.id}"`)
     expect(delivered.message).toContain('"reply_with":"session_send"')
+    expect(delivered.message).not.toContain('"from_title"')
+    expect(delivered.message).not.toContain('"from_harness"')
+    expect(delivered.message).not.toContain(source.title)
+    expect(delivered.message).not.toContain(target.title)
+    expect(delivered.message).not.toContain('Implement the API.')
+    expect(delivered.message).not.toContain('The endpoint is ready.')
+    const metadata = JSON.parse(delivered.message.split('\n')[1]!) as Record<string, unknown>
+    expect(Object.keys(metadata).sort()).toEqual([
+      'from_session_id', 'nonce', 'reply_with', 'sent_at', 'signature', 'version',
+    ])
+    expect(metadata.version).toBe(2)
     expect(parseGooeyPiAgentMessage(delivered.message)).toEqual({
       fromSessionId: source.id,
-      fromTitle: source.title,
-      fromHarness: source.harness,
       text: 'Please claim src/api.ts.',
     })
 

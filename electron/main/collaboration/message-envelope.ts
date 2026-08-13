@@ -12,12 +12,13 @@ let signingKey: Buffer | undefined
 
 export interface GooeyPiAgentMessage {
   fromSessionId: string
-  fromTitle: string
-  fromHarness: HarnessId
+  /** Legacy display metadata is parsed for saved v1 messages, never emitted in new model-facing envelopes. */
+  fromTitle?: string
+  fromHarness?: HarnessId
   text: string
 }
 
-interface SignedMetadata {
+interface SignedMetadataV1 {
   version: 1
   from_session_id: string
   from_title: string
@@ -26,6 +27,16 @@ interface SignedMetadata {
   nonce: string
   sent_at: string
 }
+
+interface SignedMetadataV2 {
+  version: 2
+  from_session_id: string
+  reply_with: 'session_send'
+  nonce: string
+  sent_at: string
+}
+
+type SignedMetadata = SignedMetadataV1 | SignedMetadataV2
 
 function signature(metadata: SignedMetadata, text: string): Buffer {
   if (!signingKey) throw new Error('GooeyPi agent-message signing is not initialized')
@@ -62,12 +73,10 @@ export function configureGooeyPiAgentMessageSigning(key: Uint8Array): void {
   signingKey = Buffer.from(key)
 }
 
-export function encodeGooeyPiAgentMessage(message: GooeyPiAgentMessage): string {
-  const unsigned: SignedMetadata = {
-    version: 1,
+export function encodeGooeyPiAgentMessage(message: Pick<GooeyPiAgentMessage, 'fromSessionId' | 'text'>): string {
+  const unsigned: SignedMetadataV2 = {
+    version: 2,
     from_session_id: message.fromSessionId,
-    from_title: message.fromTitle,
-    from_harness: message.fromHarness,
     reply_with: 'session_send',
     nonce: randomUUID(),
     sent_at: new Date().toISOString(),
@@ -83,32 +92,38 @@ export function parseGooeyPiAgentMessage(value: string): GooeyPiAgentMessage | u
   if (metadataEnd < 0) return undefined
   let metadata: unknown
   try { metadata = JSON.parse(value.slice(BEGIN.length + 1, metadataEnd)) } catch { return undefined }
-  if (!isRecord(metadata) || metadata.version !== 1) return undefined
+  if (!isRecord(metadata) || (metadata.version !== 1 && metadata.version !== 2)) return undefined
   const fromSessionId = metadata.from_session_id
-  const fromTitle = metadata.from_title
-  const fromHarness = metadata.from_harness
   const replyWith = metadata.reply_with
   const nonce = metadata.nonce
   const sentAt = metadata.sent_at
   const encodedSignature = metadata.signature
   if (typeof fromSessionId !== 'string' || fromSessionId.length < 1 || fromSessionId.length > 128) return undefined
-  if (typeof fromTitle !== 'string' || fromTitle.length < 1 || fromTitle.length > 200) return undefined
-  if (typeof fromHarness !== 'string' || !HARNESSES.has(fromHarness as HarnessId)) return undefined
-  if (replyWith !== undefined && replyWith !== 'session_send') return undefined
+  if (metadata.version === 2 && replyWith !== 'session_send') return undefined
+  if (metadata.version === 1 && replyWith !== undefined && replyWith !== 'session_send') return undefined
   if (typeof nonce !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)) return undefined
   if (typeof sentAt !== 'string' || sentAt.length > 64 || !Number.isFinite(Date.parse(sentAt))) return undefined
   if (typeof encodedSignature !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(encodedSignature)) return undefined
   const text = value.slice(metadataEnd + END.length + 2).replace(/^\n/, '')
   if (!text) return undefined
   if (!signingKey) return undefined
-  const unsigned: SignedMetadata = {
-    version: 1, from_session_id: fromSessionId, from_title: fromTitle,
-    from_harness: fromHarness as HarnessId,
-    ...(replyWith === 'session_send' ? { reply_with: replyWith } : {}),
-    nonce, sent_at: sentAt,
+  let fromTitle: string | undefined
+  let fromHarness: HarnessId | undefined
+  let unsigned: SignedMetadata
+  if (metadata.version === 1) {
+    if (typeof metadata.from_title !== 'string' || metadata.from_title.length < 1 || metadata.from_title.length > 200) return undefined
+    if (typeof metadata.from_harness !== 'string' || !HARNESSES.has(metadata.from_harness as HarnessId)) return undefined
+    fromTitle = metadata.from_title
+    fromHarness = metadata.from_harness as HarnessId
+    unsigned = {
+      version: 1, from_session_id: fromSessionId, from_title: fromTitle, from_harness: fromHarness,
+      ...(replyWith === 'session_send' ? { reply_with: replyWith } : {}), nonce, sent_at: sentAt,
+    }
+  } else {
+    unsigned = { version: 2, from_session_id: fromSessionId, reply_with: 'session_send', nonce, sent_at: sentAt }
   }
   const actual = Buffer.from(encodedSignature, 'base64url')
   const expected = signature(unsigned, text)
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return undefined
-  return { fromSessionId, fromTitle, fromHarness: fromHarness as HarnessId, text }
+  return { fromSessionId, ...(fromTitle ? { fromTitle } : {}), ...(fromHarness ? { fromHarness } : {}), text }
 }

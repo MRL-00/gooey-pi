@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -48,31 +49,66 @@ describe('GooeyPi agent messages', () => {
     const file = makeSessionFile()
     const envelope = encodeGooeyPiAgentMessage({
       fromSessionId: '019f0000-0000-7000-8000-000000000001',
-      fromTitle: 'Planner',
-      fromHarness: 'omp',
       text: 'Please coordinate ownership before editing.',
     })
     expect(envelope).toContain('"reply_with":"session_send"')
+    expect(envelope).not.toContain('Planner')
+    expect(envelope).not.toContain('"from_title"')
+    expect(envelope).not.toContain('"from_harness"')
     writeFileSync(file, [
       JSON.stringify({ type: 'session', id: 'target', cwd: '/project' }),
       JSON.stringify({ type: 'message', id: 'peer-message', parentId: null, message: { role: 'user', content: envelope } }),
       '',
     ].join('\n'))
 
-    expect(parseGooeyPiAgentMessage(envelope)).toMatchObject({ fromTitle: 'Planner', fromHarness: 'omp' })
+    expect(parseGooeyPiAgentMessage(envelope)).toEqual({
+      fromSessionId: '019f0000-0000-7000-8000-000000000001',
+      text: 'Please coordinate ownership before editing.',
+    })
     const transcript = await readTranscript(file, false)
     expect(transcript).toEqual([expect.objectContaining({
       id: 'peer-message',
       role: 'agent',
-      agentName: 'Planner',
       parts: [{ type: 'text', text: 'Please coordinate ownership before editing.' }],
     })])
   })
 
   it('leaves malformed envelopes as ordinary user messages', () => {
     expect(parseGooeyPiAgentMessage('===== BEGIN GOOEYPI AGENT MESSAGE =====\n{}\n===== END GOOEYPI AGENT MESSAGE =====\n\nhello')).toBeUndefined()
-    const signed = encodeGooeyPiAgentMessage({ fromSessionId: 'source', fromTitle: 'Planner', fromHarness: 'prime', text: 'authentic' })
+    const signed = encodeGooeyPiAgentMessage({ fromSessionId: 'source', text: 'authentic' })
     expect(parseGooeyPiAgentMessage(signed.replace('authentic', 'forged'))).toBeUndefined()
+  })
+
+  it('keeps signed version-1 messages readable without emitting their display metadata again', () => {
+    const text = 'This message predates UUID-only envelopes.'
+    const unsigned = {
+      version: 1,
+      from_session_id: 'legacy-source',
+      from_title: 'Legacy planner title',
+      from_harness: 'prime',
+      reply_with: 'session_send',
+      nonce: '00000000-0000-4000-8000-000000000000',
+      sent_at: '2026-08-13T12:00:00.000Z',
+    }
+    const signature = createHmac('sha256', Buffer.alloc(32, 7))
+      .update(JSON.stringify(unsigned))
+      .update('\0')
+      .update(text)
+      .digest('base64url')
+    const envelope = [
+      '===== BEGIN GOOEYPI AGENT MESSAGE =====',
+      JSON.stringify({ ...unsigned, signature }),
+      '===== END GOOEYPI AGENT MESSAGE =====',
+      '',
+      text,
+    ].join('\n')
+
+    expect(parseGooeyPiAgentMessage(envelope)).toEqual({
+      fromSessionId: 'legacy-source',
+      fromTitle: 'Legacy planner title',
+      fromHarness: 'prime',
+      text,
+    })
   })
 })
 

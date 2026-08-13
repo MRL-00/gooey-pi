@@ -392,7 +392,7 @@ async function readTranscriptWithDialect(dialect: TranscriptDialect, filePath: s
         id: safeId,
         role: 'agent',
         timestamp: typeof rawTimestamp === 'string' ? boundedString(rawTimestamp, 128) : rawTimestamp,
-        agentName: boundedString(collaborationMessage.fromTitle, 200),
+        agentName: collaborationMessage.fromTitle ? boundedString(collaborationMessage.fromTitle, 200) : undefined,
         parts: [{ type: 'text', text: boundedString(collaborationMessage.text, MAX_PART_TEXT_CHARS) }],
       })
       activeAssistant = undefined
