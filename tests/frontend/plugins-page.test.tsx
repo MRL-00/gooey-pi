@@ -50,6 +50,8 @@ describe('PluginsPage bundled capability controls', () => {
 
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Disable Ask user"]')
     expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+    expect(toggle?.querySelector('.plugin-toggle__check')).not.toBeNull()
+    expect(toggle?.querySelector('.plugin-toggle__disable')).not.toBeNull()
     await act(async () => { toggle!.click(); await Promise.resolve(); await Promise.resolve() })
 
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
@@ -78,7 +80,10 @@ describe('PluginsPage bundled capability controls', () => {
       />)
     })
     await render(false)
-    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable Browser"]')!.click(); await Promise.resolve() })
+    const enableBrowser = container.querySelector<HTMLButtonElement>('button[aria-label="Enable Browser"]')!
+    expect(enableBrowser.querySelector('.plugin-toggle__plus')).not.toBeNull()
+    expect(enableBrowser.querySelector('.plugin-toggle__disable')).toBeNull()
+    await act(async () => { enableBrowser.click(); await Promise.resolve() })
     expect(setBrowserEnabled).toHaveBeenCalledWith(true)
 
     await render(true)
@@ -165,7 +170,10 @@ describe('PluginsPage bundled capability controls', () => {
       />)
     })
 
-    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Remove docs"]')!.click() })
+    const remove = container.querySelector<HTMLButtonElement>('button[aria-label="Remove docs"]')!
+    const actions = remove.closest('.capability-actions')!
+    expect(actions.lastElementChild?.getAttribute('aria-label')).toBe('Disable docs')
+    await act(async () => { remove.click() })
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
     expect(dialog.textContent).toContain('Other packages and MCP entries will be kept')
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, remove completely')!.click(); await Promise.resolve() })

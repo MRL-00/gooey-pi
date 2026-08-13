@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, BookOpen, Check, ChevronRight, FileCode2, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, WandSparkles } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BookOpen, Check, ChevronRight, FileCode2, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, WandSparkles, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { CapabilityMutationInput, ExtensionInstallInput, HarnessId, McpConnectionInput, McpStateInput, PluginWarning, SkillRecord } from '@/types/api'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -296,7 +296,7 @@ export function PluginsPage({ harness, skills, warnings, loading, activeProjectP
       if (skill.kind === 'package') return mutate(skill, 'enable')
       return setMcp(skill, true)
     }
-    return <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={updating} title={skill.availability?.detail} onClick={() => { if (skill.enabled) setConfirmDisable(skill); else void enable() }}>{updating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <Check size={14}/> : <Plus size={14}/>}</button>
+    return <button type="button" className={skill.enabled ? 'plugin-toggle is-enabled' : 'plugin-toggle'} aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} aria-pressed={skill.enabled} disabled={updating} title={skill.availability?.detail} onClick={() => { if (skill.enabled) setConfirmDisable(skill); else void enable() }}>{updating ? <RefreshCw className="spin" size={14}/> : skill.enabled ? <><Check className="plugin-toggle__check" size={14}/><X className="plugin-toggle__disable" size={14}/></> : <Plus className="plugin-toggle__plus" size={14}/>}</button>
   }
 
   return (
