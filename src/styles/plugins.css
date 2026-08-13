@@ -29,6 +29,9 @@ button.plugin-toggle { cursor: pointer; }
 button.plugin-toggle:disabled { cursor: wait; opacity: .65; }
 .plugin-toggle:hover { background: var(--surface-hover); }
 .plugin-toggle.is-enabled { color: var(--success); border-color: transparent; background: var(--success-soft); }
+.capability-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.plugin-remove { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 7px; color: var(--text-tertiary); background: transparent; }
+.plugin-remove:hover { color: var(--danger); border-color: var(--border); background: var(--danger-soft); }
 .install-output { max-height: 140px; overflow: auto; margin: 12px 0 0; padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); font-size: 10.5px; white-space: pre-wrap; }
 .modal__body:has(.add-tool-form) { max-height: min(68vh, 520px); overflow-y: auto; }
 .add-tool-form { margin-top: 14px; }

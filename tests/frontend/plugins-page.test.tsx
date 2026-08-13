@@ -92,6 +92,7 @@ describe('PluginsPage bundled capability controls', () => {
   it('connects bundled MCPs from plus and confirms before disconnecting them', async () => {
     const connectBundled = vi.fn(async () => undefined)
     const disconnectBundled = vi.fn(async () => undefined)
+    const mutateCapability = vi.fn(async () => ({ ok: true, output: '' }))
     const notion: SkillRecord = { id: 'prime-mcp-notion', name: 'Notion', description: 'Official MCP.', kind: 'mcp', location: 'bundled', enabled: false }
     const render = async (enabled: boolean) => act(async () => {
       root.render(<PluginsPage
@@ -102,20 +103,23 @@ describe('PluginsPage bundled capability controls', () => {
         onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
         onInstallExtension={async () => ({ ok: true, output: '' })} onSetMcpSupport={async () => ({ ok: true, output: '' })}
         onConnectMcp={async () => ({ ok: true, output: '' })} onSetMcpEnabled={async () => ({ ok: true, output: '' })}
+        onMutateCapability={mutateCapability}
         onConnectBundledMcp={connectBundled} onDisconnectBundledMcp={disconnectBundled} onRunMcpCommand={async () => undefined}
       />)
     })
     await render(false)
     await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable Notion"]')!.click(); await Promise.resolve() })
-    expect(connectBundled).toHaveBeenCalledWith('notion')
+    expect(mutateCapability).toHaveBeenCalledWith({ kind: 'mcp', action: 'enable', name: 'notion', scope: 'user' })
 
     await render(true)
     await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Disable Notion"]')!.click() })
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
-    expect(dialog.textContent).toContain('authenticate again')
+    expect(dialog.textContent).toContain('saved authorization are kept')
+    expect(container.querySelector('button[aria-label="Remove Notion"]')).toBeNull()
     expect(disconnectBundled).not.toHaveBeenCalled()
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, disable')!.click(); await Promise.resolve() })
-    expect(disconnectBundled).toHaveBeenCalledWith('notion')
+    expect(mutateCapability).toHaveBeenLastCalledWith({ kind: 'mcp', action: 'disable', name: 'notion', scope: 'user' })
+    expect(disconnectBundled).not.toHaveBeenCalled()
   })
 
   it('confirms before disabling configured MCPs and re-enables them from plus', async () => {
@@ -143,6 +147,29 @@ describe('PluginsPage bundled capability controls', () => {
     await render(false)
     await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Enable docs"]')!.click(); await Promise.resolve() })
     expect(setMcpEnabled).toHaveBeenLastCalledWith({ name: 'docs', scope: 'user', projectPath: undefined, enabled: true })
+  })
+
+  it('offers complete removal for user MCPs but not protected capabilities', async () => {
+    const mutateCapability = vi.fn(async () => ({ ok: true, output: '' }))
+    const docs: SkillRecord = { id: 'mcp:user:docs', name: 'docs', description: 'HTTP MCP.', kind: 'mcp', location: 'user', enabled: true, associatedPackageSource: 'npm:prime-docs' }
+    await act(async () => {
+      root.render(<PluginsPage
+        harness="prime" skills={[docs]} warnings={[]} loading={false}
+        askUserEnabled={true} onSetAskUserEnabled={async () => undefined}
+        browserEnabled={true} onSetBrowserEnabled={async () => undefined}
+        computerUseEnabled={false} onSetComputerUseEnabled={async () => undefined} onOpenExternal={() => undefined}
+        onRefresh={async () => undefined} onInstall={async () => ({ ok: true, output: '' })}
+        onInstallExtension={async () => ({ ok: true, output: '' })} onSetMcpSupport={async () => ({ ok: true, output: '' })}
+        onConnectMcp={async () => ({ ok: true, output: '' })} onSetMcpEnabled={async () => ({ ok: true, output: '' })}
+        onMutateCapability={mutateCapability} onConnectBundledMcp={async () => undefined} onDisconnectBundledMcp={async () => undefined} onRunMcpCommand={async () => undefined}
+      />)
+    })
+
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Remove docs"]')!.click() })
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog.textContent).toContain('Other packages and MCP entries will be kept')
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'Yes, remove completely')!.click(); await Promise.resolve() })
+    expect(mutateCapability).toHaveBeenCalledWith({ kind: 'mcp', action: 'remove', name: 'docs', source: 'npm:prime-docs', scope: 'user', projectPath: undefined })
   })
 
   it('opens the TryCUA installer instead of enabling when the driver is missing', async () => {

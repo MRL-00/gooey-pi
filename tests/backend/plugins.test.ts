@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PluginService, beginPluginDiscoveryShutdown } from '../../electron/main/plugins'
 import { executePiPluginInstall, executePiPluginRemove } from '../../electron/main/plugins/package-execution'
 import { ProjectService } from '../../electron/main/projects'
@@ -483,6 +483,64 @@ describe('PluginService MCP connections', () => {
 
     const response = await service.setMcpEnabled({ name: 'missing', scope: 'user', enabled: false })
     expect(response).toMatchObject({ ok: false, reason: 'blocked' })
+  })
+
+  it('removes one MCP definition and its credential without changing neighboring servers', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ mcpServers: {
+      docs: { type: 'http', url: 'https://docs.example/mcp', oauth: true },
+      keep: { type: 'http', url: 'https://keep.example/mcp' },
+    } }))
+    const removeCredential = vi.fn(async () => undefined)
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir, removeMcpCredential: removeCredential })
+
+    const response = await service.mutateCapability({ kind: 'mcp', action: 'remove', name: 'docs', scope: 'user' })
+
+    expect(response.ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')).mcpServers).toEqual({ keep: { type: 'http', url: 'https://keep.example/mcp' } })
+    expect(removeCredential).toHaveBeenCalledWith('docs')
+  })
+
+  it('disables and restores a package while preserving its original filters', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const original = { source: 'npm:acme-tools', skills: ['skills/review/SKILL.md'] }
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ packages: [original], keep: true }))
+    const service = new PluginService(null, async (path) => resolve(path), { agentDir })
+
+    expect((await service.mutateCapability({ kind: 'package', action: 'disable', name: 'acme-tools', source: 'npm:acme-tools', scope: 'user' })).ok).toBe(true)
+    let settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.packages[0]).toEqual({ source: 'npm:acme-tools', extensions: [], skills: [], prompts: [], themes: [] })
+    expect(settings.keep).toBe(true)
+    expect((await service.list()).skills.find((skill) => skill.kind === 'package')).toMatchObject({ enabled: false })
+
+    expect((await service.mutateCapability({ kind: 'package', action: 'enable', name: 'acme-tools', source: 'npm:acme-tools', scope: 'user' })).ok).toBe(true)
+    settings = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
+    expect(settings.packages[0]).toEqual(original)
+    expect(settings.gooeypiDisabledPackages).toBeUndefined()
+  })
+
+  it('temporarily disables a protected Prime MCP without deleting authorization', async () => {
+    const root = temp()
+    const agentDir = join(root, 'agent')
+    mkdirSync(agentDir)
+    const removeCredential = vi.fn(async () => undefined)
+    const builtIn = { id: 'prime-mcp-notion', name: 'Notion', description: 'Official MCP.', kind: 'mcp' as const, location: 'bundled' as const, enabled: true }
+    const service = new PluginService(null, async (path) => resolve(path), {
+      agentDir,
+      builtInSkills: [builtIn],
+      protectedMcpServers: { notion: 'https://mcp.notion.com/mcp' },
+      removeMcpCredential: removeCredential,
+    })
+
+    expect((await service.mutateCapability({ kind: 'mcp', action: 'disable', name: 'notion', scope: 'user' })).ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')).mcpServers.notion).toMatchObject({ enabled: false })
+    expect((await service.list()).skills.filter((skill) => /notion/i.test(skill.name))).toEqual([expect.objectContaining({ id: 'prime-mcp-notion', enabled: false })])
+    expect(removeCredential).not.toHaveBeenCalled()
+    await expect(service.mutateCapability({ kind: 'mcp', action: 'remove', name: 'notion', scope: 'user' })).resolves.toMatchObject({ ok: false, reason: 'blocked' })
   })
 
   it('connects a Prime HTTP MCP server at project scope', async () => {

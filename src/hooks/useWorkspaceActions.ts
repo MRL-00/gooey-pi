@@ -5,7 +5,7 @@ import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
-import type { ExtensionInstallInput, GitStatus, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 import type { useAppSettings } from '@/hooks/useAppSettings'
 import type { usePanelLayout } from '@/hooks/usePanelLayout'
 import type { usePluginSkills } from '@/hooks/usePluginSkills'
@@ -424,6 +424,20 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       return response
     } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
   }
+  const mutateCapability = async (input: CapabilityMutationInput) => {
+    const { bridge, activeProject, pluginSkills, reportError, settingsState } = getDeps()
+    if (!bridge) return { ok: false as const, reason: 'blocked' as const, output: 'Capabilities can only be changed in the desktop app.' }
+    try {
+      let update = input
+      if (input.scope === 'project') {
+        if (!activeProject) return { ok: false as const, reason: 'blocked' as const, output: 'Open a project before changing a project capability.' }
+        const project = await grantProject(activeProject); update = { ...input, projectPath: project.primaryFolder }
+      }
+      const response = await bridge.plugins.mutateCapability(update, settingsState.settings.activeHarness)
+      if (response.ok) await pluginSkills.refresh()
+      return response
+    } catch (error) { reportError(error); return { ok: false, output: errorMessage(error) } }
+  }
   const createSchedule = async (input: ScheduleInput) => {
     const { bridge, refreshSchedules, reportError, settingsState } = getDeps()
     if (!bridge) throw new Error('Scheduled tasks are available in the desktop app.')
@@ -472,7 +486,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   return {
     grantProject, persistPanel, toggleSidebar, toggleInspector, toggleTerminal,
     selectProject, selectSession, newSession, navigate, renameSession, setSessionArchived,
-    addProject, removeProject, sendPrompt, stopRuntime, installSkill, installExtension, setMcpSupport, connectMcp, setMcpEnabled,
+    addProject, removeProject, sendPrompt, stopRuntime, installSkill, installExtension, setMcpSupport, connectMcp, setMcpEnabled, mutateCapability,
     createSchedule, updateSchedule, mutateSchedule, manageHeartbeat, openScheduledSession,
     openBrowser, openChanges,
   }

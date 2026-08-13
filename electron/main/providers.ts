@@ -183,6 +183,10 @@ export class PrimeProviderService {
     })
   }
 
+  protectedMcpServers(): Readonly<Record<string, string>> {
+    return Object.fromEntries(BUILTIN_MCP_CATALOG.map((integration) => [integration.server, integration.url]))
+  }
+
   async catalog(force = false, disabledProviders: ReadonlySet<string> = new Set()): Promise<PrimeModelCatalog> {
     if (!force && this.cachedCatalog && Date.now() - this.cachedAt < CATALOG_TTL_MS) {
       return this.withEnabledState(this.cachedCatalog, disabledProviders)
@@ -296,6 +300,13 @@ export class PrimeProviderService {
   async logoutMcp(rawServer: unknown): Promise<void> {
     const providerId = await this.requireMcpOAuthProvider(rawServer)
     this.authStorage.logout(providerId)
+    this.invalidate()
+  }
+
+  async removeMcpCredential(rawServer: unknown): Promise<void> {
+    const server = requireString(rawServer, 'MCP server', { min: 1, max: 64, trim: true })
+    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(server) || ['__proto__', 'prototype', 'constructor'].includes(server)) throw new TypeError('MCP server name contains unsupported characters')
+    this.authStorage.logout(`mcp:${server}`)
     this.invalidate()
   }
 

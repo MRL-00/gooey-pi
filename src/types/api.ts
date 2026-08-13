@@ -240,6 +240,7 @@ export interface SkillRecord {
   source?: string
   /** MCP server ids this package exists to bridge. Used to collapse duplicate capability rows. */
   associatedMcpServers?: string[]
+  associatedPackageSource?: string
   availability?: {
     available: boolean
     detail: string
@@ -272,6 +273,15 @@ export interface McpStateInput {
   scope: 'user' | 'project'
   projectPath?: string
   enabled: boolean
+}
+
+export interface CapabilityMutationInput {
+  kind: 'package' | 'mcp'
+  action: 'enable' | 'disable' | 'remove'
+  name: string
+  source?: string
+  scope: 'user' | 'project'
+  projectPath?: string
 }
 
 export interface ExtensionInstallInput {
@@ -676,6 +686,7 @@ export interface PrimeWorkApi {
     setMcpSupport(enabled: boolean, harness?: HarnessId): Promise<ProcessOutcome>
     connectMcp(input: McpConnectionInput, harness?: HarnessId): Promise<ProcessOutcome>
     setMcpEnabled(input: McpStateInput, harness?: HarnessId): Promise<ProcessOutcome>
+    mutateCapability(input: CapabilityMutationInput, harness?: HarnessId): Promise<ProcessOutcome>
     refresh(harness?: HarnessId): Promise<PluginCatalog>
   }
   settings: { get(): Promise<AppSettings>; update(patch: Partial<AppSettings>): Promise<AppSettings>; resetBrowserData(): Promise<boolean> }

@@ -94,6 +94,7 @@ const api: PrimeWorkApi = {
     setMcpSupport: (enabled, harness) => ipcRenderer.invoke('plugins:set-mcp-support', enabled, harness),
     connectMcp: (input, harness) => ipcRenderer.invoke('plugins:connect-mcp', input, harness),
     setMcpEnabled: (input, harness) => ipcRenderer.invoke('plugins:set-mcp-enabled', input, harness),
+    mutateCapability: (input, harness) => ipcRenderer.invoke('plugins:mutate-capability', input, harness),
     refresh: (harness) => ipcRenderer.invoke('plugins:refresh', harness),
   },
   settings: {

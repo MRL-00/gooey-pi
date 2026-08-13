@@ -48,9 +48,22 @@ export async function executePackageInstall(primeAgentPath: string, source: stri
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
 
+export async function executePackageRemove(primeAgentPath: string, source: string, localCwd?: string): Promise<ProcessOutcome> {
+  const args = localCwd ? ['package', 'remove', '--local', source] : ['package', 'remove', source]
+  const result = await runProcess(primeAgentPath, args, { cwd: localCwd, timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
+}
+
 export async function executeOmpPluginInstall(ompPath: string, source: string): Promise<ProcessOutcome> {
   const target = source.startsWith('npm:') || source.startsWith('git:') ? source.slice(4) : source
   const result = await runProcess(ompPath, ['plugin', 'install', target, '--json'], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+  return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
+}
+
+export async function executeOmpPluginAction(ompPath: string, action: 'enable' | 'disable' | 'uninstall', source: string, project = false): Promise<ProcessOutcome> {
+  const target = source.startsWith('npm:') || source.startsWith('git:') ? source.slice(4) : source
+  const args = ['plugin', action, target, '--json', ...(project ? ['--scope', 'project'] : [])]
+  const result = await runProcess(ompPath, args, { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
 
@@ -63,7 +76,8 @@ export async function executePiPluginInstall(piPath: string, source: string, loc
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }
 
-export async function executePiPluginRemove(piPath: string, source: string): Promise<ProcessOutcome> {
-  const result = await runProcess(piPath, ['remove', source], { timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
+export async function executePiPluginRemove(piPath: string, source: string, localCwd?: string): Promise<ProcessOutcome> {
+  const args = localCwd ? ['remove', '-l', source] : ['remove', source]
+  const result = await runProcess(piPath, args, { cwd: localCwd, timeoutMs: 10 * 60_000, maxBytes: 8 * 1024 * 1024 })
   return processOutcome(result, stripAnsi(`${result.stdout}${result.stderr}`).trim())
 }

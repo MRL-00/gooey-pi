@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { renameSync, type BigIntStats, type Stats } from 'node:fs'
 import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { HarnessId, McpConnectionInput, McpStateInput, ProcessOutcome } from '../../../src/types/api'
+import type { CapabilityMutationInput, HarnessId, McpConnectionInput, McpStateInput, ProcessOutcome } from '../../../src/types/api'
 import { isPathWithin, isRecord, requireString } from '../validation'
 import { errorCode, readAtMost } from './file-io'
 
@@ -312,6 +312,22 @@ export function validateMcpStateInput(value: unknown, harness: HarnessId = 'prim
   return { name, scope: value.scope, projectPath, enabled: value.enabled }
 }
 
+export function validateCapabilityMutation(value: unknown, harness: HarnessId = 'prime'): CapabilityMutationInput {
+  if (!isRecord(value)) throw new TypeError('Capability mutation must be an object')
+  if (value.kind !== 'package' && value.kind !== 'mcp') throw new TypeError('Capability kind is invalid')
+  if (value.action !== 'enable' && value.action !== 'disable' && value.action !== 'remove') throw new TypeError('Capability action is invalid')
+  const name = requireString(value.name, 'Capability name', { min: 1, max: 120, trim: true })
+  const scope = value.scope
+  if (scope !== 'user' && scope !== 'project') throw new TypeError('Capability scope must be user or project')
+  const projectPath = scope === 'project' ? requireString(value.projectPath, 'projectPath', { min: 1, max: 4096 }) : undefined
+  const source = value.kind === 'package'
+    ? requireString(value.source, 'Package source', { min: 1, max: 2_048, trim: true })
+    : value.source === undefined ? undefined : requireString(value.source, 'Associated package source', { min: 1, max: 2_048, trim: true })
+  if (source && (source.startsWith('-') || /[\r\n\u2028\u2029]/.test(source))) throw new TypeError('Package source is invalid')
+  if (value.kind === 'mcp') validateMcpStateInput({ name, scope, projectPath, enabled: value.action === 'enable' }, harness)
+  return { kind: value.kind, action: value.action, name, source, scope, projectPath }
+}
+
 export async function prepareProjectSettingsPath(
   projectPath: string,
   options: { segments?: readonly string[]; filename?: string } = {},
@@ -440,6 +456,111 @@ export async function updateMcpState(
       }
     }
     throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)
+  } finally {
+    await release()
+  }
+}
+
+export async function removeMcpDefinition(
+  target: string | ProjectSettingsPath,
+  input: Pick<CapabilityMutationInput, 'name'>,
+  fingerprint: FingerprintSettings = settingsFingerprint,
+  options: { agentName?: string } = {},
+): Promise<ProcessOutcome> {
+  const agentName = options.agentName ?? 'Prime Agent'
+  const settingsPath = typeof target === 'string' ? target : target.path
+  const verify = typeof target === 'string' ? undefined : target.verify
+  const release = await acquireSettingsLock(settingsPath, verify)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      const snapshot = await readSettingsForUpdate(settingsPath, agentName)
+      if (!isRecord(snapshot.settings.mcpServers) || !isRecord(snapshot.settings.mcpServers[input.name])) {
+        return { ok: false, reason: 'blocked', output: `MCP server “${input.name}” was not found in this scope.` }
+      }
+      const nextServers = { ...snapshot.settings.mcpServers }
+      delete nextServers[input.name]
+      snapshot.settings.mcpServers = nextServers
+      if (await writeSettingsAtomically(settingsPath, snapshot.settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
+        return { ok: true, output: `Removed MCP server “${input.name}”. Other server definitions were kept.` }
+      }
+    }
+    throw new Error(`${agentName} settings changed repeatedly; no MCP configuration was overwritten`)
+  } finally {
+    await release()
+  }
+}
+
+export async function updateBuiltinMcpState(
+  target: string,
+  input: Pick<CapabilityMutationInput, 'name' | 'action'> & { url: string },
+  fingerprint: FingerprintSettings = settingsFingerprint,
+): Promise<ProcessOutcome> {
+  const release = await acquireSettingsLock(target)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      const snapshot = await readSettingsForUpdate(target)
+      const servers = isRecord(snapshot.settings.mcpServers) ? { ...snapshot.settings.mcpServers } : {}
+      const current = servers[input.name]
+      if (input.action === 'remove') return { ok: false, reason: 'blocked', output: `Built-in MCP integration “${input.name}” cannot be removed.` }
+      if (input.action === 'disable') {
+        if (current !== undefined) return { ok: false, reason: 'blocked', output: `Built-in MCP integration “${input.name}” has a custom server definition; manage that definition instead.` }
+        servers[input.name] = { type: 'http', url: input.url, oauth: true, enabled: false }
+      } else {
+        if (!isRecord(current) || current.type !== 'http' || current.url !== input.url || current.oauth !== true || current.enabled !== false) {
+          return { ok: true, output: `Built-in MCP integration “${input.name}” is already enabled.` }
+        }
+        delete servers[input.name]
+      }
+      snapshot.settings.mcpServers = servers
+      if (await writeSettingsAtomically(target, snapshot.settings, snapshot.fingerprint, snapshot.source, fingerprint)) {
+        return { ok: true, output: `${input.action === 'enable' ? 'Enabled' : 'Disabled'} built-in MCP integration “${input.name}” without changing its authorization.` }
+      }
+    }
+    throw new Error('Prime Agent settings changed repeatedly; no MCP configuration was overwritten')
+  } finally {
+    await release()
+  }
+}
+
+export async function updatePackageState(
+  target: string | ProjectSettingsPath,
+  input: Pick<CapabilityMutationInput, 'source' | 'action'>,
+  fingerprint: FingerprintSettings = settingsFingerprint,
+  options: { agentName?: string } = {},
+): Promise<ProcessOutcome> {
+  const source = input.source!
+  const agentName = options.agentName ?? 'Prime Agent'
+  const settingsPath = typeof target === 'string' ? target : target.path
+  const verify = typeof target === 'string' ? undefined : target.verify
+  const release = await acquireSettingsLock(settingsPath, verify)
+  try {
+    for (let attempt = 0; attempt < SETTINGS_UPDATE_ATTEMPTS; attempt += 1) {
+      const snapshot = await readSettingsForUpdate(settingsPath, agentName)
+      const packages = Array.isArray(snapshot.settings.packages) ? snapshot.settings.packages : []
+      const index = packages.findIndex((item) => item === source || (isRecord(item) && item.source === source))
+      if (index < 0) return { ok: false, reason: 'blocked', output: `Package “${source}” was not found in this scope.` }
+      const saved = isRecord(snapshot.settings.gooeypiDisabledPackages) ? { ...snapshot.settings.gooeypiDisabledPackages } : {}
+      const next = [...packages]
+      if (input.action === 'disable') {
+        if (saved[source] === undefined) saved[source] = next[index]
+        next[index] = { source, extensions: [], skills: [], prompts: [], themes: [] }
+      } else if (input.action === 'enable') {
+        if (saved[source] === undefined) return { ok: true, output: `Package “${source}” is already enabled.` }
+        next[index] = saved[source]
+        delete saved[source]
+      } else {
+        next.splice(index, 1)
+        delete saved[source]
+      }
+      snapshot.settings.packages = next
+      if (Object.keys(saved).length) snapshot.settings.gooeypiDisabledPackages = saved
+      else delete snapshot.settings.gooeypiDisabledPackages
+      if (await writeSettingsAtomically(settingsPath, snapshot.settings, snapshot.fingerprint, snapshot.source, fingerprint, verify)) {
+        const verb = input.action === 'enable' ? 'Enabled' : input.action === 'disable' ? 'Disabled' : 'Removed'
+        return { ok: true, output: `${verb} package “${source}”.` }
+      }
+    }
+    throw new Error(`${agentName} settings changed repeatedly; no package configuration was overwritten`)
   } finally {
     await release()
   }

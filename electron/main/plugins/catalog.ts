@@ -297,9 +297,10 @@ async function addSettingsMetadata(
       if (output.length >= MAX_DISCOVERY_RECORDS) break
       const sourceValue = typeof raw === 'string' ? raw : isRecord(raw) && typeof raw.source === 'string' ? raw.source : undefined
       if (!sourceValue) continue
-      const source = safeSource(sourceValue)
+      const source = sourceValue.slice(0, 2_048)
       const metadata = await packageMetadata(sourceValue, settingsPath)
-      output.push({ id: idFor('package', location, sourceValue), ...metadata, kind: 'package', location, enabled: true, source })
+      const enabled = !(isRecord(raw) && ['extensions', 'skills', 'prompts', 'themes'].every((key) => Array.isArray(raw[key]) && raw[key].length === 0))
+      output.push({ id: idFor('package', location, sourceValue), ...metadata, kind: 'package', location, enabled, source })
     }
   }
   if (includeMcpServers && isRecord(settings.mcpServers)) {
