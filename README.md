@@ -88,32 +88,6 @@ For users, ship the conventional installer for their operating system: DMG on ma
 
 Electron Builder uses an available signing identity automatically. Public macOS distribution additionally requires Apple notarization credentials supported by Electron Builder (Apple ID/app-specific password/team ID or App Store Connect API key). A locally signed but unnotarized build will be rejected by Gatekeeper on another Mac; this repository does not contain release credentials.
 
-### Publish a GitHub Release
-
-Public releases are created from semantic version tags by `.github/workflows/release.yml`. The tagged commit must be on `main`, and the tag must exactly match the versions in both `package.json` and `package-lock.json` (for example, version `0.2.0` requires tag `v0.2.0`). The workflow reruns the quality and Electron E2E gates, builds each package on its native operating system, signs and verifies macOS and Windows packages, generates `SHA256SUMS.txt`, creates GitHub build-provenance attestations, and publishes every installer together in one GitHub Release.
-
-Configure these GitHub Actions secrets before publishing:
-
-- macOS: `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`
-- Windows: `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`
-
-Prepare the version change on a branch and merge it only after CI passes:
-
-```bash
-npm version 0.2.0 --no-git-tag-version
-```
-
-After that version commit is merged to `main`, create and push the annotated tag:
-
-```bash
-git switch main
-git pull --ff-only
-git tag -a v0.2.0 -m "GooeyPi 0.2.0"
-git push origin v0.2.0
-```
-
-The tag push starts the release automatically. To retry an existing tag after correcting credentials or another external failure, run `gh workflow run release.yml -f tag=v0.2.0`. The workflow will not create or move tags, publish from an unmerged commit, or replace an existing GitHub Release.
-
 ## Keyboard shortcuts
 
 | Shortcut | Action |
