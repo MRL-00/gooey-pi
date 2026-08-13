@@ -21,11 +21,17 @@ export function parseReleasePlatforms(value = RELEASE_PLATFORMS.join(',')) {
 
 export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFORMS) {
   const assets = {
-    mac: [`GooeyPi-${version}-arm64.dmg`, `GooeyPi-${version}-arm64.zip`, `GooeyPi-${version}-x64.dmg`, `GooeyPi-${version}-x64.zip`],
+    mac: [`GooeyPi-${version}-m-chip.dmg`, `GooeyPi-${version}-arm64.zip`, `GooeyPi-${version}-intel-chip.dmg`, `GooeyPi-${version}-x64.zip`],
     linux: [`GooeyPi-${version}-linux-x86_64.AppImage`, `GooeyPi-${version}-linux-amd64.deb`, `GooeyPi-${version}-linux-x64.pacman`, `GooeyPi-${version}-linux-x86_64.rpm`],
     win: [`GooeyPi-${version}-win-x64.exe`, `GooeyPi-${version}-win-x64.zip`],
   }
   return platforms.flatMap((platform) => assets[platform]).sort()
+}
+
+export function expectedDownloadedReleaseAssets(version, platforms = RELEASE_PLATFORMS) {
+  return expectedGitHubReleaseAssets(version, platforms).map((name) =>
+    name.replace(`GooeyPi-${version}-m-chip.dmg`, `GooeyPi-${version}-arm64.dmg`).replace(`GooeyPi-${version}-intel-chip.dmg`, `GooeyPi-${version}-x64.dmg`),
+  )
 }
 
 function listFiles(directory, found = []) {
@@ -51,7 +57,8 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
   mkdirSync(outputDirectory, { recursive: true })
 
   const expected = expectedGitHubReleaseAssets(release.version, platforms)
-  const expectedSet = new Set(expected)
+  const downloaded = expectedDownloadedReleaseAssets(release.version, platforms)
+  const expectedSet = new Set(downloaded)
   const selected = new Map()
   for (const path of listFiles(inputDirectory)) {
     const name = basename(path)
@@ -59,13 +66,13 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
     if (selected.has(name)) throw new Error(`Downloaded release artifacts contain duplicate files named ${name}`)
     selected.set(name, path)
   }
-  const missing = expected.filter((name) => !selected.has(name))
+  const missing = downloaded.filter((name) => !selected.has(name))
   if (missing.length) throw new Error(`Downloaded release artifacts are incomplete; missing ${missing.join(', ')}`)
 
   const checksumLines = []
-  for (const name of expected) {
+  for (const [index, name] of expected.entries()) {
     const destination = join(outputDirectory, name)
-    copyFileSync(selected.get(name), destination)
+    copyFileSync(selected.get(downloaded[index]), destination)
     if (lstatSync(destination).size === 0) throw new Error(`Release asset is empty: ${name}`)
     checksumLines.push(`${await sha256(destination)}  ${name}`)
   }

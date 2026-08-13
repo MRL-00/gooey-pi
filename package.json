@@ -1,6 +1,6 @@
 {
   "name": "gooeypi",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "A desktop workspace for OMP and Prime Agent",
   "main": "out/main/index.js",
@@ -105,6 +105,8 @@
         "**/node_modules/zeromq/build/darwin/${arch}/node/*-Release/addon.node"
       ],
       "files": [
+        "out/**/*",
+        "package.json",
         "!**/node_modules/zeromq/build/linux/**",
         "!**/node_modules/zeromq/build/win32/**"
       ]
@@ -126,6 +128,8 @@
         "**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node"
       ],
       "files": [
+        "out/**/*",
+        "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
         "!**/node_modules/zeromq/build/win32/**"
       ]
@@ -148,6 +152,8 @@
         "**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node"
       ],
       "files": [
+        "out/**/*",
+        "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
         "!**/node_modules/zeromq/build/linux/**"
       ]

@@ -21,7 +21,7 @@ import {
   validateWindowsReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
-import { expectedGitHubReleaseAssets, parseReleasePlatforms, prepareGitHubRelease } from '../scripts/release/prepare-github-release.mjs'
+import { expectedDownloadedReleaseAssets, expectedGitHubReleaseAssets, parseReleasePlatforms, prepareGitHubRelease } from '../scripts/release/prepare-github-release.mjs'
 import { assertBundleSizeBudgets, assertPackageSizeBudgets, BUNDLE_SIZE_BUDGETS, collectBundleSizeMetrics, collectPackageSizeMetrics, PACKAGE_SIZE_BUDGETS } from '../scripts/release/size-budgets.mjs'
 import { assertReleaseTag } from '../scripts/release/validate-release-tag.mjs'
 // after-pack.cjs is CommonJS; the interop layer exposes module.exports properties as named exports.
@@ -332,6 +332,8 @@ describe('GitHub Release publication', () => {
   test('selects an exact enabled platform set', () => {
     expect(parseReleasePlatforms('mac,linux')).toEqual(['mac', 'linux'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['mac', 'linux'])).not.toContain('GooeyPi-0.2.0-win-x64.exe')
+    expect(expectedGitHubReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-intel-chip.dmg', 'GooeyPi-0.2.0-m-chip.dmg', 'GooeyPi-0.2.0-x64.zip'])
+    expect(expectedDownloadedReleaseAssets('0.2.0', ['mac'])).toEqual(['GooeyPi-0.2.0-arm64.zip', 'GooeyPi-0.2.0-x64.dmg', 'GooeyPi-0.2.0-arm64.dmg', 'GooeyPi-0.2.0-x64.zip'])
     expect(expectedGitHubReleaseAssets('0.2.0', ['linux'])).toEqual([
       'GooeyPi-0.2.0-linux-amd64.deb',
       'GooeyPi-0.2.0-linux-x64.pacman',
@@ -361,7 +363,8 @@ describe('GitHub Release publication', () => {
     writeFileSync(join(projectDirectory, 'package.json'), JSON.stringify({ version: '0.2.0' }))
     writeFileSync(join(projectDirectory, 'package-lock.json'), JSON.stringify({ version: '0.2.0', packages: { '': { version: '0.2.0' } } }))
     const expected = expectedGitHubReleaseAssets('0.2.0')
-    for (const [index, name] of expected.entries()) {
+    const downloaded = expectedDownloadedReleaseAssets('0.2.0')
+    for (const [index, name] of downloaded.entries()) {
       const artifactDirectory = join(inputDirectory, `artifact-${index}`)
       mkdirSync(artifactDirectory)
       writeFileSync(join(artifactDirectory, name), `asset ${index}`)
@@ -394,7 +397,7 @@ describe('GitHub Release publication', () => {
 
     try {
       await expect(prepareGitHubRelease({ inputDirectory, outputDirectory: join(directory, 'missing-output'), projectDirectory, tag: 'v0.2.0' })).rejects.toThrow(/incomplete/)
-      const expected = expectedGitHubReleaseAssets('0.2.0')
+      const expected = expectedDownloadedReleaseAssets('0.2.0')
       for (const [index, name] of expected.entries()) {
         const artifactDirectory = join(inputDirectory, `artifact-${index}`)
         mkdirSync(artifactDirectory)
@@ -524,9 +527,9 @@ describe('post-package verification helpers', () => {
 
   test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    expect(packageJson.build.mac.files).toEqual(['!**/node_modules/zeromq/build/linux/**', '!**/node_modules/zeromq/build/win32/**'])
-    expect(packageJson.build.linux.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/win32/**'])
-    expect(packageJson.build.win.files).toEqual(['!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/linux/**'])
+    expect(packageJson.build.mac.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/linux/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.linux.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/win32/**'])
+    expect(packageJson.build.win.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/linux/**'])
     // Pin the app to the zeromq range prime-agent uses so the packaged addon
     // and the agent's runtime expectations cannot drift apart silently.
     const primeAgent = JSON.parse(readFileSync(new URL('../node_modules/prime-agent/package.json', import.meta.url), 'utf8'))
