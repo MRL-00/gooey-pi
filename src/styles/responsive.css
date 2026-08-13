@@ -86,6 +86,9 @@
   .page-tools { align-items: stretch; flex-direction: column; padding-bottom: 8px; }
   .page-search, .page-search--small { width: 100%; min-height: 38px; }
   .page-tools--activity .segmented { align-self: flex-start; }
+  .activity-tools__right { width: 100%; }
+  .activity-tools__right .page-search { flex: 1; }
+  .activity-clear-all { min-height: 38px; }
   .activity-status { display: none; }
   .project-item__actions { opacity: 1; }
   .plugin-header { align-items: flex-start; flex-direction: column; }

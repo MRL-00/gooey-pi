@@ -3,7 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { sessionShowsCompanionNotification } from '../../src/app/session-attention'
+import { activityNotificationSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
 import { createWorkspaceActions, type WorkspaceActionsDeps } from '../../src/hooks/useWorkspaceActions'
 import { ActivityPage } from '../../src/pages/ActivityPage'
 import type { ProjectRecord, SessionRecord } from '../../src/types/api'
@@ -46,7 +46,7 @@ describe('archived activity cleanup', () => {
   it('never renders archived chats in Activity', async () => {
     const onOpen = vi.fn()
     await act(async () => {
-      root.render(<ActivityPage sessions={[activeSession, archivedSession]} projects={[project]} onOpen={onOpen} />)
+      root.render(<ActivityPage sessions={[activeSession, archivedSession]} projects={[project]} clearedActivity={{}} onOpen={onOpen} onClear={vi.fn()} />)
     })
 
     expect(container.textContent).toContain('Active chat')
@@ -57,6 +57,57 @@ describe('archived activity cleanup', () => {
       container.querySelector<HTMLButtonElement>('[aria-label="Open Active chat"]')!.click()
     })
     expect(onOpen).toHaveBeenCalledWith(activeSession)
+  })
+
+  it('clears one notification from its icon and keeps running work out of clear all', async () => {
+    const failedSession: SessionRecord = {
+      ...activeSession,
+      id: 'failed',
+      filePath: '/sessions/failed.jsonl',
+      title: 'Failed chat',
+      status: 'failed',
+    }
+    const runningSession: SessionRecord = {
+      ...activeSession,
+      id: 'running',
+      filePath: '/sessions/running.jsonl',
+      title: 'Running chat',
+      status: 'running',
+    }
+    const onClear = vi.fn()
+    await act(async () => {
+      root.render(<ActivityPage sessions={[activeSession, failedSession, runningSession]} projects={[project]} clearedActivity={{}} onOpen={vi.fn()} onClear={onClear} />)
+    })
+
+    expect(container.querySelector('[aria-label="Clear Active chat activity"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Clear Failed chat activity"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Clear Running chat activity"]')).toBeNull()
+    const toolGroup = container.querySelector('.activity-tools__right')!
+    expect(toolGroup.firstElementChild?.classList.contains('page-search')).toBe(true)
+    expect(toolGroup.lastElementChild?.textContent).toBe('Clear all')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Clear Failed chat activity"]')!.click()
+    })
+    expect(onClear).toHaveBeenLastCalledWith([failedSession])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.activity-clear-all')!.click()
+    })
+    expect(onClear).toHaveBeenLastCalledWith([activeSession, failedSession])
+  })
+
+  it('hides a cleared activity until its session revision changes', async () => {
+    const signature = activityNotificationSignature(activeSession)!
+    await act(async () => {
+      root.render(<ActivityPage sessions={[activeSession]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} onOpen={vi.fn()} onClear={vi.fn()} />)
+    })
+    expect(container.textContent).not.toContain('Active chat')
+
+    await act(async () => {
+      root.render(<ActivityPage sessions={[{ ...activeSession, eventRevision: 1 }]} projects={[project]} clearedActivity={{ [activeSession.id]: signature }} onOpen={vi.fn()} onClear={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('Active chat')
   })
 
   it('suppresses notifications from sessions that are already archived', () => {

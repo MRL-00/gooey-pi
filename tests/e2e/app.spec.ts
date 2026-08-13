@@ -838,6 +838,33 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(titles.nth(0)).toHaveText('Primary workspace fixture')
   })
 
+  test('clears individual and all Activity notifications persistently', async () => {
+    await page.getByRole('button', { name: 'Activity', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
+    const primaryActivity = page.locator('.activity-row').filter({ hasText: 'Primary workspace fixture' })
+    const fixtureActivity = page.locator('.activity-row').filter({ hasText: 'Hermetic desktop fixture' })
+    await expect(primaryActivity).toBeVisible()
+    await expect(fixtureActivity).toBeVisible()
+
+    const clearPrimary = primaryActivity.getByRole('button', { name: 'Clear Primary workspace fixture activity' })
+    await primaryActivity.hover()
+    await expect(clearPrimary).toHaveCSS('opacity', '1')
+    await clearPrimary.click()
+    await expect(primaryActivity).toHaveCount(0)
+    await expect(fixtureActivity).toBeVisible()
+    await expect.poll(() => page.evaluate(() => {
+      const cleared = JSON.parse(window.localStorage.getItem('prime-work.cleared-activity') ?? '{}') as Record<string, string>
+      return cleared['primary-session']
+    })).toBeTruthy()
+
+    await page.reload()
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true')
+    await page.getByRole('button', { name: 'Activity', exact: true }).click()
+    await expect(page.locator('.activity-row').filter({ hasText: 'Primary workspace fixture' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Clear all' }).click()
+    await expect(page.getByRole('heading', { name: 'You’re all caught up' })).toBeVisible()
+  })
+
   test('removes archived chats from Activity and clears their notifications', async () => {
     const primaryFile = join(fixtureSessionFile, '..', 'primary.jsonl')
     appendFileSync(primaryFile, `${JSON.stringify({

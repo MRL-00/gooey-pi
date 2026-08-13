@@ -8,7 +8,7 @@ import type { TerminalDrawerHandle } from '@/components/TerminalDrawer'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { NoHarnessPrompt } from '@/components/NoHarnessPrompt'
 import { createAppKeydownHandler } from '@/lib/app-shortcuts'
-import { readClearedAttention, sessionCompanionNotificationSignature } from '@/app/session-attention'
+import { activityNotificationSignature, readClearedActivity, readClearedAttention, sessionCompanionNotificationSignature } from '@/app/session-attention'
 import { errorMessage } from '@/lib/errors'
 import { createSingleFlightAdmission, findProjectForSession, gitStatusForWorkspace, shouldRefreshGitOnSessionTransition, workspaceCwd } from '@/lib/workspace'
 import { waitForVoiceSession } from '@/lib/voice'
@@ -71,6 +71,7 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>(() => bridge ? [] : SAMPLE_PROJECTS)
   const [sessions, setSessions] = useState<SessionRecord[]>(() => bridge ? [] : SAMPLE_SESSIONS)
   const [clearedAttention, setClearedAttention] = useState<Record<string, string>>(() => readClearedAttention())
+  const [clearedActivity, setClearedActivity] = useState<Record<string, string>>(() => readClearedActivity())
   const [schedules, setSchedules] = useState<AutomationScheduleRecord[]>(() => bridge ? [] : SAMPLE_SCHEDULES)
   const [heartbeats, setHeartbeats] = useState<NativeHeartbeatRecord[]>([])
   const [scheduleFocusId, setScheduleFocusId] = useState<string | null>(null)
@@ -102,10 +103,34 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem('prime-work.cleared-session-attention', JSON.stringify(clearedAttention))
   }, [clearedAttention])
+  useEffect(() => {
+    window.localStorage.setItem('prime-work.cleared-activity', JSON.stringify(clearedActivity))
+  }, [clearedActivity])
   const clearSessionAttention = useCallback((session: SessionRecord) => {
     const signature = sessionCompanionNotificationSignature(session)
     if (!signature) return
     setClearedAttention((current) => current[session.id] === signature ? current : { ...current, [session.id]: signature })
+  }, [])
+  const clearActivity = useCallback((activitySessions: SessionRecord[]) => {
+    if (!activitySessions.length) return
+    const ids = new Set(activitySessions.map((session) => session.id))
+    setClearedActivity((current) => {
+      const next = { ...current }
+      for (const session of activitySessions) {
+        const signature = activityNotificationSignature(session)
+        if (signature) next[session.id] = signature
+      }
+      return next
+    })
+    setClearedAttention((current) => {
+      const next = { ...current }
+      for (const session of activitySessions) {
+        const signature = sessionCompanionNotificationSignature(session)
+        if (signature) next[session.id] = signature
+      }
+      return next
+    })
+    setSessions((items) => items.map((session) => ids.has(session.id) ? { ...session, unread: false } : session))
   }, [])
   const settingsState = useAppSettings({ bridge, reportError })
   const activeHarness = settingsState.settings.activeHarness
@@ -453,7 +478,7 @@ export default function App() {
   }, [bridge, busy, externalSessionRunning, sendPrompt, submitting, workspace.pendingQueuedPrompts, workspace.removeQueuedPrompt])
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
-    : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} onOpen={selectSession} />
+    : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} clearedActivity={clearedActivity} onOpen={selectSession} onClear={clearActivity} />
     : view === 'scheduled' ? <ScheduledPage harness={activeHarness} schedules={schedules} nativeHeartbeats={activeHarness === 'prime' ? heartbeats : []} projects={projects} sessions={sessions} models={provider.catalog?.models ?? EMPTY_MODELS} error={scheduleError} initialProjectId={activeProject?.id} initialSessionId={activeSession?.id} selectedScheduleId={scheduleFocusId} onCreate={createSchedule} onUpdate={updateSchedule} onPause={(id: string) => mutateSchedule(() => bridge!.schedules.pause(id))} onResume={(id: string) => mutateSchedule(() => bridge!.schedules.resume(id))} onDelete={(id: string) => mutateSchedule(() => bridge!.schedules.delete(id))} onRunNow={(id: string) => mutateSchedule(() => bridge!.schedules.runNow(id))} onPreview={async (timing: ScheduleTiming) => bridge ? bridge.schedules.preview(timing, 3) : { timing, occurrences: [] }} onOpenSession={openScheduledSession} onManageHeartbeat={manageHeartbeat} />
     : view === 'plugins' ? <PluginsPage harness={activeHarness} skills={pluginSkills.skills} warnings={pluginSkills.warnings} loading={pluginSkills.loading} activeProjectPath={activeProject?.primaryFolder} askUserEnabled={settingsState.settings.askUserEnabled} onSetAskUserEnabled={(enabled) => settingsState.updateSettings({ askUserEnabled: enabled })} browserEnabled={settingsState.settings.browserEnabled} onSetBrowserEnabled={(enabled) => settingsState.updateSettings({ browserEnabled: enabled })} computerUseEnabled={settingsState.settings.computerUseEnabled} onSetComputerUseEnabled={(enabled) => settingsState.updateSettings({ computerUseEnabled: enabled })} onOpenExternal={(url) => { if (bridge) void bridge.app.openExternal(url) }} onRefresh={pluginSkills.refresh} onInstall={installSkill} onInstallExtension={installExtension} onSetMcpSupport={setMcpSupport} onConnectMcp={connectMcp} onSetMcpEnabled={setMcpEnabled} onMutateCapability={mutateCapability} onConnectBundledMcp={provider.startMcpOAuth} onDisconnectBundledMcp={async (server) => { if (!bridge) throw new Error('MCP integrations can only be configured in the desktop app.'); await bridge.providers.logoutMcp(server, activeHarness); await pluginSkills.refresh() }} onRunMcpCommand={async (command) => { setView('session'); await sendPrompt(command, [], 'queue') }} />
     : view === 'settings' ? <SettingsPage initialSection={settingsSectionRequest.section} initialSectionRequestId={settingsSectionRequest.id} settings={settingsState.settings} meta={meta} providerCatalog={provider.catalog} voice={bridge?.voice ?? null} pets={bridge?.pets ?? null} onUpdate={settingsState.updateSettings} onRefreshHarnesses={refreshDetectedHarnesses} onRefreshProviders={() => provider.refresh(true)} onSaveProviderApiKey={provider.saveApiKey} onLogoutProvider={provider.logout} onSetProviderEnabled={provider.setEnabled} onSetAllProvidersEnabled={provider.setAllEnabled} onSetAllProvidersDisabled={provider.setAllDisabled} onStartProviderOAuth={provider.startOAuth} onResetBrowser={async () => {

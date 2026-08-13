@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySessionLifecycleEvent, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
+import { activityNotificationSignature, applySessionLifecycleEvent, readClearedActivity, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
 import type { SessionRecord } from '../../src/types/api'
 
@@ -51,6 +51,14 @@ describe('session lifecycle attention', () => {
     expect(sessionShowsCompanionNotification({ ...session(), status: 'complete', unread: true })).toBe(true)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' })).toBe(true)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' }, `waiting:${session().updatedAt}`)).toBe(false)
+  })
+
+  it('makes settled activity dismissible until a new revision and keeps running work visible', () => {
+    const completed = { ...session(), status: 'complete' as const, eventRevision: 3 }
+    expect(activityNotificationSignature(completed)).toBe('complete:3')
+    expect(activityNotificationSignature({ ...completed, eventRevision: 4 })).toBe('complete:4')
+    expect(activityNotificationSignature({ ...completed, status: 'running' })).toBeUndefined()
+    expect(activityNotificationSignature({ ...completed, archived: true })).toBeUndefined()
   })
 
   it('ignores desktop rate-limit drops: the agent is still running', () => {
@@ -113,5 +121,12 @@ describe('cleared-attention store', () => {
     expect(readClearedAttention('not json')).toEqual({})
     expect(readClearedAttention(null)).toEqual({})
     expect(readClearedAttention('{"a":"waiting:1","b":7}')).toEqual({ a: 'waiting:1' })
+  })
+
+  it('applies the same malformed-value guards to cleared activity', () => {
+    expect(readClearedActivity('null')).toEqual({})
+    expect(readClearedActivity('[]')).toEqual({})
+    expect(readClearedActivity('not json')).toEqual({})
+    expect(readClearedActivity('{"session":"complete:3","bad":false}')).toEqual({ session: 'complete:3' })
   })
 })

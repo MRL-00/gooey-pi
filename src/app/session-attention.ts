@@ -64,10 +64,12 @@ export function sessionShowsCompanionNotification(session: SessionRecord, cleare
   return Boolean(signature && signature !== clearedSignature)
 }
 
-export function readClearedAttention(storedValue?: string | null): Record<string, string> {
-  const raw = storedValue !== undefined
-    ? storedValue
-    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-session-attention')
+export function activityNotificationSignature(session: SessionRecord): string | undefined {
+  if (session.archived || session.status === 'running') return undefined
+  return `${session.status}:${session.eventRevision ?? session.updatedAt}`
+}
+
+function parseClearedSignatures(raw: string | null): Record<string, string> {
   try {
     const parsed: unknown = JSON.parse(raw ?? '{}')
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
@@ -77,4 +79,18 @@ export function readClearedAttention(storedValue?: string | null): Record<string
     }
     return result
   } catch { return {} }
+}
+
+export function readClearedAttention(storedValue?: string | null): Record<string, string> {
+  const raw = storedValue !== undefined
+    ? storedValue
+    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-session-attention')
+  return parseClearedSignatures(raw)
+}
+
+export function readClearedActivity(storedValue?: string | null): Record<string, string> {
+  const raw = storedValue !== undefined
+    ? storedValue
+    : typeof window === 'undefined' ? null : window.localStorage.getItem('prime-work.cleared-activity')
+  return parseClearedSignatures(raw)
 }
