@@ -1002,6 +1002,35 @@ test.describe('Prime Work desktop smoke', () => {
     await expect.poll(() => preview.evaluate((node) => (node as HTMLElement & { getWebContentsId(): number }).getWebContentsId())).not.toBe(guestId)
   })
 
+  test('stops a dev server launched from the thread terminal when archived', async () => {
+    const sessionRow = page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' })
+    await sessionRow.locator('.session-row').click()
+    await page.getByLabel(/Toggle terminal/).click()
+    const terminal = page.locator('.terminal-drawer:not([hidden])')
+    const input = terminal.locator('.xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    const pidFile = join(fixtureRoot, 'archived-dev-server.pid')
+    await input.click()
+    await page.keyboard.type(`/bin/sh -c 'echo $$ > ${pidFile}; while true; do /bin/sleep 1; done'`)
+    await page.keyboard.press('Enter')
+    await expect.poll(() => existsSync(pidFile)).toBe(true)
+    const serverPid = Number(readFileSync(pidFile, 'utf8').trim())
+    expect(serverPid).toBeGreaterThan(0)
+
+    try {
+      await sessionRow.getByTitle('Archive Hermetic desktop fixture').click()
+      await sessionRow.getByTitle('Confirm archive Hermetic desktop fixture').click()
+
+      await expect(sessionRow).toHaveCount(0)
+      await expect(page.locator('.terminal-drawer')).toHaveCount(0)
+      await expect.poll(() => {
+        try { process.kill(serverPid, 0); return false } catch { return true }
+      }).toBe(true)
+    } finally {
+      try { process.kill(serverPid, 'SIGKILL') } catch { /* archive cleanup succeeded */ }
+    }
+  })
+
   test('enforces the live preload and IPC frame boundaries', async () => {
     const initialMeta = await page.evaluate(() => window.prime.app.getMeta())
     expect(initialMeta.version).toBeTruthy()
