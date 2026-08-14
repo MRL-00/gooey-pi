@@ -1,4 +1,4 @@
-import { constants as fsConstants } from 'node:fs'
+import { constants as fsConstants, readdirSync } from 'node:fs'
 import { access, readdir } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -210,7 +210,14 @@ export function executableChildEnvironment(
   const pathKey = platform === 'win32' && result.Path !== undefined ? 'Path' : 'PATH'
   const executableDirectory = pathApi.dirname(executable)
   const separator = platform === 'win32' ? ';' : delimiter
-  const directories = [executableDirectory, ...(result[pathKey] ?? '').split(separator)]
+  const homeValue = platform === 'win32' ? result.USERPROFILE : result.HOME
+  const home = homeValue && isAbsolutePathForPlatform(homeValue, platform) ? homeValue : homedir()
+  const directories = [
+    executableDirectory,
+    ...versionManagerRuntimeDirs(result, platform, home),
+    ...sharedHarnessCandidateDirs(result, platform, home),
+    ...(result[pathKey] ?? '').split(separator),
+  ]
   const seen = new Set<string>()
   result[pathKey] = directories.filter((directory) => {
     if (!directory) return false
@@ -220,6 +227,32 @@ export function executableChildEnvironment(
     return true
   }).join(separator)
   return result
+}
+
+/**
+ * Returns bounded Node-version-manager runtime directories for env shebangs.
+ * A package-manager shim can live outside the Node installation that owns its
+ * interpreter (for example pnpm under ~/Library/pnpm with Node under nvm).
+ */
+function versionManagerRuntimeDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  home: string,
+): string[] {
+  if (platform === 'win32') {
+    return [env.NVM_SYMLINK, env.NVM_HOME]
+      .filter((directory): directory is string => Boolean(directory && win32.isAbsolute(directory)))
+  }
+  const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
+  const versionsRoot = posix.join(root, 'versions', 'node')
+  try {
+    return readdirSync(versionsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
+      .slice(0, 64)
+      .map((version) => posix.join(versionsRoot, version, 'bin'))
+  } catch { return [] }
 }
 
 export function restrictedGitEnvironment(): NodeJS.ProcessEnv {

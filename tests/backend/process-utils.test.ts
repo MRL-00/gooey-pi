@@ -23,25 +23,49 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
-  it('runs an env-node CLI beside its interpreter under a Finder-style minimal PATH', async () => {
-    const dir = temp()
-    const executable = join(dir, 'pi')
-    symlinkSync(process.execPath, join(dir, 'node'))
+  it('runs a pnpm env-node CLI whose nvm interpreter is elsewhere under a Finder-style minimal PATH', async () => {
+    const home = temp()
+    const shimDirectory = join(home, 'Library', 'pnpm', 'bin')
+    const runtimeDirectory = join(home, '.nvm', 'versions', 'node', 'v25.2.1', 'bin')
+    mkdirSync(shimDirectory, { recursive: true })
+    mkdirSync(runtimeDirectory, { recursive: true })
+    const executable = join(shimDirectory, 'pi')
+    symlinkSync(process.execPath, join(runtimeDirectory, 'node'))
     writeFileSync(executable, '#!/usr/bin/env node\nprocess.stdout.write("0.84.1\\n")\n')
     chmodSync(executable, 0o755)
 
     const result = await runProcess(executable, ['--version'], {
-      env: { HOME: dir, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+      env: { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
     })
 
     expect(result.code).toBe(0)
     expect(result.stdout).toBe('0.84.1\n')
-    expect(executableChildEnvironment(executable, { PATH: '/usr/bin' }).PATH).toBe(`${dir}:/usr/bin`)
+    expect(executableChildEnvironment(executable, { HOME: home, PATH: '/usr/bin' }).PATH?.split(':').slice(0, 2)).toEqual([
+      shimDirectory,
+      runtimeDirectory,
+    ])
 
-    const primeExecutable = join(dir, 'prime-agent')
+    const primeExecutable = join(runtimeDirectory, 'prime-agent')
     writeFileSync(primeExecutable, '#!/usr/bin/env node\nprocess.stderr.write("0.7.2\\n")\n')
     chmodSync(primeExecutable, 0o755)
     await expect(probeHarnessExecutable(primeExecutable)).resolves.toEqual({ runnable: true, version: '0.7.2' })
+  })
+
+  it('runs an official Bun-installed OMP shim under a Finder-style minimal PATH', async () => {
+    const home = temp()
+    const bunDirectory = join(home, '.bun', 'bin')
+    mkdirSync(bunDirectory, { recursive: true })
+    const executable = join(bunDirectory, 'omp')
+    symlinkSync(process.execPath, join(bunDirectory, 'bun'))
+    writeFileSync(executable, '#!/usr/bin/env bun\nprocess.stdout.write("17.3.4\\n")\n')
+    chmodSync(executable, 0o755)
+
+    const result = await runProcess(executable, ['--version'], {
+      env: { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toBe('17.3.4\n')
   })
 
   it('uses a combined output budget and explicitly reports truncation with independent kill escalation', async () => {
