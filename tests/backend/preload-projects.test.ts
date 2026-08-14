@@ -39,15 +39,15 @@ describe('preload project worktree bridge', () => {
     ])
   })
 
-  it('exposes update status, check, and install calls', async () => {
-    const api = electronMocks.api as { updates: { getState(): Promise<unknown>; check(): Promise<unknown>; install(): Promise<unknown> } }
+  it('exposes update status, check, and consented download-and-install calls', async () => {
+    const api = electronMocks.api as { updates: { getState(): Promise<unknown>; check(): Promise<unknown>; downloadAndInstall(): Promise<unknown> } }
     await api.updates.getState()
     await api.updates.check()
-    await api.updates.install()
+    await api.updates.downloadAndInstall()
     expect(electronMocks.ipcRenderer.invoke.mock.calls).toEqual([
       ['updates:get-state'],
       ['updates:check'],
-      ['updates:install'],
+      ['updates:download-and-install'],
     ])
   })
 })

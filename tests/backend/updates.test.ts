@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CHECK_INTERVAL_MS, manualUpdateNotification, UpdateService, type UpdateAdapter } from '../../electron/main/updates'
 
 class FakeUpdater extends EventEmitter {
-  autoDownload = false
-  autoInstallOnAppQuit = false
+  autoDownload = true
+  autoInstallOnAppQuit = true
   checkForUpdates = vi.fn(async () => undefined)
+  downloadUpdate = vi.fn(async (): Promise<void> => undefined)
   quitAndInstall = vi.fn()
 }
 
@@ -21,12 +22,12 @@ describe('automatic update service', () => {
     expect(manualUpdateNotification({ phase: 'downloaded', version: '0.2.0' })).toMatchObject({ type: 'info', message: 'GooeyPi Update Available' })
   })
 
-  it('automatically checks installed builds and configures download-on-discovery', async () => {
+  it('automatically checks installed builds without downloading or installing on quit', async () => {
     vi.useFakeTimers()
     const updater = new FakeUpdater()
     const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true, initialCheckDelayMs: 25, checkIntervalMs: 100 })
-    expect(updater.autoDownload).toBe(true)
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoDownload).toBe(false)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
 
     service.start()
     await vi.advanceTimersByTimeAsync(25)
@@ -51,22 +52,42 @@ describe('automatic update service', () => {
     service.dispose()
   })
 
-  it('reports discovery, progress, completion, and installs only a downloaded update', () => {
+  it('does not download or restart until the available update is explicitly accepted', async () => {
     const updater = new FakeUpdater()
     const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true })
     const changed = vi.fn()
     service.setEventSink(changed)
 
     updater.emit('update-available', { version: '0.2.0' })
+    expect(service.getState()).toEqual({ phase: 'available', version: '0.2.0' })
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+
+    let finishDownload!: () => void
+    updater.downloadUpdate.mockImplementation(() => new Promise<void>((resolve) => { finishDownload = resolve }))
+    const accepted = service.downloadAndInstall()
+    expect(service.getState()).toEqual({ phase: 'downloading', version: '0.2.0', percent: 0 })
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+
     updater.emit('download-progress', { percent: 48.6 })
     expect(service.getState()).toEqual({ phase: 'downloading', version: '0.2.0', percent: 49 })
-    expect(service.install()).toBe(false)
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
 
     updater.emit('update-downloaded', { version: '0.2.0' })
     expect(service.getState()).toEqual({ phase: 'downloaded', version: '0.2.0' })
-    expect(service.install()).toBe(true)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    finishDownload()
+    await expect(accepted).resolves.toBe(true)
     expect(changed).toHaveBeenCalled()
+  })
+
+  it('does not restart for a downloaded event that was not user-approved', () => {
+    const updater = new FakeUpdater()
+    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true })
+
+    updater.emit('update-downloaded', { version: '0.2.0' })
+    expect(service.getState()).toEqual({ phase: 'downloaded', version: '0.2.0' })
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
   })
 
   it('keeps an active release state while a manual check is requested', async () => {
@@ -84,6 +105,6 @@ describe('automatic update service', () => {
     service.start()
     await expect(service.check()).resolves.toMatchObject({ phase: 'unsupported' })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
-    expect(service.install()).toBe(false)
+    await expect(service.downloadAndInstall()).resolves.toBe(false)
   })
 })

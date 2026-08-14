@@ -187,7 +187,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   })
   handle('updates:get-state', () => services.updates.getState())
   handle('updates:check', () => services.updates.check())
-  handle('updates:install', () => services.updates.install())
+  handle('updates:download-and-install', () => services.updates.downloadAndInstall())
 
   handle('projects:list', (_event, harness) => projectsFor(requireHarness(harness)).list())
   handle('projects:list-files', (_event, root, harness) => projectsFor(requireHarness(harness)).listFiles(root))

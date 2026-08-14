@@ -49,12 +49,12 @@ async function rightClick(element: Element) {
 }
 
 describe('sidebar project context menu', () => {
-  it('shows the automatic release control beside Settings and invokes its current action', async () => {
+  it('requires confirmation before downloading and restarting an available update', async () => {
     const onUpdateAction = vi.fn()
     await act(async () => {
       root.render(
         <Sidebar
-          projects={[project]} sessions={[session]} activeView="session" updateState={{ phase: 'downloaded', version: '0.2.0' }} onUpdateAction={onUpdateAction}
+          projects={[project]} sessions={[session]} activeView="session" updateState={{ phase: 'available', version: '0.2.0' }} onUpdateAction={onUpdateAction}
           onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
           onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
         />,
@@ -65,9 +65,15 @@ describe('sidebar project context menu', () => {
     const settings = container.querySelector('.sidebar__footer button[title="Settings"]')
     expect(update).not.toBeNull()
     expect(update?.nextElementSibling).toBe(settings)
-    expect(update?.textContent).toContain('Restart for 0.2.0')
+    expect(update?.textContent).toContain('Download 0.2.0')
     expect(update?.querySelector('.lucide-download')).not.toBeNull()
     await press(update!)
+    expect(onUpdateAction).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Download and Restart GooeyPi?')
+
+    const yes = [...document.body.querySelectorAll<HTMLButtonElement>('.modal__footer button')].find((button) => button.textContent === 'Yes')
+    expect(yes).toBeDefined()
+    await press(yes!)
     expect(onUpdateAction).toHaveBeenCalledOnce()
   })
 

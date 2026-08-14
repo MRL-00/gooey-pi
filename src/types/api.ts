@@ -653,7 +653,7 @@ export interface PrimeWorkApi {
   updates: {
     getState(): Promise<AppUpdateState>
     check(): Promise<AppUpdateState>
-    install(): Promise<boolean>
+    downloadAndInstall(): Promise<boolean>
     onChanged(callback: (state: AppUpdateState) => void): () => void
   }
   projects: {
