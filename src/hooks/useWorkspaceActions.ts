@@ -50,13 +50,46 @@ export async function indexStartedSession(
   harness: ProjectRecord['harness'],
   sessionFile: string | undefined,
   setSessions: Dispatch<SetStateAction<SessionRecord[]>>,
+  fallbackTitle?: string,
 ): Promise<void> {
   if (!sessionFile) return
   // Runtime creation and filesystem watch delivery are separate async paths.
   // Make the created file part of the renderer catalog before prompt admission
   // continues, so navigating away cannot expose a watch-timing visibility gap.
   const catalog = await bridge.sessions.list(undefined, true, harness, true)
-  setSessions((current) => mergeSessionCatalog(current, catalog, sessionFile, new Map(), 0))
+  setSessions((current) => mergeSessionCatalog(current, catalog, sessionFile, new Map(), 0).map((session) => (
+    fallbackTitle && session.filePath === sessionFile && session.title === 'Untitled session'
+      ? { ...session, title: fallbackTitle }
+      : session
+  )))
+}
+
+export function sessionTitleFromPrompt(prompt: string): string {
+  const oneLine = prompt.replace(/\s+/g, ' ').trim()
+  return oneLine.length > 100 ? `${oneLine.slice(0, 99)}…` : oneLine
+}
+
+export async function titleStartedSession(
+  bridge: PrimeWorkApi,
+  harness: ProjectRecord['harness'],
+  runtimeId: string,
+  sessionFile: string | undefined,
+  prompt: string,
+  setSessions: Dispatch<SetStateAction<SessionRecord[]>>,
+): Promise<void> {
+  if (!sessionFile) return
+  const title = sessionTitleFromPrompt(prompt)
+  if (!title) return
+
+  // Prompt admission is the first point where this is a real user task. Show
+  // its prompt-derived title immediately, then persist it through the harness.
+  // Both persistence and the forced read are best-effort because a delivered
+  // prompt must never be reported as failed solely due to title bookkeeping.
+  setSessions((current) => current.map((session) => session.filePath === sessionFile && session.title === 'Untitled session'
+    ? { ...session, title }
+    : session))
+  await bridge.agent.command(runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
+  await indexStartedSession(bridge, harness, sessionFile, setSessions, title).catch(() => undefined)
 }
 
 export function parsePrimeMcpCommand(prompt: string): PrimeMcpCommand | undefined {
@@ -373,6 +406,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           workspace.setRuntime({ ...activeRuntime, isStreaming: true })
           workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
           await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
+          if (startedRuntime) void titleStartedSession(bridge, activeHarness, activeRuntime.runtimeId, activeRuntime.sessionFile, prompt, setSessions)
         }
       } catch (error) {
         if (queuedPromptId) workspace.removeQueuedPrompt(queuedPromptId)

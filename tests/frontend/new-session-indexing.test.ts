@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { indexStartedSession } from '../../src/hooks/useWorkspaceActions'
+import { indexStartedSession, sessionTitleFromPrompt, titleStartedSession } from '../../src/hooks/useWorkspaceActions'
 import type { PrimeWorkApi, SessionRecord } from '../../src/types/api'
 
 const existing: SessionRecord = {
@@ -31,5 +31,66 @@ describe('new session indexing', () => {
 
     expect(list).toHaveBeenCalledWith(undefined, true, 'prime', true)
     expect(sessions.map((session) => session.id)).toEqual(['existing', 'created'])
+  })
+
+  it('titles a newly accepted prompt immediately and persists it through the harness', async () => {
+    const untitled: SessionRecord = {
+      ...existing,
+      id: 'created',
+      filePath: '/sessions/created.jsonl',
+      title: 'Untitled session',
+      status: 'running',
+    }
+    const command = vi.fn(async () => ({ type: 'response', command: 'set_session_name', success: true }))
+    const list = vi.fn(async () => [existing, untitled])
+    let sessions = [existing, untitled]
+    const setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>> = (update) => {
+      sessions = typeof update === 'function' ? update(sessions) : update
+    }
+
+    await titleStartedSession(
+      { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
+      'prime',
+      'runtime-created',
+      untitled.filePath,
+      '  Build the sidebar\nright away.  ',
+      setSessions,
+    )
+
+    expect(command).toHaveBeenCalledWith('runtime-created', { type: 'set_session_name', name: 'Build the sidebar right away.' })
+    expect(list).toHaveBeenCalledWith(undefined, true, 'prime', true)
+    expect(sessions.find((session) => session.id === 'created')?.title).toBe('Build the sidebar right away.')
+  })
+
+  it('keeps an authoritative harness title and treats title persistence as best-effort', async () => {
+    const titled: SessionRecord = {
+      ...existing,
+      id: 'created',
+      filePath: '/sessions/created.jsonl',
+      title: 'Harness generated title',
+      status: 'running',
+    }
+    const command = vi.fn(async () => { throw new Error('older harness') })
+    const list = vi.fn(async () => [existing, titled])
+    let sessions: SessionRecord[] = [{ ...titled, title: 'Untitled session' }]
+    const setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>> = (update) => {
+      sessions = typeof update === 'function' ? update(sessions) : update
+    }
+
+    await expect(titleStartedSession(
+      { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
+      'prime',
+      'runtime-created',
+      titled.filePath,
+      'Prompt fallback title',
+      setSessions,
+    )).resolves.toBeUndefined()
+
+    expect(sessions.find((session) => session.id === 'created')?.title).toBe('Harness generated title')
+  })
+
+  it('matches the session catalog title compaction boundary', () => {
+    expect(sessionTitleFromPrompt(`  ${'a'.repeat(100)}  `)).toBe('a'.repeat(100))
+    expect(sessionTitleFromPrompt(`  ${'a'.repeat(101)}  `)).toBe(`${'a'.repeat(99)}…`)
   })
 })
