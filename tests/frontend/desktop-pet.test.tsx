@@ -106,6 +106,24 @@ describe('DesktopPet', () => {
     expect(onCloseVoice).toHaveBeenCalledTimes(1)
   })
 
+  it('opens realtime voice when the idle pet itself is clicked or keyboard-activated', async () => {
+    const onOpenVoice = vi.fn()
+    await act(async () => { root.render(<DesktopPet pets={pets} petId="gooey-pi" agentBusy={false} reduceMotion={false} voiceActive={false} onOpenVoice={onOpenVoice} />); await Promise.resolve() })
+    const pet = container.querySelector<HTMLElement>('.desktop-pet__drag-target')!
+    const pointer = (type: string) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: 100, clientY: 100, button: 0 })
+      Object.defineProperty(event, 'pointerId', { value: 13 })
+      return event
+    }
+    act(() => {
+      pet.dispatchEvent(pointer('pointerdown'))
+      pet.dispatchEvent(pointer('pointerup'))
+    })
+    expect(onOpenVoice).toHaveBeenCalledTimes(1)
+    act(() => pet.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' })))
+    expect(onOpenVoice).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the idle waveform tight to the pet without rendering a hover name chip', async () => {
     await act(async () => { root.render(<DesktopPet pets={pets} petId="gooey-pi" agentBusy={false} reduceMotion={false} voiceActive={false} onOpenVoice={vi.fn()} />); await Promise.resolve() })
     expect(container.querySelector('.desktop-pet__name')).toBeNull()

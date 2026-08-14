@@ -162,7 +162,10 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       return
     }
     window.localStorage.setItem('gooeypi:pet-position', JSON.stringify(positionRef.current))
-    if (!drag.moved) setJumping(true)
+    if (!drag.moved) {
+      if (!voiceActive && onOpenVoice) onOpenVoice()
+      else setJumping(true)
+    }
   }
   const moveByKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const movement = event.shiftKey ? 24 : 8
@@ -181,7 +184,8 @@ export function DesktopPet({ pets, petId, agentBusy, voiceActive, reduceMotion, 
       })
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      setJumping(true)
+      if (!voiceActive && onOpenVoice) onOpenVoice()
+      else setJumping(true)
     } else if (onDismiss && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault()
       onDismiss()
