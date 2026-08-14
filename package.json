@@ -1,6 +1,6 @@
 {
   "name": "gooeypi",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "description": "A desktop workspace for Pi, OMP, and Prime Agent",
   "main": "out/main/index.js",
