@@ -94,18 +94,19 @@ Harness provider credentials stay with the harness. Optional voice keys are encr
 
 ## Run from source
 
-You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer.
+You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer. The repository pins Node.js 22.12.0 in `.nvmrc`; run `nvm install && nvm use` to match it when you use nvm.
 
 ```bash
 npm install
 npm run dev
 ```
 
-`node-pty` is a native dependency. If Electron cannot rebuild it with your default Python environment, point npm at a Python installation with the required build tools:
+`node-pty` is a native dependency. If Electron cannot rebuild it with your default Python environment, point npm at a Python installation with the required build tools. The `--ignore-scripts` step below skips both the native rebuild and Electron download, so the remaining commands run those steps explicitly:
 
 ```bash
 export npm_config_python=/path/to/python3
 npm install --ignore-scripts
+node node_modules/electron/install.js
 npx electron-builder install-app-deps
 ```
 
