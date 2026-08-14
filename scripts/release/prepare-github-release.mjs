@@ -7,7 +7,13 @@ import { dump, load } from 'js-yaml'
 import { validateReleaseTag } from './validate-release-tag.mjs'
 
 const RELEASE_PLATFORMS = ['mac', 'linux', 'win']
-const UPDATE_METADATA = { mac: 'latest-mac.yml', linux: 'latest-linux.yml', win: 'latest.yml' }
+const UPDATE_METADATA_BY_PLATFORM = {
+  mac: ['latest-mac.yml'],
+  // electron-builder gives non-x64 Linux builds an architecture-specific feed
+  // name, which electron-updater selects automatically on arm64 runtimes.
+  linux: ['latest-linux.yml', 'latest-linux-arm64.yml'],
+  win: ['latest.yml'],
+}
 
 export function parseReleasePlatforms(value = RELEASE_PLATFORMS.join(',')) {
   const platforms = value
@@ -36,7 +42,7 @@ export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFOR
     ],
     win: [`GooeyPi-${version}-win-x64.exe`, `GooeyPi-${version}-win-x64.zip`],
   }
-  return platforms.flatMap((platform) => [...assets[platform], UPDATE_METADATA[platform]]).sort()
+  return platforms.flatMap((platform) => [...assets[platform], ...UPDATE_METADATA_BY_PLATFORM[platform]]).sort()
 }
 
 function parseUpdateMetadata(path, expectedVersion) {
@@ -108,12 +114,13 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
   const downloaded = expectedDownloadedReleaseAssets(release.version, platforms)
   const expectedSet = new Set(downloaded)
   const publishedNameByDownloadedName = new Map(downloaded.map((name, index) => [name, expected[index]]))
+  const updateMetadataNames = new Set(Object.values(UPDATE_METADATA_BY_PLATFORM).flat())
   const selected = new Map()
   const metadata = new Map()
   for (const path of listFiles(inputDirectory)) {
     const name = basename(path)
     if (!expectedSet.has(name)) continue
-    if (Object.values(UPDATE_METADATA).includes(name)) {
+    if (updateMetadataNames.has(name)) {
       const candidates = metadata.get(name) ?? []
       candidates.push(path)
       metadata.set(name, candidates)
@@ -132,7 +139,7 @@ export async function prepareGitHubRelease({ inputDirectory, outputDirectory, ta
     if (metadataPaths) {
       const manifest = mergeUpdateMetadata(metadataPaths, release.version)
       for (const file of manifest.files) {
-        if (file.url !== basename(file.url) || !expectedSet.has(file.url) || Object.values(UPDATE_METADATA).includes(file.url)) {
+        if (file.url !== basename(file.url) || !expectedSet.has(file.url) || updateMetadataNames.has(file.url)) {
           throw new Error(`Update metadata references an unpublished release asset: ${file.url}`)
         }
       }
