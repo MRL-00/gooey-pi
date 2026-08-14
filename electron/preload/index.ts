@@ -20,7 +20,7 @@ const api: PrimeWorkApi = {
   updates: {
     getState: () => ipcRenderer.invoke('updates:get-state'),
     check: () => ipcRenderer.invoke('updates:check'),
-    install: () => ipcRenderer.invoke('updates:install'),
+    downloadAndInstall: () => ipcRenderer.invoke('updates:download-and-install'),
     onChanged: (callback) => subscribe<AppUpdateState>('updates:changed', callback),
   },
   projects: {

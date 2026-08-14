@@ -120,7 +120,7 @@ function updateControlCopy(state: AppUpdateState): { label: string; title: strin
   const version = state.version ? ` ${state.version}` : ''
   switch (state.phase) {
     case 'checking': return { label: 'Checking for updates', title: 'Checking GitHub Releases for a new GooeyPi version' }
-    case 'available': return { label: `Update${version} found`, title: `GooeyPi${version} is downloading automatically` }
+    case 'available': return { label: `Download${version}`, title: `Download and restart GooeyPi${version}` }
     case 'downloading': return { label: `Downloading${version} · ${state.percent ?? 0}%`, title: `Downloading GooeyPi${version}` }
     case 'downloaded': return { label: `Restart for${version}`, title: `Restart GooeyPi and install version${version}` }
     case 'not-available': return { label: 'GooeyPi is up to date', title: 'Check again for a new GooeyPi release' }
@@ -162,6 +162,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const [renameValue, setRenameValue] = useState('')
   const [archiveTarget, setArchiveTarget] = useState<SessionRecord | null>(null)
   const [removeTarget, setRemoveTarget] = useState<ProjectRecord | null>(null)
+  const [confirmUpdate, setConfirmUpdate] = useState(false)
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
     const signature = sessionAttentionSignature(session)
@@ -173,7 +174,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const commandsShortcut = shortcutLabel(platform, ['Primary', 'K'])
   const settingsShortcut = shortcutLabel(platform, ['Primary', ','])
   const updateCopy = updateControlCopy(updateState)
-  const updateBusy = updateState.phase === 'checking' || updateState.phase === 'available' || updateState.phase === 'downloading'
+  const updateBusy = updateState.phase === 'checking' || updateState.phase === 'downloading'
   const updateVisible = updateState.phase === 'available' || updateState.phase === 'downloading' || updateState.phase === 'downloaded'
   useEffect(() => {
     if (!harnessMenuOpen) return
@@ -326,7 +327,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
       <div className="sidebar__footer">
         <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
         {updateVisible ? (
-          <button type="button" className={`sidebar-update sidebar-update--${updateState.phase}`} title={updateCopy.title} aria-label={updateCopy.title} aria-live="polite" disabled={updateBusy} onClick={() => { void onUpdateAction?.() }}>
+          <button type="button" className={`sidebar-update sidebar-update--${updateState.phase}`} title={updateCopy.title} aria-label={updateCopy.title} aria-live="polite" disabled={updateBusy} onClick={() => setConfirmUpdate(true)}>
             <span className="sidebar-update__icon" style={{ '--update-progress': `${updateState.percent ?? 0}%` } as CSSProperties}><Download size={12} /></span>
             <span>{updateCopy.label}</span>
           </button>
@@ -335,6 +336,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
       </div>
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}
       {removeTarget ? <Modal title="Remove project" onClose={() => setRemoveTarget(null)} footer={<><button type="button" className="button" onClick={() => setRemoveTarget(null)}>Cancel</button><button type="button" className="button button--danger" onClick={() => { const target = removeTarget; setRemoveTarget(null); onRemoveProject(target) }}>Remove</button></>}><p>Remove “{removeTarget.name}” from {HARNESS_PRODUCT_NAMES[activeHarness]}? The folder and saved sessions will not be deleted.</p></Modal> : null}
+      {confirmUpdate ? <Modal title="Download and Restart GooeyPi?" onClose={() => setConfirmUpdate(false)} footer={<><button type="button" className="button" onClick={() => setConfirmUpdate(false)}>No</button><button type="button" className="button button--primary" onClick={() => { setConfirmUpdate(false); void onUpdateAction?.() }}>Yes</button></>}><p>GooeyPi will download the update, close, and restart when it is ready.</p></Modal> : null}
     </aside>
   )
 }

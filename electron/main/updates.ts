@@ -12,6 +12,7 @@ export interface UpdateAdapter {
   on(event: 'download-progress', listener: (progress: ProgressInfo) => void): this
   on(event: 'error', listener: (error: Error) => void): this
   checkForUpdates(): Promise<unknown>
+  downloadUpdate(): Promise<unknown>
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
 }
 
@@ -58,6 +59,8 @@ export class UpdateService {
   private state: AppUpdateState
   private sink: ((state: AppUpdateState) => void) | null = null
   private checkPromise: Promise<AppUpdateState> | null = null
+  private downloadPromise: Promise<boolean> | null = null
+  private installAfterDownload = false
   private interval: ReturnType<typeof globalThis.setInterval> | null = null
   private initialTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   private readonly setIntervalFn: typeof globalThis.setInterval
@@ -71,8 +74,8 @@ export class UpdateService {
     this.setTimeoutFn = options.setTimeout ?? globalThis.setTimeout
     if (!options.enabled) return
 
-    updater.autoDownload = true
-    updater.autoInstallOnAppQuit = true
+    updater.autoDownload = false
+    updater.autoInstallOnAppQuit = false
     updater.on('checking-for-update', () => this.publish({ phase: 'checking' }))
     updater.on('update-available', (info) => this.publish({ phase: 'available', version: info.version }))
     updater.on('download-progress', (progress) => this.publish({
@@ -80,9 +83,17 @@ export class UpdateService {
       version: this.state.version,
       percent: Math.max(0, Math.min(100, Math.round(progress.percent))),
     }))
-    updater.on('update-downloaded', (info) => this.publish({ phase: 'downloaded', version: info.version }))
+    updater.on('update-downloaded', (info) => {
+      this.publish({ phase: 'downloaded', version: info.version })
+      if (!this.installAfterDownload) return
+      this.installAfterDownload = false
+      this.updater.quitAndInstall(false, true)
+    })
     updater.on('update-not-available', (info) => this.publish({ phase: 'not-available', version: info.version }))
-    updater.on('error', (error) => this.publish({ phase: 'error', message: errorMessage(error) }))
+    updater.on('error', (error) => {
+      this.installAfterDownload = false
+      this.publish({ phase: 'error', message: errorMessage(error) })
+    })
   }
 
   start(): void {
@@ -126,10 +137,26 @@ export class UpdateService {
     return this.checkPromise
   }
 
-  install(): boolean {
-    if (!this.options.enabled || this.state.phase !== 'downloaded') return false
-    this.updater.quitAndInstall(false, true)
-    return true
+  downloadAndInstall(): Promise<boolean> {
+    if (!this.options.enabled) return Promise.resolve(false)
+    if (this.state.phase === 'downloaded') {
+      this.updater.quitAndInstall(false, true)
+      return Promise.resolve(true)
+    }
+    if (this.state.phase !== 'available') return Promise.resolve(false)
+    if (this.downloadPromise) return this.downloadPromise
+
+    this.installAfterDownload = true
+    this.publish({ phase: 'downloading', version: this.state.version, percent: 0 })
+    this.downloadPromise = this.updater.downloadUpdate()
+      .then(() => true)
+      .catch((error) => {
+        this.installAfterDownload = false
+        this.publish({ phase: 'error', message: errorMessage(error) })
+        return false
+      })
+      .finally(() => { this.downloadPromise = null })
+    return this.downloadPromise
   }
 
   private publish(state: AppUpdateState): void {
