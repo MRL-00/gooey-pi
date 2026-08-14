@@ -619,25 +619,8 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
-    const updateControl = page.locator('.sidebar__footer .sidebar-update')
-    await expect(updateControl).toContainText('Automatic updates')
-    await expect(updateControl.locator('.lucide-download')).toBeVisible()
-    await expect(updateControl.evaluate((button) => button.nextElementSibling?.getAttribute('title'))).resolves.toBe('Settings')
-    const updateColor = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
-      const reference = document.createElement('span')
-      reference.style.color = 'var(--prime)'
-      document.body.append(reference)
-      const colors = { actual: getComputedStyle(icon).color, theme: getComputedStyle(reference).color }
-      reference.remove()
-      return colors
-    })
-    expect(updateColor.actual).toBe(updateColor.theme)
-    const updateIconBounds = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
-      const { width, height } = icon.getBoundingClientRect()
-      return { width, height }
-    })
-    expect(updateIconBounds.width).toBeCloseTo(22, 0)
-    expect(updateIconBounds.height).toBeCloseTo(22, 0)
+    await expect(page.locator('.sidebar__footer .sidebar-update')).toHaveCount(0)
+    await expect(page.locator('.sidebar__footer button[title="Settings"]')).toBeVisible()
   })
 
   test('left aligns the harness picker for Linux and Windows chrome', async () => {

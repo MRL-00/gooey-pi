@@ -8,7 +8,7 @@ import {
   updateActivityCriteria,
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
-import { applyPrimeEvent, createPrimeEventBuffer, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer, createSteerPickupEvent, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
 import { reconcileTranscripts } from '../../src/app/transcript-reconcile'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
@@ -170,6 +170,28 @@ describe('Activity batching', () => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('batched Prime event reduction', () => {
+  it('places repeated picked-up steers between the tool segments that consumed them', () => {
+    const result = replayPrimeEvents(transcript(), [
+      { type: 'tool_execution_start', toolCallId: 'read', toolName: 'Read', args: { path: 'before.ts' } },
+      createSteerPickupEvent([{ id: 'queued-1', text: 'change direction', intent: 'steer', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] }]),
+      { type: 'turn_start' },
+      { type: 'tool_execution_start', toolCallId: 'write', toolName: 'Write', args: { path: 'after.ts' } },
+      createSteerPickupEvent([{ id: 'queued-2', text: 'also compare the physics', intent: 'steer', timestamp: 3, parts: [{ type: 'text', text: 'also compare the physics' }] }]),
+      { type: 'turn_start' },
+      delta('continued after both pickups'),
+    ])
+
+    expect(result.map((message) => message.role)).toEqual(['assistant', 'user', 'assistant', 'user', 'assistant'])
+    expect(result[0]?.streaming).toBe(false)
+    expect(result[0]?.parts.some((part) => part.type === 'toolCall' && part.name === 'Read')).toBe(true)
+    expect(result[1]).toMatchObject({ id: 'user-queued-1', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] })
+    expect(result[2]).toMatchObject({ role: 'assistant', streaming: false })
+    expect(result[2]?.parts.some((part) => part.type === 'toolCall' && part.name === 'Write')).toBe(true)
+    expect(result[3]).toMatchObject({ id: 'user-queued-2', timestamp: 3, parts: [{ type: 'text', text: 'also compare the physics' }] })
+    expect(result[4]?.streaming).toBe(true)
+    expect(result[4]?.parts).toEqual([{ type: 'text', text: 'continued after both pickups', partId: expect.any(String) }])
+  })
+
   it('is equivalent to ordered single-event reduction across text, thinking, and tool merges', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-02T03:04:05.000Z'))

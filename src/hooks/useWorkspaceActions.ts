@@ -220,8 +220,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       }
       if (intent === 'steer') {
         const sentAt = Date.now()
-        const userMessageId = `user-${sentAt}`
-        workspace.setMessages((items) => [...items, { id: userMessageId, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }])
+        const pendingSteerId = workspace.queuePrompt(prompt, intent, [{ type: 'text', text: prompt }, ...images], sentAt)
         if (currentWorkspace.sessionFile) {
           const sentAtIso = new Date(sentAt).toISOString()
           setSessions((items) => items.map((session) => session.filePath === currentWorkspace.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
@@ -230,12 +229,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
           return
         } catch (error) {
+          workspace.removeQueuedPrompt(pendingSteerId)
           if (workspace.workspaceRef.current.generation === currentWorkspace.generation) {
-            // Replace the optimistic message with a durable system row: a toast
-            // alone is easy to miss, and a silently vanishing steer reads as
-            // "sent but ignored".
+            // Keep a durable failure row: a toast alone is easy to miss, and a
+            // silently vanishing steer reads as "sent but ignored".
             workspace.setMessages((items) => [
-              ...items.filter((message) => message.id !== userMessageId),
+              ...items,
               { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Steer was not delivered: ${requestFailureMessage(error)} Your draft was restored.` }] },
             ])
           }
@@ -333,10 +332,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         workspace.attachRuntime(activeRuntime, generation)
         if (activeRuntime.isStreaming) {
-          // The runtime queues the follow_up itself; adding it to the local
-          // queue as well would deliver it a second time via the idle flush.
+          // Follow-ups are daemon-owned. Steers get a renderer-only pending
+          // row so pickup can move them into history without redelivery.
+          if (intent === 'steer') queuedPromptId = workspace.queuePrompt(prompt, intent, userMessage.parts, sentAt)
           await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
-          if (intent === 'steer') appendUserMessage()
         } else {
           startedPrompt = true
           appendUserMessage()

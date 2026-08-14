@@ -96,6 +96,30 @@ describe('transcript rendering', () => {
     expect(html).toContain('Prime is working')
   })
 
+  it.each([
+    ['prime', 'Prime'],
+    ['omp', 'OMP'],
+    ['pi', 'Pi'],
+  ] as const)('shows an unacknowledged %s steer at the live edge without duplicating the working indicator', (harness, shortName) => {
+    const html = renderToStaticMarkup(createElement(Transcript, {
+      messages: [{
+        id: 'active', role: 'assistant', timestamp: 1_000, streaming: true,
+        parts: [{ type: 'text', text: 'Current response' }],
+      }],
+      pendingSteers: [{ id: 'queued-steer', text: 'Pick this up', intent: 'steer', timestamp: 2_000 }],
+      git,
+      harness,
+      active: true,
+      onOpenChanges: noop,
+      onSuggestion: noop,
+    }))
+
+    expect(html).toContain('Current response')
+    expect(html).toContain('Pick this up')
+    expect(html.match(new RegExp(`${shortName} is working`, 'g'))).toHaveLength(1)
+    expect(html).not.toContain('transcript-active-placeholder')
+  })
+
   it('collapses all work behind the caret as soon as the response yields', () => {
     const html = render([{
       id: 'complete',

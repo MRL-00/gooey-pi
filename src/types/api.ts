@@ -366,6 +366,9 @@ export interface QueuedPrompt {
   id: string
   text: string
   intent: PromptDeliveryIntent
+  /** Stable presentation data while a steer waits for the agent to pick it up. */
+  timestamp?: number
+  parts?: MessagePart[]
 }
 
 export interface SessionActionSnapshot {

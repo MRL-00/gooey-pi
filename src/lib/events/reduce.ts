@@ -1,4 +1,4 @@
-import type { MessagePart, TranscriptMessage } from '@/types/api'
+import type { MessagePart, QueuedPrompt, TranscriptMessage } from '@/types/api'
 import { applyCompactionEvent, isCompactionEvent } from './compaction'
 import { nextTranscriptId, withPartId } from './ids'
 import { agentMessagePart, record, resultText, string } from './parse'
@@ -34,6 +34,12 @@ function effectiveToolId(id: string | undefined, name: string): string {
 }
 
 const EMPTY_TURN_FALLBACK = 'Completed without a text response.'
+const LOCAL_STEER_PICKUP = Symbol('gooeypi-steer-pickup')
+
+/** Renderer-only event: the symbol prevents an agent frame from spoofing a local pickup. */
+export function createSteerPickupEvent(prompts: QueuedPrompt[]): Record<string, unknown> {
+  return { type: 'gooeypi_steer_pickup', prompts, [LOCAL_STEER_PICKUP]: true }
+}
 
 export function replayPrimeEvents(
   messages: TranscriptMessage[],
@@ -187,6 +193,23 @@ export function replayPrimeEvents(
     if (stats) stats.eventScans += 1
     const type = string(raw.type) ?? string(raw.event)
     if (!type) continue
+    if (type === 'gooeypi_steer_pickup' && (raw as Record<PropertyKey, unknown>)[LOCAL_STEER_PICKUP] === true) {
+      const prompts = Array.isArray(raw.prompts) ? raw.prompts : []
+      const pickedUp: TranscriptMessage[] = prompts.flatMap((value) => {
+        const prompt = record(value)
+        const id = string(prompt?.id)
+        const text = string(prompt?.text)
+        if (!id || !text) return []
+        const timestamp = typeof prompt?.timestamp === 'number' && Number.isFinite(prompt.timestamp) ? prompt.timestamp : Date.now()
+        const parts = Array.isArray(prompt?.parts) ? prompt.parts as MessagePart[] : [{ type: 'text' as const, text }]
+        return [{ id: `user-${id}`, role: 'user' as const, timestamp, parts }]
+      })
+      if (!pickedUp.length) continue
+      finalizeStreaming(Date.now(), false)
+      copyTranscript()
+      next.push(...pickedUp)
+      continue
+    }
     if (isCompactionEvent(raw)) {
       // Compaction changes the transcript shape (it closes the current
       // assistant turn and inserts a system activity row), so it applies to a

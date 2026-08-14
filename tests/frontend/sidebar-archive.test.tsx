@@ -71,6 +71,21 @@ describe('sidebar project context menu', () => {
     expect(onUpdateAction).toHaveBeenCalledOnce()
   })
 
+  it('keeps the release control hidden when no update is available', async () => {
+    await act(async () => {
+      root.render(
+        <Sidebar
+          projects={[project]} sessions={[session]} activeView="session" updateState={{ phase: 'not-available' }}
+          onSelectProject={noop} onSelectSession={noop} onNavigate={noop} onNewSession={noop} onAddProject={noop} onRemoveProject={noop}
+          onClose={noop} onOpenPalette={noop} onRenameSession={async () => undefined} onArchiveSession={async () => undefined}
+        />,
+      )
+    })
+
+    expect(container.querySelector('.sidebar__footer .sidebar-update')).toBeNull()
+    expect(container.querySelector('.sidebar__footer button[title="Settings"]')).not.toBeNull()
+  })
+
   it('copies the exact session UUID from the session context menu', async () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })

@@ -94,18 +94,32 @@ Harness provider credentials stay with the harness. Optional voice keys are encr
 
 ## Run from source
 
-You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer.
+You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer. The repository pins Node.js 22.12.0 in `.nvmrc`; with [nvm](https://github.com/nvm-sh/nvm), you can select it with:
+
+```bash
+nvm install && nvm use
+```
 
 ```bash
 npm install
 npm run dev
 ```
 
+If `node_modules/electron/dist` is missing after installation, fetch Electron's platform binary before starting the app:
+
+```bash
+node node_modules/electron/install.js
+npm run dev
+```
+
+`npm install --ignore-scripts` skips Electron's postinstall download, so it is not enough on its own for running GooeyPi from source. If you used it, run the Electron install command above before `npm run dev`.
+
 `node-pty` is a native dependency. If Electron cannot rebuild it with your default Python environment, point npm at a Python installation with the required build tools:
 
 ```bash
 export npm_config_python=/path/to/python3
 npm install --ignore-scripts
+node node_modules/electron/install.js
 npx electron-builder install-app-deps
 ```
 

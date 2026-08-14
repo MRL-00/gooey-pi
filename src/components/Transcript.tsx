@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import type { GitStatus, HarnessId, TranscriptMessage } from '@/types/api'
+import type { GitStatus, HarnessId, QueuedPrompt, TranscriptMessage } from '@/types/api'
 import { ChangesCard } from './ChangesCard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { MarkdownText } from './MarkdownText'
@@ -51,11 +51,14 @@ interface TranscriptProps {
   /** Reserve room for bottom-docked changes and queued-message affordances. */
   bottomDockHasChanges?: boolean
   queuedMessageCount?: number
+  /** Steers stay at the live bottom edge until the agent acknowledges pickup. */
+  pendingSteers?: QueuedPrompt[]
   onOpenSessionReference?(sessionId: string, harness: HarnessId): void
 }
 
 
 const ASSISTANT_MARKS = { omp: OmpMark, prime: PrimeMark, pi: PiMark } satisfies Record<HarnessId, unknown>
+const EMPTY_PENDING_STEERS: QueuedPrompt[] = []
 
 function AssistantMark({ harness, size = 24 }: { harness: HarnessId; size?: number }) {
   const Mark = ASSISTANT_MARKS[harness]
@@ -81,9 +84,18 @@ function ActiveAssistantMessage({ message, harness, showReasoning, showTools }: 
 
 
 
-export function Transcript({ messages, git, harness = 'prime', loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled, showPinnedChanges = true, bottomDockHasChanges = false, queuedMessageCount = 0, onOpenSessionReference }: TranscriptProps) {
+export function Transcript({ messages, git, harness = 'prime', loading, active = false, showReasoning = true, showTools = true, onOpenChanges, onSuggestion, suggestionsDisabled, showPinnedChanges = true, bottomDockHasChanges = false, queuedMessageCount = 0, pendingSteers = EMPTY_PENDING_STEERS, onOpenSessionReference }: TranscriptProps) {
   const groupedMessages = useMemo(() => coalesceAssistantTurns(messages), [messages])
-  const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(groupedMessages)
+  const displayMessages = useMemo<TranscriptMessage[]>(() => [
+    ...groupedMessages,
+    ...pendingSteers.map((prompt) => ({
+      id: `user-${prompt.id}`,
+      role: 'user' as const,
+      timestamp: prompt.timestamp,
+      parts: prompt.parts ?? [{ type: 'text' as const, text: prompt.text }],
+    })),
+  ], [groupedMessages, pendingSteers])
+  const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(displayMessages)
   const activeAssistantId = useMemo(() => active && groupedMessages.at(-1)?.role === 'assistant' ? groupedMessages.at(-1)?.id : undefined, [active, groupedMessages])
   const transcriptClasses = [
     'transcript',
