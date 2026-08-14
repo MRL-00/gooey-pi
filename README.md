@@ -92,6 +92,16 @@ GitHub Releases provides a DMG and ZIP for macOS, common Linux package formats p
 
 Harness provider credentials stay with the harness. Optional voice keys are encrypted with the operating system's secure storage, and local `whisper.cpp` dictation needs no API key.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=am-will%2Fgooey-pi&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=am-will/gooey-pi&type=date&theme=dark&legend=top-left&sealed_token=Gyqf4f7-dQQMVcOLDzasYvuEMUjpCSlTbbitvVvzi1dyMJRIttzqLWN-D1cijN9r-TqFj2A-ibdETPCeMHGsKGYRJrAzd9VflC7tpdapc0tRiSBi6qrSJQ" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=am-will/gooey-pi&type=date&legend=top-left&sealed_token=Gyqf4f7-dQQMVcOLDzasYvuEMUjpCSlTbbitvVvzi1dyMJRIttzqLWN-D1cijN9r-TqFj2A-ibdETPCeMHGsKGYRJrAzd9VflC7tpdapc0tRiSBi6qrSJQ" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=am-will/gooey-pi&type=date&legend=top-left&sealed_token=Gyqf4f7-dQQMVcOLDzasYvuEMUjpCSlTbbitvVvzi1dyMJRIttzqLWN-D1cijN9r-TqFj2A-ibdETPCeMHGsKGYRJrAzd9VflC7tpdapc0tRiSBi6qrSJQ" />
+  </picture>
+</a>
+
 ## Run from source
 
 You will need Node.js 22.12.0 or newer and npm 10.9.0 or newer. The repository pins Node.js 22.12.0 in `.nvmrc`; with [nvm](https://github.com/nvm-sh/nvm), you can select it with:
