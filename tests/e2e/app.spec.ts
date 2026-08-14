@@ -974,6 +974,34 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'Archived', exact: true })).toHaveCount(0)
   })
 
+  test('destroys an open session browser guest when its thread is archived', async () => {
+    const sessionRow = page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' })
+    await sessionRow.locator('.session-row').click()
+    await page.getByRole('tab', { name: 'Browser' }).click()
+    const preview = page.locator('.browser-preview webview[partition="persist:prime-work-browser"]')
+    await expect(preview).toHaveCount(1)
+    await expect.poll(() => preview.evaluate(async (node) => {
+      const webview = node as HTMLElement & {
+        executeJavaScript(script: string): Promise<unknown>
+        getWebContentsId(): number
+      }
+      await webview.executeJavaScript('window.__fixtureGameTimer = setInterval(() => {}, 10)')
+      return webview.getWebContentsId()
+    })).toBeGreaterThan(0)
+    const guestId = await preview.evaluate((node) => (node as HTMLElement & { getWebContentsId(): number }).getWebContentsId())
+    expect(await app!.evaluate(({ webContents }, id) => Boolean(webContents.fromId(id)), guestId)).toBe(true)
+
+    await sessionRow.getByTitle('Archive Hermetic desktop fixture').click()
+    await sessionRow.getByTitle('Confirm archive Hermetic desktop fixture').click()
+
+    await expect(sessionRow).toHaveCount(0)
+    await expect.poll(() => app!.evaluate(({ webContents }, id) => {
+      const guest = webContents.fromId(id)
+      return guest === undefined || guest.isDestroyed()
+    }, guestId)).toBe(true)
+    await expect.poll(() => preview.evaluate((node) => (node as HTMLElement & { getWebContentsId(): number }).getWebContentsId())).not.toBe(guestId)
+  })
+
   test('enforces the live preload and IPC frame boundaries', async () => {
     const initialMeta = await page.evaluate(() => window.prime.app.getMeta())
     expect(initialMeta.version).toBeTruthy()
