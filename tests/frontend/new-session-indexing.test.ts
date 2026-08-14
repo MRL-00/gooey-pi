@@ -22,14 +22,15 @@ describe('new session indexing', () => {
       sessions = typeof update === 'function' ? update(sessions) : update
     }
 
-    await indexStartedSession(
-      { sessions: { list } } as unknown as PrimeWorkApi,
-      'prime',
-      created.filePath,
+    const indexed = await indexStartedSession({
+      bridge: { sessions: { list } } as unknown as PrimeWorkApi,
+      harness: 'prime',
+      sessionFile: created.filePath,
       setSessions,
-    )
+    })
 
     expect(list).toHaveBeenCalledWith(undefined, true, 'prime', true)
+    expect(indexed).toEqual(created)
     expect(sessions.map((session) => session.id)).toEqual(['existing', 'created'])
   })
 
@@ -48,14 +49,14 @@ describe('new session indexing', () => {
       sessions = typeof update === 'function' ? update(sessions) : update
     }
 
-    await titleStartedSession(
-      { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
-      'prime',
-      'runtime-created',
-      untitled.filePath,
-      '  Build the sidebar\nright away.  ',
+    await titleStartedSession({
+      bridge: { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
+      harness: 'prime',
+      runtimeId: 'runtime-created',
+      sessionFile: untitled.filePath,
+      prompt: '  Build the sidebar\nright away.  ',
       setSessions,
-    )
+    })
 
     expect(command).toHaveBeenCalledWith('runtime-created', { type: 'set_session_name', name: 'Build the sidebar right away.' })
     expect(list).toHaveBeenCalledWith(undefined, true, 'prime', true)
@@ -77,14 +78,14 @@ describe('new session indexing', () => {
       sessions = typeof update === 'function' ? update(sessions) : update
     }
 
-    await expect(titleStartedSession(
-      { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
-      'prime',
-      'runtime-created',
-      titled.filePath,
-      'Prompt fallback title',
+    await expect(titleStartedSession({
+      bridge: { agent: { command }, sessions: { list } } as unknown as PrimeWorkApi,
+      harness: 'prime',
+      runtimeId: 'runtime-created',
+      sessionFile: titled.filePath,
+      prompt: 'Prompt fallback title',
       setSessions,
-    )).resolves.toBeUndefined()
+    })).resolves.toBeUndefined()
 
     expect(sessions.find((session) => session.id === 'created')?.title).toBe('Harness generated title')
   })
@@ -92,5 +93,28 @@ describe('new session indexing', () => {
   it('matches the session catalog title compaction boundary', () => {
     expect(sessionTitleFromPrompt(`  ${'a'.repeat(100)}  `)).toBe('a'.repeat(100))
     expect(sessionTitleFromPrompt(`  ${'a'.repeat(101)}  `)).toBe(`${'a'.repeat(99)}…`)
+  })
+
+  it('does not merge a stale catalog after the workspace changes', async () => {
+    let resolveList: ((sessions: SessionRecord[]) => void) | undefined
+    const list = vi.fn(() => new Promise<SessionRecord[]>((resolve) => { resolveList = resolve }))
+    let current = true
+    let sessions = [existing]
+    const setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>> = (update) => {
+      sessions = typeof update === 'function' ? update(sessions) : update
+    }
+
+    const indexing = indexStartedSession({
+      bridge: { sessions: { list } } as unknown as PrimeWorkApi,
+      harness: 'prime',
+      sessionFile: '/sessions/created.jsonl',
+      setSessions,
+      isCurrent: () => current,
+    })
+    current = false
+    resolveList?.([{ ...existing, id: 'stale', filePath: '/sessions/created.jsonl' }])
+    await indexing
+
+    expect(sessions).toEqual([existing])
   })
 })
