@@ -12,6 +12,7 @@ import type { usePanelLayout } from '@/hooks/usePanelLayout'
 import type { usePluginSkills } from '@/hooks/usePluginSkills'
 import type { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import type { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
+import { mergeSessionCatalog } from '@/hooks/useBootstrap'
 
 export interface WorkspaceActionsDeps {
   bridge: PrimeWorkApi | null
@@ -41,6 +42,20 @@ export interface WorkspaceActionsDeps {
 }
 
 export type PrimeMcpCommand = { type: 'open' } | { type: 'login'; server: string }
+
+export async function indexStartedSession(
+  bridge: PrimeWorkApi,
+  harness: ProjectRecord['harness'],
+  sessionFile: string | undefined,
+  setSessions: Dispatch<SetStateAction<SessionRecord[]>>,
+): Promise<void> {
+  if (!sessionFile) return
+  // Runtime creation and filesystem watch delivery are separate async paths.
+  // Make the created file part of the renderer catalog before prompt admission
+  // continues, so navigating away cannot expose a watch-timing visibility gap.
+  const catalog = await bridge.sessions.list(undefined, true, harness, true)
+  setSessions((current) => mergeSessionCatalog(current, catalog, sessionFile, new Map(), 0))
+}
 
 export function parsePrimeMcpCommand(prompt: string): PrimeMcpCommand | undefined {
   const value = prompt.trim()
@@ -328,6 +343,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           }
           startedRuntime = true
           if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
+          await indexStartedSession(bridge, activeHarness, activeRuntime.sessionFile, setSessions)
         }
         if (activeRuntime.cwd !== selected.cwd || (selected.sessionFile && activeRuntime.sessionFile !== selected.sessionFile)) {
           if (startedRuntime) await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
