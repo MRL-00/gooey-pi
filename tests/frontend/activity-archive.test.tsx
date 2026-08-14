@@ -117,6 +117,7 @@ describe('archived activity cleanup', () => {
   it('acknowledges and clears unread state when archiving succeeds', async () => {
     const archive = vi.fn(async () => true)
     const clearSessionAttention = vi.fn()
+    const closeTerminalForSession = vi.fn()
     const setToast = vi.fn()
     let sessions = [activeSession]
     const setSessions = vi.fn((update: (items: SessionRecord[]) => SessionRecord[]) => { sessions = update(sessions) })
@@ -125,6 +126,7 @@ describe('archived activity cleanup', () => {
       workspace: { workspaceRef: { current: { session: undefined } } },
       setSessions,
       setToast,
+      closeTerminalForSession,
       clearSessionAttention,
       reportError: vi.fn(),
     } as unknown as WorkspaceActionsDeps))
@@ -133,6 +135,7 @@ describe('archived activity cleanup', () => {
 
     expect(archive).toHaveBeenCalledWith(activeSession.filePath, true)
     expect(clearSessionAttention).toHaveBeenCalledWith(activeSession)
+    expect(closeTerminalForSession).toHaveBeenCalledWith(activeSession.filePath)
     expect(sessions[0]).toMatchObject({ id: activeSession.id, archived: true, unread: false })
     expect(setToast).toHaveBeenCalledWith('Session archived.')
   })
@@ -153,6 +156,7 @@ describe('archived activity cleanup', () => {
       setPaletteOpen: vi.fn(),
       setToast: vi.fn(),
       resetBrowserView,
+      closeTerminalForSession: vi.fn(),
       clearSessionAttention: vi.fn(),
       reportError: vi.fn(),
     } as unknown as WorkspaceActionsDeps))

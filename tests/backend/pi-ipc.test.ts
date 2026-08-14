@@ -94,7 +94,7 @@ function buildServices() {
       stop: vi.fn(async () => true),
       list: vi.fn(() => [{ runtimeId: 'prime-runtime', harness: 'prime' }]),
     },
-    terminals: serviceStub(),
+    terminals: { ...serviceStub(), killForSession: vi.fn(async () => undefined) },
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins') },
     providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })) },
@@ -194,6 +194,7 @@ describe('pi harness IPC routing', () => {
     await expect(harness.invoke('sessions:archive', PI_SESSION, true)).resolves.toBe(true)
     expect(harness.services.pi.sessions.archive).toHaveBeenCalledWith(PI_SESSION, true)
     expect(harness.services.browser.closeForSession).toHaveBeenCalledWith(PI_SESSION)
+    expect(harness.services.terminals.killForSession).toHaveBeenCalledWith(PI_SESSION)
 
     // A path no root contains still fails with the Prime service's own error.
     await expect(async () => harness.invoke('sessions:read', '/etc/passwd')).rejects.toThrow('outside the Prime session directory')

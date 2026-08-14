@@ -51,6 +51,25 @@ describe('TerminalService', () => {
       await waitFor(() => { try { process.kill(childPid, 0); return false } catch { return true } })
     } finally { try { process.kill(childPid, 'SIGKILL') } catch { /* test cleanup */ } }
   }, 15_000)
+
+  it('kills dev-server descendants only for terminals bound to the archived session', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-session-')); dirs.push(cwd)
+    const pidFile = join(cwd, 'dev-server.pid')
+    const owner = { id: 47, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents
+    const service = new TerminalService(async () => cwd, () => testShell, async (path) => path)
+    const archived = await service.create(owner, { cwd, sessionPath: '/sessions/archived.jsonl', shell: testShell, cols: 80, rows: 24 })
+    const retained = await service.create(owner, { cwd, sessionPath: '/sessions/retained.jsonl', shell: testShell, cols: 80, rows: 24 })
+    service.input(owner, archived.terminalId, `/bin/sh -c ${JSON.stringify(`echo "$$" > ${JSON.stringify(pidFile)}; while true; do /bin/sleep 1; done`)}\r`)
+    await waitFor(() => { try { return Number(readFileSync(pidFile, 'utf8').trim()) > 0 } catch { return false } })
+    const childPid = Number(readFileSync(pidFile, 'utf8').trim())
+    try {
+      await service.killForSession('/sessions/./archived.jsonl')
+      await waitFor(() => { try { process.kill(childPid, 0); return false } catch { return true } })
+      expect(await service.kill(owner, archived.terminalId)).toBe(false)
+      expect(await service.kill(owner, retained.terminalId)).toBe(true)
+    } finally { try { process.kill(childPid, 'SIGKILL') } catch { /* test cleanup */ } }
+  }, 15_000)
+
   it('escalates against a PTY leader that ignores HUP and TERM', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-pty-leader-')); dirs.push(cwd)
     const pidFile = join(cwd, 'leader.pid')

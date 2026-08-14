@@ -38,6 +38,7 @@ export interface WorkspaceActionsDeps {
   refreshSchedules(): Promise<void>
   refreshHeartbeats(): Promise<void>
   resetBrowserView(): void
+  closeTerminalForSession(sessionPath: string): void
   clearSessionAttention(session: SessionRecord): void
   reportError(error: unknown): void
 }
@@ -171,11 +172,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error) }
   }
   const setSessionArchived = async (session: SessionRecord, archived: boolean) => {
-    const { bridge, workspace, setSessions, setToast, resetBrowserView, clearSessionAttention, reportError } = getDeps()
+    const { bridge, workspace, setSessions, setToast, resetBrowserView, closeTerminalForSession, clearSessionAttention, reportError } = getDeps()
     if (!bridge) return
     try {
       await bridge.sessions.archive(session.filePath, archived)
-      if (archived) clearSessionAttention(session)
+      if (archived) {
+        clearSessionAttention(session)
+        closeTerminalForSession(session.filePath)
+      }
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived, unread: archived ? false : item.unread } : item))
       if (archived && workspace.workspaceRef.current.session?.id === session.id) {
         resetBrowserView()

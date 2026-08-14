@@ -79,7 +79,7 @@ function buildServices() {
       stop: vi.fn(async () => true),
       list: vi.fn(() => [{ runtimeId: 'prime-runtime', harness: 'prime' }]),
     },
-    terminals: serviceStub(),
+    terminals: { ...serviceStub(), killForSession: vi.fn(async () => undefined) },
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
     providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })), logoutMcp: vi.fn(async () => undefined) },
@@ -273,10 +273,13 @@ describe('harness-aware IPC routing', () => {
     await expect(harness.invoke('sessions:archive', OMP_SESSION, true)).resolves.toBe(true)
     expect(harness.services.omp.sessions.archive).toHaveBeenCalledWith(OMP_SESSION, true)
     expect(harness.services.browser.closeForSession).toHaveBeenCalledWith(OMP_SESSION)
+    expect(harness.services.terminals.killForSession).toHaveBeenCalledWith(OMP_SESSION)
 
     harness.services.browser.closeForSession.mockClear()
+    harness.services.terminals.killForSession.mockClear()
     await expect(harness.invoke('sessions:archive', OMP_SESSION, false)).resolves.toBe(true)
     expect(harness.services.browser.closeForSession).not.toHaveBeenCalled()
+    expect(harness.services.terminals.killForSession).not.toHaveBeenCalled()
   })
 
   it('answers follow-up for an OMP session with the not-running result instead of the daemon path', async () => {

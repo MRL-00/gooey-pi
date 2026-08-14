@@ -212,7 +212,10 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   handle('sessions:archive', async (_event, filePath, archived) => {
     const routed = await sessionsForPath(filePath)
     const result = await routed.service.archive(filePath, archived)
-    if (archived === true) services.browser.closeForSession(filePath)
+    if (archived === true) {
+      services.browser.closeForSession(filePath)
+      await services.terminals.killForSession(filePath)
+    }
     return result
   })
 
