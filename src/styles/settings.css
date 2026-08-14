@@ -88,6 +88,7 @@
 .voice-requirement > span { display: flex; align-items: center; gap: 6px; }
 .voice-requirement button { color: var(--text); font-size: 9.5px; text-decoration: underline; text-underline-offset: 2px; }
 .voice-requirement.is-ready { color: var(--success); background: color-mix(in srgb, var(--success) 4%, transparent); }
+.voice-realtime-note { margin: 10px 13px 12px; color: var(--text-tertiary); font-size: 9px; line-height: 1.45; }
 .theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; }
 .theme-options button { min-height: 84px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: 1fr auto; gap: 5px; padding: 9px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-secondary); background: var(--surface-subtle); text-align: left; }
 .theme-options button > span { grid-column: 1 / -1; display: grid; place-items: center; border-radius: 6px; color: var(--text-secondary); background: var(--canvas); }

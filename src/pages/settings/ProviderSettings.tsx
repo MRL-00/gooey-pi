@@ -167,9 +167,9 @@ export function ProviderSettings({ harness = 'prime', catalog, onRefresh, onSave
 }
 
 const PROVIDERS_PAGE_INTROS: Record<HarnessId, string> = {
-  omp: 'Choose which OMP providers and models appear in GooeyPi. These visibility settings do not change OMP itself; credentials remain managed by OMP.',
-  pi: 'Choose which Pi providers and models appear in GooeyPi. These visibility settings do not change Pi itself; Pi provider authentication is managed by the pi CLI.',
-  prime: 'Connect accounts, choose which providers and their models appear in GooeyPi, and browse every model Prime Agent supports.',
+  omp: 'Choose which OMP providers and models appear in GooeyPi. These visibility settings do not change OMP itself; credentials remain managed by OMP. You may need to log in to or out of providers in the OMP CLI before they appear on this screen.',
+  pi: 'Choose which Pi providers and models appear in GooeyPi. These visibility settings do not change Pi itself; Pi provider authentication is managed by the pi CLI. You may need to log in to or out of providers in the Pi CLI before they appear on this screen.',
+  prime: 'Connect accounts, choose which providers and their models appear in GooeyPi, and browse every model Prime Agent supports. You may need to log in to or out of providers in the Prime Agent CLI before they appear on this screen.',
 }
 
 /** The Providers settings page: heading plus the provider/model catalog section. */
