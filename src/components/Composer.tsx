@@ -193,6 +193,7 @@ export const Composer = memo(function Composer({
   const worktreeMenuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const mentionHighlightRef = useRef<HTMLDivElement>(null)
+  const acceptedMentionRef = useRef<{ start: number; text: string } | null>(null)
   const submittingRef = useRef(false)
   const pendingImagesRef = useRef(0)
   const imagesRef = useRef<ComposerImage[]>([])
@@ -219,7 +220,17 @@ export const Composer = memo(function Composer({
   }, [capabilityMentions, sessionMentions, value])
 
   useEffect(() => {
-    setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : /(?:^|\s)@([^@\n]*)$/.test(value) ? 'mention' : null)
+    const mentionMatch = /(?:^|\s)@([^@\n]*)$/.exec(value)
+    const mentionStart = mentionMatch ? value.length - mentionMatch[1].length - 1 : -1
+    const acceptedMention = acceptedMentionRef.current
+    const suppressAcceptedMention = Boolean(
+      mentionMatch
+      && acceptedMention
+      && mentionStart === acceptedMention.start
+      && value.slice(acceptedMention.start, acceptedMention.start + acceptedMention.text.length) === acceptedMention.text,
+    )
+    if (acceptedMention && !suppressAcceptedMention) acceptedMentionRef.current = null
+    setMenu(value.startsWith('/') && !value.includes(' ') ? 'command' : mentionMatch && !suppressAcceptedMention ? 'mention' : null)
   }, [value])
   useEffect(() => {
     setSessionReferenceIds((current) => {
@@ -422,10 +433,16 @@ export const Composer = memo(function Composer({
     if (!match) { insert(`@${label} `); return }
     const query = match[1]
     const start = value.length - query.length
+    const mentionStart = start - 1
+    const acceptedText = `@${label} `
     if (textarea) {
       textarea.setRangeText(`${label} `, start, value.length, 'end')
+      acceptedMentionRef.current = { start: mentionStart, text: acceptedText }
       setValue(textarea.value)
-    } else setValue(`${value.slice(0, start)}${label} `)
+    } else {
+      acceptedMentionRef.current = { start: mentionStart, text: acceptedText }
+      setValue(`${value.slice(0, start)}${label} `)
+    }
     if (session) {
       const key = session.title.trim().toLocaleLowerCase()
       setSessionReferenceIds((current) => new Map(current).set(key, session.id))
@@ -569,6 +586,7 @@ export const Composer = memo(function Composer({
               void addPastedImages(files)
             }}
             onKeyDown={(event) => {
+              if (event.key === 'Backspace') acceptedMentionRef.current = null
               if (menu && suggestions.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                 event.preventDefault()
                 setActiveSuggestion((current) => (event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current - 1 + suggestions.length) % suggestions.length))

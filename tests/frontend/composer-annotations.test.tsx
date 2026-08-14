@@ -128,6 +128,38 @@ const clickSend = async () => {
 }
 
 describe('Composer session mentions', () => {
+  it('closes an accepted mention and only reopens it after editing back into the query', async () => {
+    const sessions: SessionRecord[] = [{
+      id: '019f0000-0000-7000-8000-000000000001', harness: 'prime', filePath: '/sessions/browser.jsonl', projectPath: '/project', title: 'Browser',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'idle', depth: 0,
+    }]
+    renderComposer({ sessions })
+    await setDraft('@brow')
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.getAttribute('aria-expanded')).toBe('true')
+
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    expect(textarea.value).toBe('@Browser ')
+    expect(textarea.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.composer-menu')).toBeNull()
+
+    await act(async () => {
+      textarea.setRangeText('keep typing', textarea.selectionStart, textarea.selectionEnd, 'end')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(textarea.getAttribute('aria-expanded')).toBe('false')
+
+    await setDraft('@brow')
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
+      textarea.setRangeText('', '@Browser'.length, '@Browser '.length, 'end')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(textarea.value).toBe('@Browser')
+    expect(textarea.getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('suggests sidebar sessions by title and sends a stable UUID routing block', async () => {
     const sessions: SessionRecord[] = [{
       id: '019f0000-0000-7000-8000-000000000002', harness: 'pi', filePath: '/sessions/api.jsonl', projectPath: '/project', title: 'API owner',
