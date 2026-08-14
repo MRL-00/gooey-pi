@@ -110,7 +110,7 @@ describe('release preflight', () => {
   })
 
   test('binds the requested target architecture to the produced mac artifacts', async () => {
-    const { assertRequestedArchitecture } = await import('../scripts/release/verify-package.mjs')
+    const { assertBooleanEntitlement, assertRequestedArchitecture } = await import('../scripts/release/verify-package.mjs')
     const artifacts = { dmg: 'release/mac/arm64/Prime Work-1.0.0-arm64.dmg', zip: 'release/mac/arm64/Prime Work-1.0.0-arm64.zip' }
     expect(() => assertRequestedArchitecture(artifacts, 'arm64')).not.toThrow()
     expect(() => assertRequestedArchitecture(artifacts, undefined)).not.toThrow()
@@ -120,6 +120,11 @@ describe('release preflight', () => {
     expect(() => assertRequestedArchitecture(artifacts, '')).toThrow(/must be arm64 or x64/)
     // package.mjs forwards the authoritative arch into mac post-package verification.
     expect(readFileSync('scripts/release/package.mjs', 'utf8')).toContain("'--arch', arch, '--release-directory'")
+
+    const entitlement = 'com.apple.security.device.audio-input'
+    expect(() => assertBooleanEntitlement(`<key>${entitlement}</key><true/>`, entitlement, 'fixture')).not.toThrow()
+    expect(() => assertBooleanEntitlement(`[Key] ${entitlement}\n[Value]\n[Bool] true`, entitlement, 'fixture')).not.toThrow()
+    expect(() => assertBooleanEntitlement(`<key>${entitlement}</key><false/>`, entitlement, 'fixture')).toThrow(/missing required true entitlement/)
   })
 
   test('requires the Electron 43 Node.js baseline', () => {
@@ -526,7 +531,10 @@ describe('post-package verification helpers', () => {
   test('keeps every platform native unpack allowlist exact and architecture-specific', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(packageJson.author).toEqual({ name: 'GooeyPi contributors', email: '42459108+am-will@users.noreply.github.com' })
-    expect(packageJson.homepage).toBe('https://github.com/am-will/prime-work')
+    expect(packageJson.description).toBe('A desktop workspace for Pi, OMP, and Prime Agent')
+    expect(packageJson.homepage).toBe('https://github.com/am-will/gooey-pi')
+    expect(packageJson.build.productName).toBe('GooeyPi')
+    expect(packageJson.build.appId).toBe('app.gooeypi.desktop')
     expect(packageJson.desktopName).toBe('gooeypi.desktop')
     expect(packageJson.build.linux.synopsis).toBe(packageJson.description)
     expect(packageJson.build.linux.syncDesktopName).toBe(true)

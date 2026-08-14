@@ -14,10 +14,10 @@ import {
 import { runTranscriptRead } from '@/app/transcript-load'
 import { reconcileTranscripts } from '@/app/transcript-reconcile'
 import type { WorkspaceSnapshot } from '@/app/workspace'
-import { createPrimeEventBuffer, replayPrimeEvents } from '@/lib/events'
+import { createPrimeEventBuffer, createSteerPickupEvent, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
 import { findRuntimeForWorkspace, workspaceCwd } from '@/lib/workspace'
-import type { HarnessId, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
+import type { HarnessId, MessagePart, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
 
 let queuedPromptSequence = 0
 
@@ -72,6 +72,7 @@ export function useWorkspaceRuntime({
   const [pendingQueuedPrompts, setPendingQueuedPrompts] = useState<QueuedPrompt[]>([])
   const pendingQueuedPromptsRef = useRef<QueuedPrompt[]>([])
   const queuedPromptsByOwnerRef = useRef<Map<string, QueuedPrompt[]>>(new Map())
+  const observedSteerIdsRef = useRef<Set<string>>(new Set())
   const activeQueuedPromptOwnerRef = useRef<string | undefined>(queuedPromptOwner(initialProject, initialSession, undefined, 0))
   const [activeProjectId, setActiveProjectId] = useState(initialProject?.id)
   const [activeSessionId, setActiveSessionId] = useState(initialSession?.id)
@@ -391,8 +392,8 @@ export function useWorkspaceRuntime({
     return true
   }, [])
 
-  const queuePrompt = useCallback((text: string, intent: PromptDeliveryIntent): string => {
-    const queued: QueuedPrompt = { id: nextQueuedPromptId(), text, intent }
+  const queuePrompt = useCallback((text: string, intent: PromptDeliveryIntent, parts?: MessagePart[], timestamp = Date.now()): string => {
+    const queued: QueuedPrompt = { id: nextQueuedPromptId(), text, intent, timestamp, ...(parts ? { parts } : {}) }
     const next = [...pendingQueuedPromptsRef.current, queued]
     pendingQueuedPromptsRef.current = next
     const owner = activeQueuedPromptOwnerRef.current
@@ -401,6 +402,7 @@ export function useWorkspaceRuntime({
     return queued.id
   }, [])
   const removeQueuedPrompt = useCallback((id: string) => {
+    observedSteerIdsRef.current.delete(id)
     const current = pendingQueuedPromptsRef.current
     const next = current.filter((prompt) => prompt.id !== id)
     if (next.length !== current.length) {
@@ -428,10 +430,63 @@ export function useWorkspaceRuntime({
   const clearQueuedPrompts = useCallback(() => {
     const owner = activeQueuedPromptOwnerRef.current
     if (owner) queuedPromptsByOwnerRef.current.delete(owner)
+    for (const prompt of pendingQueuedPromptsRef.current) observedSteerIdsRef.current.delete(prompt.id)
     pendingQueuedPromptsRef.current = []
     setPendingQueuedPrompts([])
   }, [])
-  const reconcileQueuedPrompts = useCallback((_snapshot: SessionActionSnapshot) => undefined, [])
+  const reconcileQueuedPrompts = useCallback((snapshot: SessionActionSnapshot) => {
+    const localSteers = pendingQueuedPromptsRef.current.filter((prompt) => prompt.intent === 'steer')
+    if (!localSteers.length) return
+
+    // Session action previews are literal for ordinary prompts and may be
+    // compacted for very long ones. Match in queue order so duplicate steers
+    // are still acknowledged one at a time.
+    const unmatchedPreviews = [...snapshot.steering]
+    const stillQueued = new Set<string>()
+    for (const prompt of localSteers) {
+      const previewIndex = unmatchedPreviews.findIndex((preview) => (
+        preview === prompt.text || prompt.text.startsWith(preview) || preview.startsWith(prompt.text)
+      ))
+      if (previewIndex < 0) continue
+      unmatchedPreviews.splice(previewIndex, 1)
+      stillQueued.add(prompt.id)
+      observedSteerIdsRef.current.add(prompt.id)
+    }
+
+    const settled = localSteers.filter((prompt) => (
+      !stillQueued.has(prompt.id) && observedSteerIdsRef.current.has(prompt.id)
+    ))
+    if (!settled.length) return
+
+    // A disappearing preview is a pickup only when the scheduler exposes an
+    // active turn. Queue clearing/abort removes the pending row too, but must
+    // not inject the cancelled message into transcript history.
+    const pickedUp = snapshot.active?.kind === 'turn' ? settled : []
+    const settledIds = new Set(settled.map((prompt) => prompt.id))
+    const next = pendingQueuedPromptsRef.current.filter((prompt) => !settledIds.has(prompt.id))
+    pendingQueuedPromptsRef.current = next
+    const owner = activeQueuedPromptOwnerRef.current
+    if (owner) {
+      if (next.length) queuedPromptsByOwnerRef.current.set(owner, next)
+      else queuedPromptsByOwnerRef.current.delete(owner)
+    }
+    for (const prompt of settled) observedSteerIdsRef.current.delete(prompt.id)
+    setPendingQueuedPrompts(next)
+
+    // Keep the pickup boundary in the same ordered event buffer as preceding
+    // tool output. Directly mutating messages here would let an unflushed tool
+    // event jump below the newly inserted user row.
+    if (pickedUp.length) queueAgentEvent(createSteerPickupEvent(pickedUp))
+  }, [queueAgentEvent])
+
+  const acknowledgeSteer = useCallback((id: string, snapshot: SessionActionSnapshot) => {
+    if (!pendingQueuedPromptsRef.current.some((prompt) => prompt.id === id && prompt.intent === 'steer')) return
+    // The command response proves admission. Reconcile against the
+    // post-admission snapshot returned with it so a steer that was picked up
+    // before the renderer received either scheduler edge cannot remain stuck.
+    observedSteerIdsRef.current.add(id)
+    reconcileQueuedPrompts(snapshot)
+  }, [reconcileQueuedPrompts])
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const locallyOwnedActiveSession = Boolean(
@@ -507,6 +562,7 @@ export function useWorkspaceRuntime({
     removeQueuedPrompt,
     clearQueuedPrompts,
     reconcileQueuedPrompts,
+    acknowledgeSteer,
     activeProjectId,
     activeSessionId,
     runtime,

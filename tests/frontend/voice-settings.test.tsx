@@ -109,6 +109,14 @@ describe('Voice settings setup flow', () => {
     expect(saveApiKey).toHaveBeenCalledWith('openai', 'sk-test-key')
   })
 
+  it('explains secure keychain retrieval in the realtime section', async () => {
+    await render(<Harness voice={voiceBridge()} />)
+
+    const realtime = container.querySelector<HTMLElement>('[aria-labelledby="voice-realtime-title"]')!
+    expect(realtime.textContent).toContain('Saved API keys are encrypted using your operating system’s internal keychain.')
+    expect(realtime.textContent).toContain('may ask for your password to retrieve the key')
+  })
+
   it('allows a session key and warns that it will not persist without secure Linux storage', async () => {
     const message = 'GooeyPi will not save voice API keys because this Linux desktop is using unprotected basic-text storage. Install and unlock GNOME Keyring (libsecret) or KWallet, then restart GooeyPi.'
     const saveApiKey = vi.fn().mockResolvedValue({

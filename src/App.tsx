@@ -346,7 +346,10 @@ export default function App() {
     workspace, settingsState, layout, provider, pluginSkills,
     submissionAdmissionRef, gitRequestRef, demoTimerRef,
     setProjects, setSessions, setGitSnapshot, setView, setPaletteOpen, setToast, setSubmitting,
-    refreshSchedules, refreshHeartbeats, clearSessionAttention, reportError,
+    refreshSchedules, refreshHeartbeats,
+    resetBrowserView: () => setBrowserGeneration((value) => value + 1),
+    closeTerminalForSession: (sessionPath) => setTerminalSessions((current) => current.filter((terminal) => terminal.sessionPath !== sessionPath)),
+    clearSessionAttention, reportError,
   })
   const handleVoiceTaskStarted = useCallback(async (task: VoiceTaskStarted) => {
     if (!bridge) return
@@ -465,6 +468,10 @@ export default function App() {
     () => workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'queue'),
     [workspace.pendingQueuedPrompts],
   )
+  const pendingSteers = useMemo<QueuedPrompt[]>(
+    () => workspace.pendingQueuedPrompts.filter((pending) => pending.intent === 'steer'),
+    [workspace.pendingQueuedPrompts],
+  )
   const toggleVoice = useCallback(() => {
     const nextOpen = !voiceOrbOpen
     setFocusPetVoiceControl(nextOpen)
@@ -472,14 +479,14 @@ export default function App() {
     setVoiceOrbOpen(nextOpen)
   }, [voiceOrbOpen])
   useEffect(() => {
-    if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || workspace.pendingQueuedPrompts.length === 0) return
-    const next = workspace.pendingQueuedPrompts[0]
+    if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || queuedMessages.length === 0) return
+    const next = queuedMessages[0]
     queuedFlushRef.current = true
     void sendPrompt(next.text, [], 'queue')
       // Remove on failure too: sendPrompt already surfaced the error, and
       // leaving the prompt queued would retry in a hot loop.
       .finally(() => { workspace.removeQueuedPrompt(next.id); queuedFlushRef.current = false })
-  }, [bridge, busy, externalSessionRunning, sendPrompt, submitting, workspace.pendingQueuedPrompts, workspace.removeQueuedPrompt])
+  }, [bridge, busy, externalSessionRunning, queuedMessages, sendPrompt, submitting, workspace.removeQueuedPrompt])
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} clearedActivity={clearedActivity} onOpen={selectSession} onClear={clearActivity} />
@@ -499,7 +506,7 @@ export default function App() {
       <div className="workbench__content">{view === 'session' ? <div ref={layout.workspaceRowRef} className="session-workspace" style={{ '--inspector-width': `${layout.inspectorWidth}px`, '--terminal-height': `${layout.terminalHeight}px` } as CSSProperties}>
         <div ref={layout.sessionWorkspaceRef} className="conversation-column">
           <main className="conversation-pane">
-            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} harness={activeHarness} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} showPinnedChanges={false} bottomDockHasChanges={Boolean(git.files.length && settingsState.settings.showFileChangesPopup && !changesCardDismissed)} queuedMessageCount={queuedMessages.length} onOpenSessionReference={(sessionId, harness) => { const session = sessions.find((candidate) => candidate.id === sessionId && candidate.harness === harness && !candidate.archived && candidate.depth === 0); if (session) void selectSession(session); else setToast('That referenced session is archived or no longer available.') }} /></Suspense>
+            <Suspense fallback={<LoadingPanel label="conversation" />}><Transcript key={workspace.activeSessionId ?? 'new-session'} messages={workspace.messages} git={git} harness={activeHarness} loading={workspace.loadingSession} active={busy || activeSession?.status === 'running'} showReasoning={settingsState.settings.showReasoningSummaries} showTools={settingsState.settings.showToolCalls} onOpenChanges={openChanges} onSuggestion={(prompt) => { void sendPrompt(prompt).catch(() => undefined) }} suggestionsDisabled={!activeProject || workspace.loadingSession || submitting} showPinnedChanges={false} bottomDockHasChanges={Boolean(git.files.length && settingsState.settings.showFileChangesPopup && !changesCardDismissed)} queuedMessageCount={queuedMessages.length} pendingSteers={pendingSteers} onOpenSessionReference={(sessionId, harness) => { const session = sessions.find((candidate) => candidate.id === sessionId && candidate.harness === harness && !candidate.archived && candidate.depth === 0); if (session) void selectSession(session); else setToast('That referenced session is archived or no longer available.') }} /></Suspense>
             <div className="conversation-bottom-dock">
               {git.files.length && settingsState.settings.showFileChangesPopup && !changesCardDismissed ? <ChangesCard git={git} onOpenChanges={openChanges} onClose={() => setChangesCardDismissed(true)} /> : null}
               <Composer key={workspace.activeSessionId ? `${activeProject?.id ?? 'no-project'}:${workspace.activeSessionId}` : `${activeProject?.id ?? 'no-project'}:new:${workspace.workspaceGeneration}`} busy={busy} submitting={submitting} loading={workspace.loadingSession} disabled={!activeProject} messageEnterAction={settingsState.settings.messageEnterAction} voice={bridge?.voice} transcriptionProvider={settingsState.settings.voiceTranscriptionProvider} model={provider.model} effort={provider.effort} modelsByProvider={provider.modelsByProvider} providers={provider.catalog?.providers ?? EMPTY_PROVIDERS} reasoningLevels={provider.reasoningLevels} fast={provider.fast} fastSupported={provider.selectedModel?.fastModeSupported ?? false} fastAvailable={workspace.runtime?.fastModeAvailable !== false} worktrees={worktrees} activeWorktreePath={activeProject?.primaryFolder} checkoutLabel={git.branch ?? activeProject?.gitBranch ?? activeProject?.name} worktreesLoading={worktreesLoading} onOpenWorktree={bridge && activeProject && !activeProject.inferred && worktrees.length > 0 ? openWorktree : undefined} onCreateWorktree={bridge && activeProject && !activeProject.inferred && worktrees.length > 0 ? createWorktree : undefined} agentName={HARNESS_AGENT_NAMES[activeHarness]} shortName={HARNESS_SHORT_NAMES[activeHarness]} harness={activeHarness} imageInputSupported={provider.model === 'auto' || Boolean(provider.selectedModel?.input.includes('image'))} contextUsage={workspace.runtime?.contextUsage} skills={pluginSkills.skills} sessions={mentionableSessions} annotations={browserAnnotations.annotations} terminalSelection={terminalSelection} getTerminalContext={() => activeTerminalSession ? terminalDrawerRefs.current.get(activeTerminalSession.id)?.readSelectionContext() : undefined} queuedMessages={queuedMessages} onDeleteQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} onEditQueuedMessage={(message) => workspace.removeQueuedPrompt(message.id)} sendSignal={browserAnnotations.sendSignal} onModelChange={provider.changeModel} onEffortChange={provider.changeEffort} onFastChange={provider.changeFast} onSend={sendPrompt} onStop={stopRuntime} onRemoveAnnotation={browserAnnotations.remove} onClearAnnotations={browserAnnotations.clear} onClearTerminalSelection={() => { if (activeTerminalSession) terminalDrawerRefs.current.get(activeTerminalSession.id)?.clearSelection() }} />

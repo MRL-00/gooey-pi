@@ -29,6 +29,25 @@ function errorMessage(error: unknown): string {
   return message.replace(/[\r\n\t]+/g, ' ').slice(0, 240) || 'Update check failed'
 }
 
+export interface ManualUpdateNotification {
+  type: 'info' | 'error'
+  message: string
+  detail?: string
+}
+
+export function manualUpdateNotification(state: AppUpdateState): ManualUpdateNotification {
+  if (state.phase === 'error') return {
+    type: 'error',
+    message: 'GooeyPi Update Check Failed',
+    detail: state.message,
+  }
+  const available = state.phase === 'available' || state.phase === 'downloading' || state.phase === 'downloaded'
+  return {
+    type: 'info',
+    message: available ? 'GooeyPi Update Available' : 'No GooeyPi Update Available',
+  }
+}
+
 export function getAutoUpdater(): AppUpdater {
   // electron-updater is CommonJS; accessing through its default export keeps
   // the bundled Electron ESM output compatible with both Node module modes.
@@ -95,6 +114,7 @@ export class UpdateService {
 
   check(): Promise<AppUpdateState> {
     if (!this.options.enabled) return Promise.resolve(this.getState())
+    if (this.state.phase === 'available' || this.state.phase === 'downloading' || this.state.phase === 'downloaded') return Promise.resolve(this.getState())
     if (this.checkPromise) return this.checkPromise
     this.checkPromise = this.updater.checkForUpdates()
       .then(() => this.getState())

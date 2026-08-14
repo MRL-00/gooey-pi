@@ -209,6 +209,13 @@ export class TerminalService {
     await Promise.all([...new Set([...this.terminationPromises.values(), ...starting])])
   }
 
+  /** Terminates every PTY and descendant process tree bound to one session. */
+  async killForSession(sessionPathValue: unknown): Promise<void> {
+    const sessionPath = canonicalSessionPath(requireString(sessionPathValue, 'sessionPath', { min: 1, max: 4096 }))
+    const matches = [...this.terminals].filter(([, terminal]) => terminal.sessionPath === sessionPath)
+    await Promise.all(matches.map(([id, terminal]) => this.terminate(id, terminal)))
+  }
+
   async killForProjectRoots(roots: string[]): Promise<void> {
     const matches = [...this.terminals].filter(([, terminal]) => roots.some((root) => isPathWithin(root, terminal.cwd)))
     await Promise.all(matches.map(([id, terminal]) => this.terminate(id, terminal)))

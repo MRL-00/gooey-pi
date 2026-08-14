@@ -54,6 +54,25 @@ function assertFuses(wire) {
   }
 }
 
+export function assertBooleanEntitlement(output, key, label) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const xml = new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<true\\s*/>`, 'i')
+  const dictionary = new RegExp(`\\[Key\\]\\s*${escapedKey}\\s*\\[Value\\]\\s*\\[Bool\\]\\s*true`, 'i')
+  if (!xml.test(output) && !dictionary.test(output)) {
+    throw new Error(`${label} is missing required true entitlement ${key}`)
+  }
+}
+
+function assertPackagedMicrophoneEntitlements(app, productName) {
+  const frameworks = join(app, 'Contents', 'Frameworks')
+  const helpers = findFiles(frameworks, (path, stat) => stat.isDirectory() && basename(path).startsWith(`${productName} Helper`) && path.endsWith('.app'))
+  if (!helpers.length) throw new Error(`${productName} package contains no Electron helper applications`)
+  for (const target of [app, ...helpers]) {
+    const label = target === app ? `${productName} app` : basename(target)
+    assertBooleanEntitlement(run('codesign', ['-d', '--entitlements', '-', target]), 'com.apple.security.device.audio-input', label)
+  }
+}
+
 async function verifyApp({ app, artifact, mode, expectedTeam }) {
   const productName = basename(app, '.app')
   const resources = join(app, 'Contents', 'Resources')
@@ -76,6 +95,7 @@ async function verifyApp({ app, artifact, mode, expectedTeam }) {
     const signature = run('codesign', ['-dv', '--verbose=4', app])
     const actualTeam = parseTeamIdentifier(signature)
     if (actualTeam !== expectedTeam) throw new Error(`Signature Team ID ${actualTeam ?? '<missing>'} does not match ${expectedTeam}`)
+    assertPackagedMicrophoneEntitlements(app, productName)
     run('xcrun', ['stapler', 'validate', app])
     run('spctl', ['--assess', '--type', 'execute', '--verbose=4', app])
   }
@@ -154,7 +174,7 @@ export async function verifyPackage({ mode, releaseDirectory = resolve('release'
 
   const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
   console.log(
-    `Verified ${mode} DMG and ZIP for GooeyPi ${packageJson.version}: archive integrity, contained application, exact native unpack allowlist and architectures, Electron fuses, and package size budgets (DMG payload: ${describeSizeMetrics(dmgMetrics)}; ZIP payload: ${describeSizeMetrics(zipMetrics)})${mode === 'public' ? ', signatures, notarization staples, and Gatekeeper' : ''}.`,
+    `Verified ${mode} DMG and ZIP for GooeyPi ${packageJson.version}: archive integrity, contained application, exact native unpack allowlist and architectures, Electron fuses, and package size budgets (DMG payload: ${describeSizeMetrics(dmgMetrics)}; ZIP payload: ${describeSizeMetrics(zipMetrics)})${mode === 'public' ? ', signatures, microphone entitlements, notarization staples, and Gatekeeper' : ''}.`,
   )
 }
 

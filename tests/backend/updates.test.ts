@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_CHECK_INTERVAL_MS, UpdateService, type UpdateAdapter } from '../../electron/main/updates'
+import { DEFAULT_CHECK_INTERVAL_MS, manualUpdateNotification, UpdateService, type UpdateAdapter } from '../../electron/main/updates'
 
 class FakeUpdater extends EventEmitter {
   autoDownload = false
@@ -15,6 +15,12 @@ afterEach(() => {
 })
 
 describe('automatic update service', () => {
+  it('uses explicit system messages for manual update checks', () => {
+    expect(manualUpdateNotification({ phase: 'not-available' })).toMatchObject({ type: 'info', message: 'No GooeyPi Update Available' })
+    expect(manualUpdateNotification({ phase: 'available', version: '0.2.0' })).toMatchObject({ type: 'info', message: 'GooeyPi Update Available' })
+    expect(manualUpdateNotification({ phase: 'downloaded', version: '0.2.0' })).toMatchObject({ type: 'info', message: 'GooeyPi Update Available' })
+  })
+
   it('automatically checks installed builds and configures download-on-discovery', async () => {
     vi.useFakeTimers()
     const updater = new FakeUpdater()
@@ -61,6 +67,15 @@ describe('automatic update service', () => {
     expect(service.install()).toBe(true)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
     expect(changed).toHaveBeenCalled()
+  })
+
+  it('keeps an active release state while a manual check is requested', async () => {
+    const updater = new FakeUpdater()
+    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true })
+
+    updater.emit('update-available', { version: '0.2.0' })
+    await expect(service.check()).resolves.toEqual({ phase: 'available', version: '0.2.0' })
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
   })
 
   it('keeps development builds offline and explains why updates are unavailable', async () => {

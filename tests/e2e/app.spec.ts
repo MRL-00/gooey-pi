@@ -619,25 +619,8 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.locator('.sidebar__brand small')).toHaveText('Work')
     await expect(page.locator('.sidebar__brand .prime-mark svg path')).toHaveCount(2)
     await expect(page.locator('.prime-mark img')).toHaveCount(0)
-    const updateControl = page.locator('.sidebar__footer .sidebar-update')
-    await expect(updateControl).toContainText('Automatic updates')
-    await expect(updateControl.locator('.lucide-download')).toBeVisible()
-    await expect(updateControl.evaluate((button) => button.nextElementSibling?.getAttribute('title'))).resolves.toBe('Settings')
-    const updateColor = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
-      const reference = document.createElement('span')
-      reference.style.color = 'var(--prime)'
-      document.body.append(reference)
-      const colors = { actual: getComputedStyle(icon).color, theme: getComputedStyle(reference).color }
-      reference.remove()
-      return colors
-    })
-    expect(updateColor.actual).toBe(updateColor.theme)
-    const updateIconBounds = await updateControl.locator('.sidebar-update__icon').evaluate((icon) => {
-      const { width, height } = icon.getBoundingClientRect()
-      return { width, height }
-    })
-    expect(updateIconBounds.width).toBeCloseTo(22, 0)
-    expect(updateIconBounds.height).toBeCloseTo(22, 0)
+    await expect(page.locator('.sidebar__footer .sidebar-update')).toHaveCount(0)
+    await expect(page.locator('.sidebar__footer button[title="Settings"]')).toBeVisible()
   })
 
   test('left aligns the harness picker for Linux and Windows chrome', async () => {
@@ -989,6 +972,63 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
     await expect(page.getByText('Primary workspace fixture', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Archived', exact: true })).toHaveCount(0)
+  })
+
+  test('destroys an open session browser guest when its thread is archived', async () => {
+    const sessionRow = page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' })
+    await sessionRow.locator('.session-row').click()
+    await page.getByRole('tab', { name: 'Browser' }).click()
+    const preview = page.locator('.browser-preview webview[partition="persist:prime-work-browser"]')
+    await expect(preview).toHaveCount(1)
+    await expect.poll(() => preview.evaluate(async (node) => {
+      const webview = node as HTMLElement & {
+        executeJavaScript(script: string): Promise<unknown>
+        getWebContentsId(): number
+      }
+      await webview.executeJavaScript('window.__fixtureGameTimer = setInterval(() => {}, 10)')
+      return webview.getWebContentsId()
+    })).toBeGreaterThan(0)
+    const guestId = await preview.evaluate((node) => (node as HTMLElement & { getWebContentsId(): number }).getWebContentsId())
+    expect(await app!.evaluate(({ webContents }, id) => Boolean(webContents.fromId(id)), guestId)).toBe(true)
+
+    await sessionRow.getByTitle('Archive Hermetic desktop fixture').click()
+    await sessionRow.getByTitle('Confirm archive Hermetic desktop fixture').click()
+
+    await expect(sessionRow).toHaveCount(0)
+    await expect.poll(() => app!.evaluate(({ webContents }, id) => {
+      const guest = webContents.fromId(id)
+      return guest === undefined || guest.isDestroyed()
+    }, guestId)).toBe(true)
+    await expect.poll(() => preview.evaluate((node) => (node as HTMLElement & { getWebContentsId(): number }).getWebContentsId())).not.toBe(guestId)
+  })
+
+  test('stops a dev server launched from the thread terminal when archived', async () => {
+    const sessionRow = page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' })
+    await sessionRow.locator('.session-row').click()
+    await page.getByLabel(/Toggle terminal/).click()
+    const terminal = page.locator('.terminal-drawer:not([hidden])')
+    const input = terminal.locator('.xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    const pidFile = join(fixtureRoot, 'archived-dev-server.pid')
+    await input.click()
+    await page.keyboard.type(`/bin/sh -c 'echo $$ > ${pidFile}; while true; do /bin/sleep 1; done'`)
+    await page.keyboard.press('Enter')
+    await expect.poll(() => existsSync(pidFile)).toBe(true)
+    const serverPid = Number(readFileSync(pidFile, 'utf8').trim())
+    expect(serverPid).toBeGreaterThan(0)
+
+    try {
+      await sessionRow.getByTitle('Archive Hermetic desktop fixture').click()
+      await sessionRow.getByTitle('Confirm archive Hermetic desktop fixture').click()
+
+      await expect(sessionRow).toHaveCount(0)
+      await expect(page.locator('.terminal-drawer')).toHaveCount(0)
+      await expect.poll(() => {
+        try { process.kill(serverPid, 0); return false } catch { return true }
+      }).toBe(true)
+    } finally {
+      try { process.kill(serverPid, 'SIGKILL') } catch { /* archive cleanup succeeded */ }
+    }
   })
 
   test('enforces the live preload and IPC frame boundaries', async () => {

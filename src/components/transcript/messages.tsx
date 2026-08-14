@@ -247,13 +247,14 @@ function UserText({ text, onOpenSessionReference }: { text: string; onOpenSessio
   )
 }
 
-export const UserMessage = memo(function UserMessage({ message, onOpenSessionReference }: { message: TranscriptMessage; onOpenSessionReference?(sessionId: string, harness: HarnessId): void }) {
+export const UserMessage = memo(function UserMessage({ message, onOpenSessionReference, pendingSteer = false }: { message: TranscriptMessage; onOpenSessionReference?(sessionId: string, harness: HarnessId): void; pendingSteer?: boolean }) {
   const copyableText = message.parts.filter((part) => part.type === 'text').map((part) => visibleUserText(part.text)).filter(Boolean).join('\n')
   return (
     <article className="message message--user">
       <div className="user-bubble">
         {message.parts.map((part, index) => (part.type === 'text' ? <UserText key={index} text={part.text} onOpenSessionReference={onOpenSessionReference} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null))}
       </div>
+      {pendingSteer ? <div className="message__pending-steer" role="status">Accepted — waiting for the next safe steering point</div> : null}
       <MessageActions message={message} text={copyableText} />
     </article>
   )

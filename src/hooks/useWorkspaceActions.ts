@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { requestFailureMessage } from '@/app/workspace'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
+import { parseSessionActionSnapshot } from '@/lib/session-actions'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
@@ -11,6 +12,7 @@ import type { usePanelLayout } from '@/hooks/usePanelLayout'
 import type { usePluginSkills } from '@/hooks/usePluginSkills'
 import type { useProviderCatalog } from '@/hooks/useProviderCatalog'
 import type { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
+import { mergeSessionCatalog } from '@/hooks/useBootstrap'
 
 export interface WorkspaceActionsDeps {
   bridge: PrimeWorkApi | null
@@ -35,11 +37,66 @@ export interface WorkspaceActionsDeps {
   setSubmitting: Dispatch<SetStateAction<boolean>>
   refreshSchedules(): Promise<void>
   refreshHeartbeats(): Promise<void>
+  resetBrowserView(): void
+  closeTerminalForSession(sessionPath: string): void
   clearSessionAttention(session: SessionRecord): void
   reportError(error: unknown): void
 }
 
 export type PrimeMcpCommand = { type: 'open' } | { type: 'login'; server: string }
+
+interface StartedSessionIndexInput {
+  bridge: PrimeWorkApi
+  harness: ProjectRecord['harness']
+  sessionFile: string | undefined
+  setSessions: Dispatch<SetStateAction<SessionRecord[]>>
+  fallbackTitle?: string
+  isCurrent?(): boolean
+}
+
+export async function indexStartedSession({ bridge, harness, sessionFile, setSessions, fallbackTitle, isCurrent }: StartedSessionIndexInput): Promise<SessionRecord | undefined> {
+  if (!sessionFile) return
+  // Runtime creation and filesystem watch delivery are separate async paths.
+  // Make the created file part of the renderer catalog before prompt admission
+  // continues, so navigating away cannot expose a watch-timing visibility gap.
+  const catalog = await bridge.sessions.list(undefined, true, harness, true)
+  const indexedSession = catalog.find((session) => session.filePath === sessionFile)
+  if (isCurrent && !isCurrent()) return indexedSession
+  setSessions((current) => mergeSessionCatalog(current, catalog, sessionFile, new Map(), 0).map((session) => (
+    fallbackTitle && session.filePath === sessionFile && session.title === 'Untitled session'
+      ? { ...session, title: fallbackTitle }
+      : session
+  )))
+  return indexedSession
+}
+
+export function sessionTitleFromPrompt(prompt: string): string {
+  const oneLine = prompt.replace(/\s+/g, ' ').trim()
+  return oneLine.length > 100 ? `${oneLine.slice(0, 99)}…` : oneLine
+}
+
+interface StartedSessionTitleInput extends StartedSessionIndexInput {
+  runtimeId: string
+  prompt: string
+}
+
+export async function titleStartedSession({ bridge, harness, runtimeId, sessionFile, prompt, setSessions, isCurrent }: StartedSessionTitleInput): Promise<void> {
+  if (!sessionFile) return
+  const title = sessionTitleFromPrompt(prompt)
+  if (!title) return
+
+  // Prompt admission is the first point where this is a real user task. Show
+  // its prompt-derived title immediately, then persist it through the harness.
+  // Both persistence and the forced read are best-effort because a delivered
+  // prompt must never be reported as failed solely due to title bookkeeping.
+  if (!isCurrent || isCurrent()) {
+    setSessions((current) => current.map((session) => session.filePath === sessionFile && session.title === 'Untitled session'
+      ? { ...session, title }
+      : session))
+  }
+  await bridge.agent.command(runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
+  await indexStartedSession({ bridge, harness, sessionFile, setSessions, fallbackTitle: title, isCurrent }).catch(() => undefined)
+}
 
 export function parsePrimeMcpCommand(prompt: string): PrimeMcpCommand | undefined {
   const value = prompt.trim()
@@ -154,13 +211,19 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error) }
   }
   const setSessionArchived = async (session: SessionRecord, archived: boolean) => {
-    const { bridge, workspace, setSessions, setToast, clearSessionAttention, reportError } = getDeps()
+    const { bridge, workspace, setSessions, setToast, resetBrowserView, closeTerminalForSession, clearSessionAttention, reportError } = getDeps()
     if (!bridge) return
     try {
       await bridge.sessions.archive(session.filePath, archived)
-      if (archived) clearSessionAttention(session)
+      if (archived) {
+        clearSessionAttention(session)
+        closeTerminalForSession(session.filePath)
+      }
       setSessions((items) => items.map((item) => item.id === session.id ? { ...item, archived, unread: archived ? false : item.unread } : item))
-      if (archived && workspace.workspaceRef.current.session?.id === session.id) newSession()
+      if (archived && workspace.workspaceRef.current.session?.id === session.id) {
+        resetBrowserView()
+        newSession()
+      }
       setToast(archived ? 'Session archived.' : 'Session restored.')
     } catch (error) { reportError(error) }
   }
@@ -220,22 +283,23 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       }
       if (intent === 'steer') {
         const sentAt = Date.now()
-        const userMessageId = `user-${sentAt}`
-        workspace.setMessages((items) => [...items, { id: userMessageId, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }])
+        const pendingSteerId = workspace.queuePrompt(prompt, intent, [{ type: 'text', text: prompt }, ...images], sentAt)
         if (currentWorkspace.sessionFile) {
           const sentAtIso = new Date(sentAt).toISOString()
           setSessions((items) => items.map((session) => session.filePath === currentWorkspace.sessionFile ? { ...session, lastUserMessageAt: sentAtIso } : session))
         }
         try {
-          await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
+          const response = await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
+          const actions = parseSessionActionSnapshot(response.sessionActions)
+          if (actions) workspace.acknowledgeSteer(pendingSteerId, actions)
           return
         } catch (error) {
+          workspace.removeQueuedPrompt(pendingSteerId)
           if (workspace.workspaceRef.current.generation === currentWorkspace.generation) {
-            // Replace the optimistic message with a durable system row: a toast
-            // alone is easy to miss, and a silently vanishing steer reads as
-            // "sent but ignored".
+            // Keep a durable failure row: a toast alone is easy to miss, and a
+            // silently vanishing steer reads as "sent but ignored".
             workspace.setMessages((items) => [
-              ...items.filter((message) => message.id !== userMessageId),
+              ...items,
               { id: `error-${Date.now()}`, role: 'system', timestamp: Date.now(), parts: [{ type: 'text', text: `Steer was not delivered: ${requestFailureMessage(error)} Your draft was restored.` }] },
             ])
           }
@@ -305,6 +369,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           return
         }
         let startedRuntime = false
+        let startedSessionNeedsTitle = false
         if (!activeRuntime) {
           workspace.attachRuntime(undefined, generation)
           if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
@@ -326,6 +391,18 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           }
           startedRuntime = true
           if (workspace.workspaceRef.current.generation !== generation) { await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false); return }
+          const indexedSession = await indexStartedSession({
+            bridge,
+            harness: activeHarness,
+            sessionFile: activeRuntime.sessionFile,
+            setSessions,
+            isCurrent: () => workspace.workspaceRef.current.generation === generation,
+          })
+          if (workspace.workspaceRef.current.generation !== generation) {
+            await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
+            return
+          }
+          startedSessionNeedsTitle = !indexedSession || indexedSession.title === 'Untitled session'
         }
         if (activeRuntime.cwd !== selected.cwd || (selected.sessionFile && activeRuntime.sessionFile !== selected.sessionFile)) {
           if (startedRuntime) await bridge.agent.stop(activeRuntime.runtimeId).catch(() => false)
@@ -333,16 +410,31 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         workspace.attachRuntime(activeRuntime, generation)
         if (activeRuntime.isStreaming) {
-          // The runtime queues the follow_up itself; adding it to the local
-          // queue as well would deliver it a second time via the idle flush.
-          await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
-          if (intent === 'steer') appendUserMessage()
+          // Follow-ups are daemon-owned. Steers get a renderer-only pending
+          // row so pickup can move them into history without redelivery.
+          if (intent === 'steer') queuedPromptId = workspace.queuePrompt(prompt, intent, userMessage.parts, sentAt)
+          const response = await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
+          if (intent === 'steer' && queuedPromptId) {
+            const actions = parseSessionActionSnapshot(response.sessionActions)
+            if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
+          }
         } else {
           startedPrompt = true
           appendUserMessage()
           workspace.setRuntime({ ...activeRuntime, isStreaming: true })
           workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
           await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
+          if (startedRuntime && startedSessionNeedsTitle) {
+            void titleStartedSession({
+              bridge,
+              harness: activeHarness,
+              runtimeId: activeRuntime.runtimeId,
+              sessionFile: activeRuntime.sessionFile,
+              prompt,
+              setSessions,
+              isCurrent: () => workspace.workspaceRef.current.generation === generation,
+            })
+          }
         }
       } catch (error) {
         if (queuedPromptId) workspace.removeQueuedPrompt(queuedPromptId)

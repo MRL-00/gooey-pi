@@ -174,6 +174,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const settingsShortcut = shortcutLabel(platform, ['Primary', ','])
   const updateCopy = updateControlCopy(updateState)
   const updateBusy = updateState.phase === 'checking' || updateState.phase === 'available' || updateState.phase === 'downloading'
+  const updateVisible = updateState.phase === 'available' || updateState.phase === 'downloading' || updateState.phase === 'downloaded'
   useEffect(() => {
     if (!harnessMenuOpen) return
     const dismiss = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.brand-switcher')) setHarnessMenuOpen(false) }
@@ -324,10 +325,12 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
 
       <div className="sidebar__footer">
         <button type="button" title="Commands" onClick={onOpenPalette}><Search size={15} /><span>Commands</span><kbd>{commandsShortcut}</kbd></button>
-        <button type="button" className={`sidebar-update sidebar-update--${updateState.phase}`} title={updateCopy.title} aria-label={updateCopy.title} aria-live="polite" disabled={updateBusy} onClick={() => { void onUpdateAction?.() }}>
-          <span className="sidebar-update__icon" style={{ '--update-progress': `${updateState.percent ?? 0}%` } as CSSProperties}><Download size={12} /></span>
-          <span>{updateCopy.label}</span>
-        </button>
+        {updateVisible ? (
+          <button type="button" className={`sidebar-update sidebar-update--${updateState.phase}`} title={updateCopy.title} aria-label={updateCopy.title} aria-live="polite" disabled={updateBusy} onClick={() => { void onUpdateAction?.() }}>
+            <span className="sidebar-update__icon" style={{ '--update-progress': `${updateState.percent ?? 0}%` } as CSSProperties}><Download size={12} /></span>
+            <span>{updateCopy.label}</span>
+          </button>
+        ) : null}
         <button type="button" title="Settings" className={activeView === 'settings' ? 'is-active' : ''} onClick={() => onNavigate('settings')}><Settings size={15} /><span>Settings</span><kbd>{settingsShortcut}</kbd></button>
       </div>
       {renameTarget ? <Modal title="Rename session" onClose={() => setRenameTarget(null)} footer={<><button type="button" className="button" onClick={() => setRenameTarget(null)}>Cancel</button><button type="button" className="button button--primary" disabled={!renameValue.trim()} onClick={() => { const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) }}>Rename</button></>}><label className="field"><span>Session name</span><input autoFocus value={renameValue} maxLength={200} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && renameValue.trim()) { event.preventDefault(); const target = renameTarget; const title = renameValue.trim(); setRenameTarget(null); void onRenameSession(target, title) } }}/></label></Modal> : null}

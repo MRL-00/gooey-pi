@@ -279,6 +279,41 @@ export class AgentBrowserService {
     return true
   }
 
+  /**
+   * Permanently releases every browser guest owned by a session. Archiving is
+   * a lifecycle boundary, so merely dropping the tab records is insufficient:
+   * hidden webview guests can keep media, timers, workers, and renderer
+   * processes alive after their thread disappears from the UI.
+   */
+  closeForSession(sessionKeyValue: unknown): boolean {
+    if (this.closed) return false
+    const sessionKey = canonicalSessionPath(requireString(sessionKeyValue, 'sessionFile', { min: 1, max: 4096 }))
+    const guests = new Map<number, WebContents>()
+    const ownedTabs = [...this.tabs.values()].filter((tab) => tab.sessionKey === sessionKey)
+    for (const tab of ownedTabs) {
+      const guest = tab.webContentsId === null ? undefined : this.options.getGuest(tab.webContentsId)
+      if (guest && !guest.isDestroyed()) guests.set(guest.id, guest)
+      this.releaseTab(tab)
+      this.tabs.delete(tab.tabId)
+    }
+    const preview = this.previewTab?.sessionKey === sessionKey ? this.previewTab : null
+    if (preview) {
+      const guest = preview.webContentsId === null ? undefined : this.options.getGuest(preview.webContentsId)
+      if (guest && !guest.isDestroyed()) guests.set(guest.id, guest)
+      this.previewTab = null
+    }
+    if (!ownedTabs.length && !preview) return false
+    this.activeBySession.delete(sessionKey)
+    for (const guest of guests.values()) {
+      // Mute first so cleanup is immediately observable even if Chromium
+      // takes a moment to finish tearing down the page and its subprocesses.
+      try { guest.setAudioMuted(true) } catch { /* guest raced with teardown */ }
+      try { guest.close({ waitForBeforeUnload: false }) } catch { /* guest raced with teardown */ }
+    }
+    this.push()
+    return true
+  }
+
   // ---- agent-facing API (always scoped to a session key) -------------------
 
   async openTab(sessionKey: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {

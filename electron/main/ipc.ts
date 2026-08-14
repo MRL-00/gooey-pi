@@ -209,7 +209,15 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     return routed.service.followUp(filePath, message, intent)
   })
   handle('sessions:rename', async (_event, filePath, title) => (await sessionsForPath(filePath)).service.rename(filePath, title))
-  handle('sessions:archive', async (_event, filePath, archived) => (await sessionsForPath(filePath)).service.archive(filePath, archived))
+  handle('sessions:archive', async (_event, filePath, archived) => {
+    const routed = await sessionsForPath(filePath)
+    const result = await routed.service.archive(filePath, archived)
+    if (archived === true) {
+      services.browser.closeForSession(filePath)
+      await services.terminals.killForSession(filePath)
+    }
+    return result
+  })
 
   handle('agent:start', (_event, rawOptions) => {
     const options = requireRecord(rawOptions, 'options')

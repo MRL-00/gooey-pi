@@ -4,7 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceRuntime } from '../../src/hooks/useWorkspaceRuntime'
-import type { PrimeWorkApi, ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
+import type { HarnessId, PrimeWorkApi, ProjectRecord, SessionRecord, TranscriptMessage } from '../../src/types/api'
 
 const project: ProjectRecord = {
   id: 'project', harness: 'prime', name: 'Project', path: '/project', folders: ['/project'], primaryFolder: '/project',
@@ -20,17 +20,20 @@ let latest: Workspace
 
 function Probe({
   bridge,
+  harness = 'prime',
   initialProject = project,
   initialSession = session,
   sessions = [session],
 }: {
   bridge: PrimeWorkApi | null
+  harness?: HarnessId
   initialProject?: ProjectRecord
   initialSession?: SessionRecord
   sessions?: SessionRecord[]
 }) {
   latest = useWorkspaceRuntime({
     bridge,
+    harness,
     initialProject,
     initialSession,
     sessions,
@@ -54,6 +57,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 const flush = async () => { await act(async () => { await Promise.resolve() }) }
@@ -95,6 +99,76 @@ describe('prompt admission versus background transcript reads', () => {
 
     act(() => { latest.activateWorkspace(ompProject, otherSession) })
     expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['other thread follow-up'])
+  })
+
+  it.each(['prime', 'omp', 'pi'] as const)('promotes an acknowledged %s steer into history while leaving true queued prompts pending', (harness) => {
+    let flushFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => { flushFrame = callback; return 1 }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const harnessProject = { ...project, harness }
+    const harnessSession = { ...session, harness }
+    act(() => { root.render(createElement(Probe, { bridge: null, harness, initialProject: harnessProject, initialSession: harnessSession })) })
+    act(() => {
+      latest.setMessages([{
+        id: 'assistant-live', role: 'assistant', timestamp: 1, streaming: true,
+        parts: [{ type: 'text', text: 'Working before the steer.' }],
+      }])
+      latest.queuePrompt('change direction', 'steer', [{ type: 'text', text: 'change direction' }], 2)
+      latest.queuePrompt('do this next turn', 'queue')
+    })
+
+    act(() => { latest.reconcileQueuedPrompts({ queuedCount: 1, steering: ['change direction'], followUps: [] }) })
+    expect(latest.pendingQueuedPrompts.map((prompt) => prompt.intent)).toEqual(['steer', 'queue'])
+
+    act(() => {
+      latest.reconcileQueuedPrompts({
+        queuedCount: 0,
+        steering: [],
+        followUps: [],
+        active: { kind: 'turn', phase: 'preparing', label: 'change direction' },
+      })
+      flushFrame?.(3)
+    })
+
+    expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['do this next turn'])
+    expect(latest.messages).toMatchObject([
+      { id: 'assistant-live', role: 'assistant', streaming: false },
+      { role: 'user', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] },
+    ])
+  })
+
+  it('removes a cancelled steer without promoting it into transcript history', () => {
+    act(() => { root.render(createElement(Probe, { bridge: null })) })
+    act(() => { latest.queuePrompt('cancel this steer', 'steer') })
+    act(() => { latest.reconcileQueuedPrompts({ queuedCount: 1, steering: ['cancel this steer'], followUps: [] }) })
+    act(() => { latest.reconcileQueuedPrompts({ queuedCount: 0, steering: [], followUps: [] }) })
+
+    expect(latest.pendingQueuedPrompts).toEqual([])
+    expect(latest.messages).toEqual([])
+  })
+
+  it('settles a steer picked up before its scheduler update reaches the renderer', () => {
+    let flushFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => { flushFrame = callback; return 1 }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    act(() => { root.render(createElement(Probe, { bridge: null })) })
+    act(() => {
+      latest.setMessages([{ id: 'assistant-live', role: 'assistant', timestamp: 1, streaming: true, parts: [] }])
+      const id = latest.queuePrompt('fast steer', 'steer', [{ type: 'text', text: 'fast steer' }], 2)
+      latest.acknowledgeSteer(id, {
+        queuedCount: 0,
+        steering: [],
+        followUps: [],
+        active: { kind: 'turn', phase: 'running', label: 'fast steer' },
+      })
+      flushFrame?.(3)
+    })
+
+    expect(latest.pendingQueuedPrompts).toEqual([])
+    expect(latest.messages).toMatchObject([
+      { id: 'assistant-live', role: 'assistant', streaming: false },
+      { role: 'user', timestamp: 2, parts: [{ type: 'text', text: 'fast steer' }] },
+    ])
   })
 
   it('keeps the optimistic user message when a pending background read resolves after the prompt', async () => {
