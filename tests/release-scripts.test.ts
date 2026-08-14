@@ -110,7 +110,7 @@ describe('release preflight', () => {
   })
 
   test('binds the requested target architecture to the produced mac artifacts', async () => {
-    const { assertRequestedArchitecture } = await import('../scripts/release/verify-package.mjs')
+    const { assertBooleanEntitlement, assertRequestedArchitecture } = await import('../scripts/release/verify-package.mjs')
     const artifacts = { dmg: 'release/mac/arm64/Prime Work-1.0.0-arm64.dmg', zip: 'release/mac/arm64/Prime Work-1.0.0-arm64.zip' }
     expect(() => assertRequestedArchitecture(artifacts, 'arm64')).not.toThrow()
     expect(() => assertRequestedArchitecture(artifacts, undefined)).not.toThrow()
@@ -120,6 +120,11 @@ describe('release preflight', () => {
     expect(() => assertRequestedArchitecture(artifacts, '')).toThrow(/must be arm64 or x64/)
     // package.mjs forwards the authoritative arch into mac post-package verification.
     expect(readFileSync('scripts/release/package.mjs', 'utf8')).toContain("'--arch', arch, '--release-directory'")
+
+    const entitlement = 'com.apple.security.device.audio-input'
+    expect(() => assertBooleanEntitlement(`<key>${entitlement}</key><true/>`, entitlement, 'fixture')).not.toThrow()
+    expect(() => assertBooleanEntitlement(`[Key] ${entitlement}\n[Value]\n[Bool] true`, entitlement, 'fixture')).not.toThrow()
+    expect(() => assertBooleanEntitlement(`<key>${entitlement}</key><false/>`, entitlement, 'fixture')).toThrow(/missing required true entitlement/)
   })
 
   test('requires the Electron 43 Node.js baseline', () => {
