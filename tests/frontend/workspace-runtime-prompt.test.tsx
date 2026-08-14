@@ -147,6 +147,30 @@ describe('prompt admission versus background transcript reads', () => {
     expect(latest.messages).toEqual([])
   })
 
+  it('settles a steer picked up before its scheduler update reaches the renderer', () => {
+    let flushFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => { flushFrame = callback; return 1 }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    act(() => { root.render(createElement(Probe, { bridge: null })) })
+    act(() => {
+      latest.setMessages([{ id: 'assistant-live', role: 'assistant', timestamp: 1, streaming: true, parts: [] }])
+      const id = latest.queuePrompt('fast steer', 'steer', [{ type: 'text', text: 'fast steer' }], 2)
+      latest.acknowledgeSteer(id, {
+        queuedCount: 0,
+        steering: [],
+        followUps: [],
+        active: { kind: 'turn', phase: 'running', label: 'fast steer' },
+      })
+      flushFrame?.(3)
+    })
+
+    expect(latest.pendingQueuedPrompts).toEqual([])
+    expect(latest.messages).toMatchObject([
+      { id: 'assistant-live', role: 'assistant', streaming: false },
+      { role: 'user', timestamp: 2, parts: [{ type: 'text', text: 'fast steer' }] },
+    ])
+  })
+
   it('keeps the optimistic user message when a pending background read resolves after the prompt', async () => {
     let resolveRead!: (value: TranscriptMessage[]) => void
     const read = vi.fn(() => new Promise<TranscriptMessage[]>((resolve) => { resolveRead = resolve }))

@@ -1,4 +1,5 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
+import { parseSessionActionSnapshot } from '../../../src/lib/session-actions'
 import { resolveExecutable, type ExecutableSource } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
@@ -185,6 +186,20 @@ export class AgentRpcManager {
       throw new Error('The active model does not accept images. Choose a vision model and try again.')
     }
     const response = await runtime.command(translated)
+    if (command.type === 'steer') {
+      // A steer can be admitted and consumed before its two action-update
+      // edges cross IPC. Refresh after the admission response and attach the
+      // authoritative scheduler state so the renderer can settle its
+      // optimistic row even when both events raced the response.
+      try {
+        const state = await runtime.command({ type: 'get_state' })
+        const sessionActions = isRecord(state.data) ? parseSessionActionSnapshot(state.data.sessionActions) : null
+        // Do not expose RpcRuntime's default empty snapshot when an older
+        // harness omits sessionActions: absence is not proof of pickup.
+        if (sessionActions) return { ...response, sessionActions }
+      } catch { /* action events remain the fallback */ }
+      return response
+    }
     if (command.type === 'set_model' || command.type === 'cycle_model') {
       const preference = runtime.serviceTierPreference()
       await this.decorate(runtime)

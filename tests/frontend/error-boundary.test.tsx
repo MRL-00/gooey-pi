@@ -58,6 +58,19 @@ describe('ErrorBoundary', () => {
 })
 
 describe('transcript per-message boundary', () => {
+  it('labels an admitted steer that is waiting for a safe steering point', async () => {
+    await act(async () => {
+      root.render(<Transcript
+        messages={[]}
+        pendingSteers={[{ id: 'pending-steer', text: 'redirect', intent: 'steer', timestamp: 1 }]}
+        git={{ isRepo: false, files: [] }}
+        onOpenChanges={vi.fn()}
+        onSuggestion={vi.fn()}
+      />)
+    })
+    expect(container.textContent).toContain('Accepted — waiting for the next safe steering point')
+  })
+
   it('keeps healthy messages visible when one row fails to render', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const good: TranscriptMessage = { id: 'good', role: 'user', timestamp: 1, parts: [{ type: 'text', text: 'still here' }] }

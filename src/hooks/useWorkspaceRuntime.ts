@@ -479,6 +479,15 @@ export function useWorkspaceRuntime({
     if (pickedUp.length) queueAgentEvent(createSteerPickupEvent(pickedUp))
   }, [queueAgentEvent])
 
+  const acknowledgeSteer = useCallback((id: string, snapshot: SessionActionSnapshot) => {
+    if (!pendingQueuedPromptsRef.current.some((prompt) => prompt.id === id && prompt.intent === 'steer')) return
+    // The command response proves admission. Reconcile against the
+    // post-admission snapshot returned with it so a steer that was picked up
+    // before the renderer received either scheduler edge cannot remain stuck.
+    observedSteerIdsRef.current.add(id)
+    reconcileQueuedPrompts(snapshot)
+  }, [reconcileQueuedPrompts])
+
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const locallyOwnedActiveSession = Boolean(
     activeSession?.filePath && runtime?.sessionFile === activeSession.filePath,
@@ -553,6 +562,7 @@ export function useWorkspaceRuntime({
     removeQueuedPrompt,
     clearQueuedPrompts,
     reconcileQueuedPrompts,
+    acknowledgeSteer,
     activeProjectId,
     activeSessionId,
     runtime,

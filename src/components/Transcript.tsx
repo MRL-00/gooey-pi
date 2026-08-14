@@ -95,6 +95,7 @@ export function Transcript({ messages, git, harness = 'prime', loading, active =
       parts: prompt.parts ?? [{ type: 'text' as const, text: prompt.text }],
     })),
   ], [groupedMessages, pendingSteers])
+  const pendingSteerMessageIds = useMemo(() => new Set(pendingSteers.map((prompt) => `user-${prompt.id}`)), [pendingSteers])
   const { announcement, hiddenCount, scrollRef, showEarlier, updatePinnedState, visibleMessages } = useTranscriptScroll(displayMessages)
   const activeAssistantId = useMemo(() => active && groupedMessages.at(-1)?.role === 'assistant' ? groupedMessages.at(-1)?.id : undefined, [active, groupedMessages])
   const transcriptClasses = [
@@ -122,7 +123,7 @@ export function Transcript({ messages, git, harness = 'prime', loading, active =
         </div> : null}
         {hiddenCount > 0 ? <button type="button" className="transcript__show-earlier" onClick={showEarlier}>Show {Math.min(250, hiddenCount)} earlier messages</button> : null}
         {visibleMessages.map((message) => <ErrorBoundary key={message.id} fallback={<div className="message message--render-failure" role="note">This message could not be displayed.</div>}>
-          {message.role === 'user' ? <UserMessage message={message} onOpenSessionReference={onOpenSessionReference} />
+          {message.role === 'user' ? <UserMessage message={message} onOpenSessionReference={onOpenSessionReference} pendingSteer={pendingSteerMessageIds.has(message.id)} />
             : message.role === 'assistant' ? message.streaming || message.id === activeAssistantId
               ? <ActiveAssistantMessage message={message} harness={harness} showReasoning={showReasoning} showTools={showTools} />
               : <AssistantMessage message={message} harness={harness} showReasoning={showReasoning} showTools={showTools} />

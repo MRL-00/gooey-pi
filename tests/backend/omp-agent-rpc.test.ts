@@ -20,6 +20,7 @@ interface FakeOmpOptions {
   promptScript?: string
   /** When false the fake rejects negotiate_protocol like an unsupported version. */
   acceptNegotiate?: boolean
+  sessionActions?: Record<string, unknown>
 }
 
 function fakeOmpAgent(options: FakeOmpOptions = {}): { cwd: string; executable: string } {
@@ -29,6 +30,7 @@ function fakeOmpAgent(options: FakeOmpOptions = {}): { cwd: string; executable: 
   writeFileSync(executable, `#!/usr/bin/env node
 const readline = require('node:readline')
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+const sessionActions = ${JSON.stringify(options.sessionActions)}
 let negotiated = false
 let streaming = false
 send({ type: 'ready', protocolVersion: 1, supportedProtocolVersions: [1, 2] })
@@ -54,6 +56,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       sessionId: 'omp-session', isStreaming: streaming, isCompacting: false, thinkingLevel: 'medium',
       fastModeEnabled: true, model: { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna GPT-5.6' },
       contextUsage: { tokens: 12000, contextWindow: 200000, percent: 6 },
+      ...(sessionActions ? { sessionActions } : {}),
     } })
   } else if (command.type === 'get_session_stats') {
     send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: 12000, contextWindow: 200000, percent: 6 } } })
@@ -69,6 +72,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (command.type === 'prompt') {
     send({ id: command.id, type: 'response', command: 'prompt', success: true, data: { agentInvoked: true } })
     ${options.promptScript ?? ''}
+  } else if (command.type === 'steer') {
+    send({ id: command.id, type: 'response', command: 'steer', success: true, data: { accepted: true } })
   } else if (command.type === 'abort') {
     send({ id: command.id, type: 'response', command: 'abort', success: true })
   }
@@ -220,6 +225,21 @@ describe('OMP RPC handshake', () => {
 })
 
 describe('OMP RPC command translation', () => {
+  it('attaches only an explicit valid post-admission steering snapshot', async () => {
+    const actions = { queuedCount: 0, steering: [], followUps: [], active: { kind: 'turn', phase: 'running', label: 'redirect' } }
+    const explicitFake = fakeOmpAgent({ sessionActions: actions })
+    const explicitManager = ompManager(explicitFake.executable)
+    const explicitRuntime = await explicitManager.start({ cwd: explicitFake.cwd })
+    await expect(explicitManager.command(explicitRuntime.runtimeId, { type: 'steer', message: 'redirect' }))
+      .resolves.toMatchObject({ sessionActions: actions })
+
+    const omittedFake = fakeOmpAgent()
+    const omittedManager = ompManager(omittedFake.executable)
+    const omittedRuntime = await omittedManager.start({ cwd: omittedFake.cwd })
+    const omitted = await omittedManager.command(omittedRuntime.runtimeId, { type: 'steer', message: 'redirect' })
+    expect(omitted).not.toHaveProperty('sessionActions')
+  })
+
   it('translates fork to branch and correlates the branch response', async () => {
     const fake = fakeOmpAgent()
     const manager = ompManager(fake.executable)
