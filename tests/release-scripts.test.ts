@@ -531,7 +531,10 @@ describe('post-package verification helpers', () => {
   test('keeps every platform native unpack allowlist exact and architecture-specific', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(packageJson.author).toEqual({ name: 'GooeyPi contributors', email: '42459108+am-will@users.noreply.github.com' })
-    expect(packageJson.homepage).toBe('https://github.com/am-will/prime-work')
+    expect(packageJson.description).toBe('A desktop workspace for Pi, OMP, and Prime Agent')
+    expect(packageJson.homepage).toBe('https://github.com/am-will/gooey-pi')
+    expect(packageJson.build.productName).toBe('GooeyPi')
+    expect(packageJson.build.appId).toBe('app.gooeypi.desktop')
     expect(packageJson.desktopName).toBe('gooeypi.desktop')
     expect(packageJson.build.linux.synopsis).toBe(packageJson.description)
     expect(packageJson.build.linux.syncDesktopName).toBe(true)
