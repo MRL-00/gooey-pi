@@ -346,7 +346,7 @@ export default function App() {
     workspace, settingsState, layout, provider, pluginSkills,
     submissionAdmissionRef, gitRequestRef, demoTimerRef,
     setProjects, setSessions, setGitSnapshot, setView, setPaletteOpen, setToast, setSubmitting,
-    refreshSchedules, refreshHeartbeats, clearSessionAttention, reportError,
+    refreshSchedules, refreshHeartbeats, resetBrowserView: () => setBrowserGeneration((value) => value + 1), clearSessionAttention, reportError,
   })
   const handleVoiceTaskStarted = useCallback(async (task: VoiceTaskStarted) => {
     if (!bridge) return

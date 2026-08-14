@@ -136,4 +136,30 @@ describe('archived activity cleanup', () => {
     expect(sessions[0]).toMatchObject({ id: activeSession.id, archived: true, unread: false })
     expect(setToast).toHaveBeenCalledWith('Session archived.')
   })
+
+  it('recreates the browser host when archiving the open session', async () => {
+    const archive = vi.fn(async () => true)
+    const resetBrowserView = vi.fn()
+    const activateWorkspace = vi.fn()
+    const actions = createWorkspaceActions(() => ({
+      bridge: { sessions: { archive } },
+      initialized: true,
+      activeProject: project,
+      layout: { compactLayout: false },
+      settingsState: {},
+      workspace: { workspaceRef: { current: { project, session: activeSession } }, activateWorkspace },
+      setSessions: vi.fn(),
+      setView: vi.fn(),
+      setPaletteOpen: vi.fn(),
+      setToast: vi.fn(),
+      resetBrowserView,
+      clearSessionAttention: vi.fn(),
+      reportError: vi.fn(),
+    } as unknown as WorkspaceActionsDeps))
+
+    await actions.setSessionArchived(activeSession, true)
+
+    expect(resetBrowserView).toHaveBeenCalledOnce()
+    expect(activateWorkspace).toHaveBeenCalledWith(project)
+  })
 })

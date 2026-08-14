@@ -90,7 +90,7 @@ function buildServices() {
     },
     heartbeats: serviceStub(),
     schedules: { ...serviceStub(), onDidChange: vi.fn(() => () => undefined) },
-    browser: { ...serviceStub(), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
+    browser: { ...serviceStub(), closeForSession: vi.fn(() => true), onDidChange: vi.fn(() => vi.fn()), onPointer: vi.fn(() => vi.fn()), onActivity: vi.fn(() => vi.fn()) },
     omp: {
       plugins: { ...serviceStub(), list: vi.fn(async () => 'omp-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'omp-plugins') },
       projects: { ...serviceStub(), list: vi.fn(async () => ['omp-projects']), listWorktrees: vi.fn(async () => ['omp-worktrees']), openWorktree: vi.fn(async () => 'omp-open'), createWorktree: vi.fn(async () => 'omp-create'), grantInferred: vi.fn(async () => 'omp-grant') },
@@ -272,6 +272,11 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.sessions.rename).toHaveBeenCalledWith(OMP_SESSION, 'Title')
     await expect(harness.invoke('sessions:archive', OMP_SESSION, true)).resolves.toBe(true)
     expect(harness.services.omp.sessions.archive).toHaveBeenCalledWith(OMP_SESSION, true)
+    expect(harness.services.browser.closeForSession).toHaveBeenCalledWith(OMP_SESSION)
+
+    harness.services.browser.closeForSession.mockClear()
+    await expect(harness.invoke('sessions:archive', OMP_SESSION, false)).resolves.toBe(true)
+    expect(harness.services.browser.closeForSession).not.toHaveBeenCalled()
   })
 
   it('answers follow-up for an OMP session with the not-running result instead of the daemon path', async () => {
