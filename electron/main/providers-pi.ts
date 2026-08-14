@@ -5,7 +5,7 @@ import { supportsFastMode } from 'prime-agent-ai'
 import { PRIME_THINKING_LEVELS, type PrimeModelCatalog, type PrimeModelDescriptor, type PrimeProviderDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import type { ModelCatalogProvider } from './model-catalog'
 import { withModelVisibility } from './model-visibility'
-import { executableChildEnvironment, killProcessTree, resolveExecutable, runProcess, waitForProcessExit, type ExecutableSource } from './process-utils'
+import { killProcessTree, prepareExecutableSpawn, resolveExecutable, runProcess, waitForProcessExit, type ExecutableSource } from './process-utils'
 import { requireString } from './validation'
 
 const CATALOG_TTL_MS = 30_000
@@ -110,9 +110,10 @@ function parseProbeResponse(line: string): Record<string, unknown> | null {
  */
 function runModelProbe(executable: string, options: { timeoutMs: number; maxOutputBytes: number }): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['--mode', 'rpc', '--no-session', '--offline'], {
+    const invocation = prepareExecutableSpawn(executable, ['--mode', 'rpc', '--no-session', '--offline'])
+    const child = spawn(invocation.file, invocation.args, {
       cwd: tmpdir(),
-      env: executableChildEnvironment(executable),
+      env: invocation.env,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

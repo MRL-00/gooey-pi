@@ -21,6 +21,6 @@ The relevant upstream install layouts are documented by [Pi](https://github.com/
 
 OMP's native Windows installer writes `%LOCALAPPDATA%\omp\omp.exe`, which is checked explicitly so Refresh works even when the running GUI still has the old `Path` snapshot. Native `pi.exe` releases are discoverable through `Path` or an explicit override.
 
-Windows npm `.cmd` shims are intentionally not treated as native executables. Node cannot spawn them directly without a command shell, and GooeyPi's process boundary does not execute harnesses through a shell. Supporting them safely requires a structured Node-entrypoint launch target rather than command-string quoting.
+Pi's official Windows npm install creates a `pi.cmd` shim instead of a native executable. GooeyPi recognizes only that Pi shim, verifies the fixed `@earendil-works/pi-coding-agent/dist/cli.js` entrypoint beneath the npm prefix, finds a runnable `node.exe`, and launches the entrypoint directly without invoking a command shell. OMP does not document a Windows package-manager install, and Prime Agent documents only its macOS/Linux installer, so GooeyPi does not speculate about corresponding Windows command shims.
 
 A Windows app also does not treat an executable inside a WSL distribution as a native Windows path. WSL execution requires an explicit transport, distribution selection, Windows/Linux cwd conversion, and Linux-owned session roots. If GooeyPi itself runs as a Linux application under WSLg, normal Linux discovery applies.

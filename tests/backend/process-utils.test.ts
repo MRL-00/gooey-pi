@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -326,12 +326,44 @@ describe('OMP discovery candidates', () => {
     expect(candidates.some((candidate) => candidate.includes('resources'))).toBe(false)
   })
 
-  it('does not mistake Windows npm command shims for directly runnable Pi executables', () => {
+  it('discovers only the official Pi npm command shim alongside native Windows executables', () => {
     const candidates = harnessExecutableCandidates(HARNESSES.pi, {
       Path: 'C:\\Windows', APPDATA: 'C:\\Users\\Ada\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local',
     }, 'win32', undefined, 'C:\\Users\\Ada')
     expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Roaming\\npm\\pi.exe')
-    expect(candidates.some((candidate) => candidate.endsWith('pi.cmd'))).toBe(false)
+    expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Roaming\\npm\\pi.cmd')
+    expect(candidates.some((candidate) => candidate.endsWith('omp.cmd') || candidate.endsWith('prime-agent.cmd'))).toBe(false)
+  })
+
+  it('resolves the official Windows Pi npm shim to Node without invoking a shell', () => {
+    const shim = 'C:\\Users\\Ada\\AppData\\Roaming\\npm\\pi.cmd'
+    const entrypoint = 'C:\\Users\\Ada\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js'
+    const node = 'C:\\Program Files\\nodejs\\node.exe'
+    const accessible = new Set([entrypoint.toLowerCase(), node.toLowerCase()])
+    const invocation = prepareExecutableSpawn(shim, ['--version'], {
+      Path: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      USERPROFILE: 'C:\\Users\\Ada',
+    }, {
+      platform: 'win32',
+      home: 'C:\\Users\\Ada',
+      canAccess: (candidate) => accessible.has(candidate.toLowerCase()),
+    })
+
+    expect(invocation.file).toBe(node)
+    expect(invocation.args).toEqual([entrypoint, '--version'])
+    expect(invocation.env.Path).toContain('C:\\Users\\Ada\\AppData\\Roaming\\npm')
+  })
+
+  it('rejects missing official Pi entrypoints without enabling arbitrary Windows shims', () => {
+    expect(prepareExecutableSpawn('C:\\Tools\\omp.cmd', ['--version'], {}, { platform: 'win32' })).toMatchObject({
+      file: 'C:\\Tools\\omp.cmd',
+    })
+    expect(() => prepareExecutableSpawn('C:\\Tools\\pi.cmd', ['--version'], {}, {
+      platform: 'win32',
+      home: 'C:\\Users\\Ada',
+      canAccess: () => false,
+    })).toThrow(/official Pi installation/)
   })
 
   it('keeps E2E discovery hermetic when a fixture executable disappears', async () => {

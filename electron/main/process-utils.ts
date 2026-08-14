@@ -1,4 +1,4 @@
-import { constants as fsConstants, readdirSync } from 'node:fs'
+import { accessSync, constants as fsConstants, readdirSync } from 'node:fs'
 import { access, readdir } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -229,6 +229,68 @@ export function executableChildEnvironment(
   return result
 }
 
+export interface ExecutableSpawnInvocation {
+  file: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+}
+
+interface PrepareExecutableSpawnOptions {
+  platform?: NodeJS.Platform
+  home?: string
+  canAccess?: (candidate: string, mode: number) => boolean
+}
+
+function canAccessPath(candidate: string, mode: number): boolean {
+  try { accessSync(candidate, mode); return true } catch { return false }
+}
+
+/**
+ * Resolves the official Windows npm Pi shim without running cmd.exe. npm puts
+ * the package entry point below the shim directory, so GooeyPi can invoke that
+ * fixed JavaScript file with a validated Node executable and keep shell=false.
+ */
+export function prepareExecutableSpawn(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  options: PrepareExecutableSpawnOptions = {},
+): ExecutableSpawnInvocation {
+  const platform = options.platform ?? process.platform
+  const childEnvironment = executableChildEnvironment(file, env, platform)
+  if (platform !== 'win32' || win32.basename(file).toLowerCase() !== 'pi.cmd') {
+    return { file, args: [...args], env: childEnvironment }
+  }
+
+  const canAccess = options.canAccess ?? canAccessPath
+  const entrypoint = win32.join(win32.dirname(file), 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
+  if (!canAccess(entrypoint, fsConstants.F_OK)) throw new Error('The Pi npm command shim does not point to an official Pi installation')
+  const homeValue = options.home ?? childEnvironment.USERPROFILE
+  const home = homeValue && win32.isAbsolute(homeValue) ? homeValue : homedir()
+  const pathDirectories = [childEnvironment.Path, childEnvironment.PATH]
+    .flatMap((value) => (value ?? '').split(';'))
+    .filter((directory) => Boolean(directory && win32.isAbsolute(directory)))
+  const nodeDirectories = [
+    win32.dirname(file),
+    ...versionManagerRuntimeDirs(childEnvironment, platform, home),
+    ...pathDirectories,
+    childEnvironment.ProgramFiles ? win32.join(childEnvironment.ProgramFiles, 'nodejs') : '',
+    childEnvironment.LOCALAPPDATA ? win32.join(childEnvironment.LOCALAPPDATA, 'Programs', 'nodejs') : '',
+  ]
+  const seen = new Set<string>()
+  const node = nodeDirectories
+    .filter((directory) => {
+      const key = directory.toLowerCase()
+      if (!directory || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((directory) => win32.join(directory, 'node.exe'))
+    .find((candidate) => canAccess(candidate, fsConstants.X_OK))
+  if (!node) throw new Error('Node.js was not found for the Pi npm command shim')
+  return { file: node, args: [entrypoint, ...args], env: childEnvironment }
+}
+
 /**
  * Returns bounded Node-version-manager runtime directories for env shebangs.
  * A package-manager shim can live outside the Node installation that owns its
@@ -305,6 +367,7 @@ function sharedHarnessCandidateDirs(
   if (platform === 'win32') {
     return compact([
       ...environmentDirs,
+      env.NPM_CONFIG_PREFIX,
       fromRoot(env.APPDATA, 'npm'),
       fromRoot(env.LOCALAPPDATA, 'pnpm'),
       fromRoot(env.LOCALAPPDATA, 'pnpm', 'bin'),
@@ -340,6 +403,7 @@ export function harnessExecutableCandidates(
 ): string[] {
   const pathApi = platform === 'win32' ? win32 : posix
   const executable = descriptor.executableName(platform)
+  const executableNames = platform === 'win32' && descriptor.id === 'pi' ? [executable, 'pi.cmd'] : [executable]
   const candidates: string[] = []
   if (configuredPath && isAbsolutePathForPlatform(configuredPath, platform)) candidates.push(configuredPath)
   const configured = env[descriptor.binaryEnvVar]
@@ -349,7 +413,9 @@ export function harnessExecutableCandidates(
   }
   const pathValues = platform === 'win32' ? [env.Path, env.PATH] : [env.PATH]
   for (const directory of pathValues.flatMap((value) => (value ?? '').split(platform === 'win32' ? ';' : delimiter))) {
-    if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
+    if (directory && isAbsolutePathForPlatform(directory, platform)) {
+      for (const name of executableNames) candidates.push(pathApi.join(directory, name))
+    }
   }
   // Electron E2E fixtures must not silently connect to a developer machine's
   // globally installed harnesses after an explicit fixture binary disappears.
@@ -358,7 +424,9 @@ export function harnessExecutableCandidates(
     ...sharedHarnessCandidateDirs(env, platform, home),
   ]
   for (const directory of fallbackDirs) {
-    if (directory && isAbsolutePathForPlatform(directory, platform)) candidates.push(pathApi.join(directory, executable))
+    if (directory && isAbsolutePathForPlatform(directory, platform)) {
+      for (const name of executableNames) candidates.push(pathApi.join(directory, name))
+    }
   }
   const seen = new Set<string>()
   return candidates.filter((candidate) => {
@@ -444,9 +512,10 @@ export function runProcess(file: string, args: readonly string[], options: {
   }
 
   return processAdmission.run(() => new Promise((resolve, reject) => {
-    const child = spawn(file, [...args], {
+    const invocation = prepareExecutableSpawn(file, args, options.env ?? safeChildEnvironment())
+    const child = spawn(invocation.file, invocation.args, {
       cwd: options.cwd,
-      env: executableChildEnvironment(file, options.env ?? safeChildEnvironment()),
+      env: invocation.env,
       shell: false,
       stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
