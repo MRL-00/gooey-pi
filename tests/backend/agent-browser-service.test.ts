@@ -13,6 +13,8 @@ class FakeGuest extends EventEmitter {
   destroyed = false
   loading = false
   throttling: boolean | null = null
+  audioMuted = false
+  closeOptions: Electron.CloseOpts | null = null
   readonly loadedUrls: string[] = []
   /** CDP commands dispatched through the debugger, flattened as {method, ...params}. */
   readonly inputEvents: Array<Record<string, unknown>> = []
@@ -48,6 +50,7 @@ class FakeGuest extends EventEmitter {
   stop() {}
   focus() {}
   setBackgroundThrottling(allowed: boolean) { this.throttling = allowed }
+  setAudioMuted(muted: boolean) { this.audioMuted = muted }
   async loadURL(url: string) {
     this.loadedUrls.push(url)
     this.url = url
@@ -74,6 +77,10 @@ class FakeGuest extends EventEmitter {
   destroy() {
     this.destroyed = true
     this.emit('destroyed')
+  }
+  close(options: Electron.CloseOpts) {
+    this.closeOptions = options
+    this.destroy()
   }
 }
 
@@ -239,6 +246,30 @@ describe('AgentBrowserService', () => {
     expect(service.state().tabs.find((tab) => tab.tabId === second.tabId)).toMatchObject({ attached: false })
     service.closeTab(second.tabId)
     expect(service.state().tabs.find((tab) => tab.tabId === first.tabId)?.active).toBe(true)
+  })
+
+  it('closes every browser guest owned by a session without disturbing other sessions', async () => {
+    const { service, newGuest, openAttached } = fixture()
+    const first = await openAttached('/sessions/a.jsonl', 'https://game.example/one')
+    const second = await openAttached('/sessions/a.jsonl', 'https://game.example/two')
+    const other = await openAttached('/sessions/b.jsonl', 'https://other.example/')
+    const preview = newGuest()
+    preview.url = 'https://game.example/preview'
+    service.setPreviewContext(preview.id, '/sessions/a.jsonl')
+
+    expect(service.closeForSession('/sessions/./a.jsonl')).toBe(true)
+
+    for (const guest of [first.guest, second.guest, preview]) {
+      expect(guest.audioMuted).toBe(true)
+      expect(guest.closeOptions).toEqual({ waitForBeforeUnload: false })
+      expect(guest.destroyed).toBe(true)
+    }
+    expect(other.guest.destroyed).toBe(false)
+    expect(service.state().tabs).toEqual([
+      expect.objectContaining({ tabId: other.tabId, sessionFile: '/sessions/b.jsonl', attached: true }),
+    ])
+    expect((await service.listTabs('/sessions/a.jsonl')).tabs).toEqual([])
+    expect(service.closeForSession('/sessions/a.jsonl')).toBe(false)
   })
 
   it('adopts the user preview tab as the default target for its session', async () => {
