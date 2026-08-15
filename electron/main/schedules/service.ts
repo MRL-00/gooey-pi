@@ -23,8 +23,6 @@ import {
 } from './recurrence'
 
 const MAX_TASKS = 500
-const MAX_RUNS_PER_TASK = 50
-const MAX_GLOBAL_RUNS = 2_000
 const MAX_CONCURRENT_RUNS = 2
 const DUE_GRACE_MS = 60_000
 const THINKING_LEVELS: ReadonlySet<string> = new Set(['auto', ...PRIME_THINKING_LEVELS])
@@ -499,9 +497,6 @@ export class AutomationService {
 
   private pushRun(task: AutomationScheduleRecord, run: ScheduleRunRecord): void {
     task.runs.push(structuredClone(run))
-    if (task.runs.length > MAX_RUNS_PER_TASK) task.runs.splice(0, task.runs.length - MAX_RUNS_PER_TASK)
-    const totalRuns = this.store.snapshot().schedules.reduce((sum, candidate) => sum + candidate.runs.length, 0)
-    if (totalRuns >= MAX_GLOBAL_RUNS && task.runs.length > 1) task.runs.shift()
   }
 
   private changed(event: ScheduleChangeEvent): void {
