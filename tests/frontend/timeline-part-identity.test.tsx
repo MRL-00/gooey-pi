@@ -2,7 +2,7 @@
 
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkTimeline } from '../../src/components/transcript/timeline'
 import { replayPrimeEvents } from '../../src/lib/events'
 import type { TranscriptMessage } from '../../src/types/api'
@@ -29,6 +29,27 @@ function renderTimeline(message: TranscriptMessage): void {
 }
 
 describe('timeline part identity', () => {
+  it('only shows the tool copy action after expanding and copies its contents', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    renderTimeline({
+      id: 'copy-tool', role: 'assistant', parts: [
+        { type: 'toolCall', id: 'tool-1', name: 'Read', args: { path: 'src/App.tsx' } },
+        { type: 'toolResult', name: 'Read', text: 'file contents' },
+      ],
+    })
+
+    expect(container.querySelector('[aria-label="Copy tool contents"]')).toBeNull()
+    const summary = container.querySelector('.activity-tool__summary') as HTMLButtonElement
+    act(() => { summary.click() })
+    const copy = container.querySelector('[aria-label="Copy tool contents"]') as HTMLButtonElement
+    expect(copy).not.toBeNull()
+
+    await act(async () => { copy.click() })
+    expect(writeText).toHaveBeenCalledWith('{\n  "path": "src/App.tsx"\n}\n\nfile contents')
+    expect(container.querySelector('[aria-label="Copied tool contents"]')).not.toBeNull()
+  })
+
   it('keeps an expanded activity panel attached to its content when a tool result is spliced in', () => {
     const streamed = replayPrimeEvents([], [
       { type: 'agent_start' },

@@ -89,7 +89,11 @@
 .activity-tool__state { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 10px; white-space: nowrap; }
 .activity-line.is-done .activity-tool__state { color: var(--success); }
 .activity-line.is-error .activity-tool__state { color: var(--danger); }
-.activity-tool__details { max-height: 230px; margin: 0 5px 6px 30px; padding: 7px 9px; overflow: auto; border-left: 2px solid var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.activity-tool__details { max-height: 230px; margin: 0 5px 6px 30px; overflow: auto; border-left: 2px solid var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 10.5px; line-height: 1.5; }
+.activity-tool__details-toolbar { display: flex; justify-content: flex-end; padding: 3px 4px 0; }
+.activity-tool__copy { min-height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--text-tertiary); background: transparent; font-size: 10.5px; }
+.activity-tool__copy:hover { color: var(--text-secondary); background: var(--surface-hover); }
+.activity-tool__contents { margin: 0; padding: 4px 9px 7px; white-space: pre-wrap; word-break: break-word; }
 .activity-line--result { display: flex; align-items: flex-start; gap: 5px; padding: 4px 5px; color: var(--text-tertiary); }
 .activity-line--result.is-error { color: var(--danger); }
 .activity-line--note { padding: 5px 5px 1px 30px; color: var(--text-secondary); }

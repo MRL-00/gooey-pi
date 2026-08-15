@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  Copy,
   FileCode2,
   GitFork,
   Globe2,
@@ -15,6 +16,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import type { MessagePart, TranscriptMessage } from '@/types/api'
+import { writeClipboardText } from '@/lib/clipboard'
 import { boundText } from '@/lib/render-bounds'
 import { MarkdownText } from '../MarkdownText'
 import { SyntaxText } from './syntax'
@@ -86,6 +88,8 @@ export function ThinkingDots({ labelled = false }: { labelled?: boolean }) {
 
 function ToolPart({ part, next }: { part: Extract<MessagePart, { type: 'toolCall' }>; next?: MessagePart }) {
   const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const resetCopiedTimerRef = useRef<number | null>(null)
   const result = next?.type === 'toolResult' ? next : undefined
   const failed = result?.isError
   const kind = classifyTool(part.name)
@@ -95,6 +99,24 @@ function ToolPart({ part, next }: { part: Extract<MessagePart, { type: 'toolCall
   const canExpand = Boolean(visibleOutput)
   const state = failed ? 'error' : result ? 'done' : kind === 'question' ? 'waiting' : 'running'
   const preview = toolPreview(part)
+  useEffect(
+    () => () => {
+      if (resetCopiedTimerRef.current !== null) window.clearTimeout(resetCopiedTimerRef.current)
+    },
+    [],
+  )
+
+  const copyContents = async () => {
+    try {
+      await writeClipboardText(visibleOutput)
+      setCopied(true)
+      if (resetCopiedTimerRef.current !== null) window.clearTimeout(resetCopiedTimerRef.current)
+      resetCopiedTimerRef.current = window.setTimeout(() => setCopied(false), 1_500)
+    } catch {
+      setCopied(false)
+    }
+  }
+
   return (
     <div className={`activity-line activity-line--tool activity-line--${kind} is-${state}`}>
       <button type="button" className="activity-tool__summary" disabled={!canExpand} onClick={() => setOpen((value) => !value)} aria-expanded={canExpand ? open : undefined}>
@@ -104,7 +126,16 @@ function ToolPart({ part, next }: { part: Extract<MessagePart, { type: 'toolCall
         <span className="activity-tool__state">{failed ? <><CircleAlert size={12} /> failed</> : result ? <><Check size={12} /> done</> : kind === 'question' ? 'needs input' : <><LoaderCircle className="spin" size={12} /> running</>}</span>
         {canExpand ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}
       </button>
-      {open && visibleOutput ? <pre className="activity-tool__details"><SyntaxText text={visibleOutput} /></pre> : null}
+      {open && visibleOutput ? (
+        <div className="activity-tool__details">
+          <div className="activity-tool__details-toolbar">
+            <button type="button" className="activity-tool__copy" aria-label={`${copied ? 'Copied' : 'Copy'} tool contents`} onClick={() => void copyContents()}>
+              {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <pre className="activity-tool__contents"><SyntaxText text={visibleOutput} /></pre>
+        </div>
+      ) : null}
     </div>
   )
 }
