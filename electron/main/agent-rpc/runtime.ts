@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import type { PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
+import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { emptySessionActionSnapshot, parseSessionActionSnapshot } from '../../../src/lib/session-actions'
 import { RPC_READ_FRAME_LIMIT_BYTES } from '../jsonl-limits'
 import { killProcessTree, prepareExecutableSpawn, safeChildEnvironment, waitForProcessExit } from '../process-utils'
@@ -8,6 +8,7 @@ import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
 import { PRIME_RPC_ADAPTER, parseContextUsage, type HarnessRpcAdapter } from './harness-adapter'
+import { LiveContextUsageTracker, withLiveContextUsage } from './context-usage'
 import { FramedRpcTransport, type QueuedRpcWrite } from './transport'
 import type { RpcObject } from './types'
 
@@ -41,6 +42,12 @@ interface ChunkAssembly {
   parts: Buffer[]
 }
 
+interface ContextUsageRefreshRequest {
+  generation: number
+  sessionId?: string
+  activityTokens?: number
+}
+
 const MAX_RPC_CHUNK_COUNT = 4096
 const MAX_CONCURRENT_RPC_CHUNK_IDS = 4
 
@@ -58,6 +65,13 @@ export class RpcRuntime {
   private info: RuntimeInfo
   private requestedServiceTier: PrimeServiceTier = 'default'
   private contextUsageRefresh: Promise<void> | null = null
+  private contextUsageRefreshRequest: ContextUsageRefreshRequest | null = null
+  private readonly liveContextUsage = new LiveContextUsageTracker()
+  private authoritativeContextUsage: PrimeContextUsage | undefined
+  private contextUsageActivityBaseline = 0
+  private contextUsageGeneration = 0
+  private contextUsageEmitTimer: NodeJS.Timeout | null = null
+  private lastContextUsageEmitAt = 0
   private continuationPending = false
   // Provider auto-retry backoff: agent_end has fired but the agent will
   // continue the same turn, so the runtime must keep reporting busy. Kept
@@ -110,6 +124,7 @@ export class RpcRuntime {
     this.child.once('error', (error) => this.fail(error))
     this.child.once('close', (code, signal) => {
       this.disposeCompactionWatchdog()
+      this.disposeContextUsage()
       this.fail(new Error(`${this.adapter.agentName} RPC exited (${code ?? signal ?? 'unknown'})`))
       this.emit({ type: 'runtime_exit', code, signal, expected: this.stopped })
       this.onExit(this)
@@ -199,7 +214,12 @@ export class RpcRuntime {
       const state = await this.request({ type: 'get_state' }, 60_000)
       this.updateFromState(state.data)
       void this.refreshContextUsage()
-    } else if (response.success === true && ['prompt', 'new_session', 'switch_session', 'clone', 'fork', 'branch'].includes(String(command.type))) {
+    } else if (response.success === true && command.type === 'prompt') {
+      // get_state discovers the new session file promptly. Its mid-stream
+      // context snapshot does not include the active assistant message, so a
+      // usage refresh waits for message/tool boundaries below.
+      void this.request({ type: 'get_state' }, 60_000).then((state) => this.updateFromState(state.data)).catch(() => undefined)
+    } else if (response.success === true && ['new_session', 'switch_session', 'clone', 'fork', 'branch'].includes(String(command.type))) {
       void this.request({ type: 'get_state' }, 60_000).then((state) => {
         this.updateFromState(state.data)
         return this.refreshContextUsage()
@@ -411,6 +431,11 @@ export class RpcRuntime {
     }
     const value = this.adapter.normalizeEvent(raw)
     if (!value) return
+    const liveUsageUpdate = this.liveContextUsage.handleEvent(value)
+    if (liveUsageUpdate.reset) {
+      this.contextUsageActivityBaseline = 0
+      this.contextUsageGeneration += 1
+    }
     if (value.type === 'session_action_update') {
       const actions = parseSessionActionSnapshot(value.actions)
       if (actions) this.info.sessionActions = actions
@@ -434,6 +459,7 @@ export class RpcRuntime {
       this.continuationPending = false
       this.info.isStreaming = false
       this.info.isCompacting = false
+      this.bakeLiveContextUsage()
     } else if (value.type === 'compaction_start') {
       this.info.isCompacting = true
       this.lastRealCompactionEventAt = Date.now()
@@ -451,7 +477,13 @@ export class RpcRuntime {
     } else if (value.type === 'auto_retry_start') this.retryPending = true
     else if (value.type === 'auto_retry_end') this.retryPending = false
     this.emit(value)
-    if (value.type === 'agent_end' || value.type === 'compaction_end') void this.refreshContextUsage()
+    if (liveUsageUpdate.changed || liveUsageUpdate.reset) this.publishLiveContextUsage(value.type === 'message_end')
+    if (value.type === 'message_end'
+      || value.type === 'tool_execution_end'
+      || value.type === 'turn_end'
+      || value.type === 'agent_end') {
+      void this.refreshContextUsage(this.liveContextUsage.tokens)
+    } else if (value.type === 'compaction_end') void this.refreshContextUsage()
   }
 
   private handleChunkFrame(frame: RpcObject): void {
@@ -518,24 +550,132 @@ export class RpcRuntime {
     this.emit({ type: 'transport_limit', kind: 'chunk', error })
   }
 
-  private refreshContextUsage(): Promise<void> {
-    this.contextUsageRefresh ??= this.performContextUsageRefresh().finally(() => { this.contextUsageRefresh = null })
+  private refreshContextUsage(activityTokens?: number): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    const request: ContextUsageRefreshRequest = {
+      generation: this.contextUsageGeneration,
+      sessionId: this.info.sessionId,
+      ...(activityTokens === undefined ? {} : { activityTokens }),
+    }
+    const queued = this.contextUsageRefreshRequest
+    if (!queued || queued.generation !== request.generation || queued.sessionId !== request.sessionId) {
+      this.contextUsageRefreshRequest = request
+    } else if (activityTokens !== undefined) {
+      queued.activityTokens = Math.max(queued.activityTokens ?? 0, activityTokens)
+    }
+    this.contextUsageRefresh ??= this.drainContextUsageRefreshes()
     return this.contextUsageRefresh
   }
 
-  private async performContextUsageRefresh(): Promise<void> {
+  private async drainContextUsageRefreshes(): Promise<void> {
+    try {
+      while (!this.stopped && this.contextUsageRefreshRequest) {
+        const request = this.contextUsageRefreshRequest
+        this.contextUsageRefreshRequest = null
+        await this.performContextUsageRefresh(request)
+      }
+    } finally {
+      // Clearing inside the drain closes the old single-flight race: a request
+      // queued by agent_end while an earlier stats RPC is in flight is observed
+      // by the loop before this promise can become idle.
+      this.contextUsageRefresh = null
+    }
+  }
+
+  private async performContextUsageRefresh(request: ContextUsageRefreshRequest): Promise<void> {
     try {
       const response = await this.request({ type: 'get_session_stats' }, 10_000)
       const usage = isRecord(response.data) ? parseContextUsage(response.data.contextUsage) : null
-      if (!usage) return
-      this.info.contextUsage = usage
-      this.emit({ type: 'context_usage', contextUsage: usage })
+      if (!usage
+        || request.generation !== this.contextUsageGeneration
+        || request.sessionId !== this.info.sessionId) return
+      this.applyAuthoritativeContextUsage(usage, request.activityTokens)
     } catch { /* older Prime Agent versions may not expose session stats */ }
+  }
+
+  private applyAuthoritativeContextUsage(usage: PrimeContextUsage, activityTokens?: number): void {
+    if (activityTokens !== undefined) {
+      const previous = this.authoritativeContextUsage
+      const activityDelta = Math.max(0, activityTokens - this.contextUsageActivityBaseline)
+      // A message_end event is forwarded just before persistence. If a very
+      // fast stats response still reflects the preceding message, keep its
+      // activity live and let the guaranteed trailing refresh absorb it.
+      const includesActivity = activityDelta === 0
+        || previous === undefined
+        || previous?.tokens === null
+        || usage.tokens === null
+        || (previous?.tokens !== undefined && usage.tokens >= previous.tokens + activityDelta)
+      if (includesActivity) this.contextUsageActivityBaseline = Math.max(this.contextUsageActivityBaseline, activityTokens)
+    }
+    this.authoritativeContextUsage = usage
+    this.publishLiveContextUsage(true)
+  }
+
+  private bakeLiveContextUsage(): void {
+    if (!this.authoritativeContextUsage) return
+    this.authoritativeContextUsage = withLiveContextUsage(
+      this.authoritativeContextUsage,
+      this.liveContextUsage.tokens,
+      this.contextUsageActivityBaseline,
+    )
+    this.contextUsageActivityBaseline = this.liveContextUsage.tokens
+    this.publishLiveContextUsage(true)
+  }
+
+  private publishLiveContextUsage(immediate = false): void {
+    const snapshot = this.authoritativeContextUsage
+    if (!snapshot) return
+    const usage = withLiveContextUsage(snapshot, this.liveContextUsage.tokens, this.contextUsageActivityBaseline)
+    const current = this.info.contextUsage
+    const changed = !current
+      || current.tokens !== usage.tokens
+      || current.contextWindow !== usage.contextWindow
+      || current.percent !== usage.percent
+    this.info.contextUsage = usage
+    if (!changed) return
+
+    const elapsed = Date.now() - this.lastContextUsageEmitAt
+    if (immediate || elapsed >= 100) {
+      this.emitContextUsageNow()
+      return
+    }
+    if (this.contextUsageEmitTimer) return
+    this.contextUsageEmitTimer = setTimeout(() => {
+      this.contextUsageEmitTimer = null
+      this.emitContextUsageNow()
+    }, 100 - elapsed)
+    this.contextUsageEmitTimer.unref()
+  }
+
+  private emitContextUsageNow(): void {
+    if (this.contextUsageEmitTimer) {
+      clearTimeout(this.contextUsageEmitTimer)
+      this.contextUsageEmitTimer = null
+    }
+    const usage = this.info.contextUsage
+    if (!usage || this.stopped) return
+    this.lastContextUsageEmitAt = Date.now()
+    this.emit({ type: 'context_usage', contextUsage: usage })
+  }
+
+  private disposeContextUsage(): void {
+    if (this.contextUsageEmitTimer) clearTimeout(this.contextUsageEmitTimer)
+    this.contextUsageEmitTimer = null
+    this.contextUsageRefreshRequest = null
   }
 
   private updateFromState(raw: unknown): void {
     if (!isRecord(raw)) return
-    if (typeof raw.sessionId === 'string') this.info.sessionId = raw.sessionId
+    if (typeof raw.sessionId === 'string') {
+      if (this.info.sessionId !== undefined && raw.sessionId !== this.info.sessionId) {
+        this.liveContextUsage.reset()
+        this.contextUsageActivityBaseline = 0
+        this.contextUsageGeneration += 1
+        this.authoritativeContextUsage = undefined
+        delete this.info.contextUsage
+      }
+      this.info.sessionId = raw.sessionId
+    }
     // Canonicalize once at the boundary (cached): every later comparison
     // against catalog and validator paths uses the canonical form.
     if (typeof raw.sessionFile === 'string') this.info.sessionFile = canonicalSessionPath(raw.sessionFile)
@@ -551,8 +691,7 @@ export class RpcRuntime {
     if (reading.contextUsage) {
       // Harnesses that report usage inside get_state feed the same authoritative
       // path as the get_session_stats refresh.
-      this.info.contextUsage = reading.contextUsage
-      this.emit({ type: 'context_usage', contextUsage: reading.contextUsage })
+      this.applyAuthoritativeContextUsage(reading.contextUsage)
     }
     const sessionActions = parseSessionActionSnapshot(raw.sessionActions)
     if (sessionActions) this.info.sessionActions = sessionActions

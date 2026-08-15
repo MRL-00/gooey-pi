@@ -133,6 +133,122 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     expect(manager.list()[0]?.contextUsage?.percent).toBeGreaterThanOrEqual(50)
   })
 
+  it('projects context usage while a response streams and corrects it at message boundaries', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-live-context-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'live-context-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+let contextTokens = 40000
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'live-context', isStreaming: false } })
+  } else if (command.type === 'get_session_stats') {
+    send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens: contextTokens, contextWindow: 100000, percent: contextTokens / 1000 } } })
+  } else if (command.type === 'prompt') {
+    send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    send({ type: 'agent_start' })
+    send({ type: 'message_start', message: { role: 'user', content: 'continue' } })
+    contextTokens = 40100
+    send({ type: 'message_end', message: { role: 'user', content: 'continue' } })
+    setTimeout(() => send({
+      type: 'message_update',
+      message: { role: 'assistant', usage: { output: 80 } },
+      assistantMessageEvent: { type: 'text_delta', delta: 'x'.repeat(400) },
+    }), 40)
+    setTimeout(() => send({
+      type: 'message_update',
+      message: { role: 'assistant', usage: { output: 200 } },
+      assistantMessageEvent: { type: 'text_delta', delta: 'finished' },
+    }), 100)
+    setTimeout(() => {
+      contextTokens = 40500
+      send({ type: 'message_end', message: { role: 'assistant', usage: { output: 200 } } })
+    }, 180)
+    setTimeout(() => send({ type: 'tool_execution_start', toolCallId: 'read-1', toolName: 'Read', args: { path: 'large.txt' } }), 210)
+    setTimeout(() => {
+      contextTokens = 40700
+      send({ type: 'tool_execution_end', toolCallId: 'read-1', toolName: 'Read', result: 'tool output' })
+      send({ type: 'message_end', message: { role: 'toolResult', content: 'tool output' } })
+    }, 240)
+    setTimeout(() => send({ type: 'agent_end' }), 360)
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: 'abort', success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    const events: Array<Record<string, unknown>> = []
+    const runtime = new RpcRuntime(process.execPath, [executable], cwd, ({ event }) => events.push(event), () => undefined)
+    try {
+      await runtime.handshake()
+      await runtime.command({ type: 'prompt', message: 'continue' })
+      await waitUntil(() => events.some((event) => event.type === 'context_usage'
+        && Number((event.contextUsage as { tokens?: number } | undefined)?.tokens) > 40_100
+        && Number((event.contextUsage as { tokens?: number } | undefined)?.tokens) < 40_500))
+      const liveUsageIndex = events.findIndex((event) => event.type === 'context_usage'
+        && Number((event.contextUsage as { tokens?: number } | undefined)?.tokens) > 40_100)
+      expect(liveUsageIndex).toBeGreaterThanOrEqual(0)
+      expect(events.findIndex((event) => event.type === 'agent_end')).toBe(-1)
+
+      await waitUntil(() => runtime.snapshot().contextUsage?.tokens === 40_700)
+      expect(events.findIndex((event) => event.type === 'agent_end')).toBe(-1)
+      await waitUntil(() => events.some((event) => event.type === 'agent_end'))
+      expect(runtime.snapshot().contextUsage).toEqual({ tokens: 40_700, contextWindow: 100_000, percent: 40.7 })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it('runs a trailing authoritative refresh when agent_end lands during an in-flight refresh', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-trailing-context-'))
+    dirs.push(cwd)
+    const executable = join(cwd, 'trailing-context-agent.cjs')
+    writeFileSync(executable, `#!/usr/bin/env node
+const readline = require('node:readline')
+let statsRequests = 0
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'trailing-context', isStreaming: false } })
+  } else if (command.type === 'get_session_stats') {
+    statsRequests += 1
+    const tokens = statsRequests === 1 ? 10000 : statsRequests === 2 ? 20000 : 30000
+    const respond = () => send({ id: command.id, type: 'response', command: 'get_session_stats', success: true, data: { contextUsage: { tokens, contextWindow: 100000, percent: tokens / 1000 } } })
+    if (statsRequests === 2) setTimeout(respond, 180)
+    else respond()
+  } else if (command.type === 'prompt') {
+    send({ id: command.id, type: 'response', command: 'prompt', success: true })
+    send({ type: 'agent_start' })
+    send({ type: 'message_start', message: { role: 'user', content: 'continue' } })
+    send({ type: 'message_end', message: { role: 'user', content: 'continue' } })
+    setTimeout(() => send({ type: 'agent_end' }), 20)
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: 'abort', success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    const events: Array<Record<string, unknown>> = []
+    const runtime = new RpcRuntime(process.execPath, [executable], cwd, ({ event }) => events.push(event), () => undefined)
+    try {
+      await runtime.handshake()
+      await runtime.command({ type: 'prompt', message: 'continue' })
+      await waitUntil(() => events.some((event) => event.type === 'agent_end'))
+      await waitUntil(() => runtime.snapshot().contextUsage?.tokens === 30_000)
+      expect(events.filter((event) => event.type === 'context_usage').at(-1)?.contextUsage).toEqual({
+        tokens: 30_000,
+        contextWindow: 100_000,
+        percent: 30,
+      })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('stays busy while an overflow compaction is waiting to restart', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'prime-work-rpc-compaction-'))
     dirs.push(cwd)
