@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell, webContents } from 'electron'
 import type { BrowserWindowConstructorOptions, WebContents } from 'electron'
-import { extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { extname, isAbsolute, join, relative, resolve, win32 as win32Path } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -112,9 +112,10 @@ function registerRendererProtocol(): void {
 /** Resolves a renderer URL path without relying on a platform-specific separator. */
 export function resolveRendererAssetPath(rendererRoot: string, decodedPath: string): string | null {
   if (!decodedPath.startsWith('/') || decodedPath.includes('\0') || decodedPath.includes('\\')) return null
-  const candidate = resolve(rendererRoot, `.${decodedPath === '/' ? '/index.html' : decodedPath}`)
-  const relativePath = relative(rendererRoot, candidate)
-  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return null
+  const pathApi = /^[A-Za-z]:[\\/]/.test(rendererRoot) ? win32Path : { resolve, relative, isAbsolute }
+  const candidate = pathApi.resolve(rendererRoot, `.${decodedPath === '/' ? '/index.html' : decodedPath}`)
+  const relativePath = pathApi.relative(rendererRoot, candidate)
+  if (!relativePath || relativePath.startsWith('..') || pathApi.isAbsolute(relativePath)) return null
   return candidate
 }
 

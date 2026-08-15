@@ -46,7 +46,7 @@
     "prime-agent": "file:vendor/prime-agent-0.7.0-gooeypi.1.tgz",
     "prime-agent-ai": "file:vendor/prime-agent-ai-0.7.0-gooeypi.1.tgz",
     "rrule": "^2.8.1",
-    "zeromq": "^6.6.0"
+    "zeromq": "^6.1.2"
   },
   "overrides": {
     "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",

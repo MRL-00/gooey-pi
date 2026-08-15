@@ -18,10 +18,10 @@ export function useTranscriptScroll(messages: TranscriptMessage[]) {
     const scroller = scrollRef.current
     let frame: number | undefined
     if (firstLoadedTranscript) {
-      frame = requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
+      frame = requestAnimationFrame(() => scroller && typeof scroller.scrollTo === 'function' && scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
       pinnedToBottomRef.current = true
     } else if (streaming && pinnedToBottomRef.current) {
-      frame = requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
+      frame = requestAnimationFrame(() => scroller && typeof scroller.scrollTo === 'function' && scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' }))
     }
     if (previousStreamingRef.current && !streaming) setAnnouncement('Prime response complete.')
     else if (!previousStreamingRef.current && streaming) setAnnouncement('Prime is working.')

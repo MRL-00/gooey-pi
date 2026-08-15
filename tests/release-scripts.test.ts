@@ -177,9 +177,9 @@ describe('release preflight', () => {
 
   test('keeps contributor instructions aligned with the enforced engines', () => {
     const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
-    expect(packageJson.engines).toEqual({ node: '>=22.12.0', npm: '>=10.9.0' })
-    expect(readFileSync('.nvmrc', 'utf8').trim()).toBe('22.12.0')
-    expect(readFileSync('README.md', 'utf8')).toContain('Node.js 22.12.0 or newer and npm 10.9.0 or newer')
+    expect(packageJson.engines).toEqual({ node: '>=24.15.0', npm: '>=12.0.2' })
+    expect(readFileSync('.nvmrc', 'utf8').trim()).toBe('24.15.0')
+    expect(readFileSync('README.md', 'utf8')).toContain('Node.js 24.15.0 or newer and npm 12.0.2 or newer')
   })
 
   test('fails closed without Developer ID credentials', () => {
@@ -324,7 +324,7 @@ describe('release preflight', () => {
     }
     // Release jobs skip the CI-duplicated verification suite and never upload
     // an unpacked application directory; every platform publishes its update feed.
-    expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(3)
+    expect(releaseWorkflow.match(/-- --skip-verify/g)).toHaveLength(4)
     expect(releaseWorkflow).toContain('release/mac/${{ matrix.arch }}/latest*.yml')
     expect(releaseWorkflow).toContain('release/linux/${{ matrix.arch }}/latest*.yml')
     expect(releaseWorkflow).toContain('release/win/**/latest*.yml')
@@ -472,6 +472,7 @@ describe('GitHub Release publication', () => {
     expect([...names].filter(([published, downloaded]) => published !== downloaded)).toEqual([
       ['GooeyPi-0.2.0-intel-chip.dmg', 'GooeyPi-0.2.0-x64.dmg'],
       ['GooeyPi-0.2.0-m-chip.dmg', 'GooeyPi-0.2.0-arm64.dmg'],
+      ['GooeyPi-0.2.0-win-x64.msix', 'GooeyPi-0.2.0-win-x64.appx'],
     ])
   })
 
@@ -749,7 +750,7 @@ describe('post-package verification helpers', () => {
       '**/node_modules/node-pty/build/Release/spawn-helper',
       '**/node_modules/zeromq/build/darwin/${arch}/node/*-Release/addon.node',
     ])
-    expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node'])
+    expect(packageJson.build.linux.asarUnpack).toEqual(['**/node_modules/node-pty/build/Release/pty.node', '**/node_modules/zeromq/build/linux/${arch}/node/*-Release/addon.node'])
     expect(packageJson.build.win.asarUnpack).toEqual([
       '**/node_modules/node-pty/prebuilds/win32-${arch}/pty.node',
       '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty.node',

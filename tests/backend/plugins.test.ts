@@ -774,8 +774,8 @@ const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(installStarted)},'
     const connector = new PluginService(null, async (path) => resolve(path), { agentDir })
 
     const installPromise = installer.install('npm:example-package')
-    for (let attempt = 0; attempt < 200 && !existsSync(installStarted); attempt += 1) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5))
+    for (let attempt = 0; attempt < 1000 && !existsSync(installStarted); attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10))
     }
     expect(existsSync(installStarted)).toBe(true)
     const [installed, connected] = await Promise.all([

@@ -120,7 +120,7 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const applyTheme = (theme: 'light' | 'dark') => {
       document.documentElement.dataset.theme = theme
-      void bridge?.app.setTitleBarTheme?.(theme).catch(() => undefined)
+      void bridge?.app?.setTitleBarTheme?.(theme)?.catch(() => undefined)
     }
     applyTheme(settings.theme === 'system' ? media.matches ? 'dark' : 'light' : settings.theme)
     document.documentElement.classList.toggle('reduce-motion', settings.reduceMotion)
