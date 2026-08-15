@@ -77,8 +77,9 @@ export function expectedGitHubReleaseAssets(version, platforms = RELEASE_PLATFOR
 }
 
 function parseUpdateMetadata(path, expectedVersion) {
-  const value = load(readFileSync(path, 'utf8'))
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Update metadata is not an object: ${path}`)
+  const parsed = load(readFileSync(path, 'utf8'))
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`Update metadata is not an object: ${path}`)
+  const value = /** @type {Record<string, unknown>} */ (parsed)
   if (value.version !== expectedVersion) throw new Error(`Update metadata version does not match ${expectedVersion}: ${path}`)
   if (!Array.isArray(value.files) || !value.files.length) throw new Error(`Update metadata has no files: ${path}`)
   for (const file of value.files) {

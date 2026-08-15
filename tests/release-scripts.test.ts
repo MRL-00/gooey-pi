@@ -989,7 +989,7 @@ describe('cross-platform packaging repair', () => {
         expect(globs, `verifier requires ${file} but no ${target} asarUnpack glob produces it`).toContain(file)
       }
       const zeroMqGlob = globs.find((glob) => glob.includes('zeromq'))
-      expect(zeroMqGlob).toBe(`node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/**/addon.node`)
+      expect(zeroMqGlob).toBe(`node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/*-Release/addon.node`)
       const sampleAddon = `node_modules/zeromq/build/${nativeRuntimeDirectory(target)}/${architecture}/node/glibc-x64-115-Release/addon.node`
       expect(zeroMqAddonPattern(target, architecture).test(sampleAddon)).toBe(true)
     }

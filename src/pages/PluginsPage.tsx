@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, BookOpen, Check, ChevronRight, FileCode2, FileText, Github, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, WandSparkles, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BookOpen, Check, ChevronRight, FileCode2, FileText, GitFork, Globe2, Package, Palette, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, WandSparkles, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { CapabilityMutationInput, ExtensionInstallInput, HarnessId, McpConnectionInput, McpStateInput, PluginWarning, SkillRecord } from '@/types/api'
 import { HARNESS_SHORT_NAMES } from '@/lib/harness'
@@ -33,7 +33,7 @@ const PRIME_MCP_DOCS_URL = 'https://github.com/PrimeIntellect-ai/prime-agent/blo
 
 function SkillIcon({ skill }: { skill: SkillRecord }) {
   const common = { size: 16 }
-  if (skill.icon === 'github') return <Github {...common}/>
+  if (skill.icon === 'github') return <GitFork {...common}/>
   if (skill.icon === 'palette') return <Palette {...common}/>
   if (skill.icon === 'book-open') return <BookOpen {...common}/>
   if (skill.kind === 'mcp') return <Globe2 {...common}/>

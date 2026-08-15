@@ -5,7 +5,7 @@ import {
   ChevronRight,
   CircleAlert,
   FileCode2,
-  Github,
+  GitFork,
   Globe2,
   Layers3,
   LoaderCircle,
@@ -51,7 +51,7 @@ function toolIcon(kind: ToolKind): ReactNode {
   if (kind === 'question') return <MessageCircleQuestion size={14} />
   if (kind === 'terminal') return <TerminalSquare size={14} />
   if (kind === 'web') return <Globe2 size={14} />
-  if (kind === 'git') return <Github size={14} />
+  if (kind === 'git') return <GitFork size={14} />
   if (kind === 'file') return <FileCode2 size={14} />
   return <Wrench size={14} />
 }
