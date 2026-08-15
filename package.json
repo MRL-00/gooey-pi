@@ -41,12 +41,12 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "js-yaml": "^4.3.1",
-    "node-pty": "^1.0.0",
+    "js-yaml": "^5.3.0",
+    "node-pty": "^1.1.0",
     "prime-agent": "file:vendor/prime-agent-0.7.0-gooeypi.1.tgz",
     "prime-agent-ai": "file:vendor/prime-agent-ai-0.7.0-gooeypi.1.tgz",
     "rrule": "^2.8.1",
-    "zeromq": "^6.1.2"
+    "zeromq": "^6.6.0"
   },
   "overrides": {
     "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",
@@ -54,27 +54,27 @@
     "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.6",
+    "@biomejs/biome": "^2.5.8",
     "@electron/asar": "^4.2.1",
     "@electron/fuses": "^2.1.3",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^22.10.2",
-    "@types/react": "^19.0.3",
-    "@types/react-dom": "^19.0.2",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^5.2.0",
     "@vitest/coverage-v8": "^4.1.10",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
-    "electron": "^43.2.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^43.4.0",
     "electron-builder": "^26.15.7",
     "electron-vite": "^5.0.0",
-    "jsdom": "^26.1.0",
-    "lucide-react": "^0.468.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "jsdom": "^30.0.1",
+    "lucide-react": "^1.31.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "typescript": "^5.7.2",
+    "typescript": "^7.0.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
   },
@@ -128,7 +128,7 @@
       "icon": "assets/icon.png",
       "asarUnpack": [
         "**/node_modules/node-pty/build/Release/pty.node",
-        "**/node_modules/zeromq/build/linux/${arch}/node/**/addon.node"
+        "**/node_modules/zeromq/build/linux/${arch}/node/*-Release/addon.node"
       ],
       "files": [
         "out/**/*",
@@ -152,7 +152,7 @@
         "**/node_modules/node-pty/prebuilds/win32-${arch}/winpty.dll",
         "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/OpenConsole.exe",
         "**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll",
-        "**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node"
+        "**/node_modules/zeromq/build/win32/${arch}/node/*-Release/addon.node"
       ],
       "files": [
         "out/**/*",
@@ -193,8 +193,8 @@
     ]
   },
   "engines": {
-    "node": ">=22.12.0",
-    "npm": ">=10.9.0"
+    "node": ">=24.15.0",
+    "npm": ">=12.0.2"
   },
-  "packageManager": "npm@11.12.1"
+  "packageManager": "npm@12.0.2"
 }
