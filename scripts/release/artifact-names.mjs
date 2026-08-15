@@ -20,6 +20,7 @@ export const TARGET_EXTENSIONS = Object.freeze({
   rpm: 'rpm',
   pacman: 'pacman',
   nsis: 'exe',
+  appx: 'appx',
 })
 
 /** Platform/architecture legs the release workflow packages; mirrors the release.yml build matrices. */

@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      include_windows_unsigned:
+        description: Build unsigned Windows packages for free beta distribution
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -26,7 +31,9 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   RELEASE_REF: ${{ inputs.tag || github.ref }}
-  RELEASE_WINDOWS_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true') }}
+  RELEASE_WINDOWS_SIGNED_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true') }}
+  RELEASE_WINDOWS_UNSIGNED_ENABLED: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_windows_unsigned) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true') }}
+  RELEASE_WINDOWS_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && (inputs.include_windows || inputs.include_windows_unsigned)) || (github.event_name == 'push' && (vars.RELEASE_WINDOWS_ENABLED == 'true' || vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true'))) }}
 
 jobs:
   validate:
@@ -200,7 +207,7 @@ jobs:
           if-no-files-found: error
 
   package-windows:
-    if: (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true')
+    if: (github.event_name == 'workflow_dispatch' && (inputs.include_windows || inputs.include_windows_unsigned)) || (github.event_name == 'push' && (vars.RELEASE_WINDOWS_ENABLED == 'true' || vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true'))
     needs: [validate, quality, hermetic-e2e]
     runs-on: windows-2022
     steps:
@@ -218,23 +225,26 @@ jobs:
             ~/AppData/Local/electron-builder/Cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
-      # Authenticode verification asserts who signed, not merely that some
-      # trusted chain signed: set the repository variables
-      # GOOEYPI_WINDOWS_CERT_SUBJECT and/or GOOEYPI_WINDOWS_CERT_THUMBPRINT (see
-      # docs/security.md). Windows packaging fails closed when neither is set.
+      # Signed builds remain fail-closed and require the configured Authenticode identity.
       - name: Build, Authenticode-sign, and verify Windows packages
+        if: (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true')
         run: npm run package:win -- --skip-verify
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           GOOEYPI_WINDOWS_CERT_SUBJECT: ${{ vars.GOOEYPI_WINDOWS_CERT_SUBJECT }}
           GOOEYPI_WINDOWS_CERT_THUMBPRINT: ${{ vars.GOOEYPI_WINDOWS_CERT_THUMBPRINT }}
+      - name: Build unsigned Windows packages for beta distribution
+        if: (github.event_name == 'workflow_dispatch' && inputs.include_windows_unsigned && !inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true' && vars.RELEASE_WINDOWS_ENABLED != 'true')
+        run: npm run package:win:local-qa -- --skip-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-windows
           path: |
             release/win/**/*.exe
             release/win/**/*.zip
+            release/win/**/*.appx
+            release/win/**/*.msix
             release/win/**/latest*.yml
           if-no-files-found: error
 

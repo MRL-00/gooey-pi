@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { rmSync } from 'node:fs'
+import { copyFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { assertSupportedNode, runCommand, validateReleaseCredentials, validateWindowsReleaseCredentials, withoutReleaseCredentials } from './lib.mjs'
 
@@ -54,6 +54,12 @@ try {
   const builderEnv = isQa ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' } : process.env
   if (isQa && platform === 'mac') builderArgs.push('--config.mac.identity=null', '--config.mac.notarize=false')
   run('electron-builder', builderArgs, builderEnv)
+  if (platform === 'win' && !dryRun) {
+    const outputDirectory = resolve('release', platform, arch)
+    const appx = readdirSync(outputDirectory).find((name) => name.endsWith('.appx'))
+    if (!appx) throw new Error('Windows AppX/MSIX package was not produced')
+    copyFileSync(resolve(outputDirectory, appx), resolve(outputDirectory, appx.replace(/\.appx$/, '.msix')))
+  }
   if (platform === 'mac') {
     run(
       'node',

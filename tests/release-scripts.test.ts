@@ -761,12 +761,13 @@ describe('post-package verification helpers', () => {
       '**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node',
     ])
     expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm', 'pacman'])
-    expect(packageJson.build.win.target).toEqual(['nsis', 'zip'])
+    expect(packageJson.build.win.target).toEqual(['nsis', 'zip', 'appx'])
     expect(packageJson.build.directories.output).toBe('release')
   })
 
   test('verifies and uploads every configured Linux installer format', () => {
     expect(expectedArtifactExtensions('linux')).toEqual(['.AppImage', '.deb', '.rpm', '.pacman'])
+    expect(expectedArtifactExtensions('win')).toEqual(['.exe', '.zip', '.appx'])
     const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8')
     const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
     expect(ciWorkflow).toContain('release/linux/**/*.pacman')

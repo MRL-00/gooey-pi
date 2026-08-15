@@ -140,7 +140,8 @@
     "win": {
       "target": [
         "nsis",
-        "zip"
+        "zip",
+        "appx"
       ],
       "artifactName": "${productName}-${version}-win-${arch}.${ext}",
       "icon": "assets/icon.png",
@@ -190,7 +191,17 @@
     ],
     "electronLanguages": [
       "en-US"
-    ]
+    ],
+    "appx": {
+      "applicationId": "GooeyPi",
+      "identityName": "GooeyPi",
+      "publisherDisplayName": "GooeyPi",
+      "displayName": "GooeyPi",
+      "backgroundColor": "#171716",
+      "languages": [
+        "en-US"
+      ]
+    }
   },
   "engines": {
     "node": ">=24.15.0",

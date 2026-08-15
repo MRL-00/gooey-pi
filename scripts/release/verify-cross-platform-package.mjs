@@ -30,7 +30,7 @@ function findUnpackedDirectory(outputDirectory, target) {
 }
 
 export function expectedArtifactExtensions(target) {
-  return target === 'linux' ? ['.AppImage', '.deb', '.rpm', '.pacman'] : ['.exe', '.zip']
+  return target === 'linux' ? ['.AppImage', '.deb', '.rpm', '.pacman'] : ['.exe', '.zip', '.appx']
 }
 
 function assertExpectedArtifacts(outputDirectory, target) {

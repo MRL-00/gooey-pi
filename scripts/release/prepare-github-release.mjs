@@ -56,7 +56,8 @@ export function releaseAssetNames(version, platforms = RELEASE_PLATFORMS) {
       [`GooeyPi-${version}-linux-x64.pacman`],
       [`GooeyPi-${version}-linux-x86_64.rpm`],
     ],
-    win: [[`GooeyPi-${version}-win-x64.exe`], [`GooeyPi-${version}-win-x64.zip`]],
+    // electron-builder emits the MSIX-compatible package as .appx; publish the same bytes with the modern .msix extension.
+    win: [[`GooeyPi-${version}-win-x64.exe`], [`GooeyPi-${version}-win-x64.zip`], [`GooeyPi-${version}-win-x64.msix`, `GooeyPi-${version}-win-x64.appx`]],
   }
   const entries = platforms
     .flatMap((platform) => [...assets[platform], ...UPDATE_METADATA_BY_PLATFORM[platform].map((name) => [name])])
