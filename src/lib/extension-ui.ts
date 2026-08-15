@@ -18,6 +18,7 @@ export interface ExtensionUiQuestionnaireRequest {
   questions: ExtensionUiQuestion[]
   total: number
   complete: boolean
+  timeout?: number
 }
 
 export type ExtensionUiRequest =
@@ -31,6 +32,7 @@ const MAX_TITLE_LENGTH = 4_000
 const MAX_OPTION_LENGTH = 500
 const MAX_OPTIONS = 32
 const ASK_USER_RPC_MARKER = '__prime_ask_user__'
+export const ASK_USER_TIMEOUT_MS = 30_000
 
 function stringValue(value: unknown, max: number): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max ? value : undefined

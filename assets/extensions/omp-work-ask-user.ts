@@ -100,6 +100,7 @@ const MAX_QUESTION_LENGTH = 4_000
 const MAX_OPTION_LENGTH = 500
 const MAX_ANSWER_LENGTH = 8_000
 const MAX_CONTEXT_LENGTH = 8_000
+const NO_ANSWER_GUIDANCE = 'No answer given. Continue forward with your best judgment unless it is unsafe to take further action without user input.'
 
 function trimmed(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -222,7 +223,7 @@ function registerTools(pi: OmpExtensionApi, Type: OmpTypebox): void {
       )))
       if (values.some((value) => value === undefined)) {
         return {
-          content: [{ type: 'text', text: 'The user cancelled the questionnaire.' }],
+          content: [{ type: 'text', text: NO_ANSWER_GUIDANCE }],
           details: { questions, answers: [], cancelled: true },
         }
       }

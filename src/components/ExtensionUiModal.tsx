@@ -40,12 +40,14 @@ function questionnaireAnswer(
 
 export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: ExtensionUiModalProps) {
   const prefill = request.method === 'editor' ? request.prefill : undefined
+  const questionnaireTimeout = request.method === 'questionnaire' ? request.timeout : undefined
   const [value, setValue] = useState(prefill ?? '')
   const [selected, setSelected] = useState(0)
   const [questionIndex, setQuestionIndex] = useState(0)
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, number>>({})
   const [answeredByQuestion, setAnsweredByQuestion] = useState<Record<string, boolean>>({})
   const [contexts, setContexts] = useState<Record<string, string>>({})
+  const [remainingMs, setRemainingMs] = useState<number | undefined>(questionnaireTimeout)
   const contextInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const questionnaireRef = useRef<HTMLDivElement | null>(null)
 
@@ -76,9 +78,21 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
     if (request.method !== 'questionnaire' || !request.complete) return
     const container = questionnaireRef.current
     if (!container || container.contains(document.activeElement)) return
-    const focusTarget = container.querySelector<HTMLElement>('.extension-question__options button, .extension-questionnaire__submit button')
+    const focusTarget = container.querySelector<HTMLElement>('.extension-question__options button')
     focusTarget?.focus()
   }, [request.id, request.method === 'questionnaire' ? request.complete : false, questionIndex])
+
+  useEffect(() => {
+    if (questionnaireTimeout === undefined) {
+      setRemainingMs(undefined)
+      return
+    }
+    const deadline = Date.now() + questionnaireTimeout
+    const updateRemaining = () => setRemainingMs(Math.max(0, deadline - Date.now()))
+    updateRemaining()
+    const timer = window.setInterval(updateRemaining, 1_000)
+    return () => window.clearInterval(timer)
+  }, [questionnaireTimeout, request.id])
 
   const cancel = () => onRespond({ cancelled: true })
 
@@ -108,12 +122,13 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
   const commitQuestion = (index = activeSelected) => {
     if (!activeQuestion) return
     const bounded = Math.max(0, Math.min(activeQuestion.options.length - 1, index))
+    setSelectedByQuestion((current) => ({ ...current, [activeQuestion.id]: bounded }))
     const answer = questionnaireAnswer(activeQuestion, bounded, contexts)
     if (!answer) {
+      setAnsweredByQuestion((current) => ({ ...current, [activeQuestion.id]: false }))
       contextInputRefs.current[activeQuestion.id]?.focus()
       return
     }
-    setSelectedByQuestion((current) => ({ ...current, [activeQuestion.id]: bounded }))
     setAnsweredByQuestion((current) => ({ ...current, [activeQuestion.id]: true }))
     setQuestionIndex((current) => Math.min(current + 1, questionnaire?.questions.length ?? current + 1))
   }
@@ -194,6 +209,14 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
           {!request.complete ? <p className="modal-intro">Preparing questions…</p> : null}
           {request.complete ? (
             <>
+              {remainingMs !== undefined ? (
+                <div className="extension-questionnaire__timer" role="timer" aria-live="polite">
+                  <span>Time remaining</span>
+                  <strong aria-label={`${Math.max(0, Math.ceil(remainingMs / 1_000))} seconds remaining`}>
+                    {Math.max(0, Math.ceil(remainingMs / 1_000))}s
+                  </strong>
+                </div>
+              ) : null}
               <div className="extension-questionnaire__progress" aria-label="Question progress">
                 {request.questions.map((question, index) => (
                   <button type="button" key={question.id} className={questionIndex === index ? 'is-active' : ''} onClick={() => navigateQuestion(index)}>
@@ -215,7 +238,7 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
                         aria-selected={isSelected}
                         className={isSelected ? 'is-selected' : ''}
                         key={`${option}-${index}`}
-                        onClick={() => selectQuestionOption(index)}
+                        onClick={() => commitQuestion(index)}
                       >
                         <span className="extension-question__option-index">{index + 1}</span>
                         <span>{option}</span>
@@ -239,7 +262,6 @@ export function ExtensionUiModal({ request, onRespond, platform = 'darwin' }: Ex
                 </div>
               ) : (
                 <div className="extension-questionnaire__submit" role="listbox" aria-label="Submit answers">
-                  <button type="button" role="option" aria-selected="true" disabled={!allAnswered} onClick={submitQuestionnaire}>✓ Submit answers</button>
                   {request.questions.map((question) => {
                     const answer = questionnaireAnswer(question, selectedByQuestion[question.id] ?? 0, contexts)
                     return <p key={question.id}><strong>{question.index + 1}.</strong> {answer?.answer ?? 'Not answered'}</p>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ExtensionUiResponse } from '@/components/ExtensionUiModal'
-import { parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
+import { ASK_USER_TIMEOUT_MS, parseExtensionUiRequest, type ExtensionUiRequest } from '@/lib/extension-ui'
 import type { PrimeWorkApi, RuntimeInfo, SessionRecord } from '@/types/api'
 
 interface UseExtensionUiOptions {
@@ -45,6 +45,7 @@ export function useExtensionUi({
   const extensionUiRef = useRef<PendingExtensionUi | null>(null)
   const pendingByRuntimeRef = useRef<Map<string, PendingExtensionUi>>(new Map())
   const timerByRuntimeRef = useRef<Map<string, number>>(new Map())
+  const timedOutQuestionnairesRef = useRef<Set<string>>(new Set())
   const activeRuntimeIdRef = useRef(activeRuntimeId)
   useLayoutEffect(() => { activeRuntimeIdRef.current = activeRuntimeId })
 
@@ -81,8 +82,22 @@ export function useExtensionUi({
   const respondToExtensionUi = useCallback(async (response: ExtensionUiResponse) => {
     const pending = extensionUiRef.current
     if (!pending) return
-    setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: true } : current)
     clearExtensionUi(pending.runtimeId)
+    if ('cancelled' in response && response.cancelled) {
+      if (!bridge) return
+      try {
+        await bridge.agent.stop(pending.runtimeId)
+        setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: false } : current)
+      } catch (error) {
+        // If stopping the runtime fails, still resolve the extension request so
+        // it cannot remain blocked behind a dialog that is no longer visible.
+        cancelPending(pending)
+        setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: false } : current)
+        if (activeRuntimeIdRef.current === pending.runtimeId) reportError(error)
+      }
+      return
+    }
+    setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: true } : current)
     const pendingSession = runtimeSessionsRef.current.get(pending.runtimeId)
     if (pendingSession) {
       setSessions((items) => items.map((session) => session.filePath === pendingSession
@@ -120,13 +135,34 @@ export function useExtensionUi({
       setRuntime((current) => current?.runtimeId === pending.runtimeId ? { ...current, isStreaming: false } : current)
       if (activeRuntimeIdRef.current === pending.runtimeId) reportError(error)
     }
-  }, [bridge, clearExtensionUi, reportError, runtimeSessionsRef, setRuntime, setSessions])
+  }, [bridge, cancelPending, clearExtensionUi, reportError, runtimeSessionsRef, setRuntime, setSessions])
+
+  const scheduleTimeout = useCallback((pending: PendingExtensionUi) => {
+    const timeout = 'timeout' in pending.request ? pending.request.timeout : undefined
+    if (timeout === undefined || timerByRuntimeRef.current.has(pending.runtimeId)) return
+    timerByRuntimeRef.current.set(pending.runtimeId, window.setTimeout(() => {
+      const current = pendingByRuntimeRef.current.get(pending.runtimeId)
+      if (!current || current.request.id !== pending.request.id) return
+      if (current.request.method === 'questionnaire') timedOutQuestionnairesRef.current.add(`${pending.runtimeId}:${pending.request.id}`)
+      cancelPending(current)
+      clearExtensionUi(pending.runtimeId)
+    }, timeout))
+  }, [cancelPending, clearExtensionUi])
 
   const showExtensionUi = useCallback((runtimeId: string, rawEvent: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(rawEvent)
     if (!request || !bridge) return
 
     if (request.method === 'select' && request.questionnaire) {
+      const questionnaireKey = `${runtimeId}:${request.questionnaire.groupId}`
+      if (timedOutQuestionnairesRef.current.has(questionnaireKey)) {
+        void bridge.agent.command(runtimeId, {
+          type: 'extension_ui_response',
+          id: request.id,
+          cancelled: true,
+        }).catch(() => undefined)
+        return
+      }
       const previous = pendingByRuntimeRef.current.get(runtimeId)
       const sameQuestionnaire = previous?.request.method === 'questionnaire' && previous.request.id === request.questionnaire.groupId
       if (previous && !sameQuestionnaire) {
@@ -156,6 +192,9 @@ export function useExtensionUi({
           questions,
           total,
           complete: questions.length >= total,
+          timeout: previous?.request.method === 'questionnaire'
+            ? previous.request.timeout
+            : request.timeout ?? ASK_USER_TIMEOUT_MS,
         },
         requests,
       }
@@ -164,6 +203,7 @@ export function useExtensionUi({
         extensionUiRef.current = pending
         setExtensionUi(pending)
       }
+      scheduleTimeout(pending)
       return
     }
 
@@ -178,15 +218,8 @@ export function useExtensionUi({
       extensionUiRef.current = pending
       setExtensionUi(pending)
     }
-    if ('timeout' in request && request.timeout !== undefined) {
-      timerByRuntimeRef.current.set(runtimeId, window.setTimeout(() => {
-        const current = pendingByRuntimeRef.current.get(runtimeId)
-        if (!current || current.request.id !== request.id) return
-        cancelPending(current)
-        clearExtensionUi(runtimeId)
-      }, request.timeout))
-    }
-  }, [bridge, cancelPending, clearExtensionUi])
+    scheduleTimeout(pending)
+  }, [bridge, cancelPending, clearExtensionUi, scheduleTimeout])
 
   const hasOpenRequestForSession = useCallback((filePath: string): boolean => {
     for (const runtimeId of pendingByRuntimeRef.current.keys()) {
@@ -202,6 +235,7 @@ export function useExtensionUi({
     for (const pending of pendingByRuntimeRef.current.values()) cancelPending(pending)
     timerByRuntimeRef.current.clear()
     pendingByRuntimeRef.current.clear()
+    timedOutQuestionnairesRef.current.clear()
   }, [cancelPending])
 
   return { extensionUi, clearExtensionUi, respondToExtensionUi, showExtensionUi, hasOpenRequestForSession }

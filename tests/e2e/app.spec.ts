@@ -1583,7 +1583,6 @@ test.describe('Prime Work desktop smoke', () => {
     const context = dialog.getByRole('textbox', { name: 'Additional context' })
     await context.fill('For the pilot')
     await dialog.getByRole('option', { name: 'Beta' }).click()
-    await page.keyboard.press('Enter')
     await expect(dialog).toContainText('Question 2 of 2')
 
     await dialog.getByRole('option', { name: 'Safety' }).click()
@@ -1597,7 +1596,7 @@ test.describe('Prime Work desktop smoke', () => {
     await dialog.getByRole('textbox', { name: 'Additional context' }).fill('A custom priority')
     await page.keyboard.press('Enter')
     await expect(dialog).toContainText('Submit answers')
-    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).click()
     await expect(dialog).toHaveCount(0)
 
     expect(JSON.parse(readFileSync(join(fixtureRoot, 'prompt-args.json'), 'utf8'))).toMatchObject({
@@ -1635,11 +1634,9 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toContainText('Which OMP release channel?')
     await dialog.getByRole('textbox', { name: 'Additional context' }).fill('OMP app verification')
     await dialog.getByRole('option', { name: 'Beta' }).click()
-    await page.keyboard.press('Enter')
     await expect(dialog).toContainText('What should OMP optimize for?')
     await dialog.getByRole('option', { name: 'Safety' }).click()
-    await page.keyboard.press('Enter')
-    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).click()
     await expect(dialog).toHaveCount(0)
 
     const valuesPath = join(fixtureRoot, 'omp-questionnaire-values.json')
@@ -1669,12 +1666,10 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('Which Pi release channel?')
     await dialog.getByRole('option', { name: 'Beta' }).click()
-    await page.keyboard.press('Enter')
     await expect(dialog).toContainText('What should Pi optimize for?')
     await dialog.getByRole('textbox', { name: 'Additional context' }).fill('Pi app verification')
     await dialog.getByRole('option', { name: 'Safety' }).click()
-    await page.keyboard.press('Enter')
-    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).last().click()
+    await dialog.getByRole('button', { name: 'Submit answers', exact: true }).click()
     await expect(dialog).toHaveCount(0)
 
     const valuesPath = join(fixtureRoot, 'pi-questionnaire-values.json')

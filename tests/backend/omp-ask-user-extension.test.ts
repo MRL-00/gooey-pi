@@ -76,4 +76,13 @@ describe('omp-work-ask-user extension', () => {
     expect(result.content[0].text).toContain('not available')
     expect(result.details).toMatchObject({ answers: [], cancelled: true })
   })
+
+  it('gives the agent a safe forward-progress instruction when no answer is returned', async () => {
+    const { tool } = fixture()
+    const result = await tool.execute('call-1', {
+      questions: [{ question: 'Continue?', options: ['Yes', 'No'] }],
+    }, undefined, undefined, { hasUI: true, ui: { select: vi.fn().mockResolvedValue(undefined) } })
+    expect(result.content[0].text).toBe('No answer given. Continue forward with your best judgment unless it is unsafe to take further action without user input.')
+    expect(result.details).toMatchObject({ answers: [], cancelled: true })
+  })
 })

@@ -595,6 +595,73 @@ describe('extension UI runtime ownership', () => {
     const resumeRuntime = setRuntime.mock.calls[0][0] as (current: RuntimeInfo | null) => RuntimeInfo | null
     expect(resumeRuntime(runtime)).toMatchObject({ runtimeId: 'runtime', isStreaming: true })
   })
+
+  it('stops the agent when an ask_user questionnaire is dismissed', async () => {
+    const command = vi.fn().mockResolvedValue({})
+    const stop = vi.fn().mockResolvedValue(true)
+    const bridge = { agent: { command, stop } } as unknown as PrimeWorkApi
+    const runtimeSessionsRef = { current: new Map<string, string>() }
+    const setSessions = vi.fn()
+    const setRuntime = vi.fn()
+    const reportError = vi.fn()
+    let state!: ReturnType<typeof useExtensionUi>
+    function ExtensionProbe() {
+      state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeSessionsRef, setSessions, setRuntime, reportError })
+      return <Probe />
+    }
+
+    await act(async () => { root.render(<ExtensionProbe />) })
+    await act(async () => {
+      state.showExtensionUi('runtime', {
+        type: 'extension_ui_request', id: 'question-1', method: 'select', title: 'First question',
+        options: ['__prime_ask_user__group-1:0:1', 'A', 'B'],
+      })
+    })
+    await act(async () => { await state.respondToExtensionUi({ cancelled: true }) })
+
+    expect(stop).toHaveBeenCalledWith('runtime')
+    expect(command).not.toHaveBeenCalled()
+    expect(state.extensionUi).toBeNull()
+  })
+
+  it('auto-continues an unanswered ask_user questionnaire after thirty seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const command = vi.fn().mockResolvedValue({})
+      const stop = vi.fn().mockResolvedValue(true)
+      const bridge = { agent: { command, stop } } as unknown as PrimeWorkApi
+      const runtimeSessionsRef = { current: new Map<string, string>() }
+      const setSessions = vi.fn()
+      const setRuntime = vi.fn()
+      const reportError = vi.fn()
+      let state!: ReturnType<typeof useExtensionUi>
+      function ExtensionProbe() {
+        state = useExtensionUi({ bridge, activeRuntimeId: 'runtime', runtimeSessionsRef, setSessions, setRuntime, reportError })
+        return <Probe />
+      }
+
+      await act(async () => { root.render(<ExtensionProbe />) })
+      await act(async () => {
+        state.showExtensionUi('runtime', {
+          type: 'extension_ui_request', id: 'question-1', method: 'select', title: 'First question',
+          options: ['__prime_ask_user__group-1:0:1', 'A', 'B'],
+        })
+      })
+      expect(state.extensionUi?.request.method === 'questionnaire' ? state.extensionUi.request.timeout : undefined).toBe(30_000)
+
+      await act(async () => { vi.advanceTimersByTime(29_999) })
+      expect(state.extensionUi).not.toBeNull()
+      await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve() })
+
+      expect(state.extensionUi).toBeNull()
+      expect(stop).not.toHaveBeenCalled()
+      expect(command).toHaveBeenCalledWith('runtime', {
+        type: 'extension_ui_response', id: 'question-1', cancelled: true,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 
