@@ -316,6 +316,48 @@ describe('AgentCollaborationBridge', () => {
     expect(primeSessions.read.mock.calls.length - readsBefore).toBeLessThanOrEqual(2)
   })
 
+  it('re-arms an early timeout wake without polling the transcript early', async () => {
+    const { call, primeSessions } = await fixture()
+    const read = await call('read', { target_session_id: target.id })
+    const cursor = (read.body.result as Record<string, unknown>).cursor
+    const readsBefore = primeSessions.read.mock.calls.length
+    const nativeSetTimeout = globalThis.setTimeout
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const requested = Number(delay ?? 0)
+      return nativeSetTimeout(callback, requested > 25 && requested <= 150 ? requested - 25 : requested, ...args)
+    }) as typeof setTimeout)
+
+    try {
+      const completed = await call('wait', { target_session_id: target.id, after_cursor: cursor, timeout_ms: 150 })
+      expect(completed.body.result).toMatchObject({ timed_out: true })
+      expect(primeSessions.read.mock.calls.length - readsBefore).toBeLessThanOrEqual(2)
+    } finally {
+      timer.mockRestore()
+    }
+  })
+
+  it('reports a transcript change found by the final deadline snapshot', async () => {
+    const changedTranscript: TranscriptMessage[] = [
+      ...defaultTargetTranscript,
+      { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'The deadline update is ready.' }] },
+    ]
+    const { call, primeSessions } = await fixture()
+    let reads = 0
+    primeSessions.read.mockImplementation(async () => {
+      reads += 1
+      return reads >= 3 ? changedTranscript : defaultTargetTranscript
+    })
+    const read = await call('read', { target_session_id: target.id })
+    const cursor = (read.body.result as Record<string, unknown>).cursor
+
+    const completed = await call('wait', { target_session_id: target.id, after_cursor: cursor, timeout_ms: 50 })
+
+    expect(completed.body.result).toMatchObject({ timed_out: false })
+    expect((completed.body.result as Record<string, unknown>).messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'a2', text: 'The deadline update is ready.' }),
+    ]))
+  })
+
   it('wakes an offline target while rejecting missing source scope and invalid tokens', async () => {
     const { bridge, call, environment } = await fixture(false)
     const offline = await call('send', { target_session_id: target.id, message: 'Hello' })
