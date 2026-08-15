@@ -35,6 +35,12 @@ function effectiveToolId(id: string | undefined, name: string): string {
 
 const EMPTY_TURN_FALLBACK = 'Completed without a text response.'
 const LOCAL_STEER_PICKUP = Symbol('gooeypi-steer-pickup')
+const LOCAL_STEER_ACCEPTED = Symbol('gooeypi-steer-accepted')
+
+/** Renderer-only event: fixes an admitted steer in history at response time. */
+export function createSteerAcceptedEvent(prompt: QueuedPrompt): Record<string, unknown> {
+  return { type: 'gooeypi_steer_accepted', prompt, [LOCAL_STEER_ACCEPTED]: true }
+}
 
 /** Renderer-only event: the symbol prevents an agent frame from spoofing a local pickup. */
 export function createSteerPickupEvent(prompts: QueuedPrompt[]): Record<string, unknown> {
@@ -189,25 +195,55 @@ export function replayPrimeEvents(
     scanStreaming()
   }
 
+  const steerMessage = (value: unknown, state: 'accepted' | 'read'): TranscriptMessage | undefined => {
+    const prompt = record(value)
+    const id = string(prompt?.id)
+    const text = string(prompt?.text)
+    if (!id || !text) return undefined
+    const timestamp = typeof prompt?.timestamp === 'number' && Number.isFinite(prompt.timestamp) ? prompt.timestamp : Date.now()
+    const parts = Array.isArray(prompt?.parts) ? prompt.parts as MessagePart[] : [{ type: 'text' as const, text }]
+    return { id: `user-${id}`, role: 'user', steerState: state, timestamp, parts }
+  }
+
   for (const raw of events) {
     if (stats) stats.eventScans += 1
     const type = string(raw.type) ?? string(raw.event)
     if (!type) continue
+    if (type === 'gooeypi_steer_accepted' && (raw as Record<PropertyKey, unknown>)[LOCAL_STEER_ACCEPTED] === true) {
+      const accepted = steerMessage(raw.prompt, 'accepted')
+      if (!accepted || next.some((message) => message.id === accepted.id)) continue
+      // Freeze the output already visible when the RPC response confirms
+      // admission. Later deltas open a new assistant segment below this row,
+      // so the steer cannot ride the live bottom edge as output grows.
+      finalizeStreaming(Date.now(), false)
+      copyTranscript()
+      next.push(accepted)
+      continue
+    }
     if (type === 'gooeypi_steer_pickup' && (raw as Record<PropertyKey, unknown>)[LOCAL_STEER_PICKUP] === true) {
       const prompts = Array.isArray(raw.prompts) ? raw.prompts : []
-      const pickedUp: TranscriptMessage[] = prompts.flatMap((value) => {
-        const prompt = record(value)
-        const id = string(prompt?.id)
-        const text = string(prompt?.text)
-        if (!id || !text) return []
-        const timestamp = typeof prompt?.timestamp === 'number' && Number.isFinite(prompt.timestamp) ? prompt.timestamp : Date.now()
-        const parts = Array.isArray(prompt?.parts) ? prompt.parts as MessagePart[] : [{ type: 'text' as const, text }]
-        return [{ id: `user-${id}`, role: 'user' as const, timestamp, parts }]
+      const pickedUp = prompts.flatMap((value) => {
+        const message = steerMessage(value, 'read')
+        return message ? [message] : []
       })
       if (!pickedUp.length) continue
       finalizeStreaming(Date.now(), false)
       copyTranscript()
-      next.push(...pickedUp)
+      for (const message of pickedUp) {
+        const existingIndex = next.findIndex((candidate) => candidate.id === message.id)
+        if (existingIndex >= 0) draftMessage(existingIndex).steerState = 'read'
+        else next.push(message)
+      }
+      const markerId = `steer-read-${pickedUp.map((message) => message.id).join('-')}`
+      if (!next.some((message) => message.id === markerId)) {
+        next.push({
+          id: markerId,
+          role: 'system',
+          kind: 'steer-read-marker',
+          timestamp: Date.now(),
+          parts: [{ type: 'text', text: pickedUp.length === 1 ? 'Steer read here' : `${pickedUp.length} steers read here` }],
+        })
+      }
       continue
     }
     if (isCompactionEvent(raw)) {

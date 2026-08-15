@@ -227,17 +227,21 @@ function UserText({ text, onOpenSessionReference }: { text: string; onOpenSessio
   )
 }
 
-export const UserMessage = memo(function UserMessage({ message, onOpenSessionReference, pendingSteer = false }: { message: TranscriptMessage; onOpenSessionReference?(sessionId: string, harness: HarnessId): void; pendingSteer?: boolean }) {
+export const UserMessage = memo(function UserMessage({ message, onOpenSessionReference }: { message: TranscriptMessage; onOpenSessionReference?(sessionId: string, harness: HarnessId): void }) {
   const copyableText = message.parts.filter((part) => part.type === 'text').map((part) => visibleUserText(part.text)).filter(Boolean).join('\n')
   return (
     <article className="message message--user">
       <div className="user-bubble">
         {message.parts.map((part, index) => (part.type === 'text' ? <UserText key={index} text={part.text} onOpenSessionReference={onOpenSessionReference} /> : part.type === 'image' ? renderImage(part, `user-${index}`) : null))}
       </div>
-      {pendingSteer ? <div className="message__pending-steer" role="status">Accepted — waiting for the next safe steering point</div> : null}
+      {message.steerState ? <div className={`message__steer-state is-${message.steerState}`} role="status">{message.steerState === 'accepted' ? 'Accepted — waiting for the next safe steering point' : 'Read by agent'}</div> : null}
       <MessageActions message={message} text={copyableText} />
     </article>
   )
+})
+
+export const SteerReadMarker = memo(function SteerReadMarker({ message }: { message: TranscriptMessage }) {
+  return <div className="message message--steer-read" role="status"><span>{messageText(message)}</span></div>
 })
 
 export const ActivityMessage = memo(function ActivityMessage({ message, harness = 'prime' }: { message: TranscriptMessage; harness?: HarnessId }) {

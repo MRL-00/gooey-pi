@@ -8,7 +8,7 @@ import {
   updateActivityCriteria,
   type ActivityViewState,
 } from '../../src/pages/ActivityPage'
-import { applyPrimeEvent, createPrimeEventBuffer, createSteerPickupEvent, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
+import { applyPrimeEvent, createPrimeEventBuffer, createSteerAcceptedEvent, createSteerPickupEvent, replayPrimeEvents, resetTranscriptIdsForTests, type PrimeEventReplayStats } from '../../src/lib/events'
 import { reconcileTranscripts } from '../../src/app/transcript-reconcile'
 import { createSidebarActionProxy } from '../../src/hooks/useSidebarActions'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
@@ -170,6 +170,30 @@ describe('Activity batching', () => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('batched Prime event reduction', () => {
+  it('anchors an accepted steer immediately, then marks the exact pickup boundary', () => {
+    const steer = { id: 'queued-1', text: 'change direction', intent: 'steer' as const, timestamp: 2, parts: [{ type: 'text' as const, text: 'change direction' }] }
+    const result = replayPrimeEvents(transcript(), [
+      delta('before acceptance'),
+      createSteerAcceptedEvent(steer),
+      delta('still finishing the current work'),
+      createSteerPickupEvent([steer]),
+      { type: 'turn_start' },
+      delta('after pickup'),
+    ])
+
+    expect(result.map((message) => [message.role, message.kind])).toEqual([
+      ['assistant', undefined],
+      ['user', undefined],
+      ['assistant', undefined],
+      ['system', 'steer-read-marker'],
+      ['assistant', undefined],
+    ])
+    expect(result[1]).toMatchObject({ id: 'user-queued-1', steerState: 'read' })
+    expect(result[2]?.parts).toEqual([{ type: 'text', text: 'still finishing the current work', partId: expect.any(String) }])
+    expect(result[3]?.parts).toEqual([{ type: 'text', text: 'Steer read here' }])
+    expect(result[4]?.parts).toEqual([{ type: 'text', text: 'after pickup', partId: expect.any(String) }])
+  })
+
   it('places repeated picked-up steers between the tool segments that consumed them', () => {
     const result = replayPrimeEvents(transcript(), [
       { type: 'tool_execution_start', toolCallId: 'read', toolName: 'Read', args: { path: 'before.ts' } },
@@ -181,15 +205,17 @@ describe('batched Prime event reduction', () => {
       delta('continued after both pickups'),
     ])
 
-    expect(result.map((message) => message.role)).toEqual(['assistant', 'user', 'assistant', 'user', 'assistant'])
+    expect(result.map((message) => message.role)).toEqual(['assistant', 'user', 'system', 'assistant', 'user', 'system', 'assistant'])
     expect(result[0]?.streaming).toBe(false)
     expect(result[0]?.parts.some((part) => part.type === 'toolCall' && part.name === 'Read')).toBe(true)
     expect(result[1]).toMatchObject({ id: 'user-queued-1', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] })
-    expect(result[2]).toMatchObject({ role: 'assistant', streaming: false })
-    expect(result[2]?.parts.some((part) => part.type === 'toolCall' && part.name === 'Write')).toBe(true)
-    expect(result[3]).toMatchObject({ id: 'user-queued-2', timestamp: 3, parts: [{ type: 'text', text: 'also compare the physics' }] })
-    expect(result[4]?.streaming).toBe(true)
-    expect(result[4]?.parts).toEqual([{ type: 'text', text: 'continued after both pickups', partId: expect.any(String) }])
+    expect(result[2]).toMatchObject({ kind: 'steer-read-marker' })
+    expect(result[3]).toMatchObject({ role: 'assistant', streaming: false })
+    expect(result[3]?.parts.some((part) => part.type === 'toolCall' && part.name === 'Write')).toBe(true)
+    expect(result[4]).toMatchObject({ id: 'user-queued-2', timestamp: 3, parts: [{ type: 'text', text: 'also compare the physics' }] })
+    expect(result[5]).toMatchObject({ kind: 'steer-read-marker' })
+    expect(result[6]?.streaming).toBe(true)
+    expect(result[6]?.parts).toEqual([{ type: 'text', text: 'continued after both pickups', partId: expect.any(String) }])
   })
 
   it('is equivalent to ordered single-event reduction across text, thinking, and tool merges', () => {

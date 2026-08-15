@@ -290,6 +290,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         }
         try {
           const response = await bridge.agent.command(currentRuntime.runtimeId, { type: 'steer', message: prompt, ...(images.length ? { images } : {}) })
+          workspace.acceptSteer(pendingSteerId)
           const actions = parseSessionActionSnapshot(response.sessionActions)
           if (actions) workspace.acknowledgeSteer(pendingSteerId, actions)
           return
@@ -415,6 +416,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           if (intent === 'steer') queuedPromptId = workspace.queuePrompt(prompt, intent, userMessage.parts, sentAt)
           const response = await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
           if (intent === 'steer' && queuedPromptId) {
+            workspace.acceptSteer(queuedPromptId)
             const actions = parseSessionActionSnapshot(response.sessionActions)
             if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
           }

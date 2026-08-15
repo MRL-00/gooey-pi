@@ -14,7 +14,7 @@ import {
 import { runTranscriptRead } from '@/app/transcript-load'
 import { reconcileTranscripts } from '@/app/transcript-reconcile'
 import type { WorkspaceSnapshot } from '@/app/workspace'
-import { createPrimeEventBuffer, createSteerPickupEvent, replayPrimeEvents } from '@/lib/events'
+import { createPrimeEventBuffer, createSteerAcceptedEvent, createSteerPickupEvent, replayPrimeEvents } from '@/lib/events'
 import type { PrimeEventBuffer } from '@/lib/events'
 import { findRuntimeForWorkspace, workspaceCwd } from '@/lib/workspace'
 import type { HarnessId, MessagePart, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, QueuedPrompt, RuntimeInfo, SessionActionSnapshot, SessionRecord, TranscriptMessage } from '@/types/api'
@@ -434,6 +434,10 @@ export function useWorkspaceRuntime({
     pendingQueuedPromptsRef.current = []
     setPendingQueuedPrompts([])
   }, [])
+  const acceptSteer = useCallback((id: string) => {
+    const prompt = pendingQueuedPromptsRef.current.find((candidate) => candidate.id === id && candidate.intent === 'steer')
+    if (prompt) queueAgentEvent(createSteerAcceptedEvent(prompt))
+  }, [queueAgentEvent])
   const reconcileQueuedPrompts = useCallback((snapshot: SessionActionSnapshot) => {
     const localSteers = pendingQueuedPromptsRef.current.filter((prompt) => prompt.intent === 'steer')
     if (!localSteers.length) return
@@ -561,6 +565,7 @@ export function useWorkspaceRuntime({
     queuePrompt,
     removeQueuedPrompt,
     clearQueuedPrompts,
+    acceptSteer,
     reconcileQueuedPrompts,
     acknowledgeSteer,
     activeProjectId,

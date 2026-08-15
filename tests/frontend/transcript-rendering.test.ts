@@ -100,13 +100,13 @@ describe('transcript rendering', () => {
     ['prime', 'Prime'],
     ['omp', 'OMP'],
     ['pi', 'Pi'],
-  ] as const)('shows an unacknowledged %s steer at the live edge without duplicating the working indicator', (harness, shortName) => {
+  ] as const)('keeps an accepted %s steer in history without duplicating the working indicator', (harness, shortName) => {
     const html = renderToStaticMarkup(createElement(Transcript, {
-      messages: [{
-        id: 'active', role: 'assistant', timestamp: 1_000, streaming: true,
-        parts: [{ type: 'text', text: 'Current response' }],
-      }],
-      pendingSteers: [{ id: 'queued-steer', text: 'Pick this up', intent: 'steer', timestamp: 2_000 }],
+      messages: [
+        { id: 'before', role: 'assistant', timestamp: 1_000, parts: [{ type: 'text', text: 'Current response' }] },
+        { id: 'user-queued-steer', role: 'user', steerState: 'accepted', timestamp: 2_000, parts: [{ type: 'text', text: 'Pick this up' }] },
+        { id: 'active', role: 'assistant', timestamp: 2_001, streaming: true, parts: [] },
+      ],
       git,
       harness,
       active: true,

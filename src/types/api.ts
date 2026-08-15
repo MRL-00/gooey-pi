@@ -147,6 +147,10 @@ export type MessagePart =
 export interface TranscriptMessage {
   id: string
   role: 'user' | 'assistant' | 'agent' | 'goal' | 'tool' | 'system'
+  /** Renderer-local steering lifecycle. Persisted transcripts remain harness-owned. */
+  steerState?: 'accepted' | 'read'
+  /** Lightweight renderer-only boundary showing where an accepted steer was consumed. */
+  kind?: 'steer-read-marker'
   timestamp?: string | number
   agentName?: string
   startedAt?: string | number

@@ -6,6 +6,7 @@
  */
 export {
   applyPrimeEvent,
+  createSteerAcceptedEvent,
   createSteerPickupEvent,
   createPrimeEventBuffer,
   replayPrimeEvents,

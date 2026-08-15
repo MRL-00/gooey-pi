@@ -61,8 +61,7 @@ describe('transcript per-message boundary', () => {
   it('labels an admitted steer that is waiting for a safe steering point', async () => {
     await act(async () => {
       root.render(<Transcript
-        messages={[]}
-        pendingSteers={[{ id: 'pending-steer', text: 'redirect', intent: 'steer', timestamp: 1 }]}
+        messages={[{ id: 'user-pending-steer', role: 'user', steerState: 'accepted', timestamp: 1, parts: [{ type: 'text', text: 'redirect' }] }]}
         git={{ isRepo: false, files: [] }}
         onOpenChanges={vi.fn()}
         onSuggestion={vi.fn()}
