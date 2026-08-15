@@ -133,7 +133,8 @@ describe('prompt admission versus background transcript reads', () => {
     expect(latest.pendingQueuedPrompts.map((prompt) => prompt.text)).toEqual(['do this next turn'])
     expect(latest.messages).toMatchObject([
       { id: 'assistant-live', role: 'assistant', streaming: false },
-      { role: 'user', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] },
+      { role: 'user', steerState: 'read', timestamp: 2, parts: [{ type: 'text', text: 'change direction' }] },
+      { role: 'system', kind: 'steer-read-marker', parts: [{ type: 'text', text: 'Steer read here' }] },
     ])
   })
 
@@ -167,7 +168,8 @@ describe('prompt admission versus background transcript reads', () => {
     expect(latest.pendingQueuedPrompts).toEqual([])
     expect(latest.messages).toMatchObject([
       { id: 'assistant-live', role: 'assistant', streaming: false },
-      { role: 'user', timestamp: 2, parts: [{ type: 'text', text: 'fast steer' }] },
+      { role: 'user', steerState: 'read', timestamp: 2, parts: [{ type: 'text', text: 'fast steer' }] },
+      { role: 'system', kind: 'steer-read-marker', parts: [{ type: 'text', text: 'Steer read here' }] },
     ])
   })
 
