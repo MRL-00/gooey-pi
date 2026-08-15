@@ -759,7 +759,7 @@ describe('post-package verification helpers', () => {
       '**/node_modules/node-pty/prebuilds/win32-${arch}/winpty.dll',
       '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/OpenConsole.exe',
       '**/node_modules/node-pty/prebuilds/win32-${arch}/conpty/conpty.dll',
-      '**/node_modules/zeromq/build/win32/${arch}/node/**/addon.node',
+      '**/node_modules/zeromq/build/win32/${arch}/node/*-Release/addon.node',
     ])
     expect(packageJson.build.linux.target).toEqual(['AppImage', 'deb', 'rpm', 'pacman'])
     expect(packageJson.build.win.target).toEqual(['nsis', 'zip', 'appx'])
