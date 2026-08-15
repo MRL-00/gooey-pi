@@ -1,5 +1,5 @@
 import { ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron'
-import type { AppMeta, HarnessId, SessionChangeEvent } from '../../src/types/api'
+import type { ApplicationMenuName, AppMeta, HarnessId, SessionChangeEvent, ThemeMode } from '../../src/types/api'
 import type { AgentRpcManager } from './agent-rpc'
 import type { GitService } from './git'
 import type { CuaDriverService } from './cua-driver'
@@ -21,6 +21,8 @@ import { requireExistingPath, requireRecord, requireString, requireWebUrl } from
 interface Services {
   meta: AppMeta
   refreshHarnesses(): Promise<{ meta: AppMeta; settings: ReturnType<SettingsService['get']> }>
+  popupApplicationMenu(sender: WebContents, menu: ApplicationMenuName, x: number, y: number): boolean
+  setTitleBarTheme(sender: WebContents, theme: Exclude<ThemeMode, 'system'>): boolean
   projects: ProjectService
   sessions: SessionService
   agents: AgentRpcManager
@@ -57,6 +59,21 @@ function requireHarness(value: unknown): HarnessId {
   if (value === undefined) return 'prime'
   if (value === 'prime' || value === 'omp' || value === 'pi') return value
   throw new TypeError('Invalid harness')
+}
+
+function requireApplicationMenu(value: unknown): ApplicationMenuName {
+  if (value === 'file' || value === 'edit' || value === 'view' || value === 'window' || value === 'help') return value
+  throw new TypeError('Invalid application menu')
+}
+
+function requireMenuCoordinate(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10_000) throw new TypeError('Invalid menu coordinate')
+  return Math.round(value)
+}
+
+function requireResolvedTheme(value: unknown): Exclude<ThemeMode, 'system'> {
+  if (value === 'light' || value === 'dark') return value
+  throw new TypeError('Invalid resolved theme')
 }
 
 type IpcEvent = IpcMainInvokeEvent | IpcMainEvent
@@ -157,6 +174,8 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
 
   handle('app:get-meta', () => services.meta)
   handle('app:refresh-harnesses', () => services.refreshHarnesses())
+  handle('app:popup-menu', (event, menu, x, y) => services.popupApplicationMenu(event.sender, requireApplicationMenu(menu), requireMenuCoordinate(x), requireMenuCoordinate(y)))
+  handle('app:set-title-bar-theme', (event, theme) => services.setTitleBarTheme(event.sender, requireResolvedTheme(theme)))
   handle('app:open-external', async (_event, url) => {
     try { await shell.openExternal(requireWebUrl(url, { mailto: true }), { activate: true }); return true } catch (error) {
       console.warn('Rejected app:open-external:', error instanceof Error ? error.message : error)

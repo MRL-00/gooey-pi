@@ -36,15 +36,19 @@ describe('application update menu', () => {
 
   it('puts Check for Updates in Help on Windows and Linux', () => {
     for (const platform of ['win32', 'linux'] as const) {
-      const template = buildApplicationMenuTemplate({ platform, appName: 'GooeyPi', checkForUpdates: vi.fn() })
+      const checkForUpdates = vi.fn()
+      const template = buildApplicationMenuTemplate({ platform, appName: 'GooeyPi', checkForUpdates })
       const helpMenu = template.at(-1)
       expect(helpMenu?.role).toBe('help')
-      expect(submenu(helpMenu).map((item) => item.label)).toContain('Check for Updates…')
+      const updateItem = submenu(helpMenu).find((item) => item.label === 'Check for Updates…')
+      expect(updateItem).toBeDefined()
+      updateItem?.click?.(undefined as never, undefined as never, undefined as never)
+      expect(checkForUpdates).toHaveBeenCalledOnce()
     }
   })
 
   it('disables Check for Updates when the build has no update service', () => {
-    for (const platform of ['darwin', 'linux'] as const) {
+    for (const platform of ['darwin', 'win32', 'linux'] as const) {
       const template = buildApplicationMenuTemplate({ platform, appName: 'GooeyPi', updatesEnabled: false, checkForUpdates: vi.fn() })
       const owner = platform === 'darwin' ? template[0] : template.at(-1)
       const updateItem = submenu(owner).find((item) => item.label === 'Check for Updates…')

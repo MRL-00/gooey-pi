@@ -17,24 +17,40 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => electron)
 
-import { activeShutdownWork, confirmAppClose, hardenRenderer, loadInitialRenderer, mainWindowChromeOptions, settleShutdown, shutdownPrompt } from '../../electron/main/index'
+import { activeShutdownWork, confirmAppClose, hardenRenderer, loadInitialRenderer, mainWindowChromeOptions, resolveRendererAssetPath, settleShutdown, shutdownPrompt } from '../../electron/main/index'
 import type { RuntimeInfo } from '../../src/types/api'
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
 
 describe('application window lifecycle', () => {
-  it('uses one overlay title bar on Linux while preserving native platform chrome elsewhere', () => {
+  it('uses one overlay title bar on Windows and Linux while preserving native macOS chrome', () => {
     expect(mainWindowChromeOptions('linux')).toEqual({
       titleBarStyle: 'hidden',
       titleBarOverlay: { height: 52 },
       autoHideMenuBar: true,
     })
-    expect(mainWindowChromeOptions('win32')).toEqual({ titleBarStyle: 'default' })
+    expect(mainWindowChromeOptions('win32')).toEqual({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#ffffff', symbolColor: '#20201e', height: 32 },
+      autoHideMenuBar: true,
+    })
+    expect(mainWindowChromeOptions('win32', 'dark')).toEqual({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#171716', symbolColor: '#f1f1ee', height: 32 },
+      autoHideMenuBar: true,
+    })
     expect(mainWindowChromeOptions('darwin')).toMatchObject({
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 18, y: 18 },
     })
+  })
+
+  it('resolves packaged renderer assets with Windows path separators', () => {
+    const root = 'C:\\GooeyPi\\resources\\app.asar\\out\\renderer'
+    expect(resolveRendererAssetPath(root, '/index.html')).toBe(`${root}\\index.html`)
+    expect(resolveRendererAssetPath(root, '/../main/index.js')).toBeNull()
+    expect(resolveRendererAssetPath(root, '/assets/app.css')).toBe(`${root}\\assets\\app.css`)
   })
 
   it('asks nothing when no agent run or schedule is active', () => {

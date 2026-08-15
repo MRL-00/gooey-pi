@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog, Menu, protocol, safeStorage, session, shell, webContents } from 'electron'
-import type { BrowserWindowConstructorOptions } from 'electron'
-import { extname, join, resolve } from 'node:path'
+import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell, webContents } from 'electron'
+import type { BrowserWindowConstructorOptions, WebContents } from 'electron'
+import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { BROWSER_PARTITION, type AppMeta, type AppUpdateState, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent, type RuntimeInfo } from '../../src/types/api'
+import { BROWSER_PARTITION, type ApplicationMenuName, type AppMeta, type AppUpdateState, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent, type RuntimeInfo, type ThemeMode } from '../../src/types/api'
 import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
 import { installApplicationMenu } from './application-menu'
 import { BrowserDownloadGuard } from './browser-downloads'
@@ -97,9 +97,8 @@ function registerRendererProtocol(): void {
       const url = new URL(request.url)
       if (url.hostname !== 'app' || url.username || url.password || url.search || url.hash) return new Response('Not found', { status: 404 })
       const decoded = decodeURIComponent(url.pathname)
-      if (!decoded.startsWith('/') || decoded.includes('\0') || decoded.includes('\\')) return new Response('Not found', { status: 404 })
-      const candidate = resolve(rendererRoot, `.${decoded === '/' ? '/index.html' : decoded}`)
-      if (candidate !== rendererRoot && !candidate.startsWith(`${rendererRoot}/`)) return new Response('Not found', { status: 404 })
+      const candidate = resolveRendererAssetPath(rendererRoot, decoded)
+      if (!candidate) return new Response('Not found', { status: 404 })
       const body = await readFile(candidate)
       return new Response(body, { headers: {
         'Content-Type': rendererContentTypes[extname(candidate).toLowerCase()] ?? 'application/octet-stream',
@@ -108,6 +107,15 @@ function registerRendererProtocol(): void {
       } })
     } catch { return new Response('Not found', { status: 404 }) }
   })
+}
+
+/** Resolves a renderer URL path without relying on a platform-specific separator. */
+export function resolveRendererAssetPath(rendererRoot: string, decodedPath: string): string | null {
+  if (!decodedPath.startsWith('/') || decodedPath.includes('\0') || decodedPath.includes('\\')) return null
+  const candidate = resolve(rendererRoot, `.${decodedPath === '/' ? '/index.html' : decodedPath}`)
+  const relativePath = relative(rendererRoot, candidate)
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return null
+  return candidate
 }
 
 function resolveRendererUrl(): string {
@@ -276,23 +284,57 @@ function applyInterfaceZoom(scale: number): void {
   }
 }
 
-export function mainWindowChromeOptions(platform: NodeJS.Platform = process.platform): BrowserWindowConstructorOptions {
+type ResolvedTheme = Exclude<ThemeMode, 'system'>
+
+function windowsTitleBarOverlay(theme: ResolvedTheme): { color: string; symbolColor: string; height: number } {
+  return theme === 'dark'
+    ? { color: '#171716', symbolColor: '#f1f1ee', height: 32 }
+    : { color: '#ffffff', symbolColor: '#20201e', height: 32 }
+}
+
+function resolvedWindowTheme(theme: ThemeMode | undefined): ResolvedTheme {
+  if (theme === 'dark') return 'dark'
+  if (theme === 'system' && nativeTheme.shouldUseDarkColors) return 'dark'
+  return 'light'
+}
+
+export function mainWindowChromeOptions(platform: NodeJS.Platform = process.platform, theme: ResolvedTheme = 'light'): BrowserWindowConstructorOptions {
   if (platform === 'darwin') return {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 18 },
     vibrancy: 'sidebar',
     visualEffectState: 'active',
   }
+  if (platform === 'win32') return {
+    // The native caption controls share a dedicated menu row. GooeyPi's own
+    // 52px toolbar remains a separate application surface below it.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: windowsTitleBarOverlay(theme),
+    autoHideMenuBar: true,
+  }
   if (platform === 'linux') return {
-    // Let the app's existing 52px drag regions become the one visible title
-    // bar. Native controls remain managed by Electron/the window manager, and
-    // the default application menu remains reachable with Alt without taking
-    // a permanent second row.
     titleBarStyle: 'hidden',
     titleBarOverlay: { height: 52 },
     autoHideMenuBar: true,
   }
   return { titleBarStyle: 'default' }
+}
+
+export function popupApplicationMenu(sender: WebContents, menuName: ApplicationMenuName, x: number, y: number): boolean {
+  const window = BrowserWindow.fromWebContents(sender)
+  const applicationMenu = Menu.getApplicationMenu()
+  const menuItem = applicationMenu?.items.find((item) => item.label.replaceAll('&', '').toLowerCase() === menuName)
+  if (!window || window.isDestroyed() || !menuItem?.submenu) return false
+  const zoom = sender.getZoomFactor()
+  menuItem.submenu.popup({ window, x: Math.round(x * zoom), y: Math.round(y * zoom) })
+  return true
+}
+
+export function setTitleBarTheme(sender: WebContents, theme: ResolvedTheme): boolean {
+  const window = BrowserWindow.fromWebContents(sender)
+  if (process.platform !== 'win32' || !window || window.isDestroyed()) return false
+  window.setTitleBarOverlay(windowsTitleBarOverlay(theme))
+  return true
 }
 
 async function createWindow(): Promise<BrowserWindow | null> {
@@ -305,7 +347,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     show: false,
     backgroundColor: '#f5f5f4',
     icon: appIconPath(),
-    ...mainWindowChromeOptions(),
+    ...mainWindowChromeOptions(process.platform, resolvedWindowTheme(store?.getSettings().theme)),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       zoomFactor: interfaceZoomFactor(),
@@ -879,6 +921,7 @@ async function bootstrap(): Promise<void> {
   trustedRendererUrl = resolveRendererUrl()
   ipc = registerIpc({
     meta, refreshHarnesses, projects, sessions, agents, terminals, git, plugins, providers, settings, updates, cuaDriver, heartbeats, schedules, browser: browserService, voice, pets,
+    popupApplicationMenu, setTitleBarTheme,
     omp: { projects: ompProjects, sessions: ompSessions, agents: ompManager, catalog: ompCatalog, plugins: ompPlugins },
     pi: { projects: piProjects, sessions: piSessions, agents: piManager, catalog: piCatalog, plugins: piPlugins },
     applyInterfaceZoom,

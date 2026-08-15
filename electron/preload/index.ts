@@ -16,6 +16,8 @@ const api: PrimeWorkApi = {
     refreshHarnesses: () => ipcRenderer.invoke('app:refresh-harnesses'),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     revealPath: (path) => ipcRenderer.invoke('app:reveal-path', path),
+    popupMenu: (menu, x, y) => ipcRenderer.invoke('app:popup-menu', menu, x, y),
+    setTitleBarTheme: (theme) => ipcRenderer.invoke('app:set-title-bar-theme', theme),
   },
   updates: {
     getState: () => ipcRenderer.invoke('updates:get-state'),

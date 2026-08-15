@@ -117,18 +117,19 @@ export function useAppSettings({ bridge, reportError }: UseAppSettingsOptions) {
   }, [applySettings, bridge, reportError])
 
   useEffect(() => {
-    const theme = settings.theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      : settings.theme
-    document.documentElement.dataset.theme = theme
-    document.documentElement.classList.toggle('reduce-motion', settings.reduceMotion)
     const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const applyTheme = (theme: 'light' | 'dark') => {
+      document.documentElement.dataset.theme = theme
+      void bridge?.app.setTitleBarTheme?.(theme).catch(() => undefined)
+    }
+    applyTheme(settings.theme === 'system' ? media.matches ? 'dark' : 'light' : settings.theme)
+    document.documentElement.classList.toggle('reduce-motion', settings.reduceMotion)
     const sync = () => {
-      if (settings.theme === 'system') document.documentElement.dataset.theme = media.matches ? 'dark' : 'light'
+      if (settings.theme === 'system') applyTheme(media.matches ? 'dark' : 'light')
     }
     media.addEventListener('change', sync)
     return () => media.removeEventListener('change', sync)
-  }, [settings.reduceMotion, settings.theme])
+  }, [bridge, settings.reduceMotion, settings.theme])
 
   const selectInspectorTab = useCallback((tab: InspectorTab) => {
     inspectorTabTouchedRef.current = true

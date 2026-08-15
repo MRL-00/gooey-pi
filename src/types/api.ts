@@ -33,6 +33,8 @@ export interface AppMeta {
   harnesses: Record<HarnessId, HarnessStatus>
 }
 
+export type ApplicationMenuName = 'file' | 'edit' | 'view' | 'window' | 'help'
+
 export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error' | 'unsupported'
 
 export interface AppUpdateState {
@@ -649,7 +651,7 @@ export interface AgentBrowserPointerEvent {
 }
 
 export interface PrimeWorkApi {
-  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean> }
+  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean> }
   updates: {
     getState(): Promise<AppUpdateState>
     check(): Promise<AppUpdateState>

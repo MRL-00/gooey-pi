@@ -5,12 +5,26 @@ import {
   PanelRight,
   Terminal,
 } from 'lucide-react'
-import type { ProjectRecord, WorkspaceView } from '@/types/api'
+import type { ApplicationMenuName, ProjectRecord, WorkspaceView } from '@/types/api'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, IconButton } from './ui'
+import type { MouseEvent } from 'react'
 
 const viewTitles: Record<Exclude<WorkspaceView, 'session'>, string> = {
   projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Capabilities', settings: 'Settings',
+}
+
+const windowsMenus: ReadonlyArray<{ name: ApplicationMenuName; label: string }> = [
+  { name: 'file', label: 'File' },
+  { name: 'edit', label: 'Edit' },
+  { name: 'view', label: 'View' },
+  { name: 'window', label: 'Window' },
+  { name: 'help', label: 'Help' },
+]
+
+function openApplicationMenu(menu: ApplicationMenuName, event: MouseEvent<HTMLButtonElement>): void {
+  const rect = event.currentTarget.getBoundingClientRect()
+  void window.prime?.app.popupMenu?.(menu, rect.left, rect.bottom).catch(() => undefined)
 }
 
 interface TitleToolbarProps {
@@ -36,7 +50,10 @@ export function TitleToolbar({ project, view, productName = 'Prime Work', sideba
   const browserShortcut = shortcutLabel(platform, ['Primary', 'Shift', 'B'])
   return (
     <header className="title-toolbar drag-region">
-      {!sidebarOpen ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
+      {!sidebarOpen && platform === 'darwin' ? <div className="traffic-light-clearance traffic-light-clearance--toolbar" aria-hidden="true" /> : null}
+      {platform === 'win32' ? <nav className="windows-app-menu" aria-label="Application menu">
+        {windowsMenus.map(({ name, label }) => <button key={name} type="button" className="windows-app-menu__button" onClick={(event) => openApplicationMenu(name, event)}>{label}</button>)}
+      </nav> : null}
       <div className="title-toolbar__nav no-drag">
         {!sidebarOpen ? <IconButton label={`Show sidebar (${sidebarShortcut})`} onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
