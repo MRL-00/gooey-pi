@@ -410,6 +410,10 @@ export interface AppSettings {
   sidebarOpen: boolean
   inspectorOpen: boolean
   showFileChangesPopup: boolean
+  /** Keep the desktop process available for scheduled work after its window closes. */
+  keepRunningInBackground: boolean
+  /** Ask the operating system to launch GooeyPi when the user signs in. */
+  launchAtLogin: boolean
   terminalOpen: boolean
   defaultInspectorTab: InspectorTab
   browserHome: string
@@ -671,7 +675,7 @@ export interface AgentBrowserPointerEvent {
 }
 
 export interface PrimeWorkApi {
-  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean> }
+  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean>; onOpenSettings(callback: () => void): () => void }
   updates: {
     getState(): Promise<AppUpdateState>
     check(): Promise<AppUpdateState>
