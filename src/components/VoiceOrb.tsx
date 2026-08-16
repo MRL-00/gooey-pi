@@ -10,6 +10,7 @@ type OrbState = 'connecting' | 'listening' | 'user-speaking' | 'thinking' | 'age
 interface VoiceOrbProps {
   voice: PrimeWorkApi['voice']
   harness: HarnessId
+  projectId?: string
   onClose(): void
   onTaskStarted(task: VoiceTaskStarted): Promise<void>
   pet?: Pick<DesktopPetProps, 'pets' | 'petId' | 'agentBusy' | 'reduceMotion' | 'petSize' | 'onDismiss'>
@@ -49,6 +50,7 @@ function boundedErrorField(value: unknown): string {
 }
 
 function realtimeErrorMessage(message: Record<string, unknown>): string {
+  if (typeof message.message === 'string' && message.message.trim()) return `Realtime error: ${message.message.trim().slice(0, 500)}`
   if (!message.error || typeof message.error !== 'object' || Array.isArray(message.error)) return 'The realtime voice session reported an error.'
   const error = message.error as Record<string, unknown>
   const detail = boundedErrorField(error.message)
@@ -59,7 +61,37 @@ function realtimeErrorMessage(message: Record<string, unknown>): string {
   return `Realtime error${code ? ` (${code})` : ''}: ${detail}${param ? ` [${param}]` : ''}${eventId ? ` [event ${eventId}]` : ''}`
 }
 
-export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPetControl = false, onPetControlFocused }: VoiceOrbProps) {
+function delegationInput(message: Record<string, unknown>): { id: string; input: string } | null {
+  if (message.type !== 'delegation.created' || !message.item || typeof message.item !== 'object' || Array.isArray(message.item)) return null
+  const item = message.item as Record<string, unknown>
+  if (item.type !== 'delegation' || item.target !== 'client' || typeof item.id !== 'string' || item.id.length > 512 || !Array.isArray(item.content)) return null
+  const input = item.content.flatMap((part) => part && typeof part === 'object' && !Array.isArray(part)
+    && (part as Record<string, unknown>).type === 'input_text' && typeof (part as Record<string, unknown>).text === 'string'
+    ? [(part as Record<string, unknown>).text as string] : []).join('').trim()
+  return input && new TextEncoder().encode(input).byteLength <= 32 * 1024 ? { id: item.id, input } : null
+}
+
+function utf8Chunks(value: string, maxBytes = 500): string[] {
+  const chunks: string[] = []
+  let current = ''
+  for (const character of value) {
+    if (current && new TextEncoder().encode(current + character).byteLength > maxBytes) { chunks.push(current); current = character }
+    else current += character
+  }
+  if (current) chunks.push(current)
+  return chunks
+}
+
+function delegatedToolRequest(input: string): VoiceToolRequest | null {
+  try {
+    const value = JSON.parse(input) as unknown
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const record = value as Record<string, unknown>
+    return toolRequest(record.name, record.arguments)
+  } catch { return null }
+}
+
+export function VoiceOrb({ voice, harness, projectId, onClose, onTaskStarted, pet, focusPetControl = false, onPetControlFocused }: VoiceOrbProps) {
   const [orbState, setOrbState] = useState<OrbState>('connecting')
   const [muted, setMuted] = useState(false)
   const [error, setError] = useState('')
@@ -71,6 +103,8 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
   const audioRef = useRef<HTMLAudioElement>(null)
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
   const harnessRef = useRef(harness)
+  const projectIdRef = useRef(projectId)
+  projectIdRef.current = projectId
   const petVisibleRef = useRef(Boolean(pet))
 
   useEffect(() => {
@@ -86,11 +120,13 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
   useEffect(() => {
     let active = true
     const handledCalls = new Set<string>()
+    const handledDelegations = new Set<string>()
     let responseActive = false
     let pendingToolCalls = 0
     let continuationPending = false
     let pendingResponseCreateEventId: string | null = null
     let clientEventSequence = 0
+    let realtimeProtocol: 'openai' | 'codex-v3' = 'openai'
     const peer = new RTCPeerConnection()
     const channel = peer.createDataChannel('oai-events')
     channelRef.current = channel
@@ -146,14 +182,81 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
       }
     }
 
-    channel.addEventListener('open', () => { if (active) setOrbState('listening') })
+    const sendDelegationContext = (delegationId: string, content: string, contextChannel: 'commentary' | 'speakable') => {
+      if (!active || channel.readyState !== 'open') return
+      for (const text of utf8Chunks(content)) channel.send(JSON.stringify({
+        type: 'delegation.context.append', delegation_item_id: delegationId, channel: contextChannel,
+        content: [{ type: 'input_text', text }],
+      }))
+    }
+
+    const executeDelegation = async ({ id, input }: { id: string; input: string }) => {
+      if (handledDelegations.has(id)) return
+      handledDelegations.add(id)
+      setOrbState('thinking')
+      const request = delegatedToolRequest(input)
+      if (!request) {
+        sendDelegationContext(id, 'The delegated client tool request was invalid. Ask the user to select a project or try again.', 'speakable')
+        return
+      }
+      if (request.name === 'start_task') setError('')
+      try {
+        const result = await voice.executeTool(request, harnessRef.current)
+        if (!active) return
+        sendDelegationContext(id, `The ${request.name} tool returned: ${result.output}`, request.name === 'start_task' ? 'speakable' : 'commentary')
+        if (result.task) {
+          setTaskReceipt(result.task)
+          setTaskOpened(false)
+          void onTaskStarted(result.task).then(() => {
+            if (active) setTaskOpened(true)
+          }).catch((failure) => {
+            if (!active) return
+            setError(`The task started, but GooeyPi could not open it: ${failure instanceof Error ? failure.message : 'Unknown error'}`)
+          })
+        }
+      } catch (failure) {
+        if (!active) return
+        const message = (failure instanceof Error ? failure.message : 'Voice task failed').slice(0, 1_000)
+        if (request.name === 'start_task') {
+          setTaskReceipt(null)
+          setError(`Task was not started: ${message}`)
+        }
+        sendDelegationContext(id, `The ${request.name} tool failed: ${message}`, request.name === 'start_task' ? 'speakable' : 'commentary')
+      }
+    }
+
+    channel.addEventListener('open', () => {
+      if (!active) return
+      setOrbState('listening')
+      if (realtimeProtocol === 'codex-v3') channel.send(JSON.stringify({
+        type: 'session.context.append', channel: 'speakable',
+        content: [{ type: 'input_text', text: 'The voice session has started. Give the user a short greeting, then wait for them to speak.' }],
+      }))
+    })
     channel.addEventListener('message', (event) => {
       let payload: unknown
-      try { payload = JSON.parse(String(event.data)) } catch { return }
+      const raw = String(event.data)
+      if (new TextEncoder().encode(raw).byteLength > 1024 * 1024) return
+      try { payload = JSON.parse(raw) } catch { return }
       if (!payload || typeof payload !== 'object') return
       const message = payload as Record<string, unknown>
       if (message.type === 'input_audio_buffer.speech_started') setOrbState('user-speaking')
+      else if (message.type === 'input_transcript.added') setOrbState('user-speaking')
       else if (message.type === 'input_audio_buffer.speech_stopped') setOrbState('thinking')
+      else if (message.type === 'output_transcript.added') setOrbState('agent-speaking')
+      else if (message.type === 'turn.done' && message.turn && typeof message.turn === 'object' && (message.turn as Record<string, unknown>).role === 'user') setOrbState('thinking')
+      else if (message.type === 'turn.done' && message.turn && typeof message.turn === 'object' && (message.turn as Record<string, unknown>).role === 'assistant') setOrbState('listening')
+      else if (message.type === 'delegation.created') {
+        const delegation = delegationInput(message)
+        if (delegation) void executeDelegation(delegation)
+        else {
+          setError('Codex voice returned an invalid delegation.')
+          setOrbState('error')
+          try { channel.close() } catch { /* already closed */ }
+          peer.close()
+          for (const track of streamRef.current?.getTracks() ?? []) track.stop()
+        }
+      }
       else if (message.type === 'response.created') {
         responseActive = true
         setOrbState('thinking')
@@ -208,9 +311,10 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
         for (const track of stream.getTracks()) peer.addTrack(track, stream)
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
-        const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '', harness: harnessRef.current })
+        const answer = await voice.createRealtimeCall({ mode: 'conversation', sdp: offer.sdp ?? '', harness: harnessRef.current, ...(projectIdRef.current ? { projectId: projectIdRef.current } : {}) })
         if (!active) return
-        await peer.setRemoteDescription({ type: 'answer', sdp: answer })
+        realtimeProtocol = answer.protocol
+        await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
       } catch (failure) {
         if (!active) return
         setError(failure instanceof Error ? failure.message : 'Could not start realtime voice.')
@@ -227,7 +331,7 @@ export function VoiceOrb({ voice, harness, onClose, onTaskStarted, pet, focusPet
       streamRef.current = null
       if (audioRef.current) audioRef.current.srcObject = null
     }
-  }, [onTaskStarted, voice])
+  }, [onTaskStarted, projectId, voice])
 
   const toggleMute = () => {
     const next = !muted

@@ -83,6 +83,24 @@ function expectRelationalIntegrity(catalog: PrimeModelCatalog): void {
 }
 
 describe('Prime provider adapter', () => {
+  it('resolves realtime subscription voice only from Codex OAuth credentials', async () => {
+    const providerService = service()
+    const internals = providerService as unknown as {
+      authStorage: { get(provider: string): { type: string } | undefined }
+      registry: { getAll(): unknown[]; getApiKeyAndHeaders(model: unknown): Promise<{ ok: true; apiKey: string; headers: Record<string, string> }> }
+    }
+    const { authStorage, registry } = internals
+    authStorage.get = () => ({ type: 'api_key' })
+    expect(providerService.codexVoiceConfigured()).toBe(false)
+    authStorage.get = () => ({ type: 'oauth' })
+    expect(providerService.codexVoiceConfigured()).toBe(true)
+    registry.getAll = () => [{ provider: 'openai-codex', baseUrl: 'https://codex-proxy.example.test/backend-api' }]
+    registry.getApiKeyAndHeaders = async () => ({ ok: true, apiKey: 'oauth-token', headers: { 'x-proxy': 'yes' } })
+    await expect(providerService.codexVoiceAuth()).resolves.toEqual({
+      apiKey: 'oauth-token', baseUrl: 'https://codex-proxy.example.test/backend-api/codex', headers: { 'x-proxy': 'yes' },
+    })
+  })
+
   it('keeps configured ChatGPT subscription models selectable when discovery returns no models', () => {
     const result = resolveAvailableModelKeys(
       [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'anthropic', id: 'claude-sonnet-5' }],

@@ -218,6 +218,21 @@ export class PrimeProviderService {
     return (await this.catalog()).models.find((model) => model.provider === provider && model.id === modelId)
   }
 
+  codexVoiceConfigured(): boolean {
+    return this.authStorage.get('openai-codex')?.type === 'oauth'
+  }
+
+  async codexVoiceAuth(): Promise<{ apiKey: string; baseUrl: string; headers?: Record<string, string> }> {
+    if (!this.codexVoiceConfigured()) throw new Error('Connect ChatGPT Plus/Pro in Prime Work provider settings before starting realtime voice')
+    const model = this.registry.getAll().find((candidate) => candidate.provider === 'openai-codex')
+    if (!model) throw new Error('OpenAI Codex is not available in the Prime Agent model catalog')
+    const auth = await this.registry.getApiKeyAndHeaders(model)
+    if (!auth.ok || !auth.apiKey) throw new Error('Connect ChatGPT Plus/Pro in Prime Work provider settings before starting realtime voice')
+    const providerBaseUrl = model.baseUrl.replace(/\/+$/, '')
+    const baseUrl = providerBaseUrl.endsWith('/codex') ? providerBaseUrl : `${providerBaseUrl}/codex`
+    return { apiKey: auth.apiKey, baseUrl, ...(auth.headers ? { headers: auth.headers } : {}) }
+  }
+
   async saveApiKey(rawProviderId: unknown, rawKey: unknown): Promise<void> {
     const providerId = requireString(rawProviderId, 'providerId', { min: 1, max: 128, trim: true })
     if (isMcpAuthProvider(providerId)) throw new Error(NETWORK_MCP_AUTH_UNAVAILABLE)

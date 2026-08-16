@@ -12,6 +12,7 @@ import type {
   VoiceCredentialProvider,
   VoiceCredentialStorageStatus,
   VoiceCredentialStatus,
+  VoiceRealtimeCallResult,
   VoiceTaskStarted,
   VoiceToolResult,
 } from '../../src/types/api'
@@ -47,10 +48,14 @@ interface VoiceServiceOptions {
   projects: Record<HarnessId, ProjectService>
   agents: Record<HarnessId, AgentRpcManager>
   catalogs: Record<HarnessId, ModelCatalogProvider>
+  codexVoiceAuth(): Promise<{ apiKey: string; baseUrl: string; headers?: Record<string, string> }>
+  codexVoiceConfigured(): boolean
   fetch?: typeof fetch
   runProcess(file: string, args: readonly string[], options?: { timeoutMs?: number; maxBytes?: number }): Promise<ProcessResult>
   environment?: NodeJS.ProcessEnv
 }
+
+const CODEX_REALTIME_MODEL = 'gpt-live-1-codex'
 
 function voiceSecretStorageStatus(platform: NodeJS.Platform, encryptionAvailable: boolean, backend?: string): VoiceCredentialStorageStatus {
   if (platform === 'linux' && backend === 'basic_text') {
@@ -111,6 +116,20 @@ function silentWav(): Uint8Array {
 function harnessId(value: unknown): HarnessId {
   if (value !== 'prime' && value !== 'omp' && value !== 'pi') throw new TypeError('Invalid voice harness')
   return value
+}
+
+function extractAccountId(token: string): string {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) throw new Error()
+    const payload = JSON.parse(Buffer.from(parts[1] ?? '', 'base64url').toString('utf8')) as unknown
+    if (!isRecord(payload)) throw new Error()
+    const auth = payload['https://api.openai.com/auth']
+    if (!isRecord(auth) || typeof auth.chatgpt_account_id !== 'string' || !auth.chatgpt_account_id) throw new Error()
+    return auth.chatgpt_account_id
+  } catch {
+    throw new Error('Failed to read the ChatGPT account from the OpenAI Codex login')
+  }
 }
 
 function boundedAudio(value: unknown): Uint8Array {
@@ -203,7 +222,7 @@ class VoiceSecretStore {
         source[provider] = 'saved'
       }
     }
-    return { configured, source, storage }
+    return { configured, source, storage, codexSubscription: false }
   }
 
   async get(provider: VoiceCredentialProvider): Promise<string> {
@@ -359,6 +378,23 @@ function realtimeSession(settings: AppSettings, harness: HarnessId): Record<stri
   }
 }
 
+function codexRealtimeSession(settings: AppSettings, harness: HarnessId, projectName?: string): Record<string, unknown> {
+  const toolContracts = realtimeSession(settings, harness).tools
+  return {
+    model: CODEX_REALTIME_MODEL,
+    instructions: [
+      orchestrationInstructions(harness),
+      projectName ? `The project currently open in GooeyPi is ${JSON.stringify(projectName)}.` : 'No project is currently open in GooeyPi.',
+      'The client exposes the named GooeyPi tools through delegation rather than native function calls.',
+      'To call a tool, delegate exactly one JSON object with shape {"name":"tool_name","arguments":{...}} and no Markdown or surrounding prose.',
+      `Tool contracts: ${JSON.stringify(toolContracts)}.`,
+      'Wait for the client result before deciding whether to delegate another tool call. Never claim a task started unless start_task reports success.',
+    ].join(' '),
+    audio: { output: { voice: 'cove' } },
+    delegation: { type: 'client', ack_filler: true },
+  }
+}
+
 function transcriptionSession(settings: AppSettings): Record<string, unknown> {
   return {
     type: 'transcription',
@@ -386,32 +422,61 @@ export class VoiceService {
     this.fetchImpl = options.fetch ?? fetch
   }
 
-  credentialStatus(): Promise<VoiceCredentialStatus> { return this.secrets.status() }
-  saveApiKey(provider: unknown, key: unknown): Promise<VoiceCredentialStatus> { return this.secrets.save(provider, key) }
-  deleteApiKey(provider: unknown): Promise<VoiceCredentialStatus> { return this.secrets.delete(provider) }
+  async credentialStatus(): Promise<VoiceCredentialStatus> {
+    return { ...await this.secrets.status(), codexSubscription: this.options.codexVoiceConfigured() }
+  }
+  async saveApiKey(provider: unknown, key: unknown): Promise<VoiceCredentialStatus> {
+    await this.secrets.save(provider, key)
+    return this.credentialStatus()
+  }
+  async deleteApiKey(provider: unknown): Promise<VoiceCredentialStatus> {
+    await this.secrets.delete(provider)
+    return this.credentialStatus()
+  }
 
-  async createRealtimeCall(raw: unknown): Promise<string> {
+  async createRealtimeCall(raw: unknown): Promise<VoiceRealtimeCallResult> {
     const request = requireRecord(raw, 'realtime call')
     if (request.mode !== 'conversation' && request.mode !== 'transcription') throw new TypeError('Invalid realtime call mode')
     const sdp = requireString(request.sdp, 'sdp', { min: 16, max: MAX_SDP_BYTES })
     if (!sdp.startsWith('v=0')) throw new TypeError('Invalid WebRTC session description')
-    const key = await this.secrets.get('openai')
-    const form = new FormData()
-    form.set('sdp', sdp)
     const settings = this.options.settings()
-    const session = request.mode === 'conversation'
-      ? realtimeSession(settings, harnessId(request.harness))
-      : transcriptionSession(settings)
-    form.set('session', JSON.stringify(session))
-    const response = await this.withTimeout('https://api.openai.com/v1/realtime/calls', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
-    }, 30_000)
-    const answer = await response.text()
-    if (!response.ok) throw new Error(`OpenAI realtime setup failed (${response.status}): ${answer.slice(0, 512)}`)
-    if (!answer.startsWith('v=0')) throw new Error('OpenAI realtime setup returned an invalid session description')
-    return answer
+    const useOpenAi = request.mode === 'transcription' || settings.voiceRealtimeProvider === 'openai'
+    let response: Response
+    let protocol: VoiceRealtimeCallResult['protocol']
+    if (!useOpenAi) {
+      const harness = harnessId(request.harness)
+      const projectId = request.projectId === undefined ? undefined : requireId(request.projectId, 'projectId')
+      const project = projectId ? (await this.options.projects[harness].list()).find((candidate) => candidate.id === projectId && !candidate.inferred) : undefined
+      if (projectId && !project) throw new Error(`The selected project is not explicitly granted to ${HARNESSES[harness].agentName}`)
+      const auth = await this.options.codexVoiceAuth()
+      const headers = new Headers(auth.headers)
+      headers.set('authorization', `Bearer ${auth.apiKey}`)
+      headers.set('chatgpt-account-id', extractAccountId(auth.apiKey))
+      headers.set('originator', 'pi')
+      headers.set('x-session-id', randomUUID())
+      headers.set('user-agent', 'gooeypi')
+      headers.set('openai-alpha', 'quicksilver=v2')
+      headers.set('content-type', 'application/json')
+      const endpoint = `${auth.baseUrl.replace(/\/+$/, '')}/realtime/calls?intent=quicksilver&architecture=avas`
+      response = await this.withTimeout(endpoint, {
+        method: 'POST', headers,
+        body: JSON.stringify({ sdp, session: codexRealtimeSession(settings, harness, project?.name) }),
+      }, 30_000)
+      protocol = 'codex-v3'
+    } else {
+      const key = await this.secrets.get('openai')
+      const form = new FormData()
+      form.set('sdp', sdp)
+      form.set('session', JSON.stringify(request.mode === 'conversation' ? realtimeSession(settings, harnessId(request.harness)) : transcriptionSession(settings)))
+      response = await this.withTimeout('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form,
+      }, 30_000)
+      protocol = 'openai'
+    }
+    const answer = await this.boundedResponseText(response, 'Realtime setup', MAX_SDP_BYTES)
+    if (protocol === 'codex-v3' ? response.status !== 201 : !response.ok) throw new Error(`${protocol === 'codex-v3' ? 'Codex voice' : 'OpenAI realtime'} setup failed (${response.status}): ${answer.slice(0, 512)}`)
+    if (!answer.startsWith('v=0')) throw new Error('Realtime setup returned an invalid session description')
+    return { sdp: answer, protocol }
   }
 
   async transcribe(raw: unknown): Promise<string> {
@@ -650,9 +715,9 @@ export class VoiceService {
     return requireRecord(parsed, `${label} response`)
   }
 
-  private async boundedResponseText(response: Response, label: string): Promise<string> {
+  private async boundedResponseText(response: Response, label: string, maxBytes = MAX_PROVIDER_RESPONSE_BYTES): Promise<string> {
     const length = Number(response.headers.get('content-length'))
-    if (Number.isFinite(length) && length > MAX_PROVIDER_RESPONSE_BYTES) throw new Error(`${label} response was too large`)
+    if (Number.isFinite(length) && length > maxBytes) throw new Error(`${label} response was too large`)
     if (!response.body) return ''
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
@@ -661,7 +726,7 @@ export class VoiceService {
       const { done, value } = await reader.read()
       if (done) break
       total += value.byteLength
-      if (total > MAX_PROVIDER_RESPONSE_BYTES) {
+      if (total > maxBytes) {
         await reader.cancel().catch(() => undefined)
         throw new Error(`${label} response was too large`)
       }
