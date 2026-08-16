@@ -240,7 +240,7 @@ jobs:
       # Signed builds remain fail-closed and require the configured Authenticode identity.
       - name: Build, Authenticode-sign, and verify Windows packages
         if: (github.event_name == 'workflow_dispatch' && inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_ENABLED == 'true')
-        run: npm run package:win -- --skip-verify
+        run: node scripts/release/package.mjs --public --platform win --skip-verify
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
@@ -248,7 +248,7 @@ jobs:
           GOOEYPI_WINDOWS_CERT_THUMBPRINT: ${{ vars.GOOEYPI_WINDOWS_CERT_THUMBPRINT }}
       - name: Build unsigned Windows packages for beta distribution
         if: (github.event_name == 'workflow_dispatch' && inputs.include_windows_unsigned && !inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true' && vars.RELEASE_WINDOWS_ENABLED != 'true')
-        run: npm run package:win:local-qa -- --skip-verify
+        run: node scripts/release/package.mjs --qa --platform win --skip-verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-windows
