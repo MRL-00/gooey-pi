@@ -11,13 +11,15 @@ const electron = vi.hoisted(() => ({
   BrowserWindow: class {},
   dialog: { showMessageBox: vi.fn(async () => ({ response: 0 })) },
   Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
+  nativeImage: { createFromPath: vi.fn() },
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
+  Tray: class {},
 }))
 
 vi.mock('electron', () => electron)
 
-import { activeShutdownWork, confirmAppClose, hardenRenderer, loadInitialRenderer, mainWindowChromeOptions, resolveRendererAssetPath, settleShutdown, shutdownPrompt, startupFailureDialog } from '../../electron/main/index'
+import { activeShutdownWork, confirmAppClose, hardenRenderer, isMacWindowCloseShortcut, loadInitialRenderer, mainWindowChromeOptions, resolveRendererAssetPath, routeAllWindowsClosed, settleShutdown, shutdownPrompt, startupFailureDialog } from '../../electron/main/index'
 import { StateMigrationError, UnsupportedStateVersionError } from '../../electron/main/store'
 import type { RuntimeInfo } from '../../src/types/api'
 import type { BrowserWindow } from 'electron'
@@ -61,6 +63,17 @@ describe('application window lifecycle', () => {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 18, y: 18 },
     })
+  })
+
+  it('recognizes only an unmodified macOS Command-Q keydown as a window close', () => {
+    const input = { type: 'keyDown', key: 'q', meta: true, shift: false, control: false, alt: false }
+
+    expect(isMacWindowCloseShortcut(input, 'darwin')).toBe(true)
+    expect(isMacWindowCloseShortcut({ ...input, type: 'keyUp' }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, meta: false }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, shift: true }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, key: 'w' }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut(input, 'win32')).toBe(false)
   })
 
   it('resolves packaged renderer assets with Windows path separators', () => {
@@ -135,6 +148,16 @@ describe('application window lifecycle', () => {
     expect(registration).toBeDefined()
     registration?.[1]()
     expect(electron.app.quit).toHaveBeenCalledOnce()
+  })
+
+  it('does not recreate background mode after shutdown starts', () => {
+    const background = { handleAllWindowsClosed: vi.fn(() => true) }
+    const quit = vi.fn()
+
+    routeAllWindowsClosed(true, background, quit)
+
+    expect(background.handleAllWindowsClosed).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
   })
 })
 

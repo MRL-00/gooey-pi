@@ -410,6 +410,10 @@ export interface AppSettings {
   sidebarOpen: boolean
   inspectorOpen: boolean
   showFileChangesPopup: boolean
+  /** Keep the desktop process available for scheduled work after its window closes. */
+  keepRunningInBackground: boolean
+  /** Ask the operating system to launch GooeyPi when the user signs in. */
+  launchAtLogin: boolean
   terminalOpen: boolean
   defaultInspectorTab: InspectorTab
   browserHome: string
@@ -423,6 +427,10 @@ export interface AppSettings {
   runtimePaths: Record<HarnessId, string>
   /** Legacy visibility preference retained for state compatibility; executable detection is authoritative. */
   enabledHarnesses: HarnessId[]
+  /**
+   * Legacy diagnostics preference retained for persisted-state compatibility.
+   * The Privacy UI deliberately ignores this field; any reporting use needs separate review.
+   */
   telemetry: boolean
   /** GooeyPi-managed ask_user tool, shared by every interactive harness. */
   askUserEnabled: boolean
@@ -677,7 +685,7 @@ export interface AgentBrowserPointerEvent {
 }
 
 export interface PrimeWorkApi {
-  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean> }
+  app: { getMeta(): Promise<AppMeta>; refreshHarnesses(): Promise<{ meta: AppMeta; settings: AppSettings }>; openExternal(url: string): Promise<boolean>; revealPath(path: string): Promise<boolean>; popupMenu(menu: ApplicationMenuName, x: number, y: number): Promise<boolean>; setTitleBarTheme(theme: Exclude<ThemeMode, 'system'>): Promise<boolean>; onOpenSettings(callback: () => void): () => void }
   updates: {
     getState(): Promise<AppUpdateState>
     check(): Promise<AppUpdateState>
