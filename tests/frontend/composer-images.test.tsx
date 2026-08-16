@@ -156,8 +156,12 @@ describe('Composer image ingestion', () => {
     const onSend = renderComposer(vi.fn(), false)
     await paste(pastedPng())
 
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('.composer-attachment')?.textContent).toContain('pasted.png')
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Send message"]') as HTMLButtonElement).click()
+    })
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('does not accept images')
-    expect(container.querySelector('.composer-attachment')).toBeNull()
     expect(onSend).not.toHaveBeenCalled()
   })
 
@@ -234,7 +238,7 @@ describe('Composer image ingestion', () => {
     })
 
     expect(container.querySelectorAll('.composer-attachment')).toHaveLength(5)
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('up to 8 images')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('up to 8 files')
   })
 
 
@@ -291,7 +295,7 @@ describe('Composer image ingestion', () => {
     expect(container.textContent).toContain('submitted-1.png')
     expect(container.textContent).not.toContain('submitted-2.png')
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('1 submitted image could not be restored because the attachment limits are full')
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('8 images attached')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('8 files attached')
   })
 
   it('accounts for newly attached bytes when restoring a failed send', async () => {
@@ -313,18 +317,37 @@ describe('Composer image ingestion', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('1 submitted image could not be restored because the attachment limits are full')
   })
 
-  it('opens an image-only picker and attaches its selection', async () => {
+  it('opens a general file picker from the add menu and attaches its selection', async () => {
     renderComposer()
-    const input = container.querySelector<HTMLInputElement>('input[aria-label="Choose images to attach"]')
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Choose files to attach"]')
     const click = vi.spyOn(input as HTMLInputElement, 'click')
 
-    ;(container.querySelector('button[aria-label="Attach images"]') as HTMLButtonElement).click()
+    act(() => (container.querySelector('button[aria-label="Add context"]') as HTMLButtonElement).click())
+    expect(container.querySelector('[role="listbox"]')?.textContent).toContain('Add files')
+    expect(container.querySelector('[role="listbox"]')?.textContent).toContain('Mention a session or skill')
+    act(() => (Array.from(container.querySelectorAll<HTMLButtonElement>('.composer-menu button')).find((button) => button.textContent?.includes('Add files')) as HTMLButtonElement).click())
     expect(click).toHaveBeenCalledOnce()
     expect(input?.multiple).toBe(true)
-    expect(input?.accept).toBe('image/png,image/jpeg,image/gif,image/webp')
+    expect(input?.accept).toBe('')
+    expect(container.querySelector('.composer-menu')).toBeNull()
+    expect(container.querySelector('button[aria-label="Attach images"]')).toBeNull()
 
     await pickFiles([pastedPng()])
     expect(container.querySelector('.composer-attachment')?.textContent).toContain('pasted.png')
+  })
+
+  it('closes the add menu from its trigger or an outside click', () => {
+    renderComposer()
+    const trigger = container.querySelector('button[aria-label="Add context"]') as HTMLButtonElement
+
+    act(() => trigger.click())
+    expect(container.querySelector('.composer-menu')).not.toBeNull()
+    act(() => trigger.click())
+    expect(container.querySelector('.composer-menu')).toBeNull()
+    act(() => trigger.click())
+    expect(container.querySelector('.composer-menu')).not.toBeNull()
+    act(() => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    expect(container.querySelector('.composer-menu')).toBeNull()
   })
 
   it('attaches dropped images and keeps nested drag feedback stable', async () => {
@@ -337,8 +360,8 @@ describe('Composer image ingestion', () => {
       dispatchDrag('dragenter', textarea, [pastedPng()])
       dispatchDrag('dragleave', textarea, [pastedPng()])
     })
-    expect(container.querySelector('.composer-drop-feedback')?.textContent).toContain('Drop images')
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('Drop images')
+    expect(container.querySelector('.composer-drop-feedback')?.textContent).toContain('Drop files')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Drop files')
 
     await act(async () => {
       dispatchDrag('drop', composer, [pastedPng()])
@@ -349,15 +372,20 @@ describe('Composer image ingestion', () => {
     expect(container.querySelector('.composer-attachment')?.textContent).toContain('pasted.png')
   })
 
-  it('rejects mixed supported and unsupported payloads atomically', async () => {
-    renderComposer()
+  it('stages mixed file types and rejects unsupported files when sending', async () => {
+    const onSend = renderComposer()
     const unsupported = new File(['plain text'], 'notes.txt', { type: 'text/plain' })
 
     await pasteFiles([pastedPng(), unsupported], 'keep this text')
 
-    expect(container.querySelector('.composer-attachment')).toBeNull()
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('PNG, JPEG, GIF, and WebP')
+    expect(container.querySelectorAll('.composer-attachment')).toHaveLength(2)
+    expect(container.textContent).toContain('notes.txt')
+    await act(async () => {
+      ;(container.querySelector('button[aria-label="Send message"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('notes.txt cannot be sent')
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('keep this text')
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('shares count and byte limits across picker, paste, and drop', async () => {
@@ -365,36 +393,37 @@ describe('Composer image ingestion', () => {
     await pickFiles(Array.from({ length: 4 }, () => pastedPng()))
     await dropFiles(Array.from({ length: 5 }, () => pastedPng()))
     expect(container.querySelectorAll('.composer-attachment')).toHaveLength(4)
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('up to 8 images')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('up to 8 files')
 
     const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.composer-attachment > button'))
     act(() => removeButtons.forEach((button) => { button.click() }))
-    const largeImage = () => new File([new Uint8Array(700_000)], 'large.png', { type: 'image/png' })
+    const largeImage = () => sizedPng('large.png', 700_000)
     await paste(largeImage())
     await pickFiles([largeImage()])
     expect(container.querySelectorAll('.composer-attachment')).toHaveLength(1)
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('too large')
   })
 
-  it('rejects picker and drop input for text-only models', async () => {
+  it('keeps files removable when the current model cannot send them', async () => {
     renderComposer(vi.fn(), false)
     await pickFiles([pastedPng()])
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('does not accept images')
-    await dropFiles([pastedPng()])
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('.composer-attachment')?.textContent).toContain('pasted.png')
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Remove pasted.png"]')?.click())
     expect(container.querySelector('.composer-attachment')).toBeNull()
   })
 
   it('removes a chosen image and exposes accessible picker and attachment status labels', async () => {
     renderComposer()
     await pickFiles([pastedPng()])
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('1 image attached')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('1 file attached')
 
     const remove = container.querySelector<HTMLButtonElement>('button[aria-label="Remove pasted.png"]')
     expect(remove).not.toBeNull()
     act(() => remove?.click())
     expect(container.querySelector('.composer-attachment')).toBeNull()
     expect(container.querySelector('[role="status"]')?.textContent).toBe('')
-    expect(container.querySelector('button[aria-label="Attach images"]')?.getAttribute('title')).toBe('Attach images')
+    expect(container.querySelector('button[aria-label="Add context"]')?.getAttribute('title')).toBe('Add context')
   })
 
 })

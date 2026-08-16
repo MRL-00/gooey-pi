@@ -1,4 +1,4 @@
-import { ArrowUp, AtSign, Brain, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, AtSign, Brain, Check, ChevronDown, Clock3, Command, Edit3, FolderGit2, Gauge, ImageIcon, LoaderCircle, MessageCirclePlus, Mic, Paperclip, Plus, Square, SquareTerminal, Trash2, X, Zap } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
@@ -26,7 +26,7 @@ import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { appendSessionRouting, findSessionMentions } from '@/lib/session-mentions'
 import { takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
-import { COMPOSER_IMAGE_ACCEPT, useComposerImages } from '@/hooks/useComposerImages'
+import { useComposerImages } from '@/hooks/useComposerImages'
 import { useDictation } from '@/hooks/useDictation'
 import { IconButton, SelectControl } from './ui'
 
@@ -165,8 +165,8 @@ export const Composer = memo(function Composer({
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
   const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
-  const imageAttachments = useComposerImages({ imageInputSupported, shortName })
-  const { images, imagesRef, error: attachmentError, setError: setAttachmentError, processing: processingImages } = imageAttachments
+  const imageAttachments = useComposerImages({ shortName })
+  const { images, imagesRef, unsupportedFiles, unsupportedFilesRef, error: attachmentError, setError: setAttachmentError, processing: processingImages } = imageAttachments
   const [worktreeMenuOpen, setWorktreeMenuOpen] = useState(false)
   const [creatingWorktree, setCreatingWorktree] = useState(false)
   const [worktreeBranch, setWorktreeBranch] = useState('')
@@ -174,11 +174,12 @@ export const Composer = memo(function Composer({
   const dictation = useDictation(voice, transcriptionProvider, setAttachmentError)
   const menuId = useId()
   const worktreeMenuId = useId()
+  const menuRef = useRef<HTMLDivElement>(null)
   const worktreeMenuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const acceptedMentionRef = useRef<{ start: number; text: string } | null>(null)
   const submittingRef = useRef(false)
-  const imageInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const imageStatusId = useId()
   const annotationsRef = useRef(annotations)
   annotationsRef.current = annotations
@@ -218,6 +219,25 @@ export const Composer = memo(function Composer({
   useEffect(() => {
     if (!terminalSelection?.text) setTerminalSelectionOpen(false)
   }, [terminalSelection?.text])
+
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: MouseEvent) => {
+      const target = event.target
+      if (!(target instanceof Node) || menuRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-composer-menu-trigger]')) return
+      setMenu(null)
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [menu])
 
   useEffect(() => {
     if (!worktreeMenuOpen) return
@@ -264,16 +284,24 @@ export const Composer = memo(function Composer({
 
   const submit = async (intent: PromptDeliveryIntent = 'queue', valueOverride?: string) => {
     const currentImages = imagesRef.current
+    const currentUnsupportedFiles = unsupportedFilesRef.current
     const currentAnnotations = annotationsRef.current
     const currentTerminalContext = terminalSelection?.text ? getTerminalContext?.() : undefined
     const hasTerminalSelection = Boolean(currentTerminalContext?.text)
     const draftValue = valueOverride ?? value
     const prompt = draftValue.trim() || (currentImages.length > 0
       ? (currentImages.length === 1 ? '[Attached image]' : '[Attached images]')
-      : currentAnnotations.length > 0 ? '[Page annotations]' : '[Terminal selection]')
-    if ((!draftValue.trim() && currentImages.length === 0 && currentAnnotations.length === 0 && !hasTerminalSelection) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
+      : currentUnsupportedFiles.length > 0 ? (currentUnsupportedFiles.length === 1 ? '[Attached file]' : '[Attached files]')
+        : currentAnnotations.length > 0 ? '[Page annotations]' : '[Terminal selection]')
+    if ((!draftValue.trim() && currentImages.length === 0 && currentUnsupportedFiles.length === 0 && currentAnnotations.length === 0 && !hasTerminalSelection) || loading || disabled || (intent !== 'steer' && !busy && (submitting || submittingRef.current))) return
     if (imageAttachments.hasPending()) {
-      setAttachmentError('Wait for the image to finish processing before sending.')
+      setAttachmentError('Wait for the file to finish processing before sending.')
+      return
+    }
+    if (currentUnsupportedFiles.length > 0) {
+      const first = currentUnsupportedFiles[0]
+      const remainder = currentUnsupportedFiles.length - 1
+      setAttachmentError(`${first.name}${remainder ? ` and ${remainder} more file${remainder === 1 ? '' : 's'}` : ''} cannot be sent to this model or agent. Remove ${remainder ? 'them' : 'it'} before sending.`)
       return
     }
     if (currentImages.length > 0 && !imageInputSupported) {
@@ -407,7 +435,10 @@ export const Composer = memo(function Composer({
             })),
           ].slice(0, 8)
         : menu === 'add'
-          ? [{ key: 'mention', label: 'Mention a session or skill', detail: 'Reference sidebar work or an enabled capability', icon: <AtSign size={14} />, choose: () => insert('@') }]
+          ? [
+              { key: 'files', label: 'Add files', detail: 'Attach images, audio, video, or other files', icon: <Paperclip size={14} />, choose: () => { setMenu(null); fileInputRef.current?.click() } },
+              { key: 'mention', label: 'Mention a session or skill', detail: 'Reference sidebar work or an enabled capability', icon: <AtSign size={14} />, choose: () => insert('@') },
+            ]
           : []
 
   useEffect(() => {
@@ -473,7 +504,7 @@ export const Composer = memo(function Composer({
         className={`composer ${busy || submitting ? 'composer--busy' : ''} ${imageAttachments.dragging ? 'composer--image-dragging' : ''}`}
         {...imageAttachments.dragHandlers}
       >
-        {imageAttachments.dragging ? <div className="composer-drop-feedback" aria-hidden="true"><ImageIcon size={18} />Drop images to attach</div> : null}
+        {imageAttachments.dragging ? <div className="composer-drop-feedback" aria-hidden="true"><Paperclip size={18} />Drop files to attach</div> : null}
         <div className="composer-input">
           <textarea
             ref={textareaRef}
@@ -536,7 +567,7 @@ export const Composer = memo(function Composer({
           />
         </div>
         {menu && suggestions.length ? (
-          <div id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'mention' ? 'Sessions and skills' : 'Add context'}>
+          <div ref={menuRef} id={menuId} className="composer-menu" role="listbox" aria-label={menu === 'command' ? 'Commands' : menu === 'mention' ? 'Sessions and skills' : 'Add context'}>
             {suggestions.map((suggestion, index) => (
               <button
                 id={`${menuId}-option-${index}`}
@@ -588,7 +619,7 @@ export const Composer = memo(function Composer({
             <pre>{terminalSelection.text}</pre>
           </div>
         ) : null}
-        {images.length || annotations.length || terminalSelection?.text ? (
+        {images.length || unsupportedFiles.length || annotations.length || terminalSelection?.text ? (
           <div className="composer-attachments" aria-label="Attachments">
             {annotations.length ? (
               <div className="composer-attachment composer-attachment--annotations" title={`${annotations.length} page annotation${annotations.length === 1 ? '' : 's'}`}>
@@ -648,6 +679,21 @@ export const Composer = memo(function Composer({
                 </button>
               </div>
             ))}
+            {unsupportedFiles.map((file) => (
+              <div className="composer-attachment" key={file.id}>
+                <span>
+                  <Paperclip size={12} />
+                  {file.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() => imageAttachments.remove(file.id)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
         {attachmentError ? (
@@ -656,12 +702,13 @@ export const Composer = memo(function Composer({
           </p>
         ) : null}
         <p id={imageStatusId} className="sr-only" role="status" aria-live="polite">
-          {imageAttachments.dragging ? 'Drop images to attach.' : processingImages ? 'Adding images.' : images.length ? `${images.length} image${images.length === 1 ? '' : 's'} attached.` : ''}
+          {imageAttachments.dragging ? 'Drop files to attach.' : processingImages ? 'Adding files.' : images.length + unsupportedFiles.length ? `${images.length + unsupportedFiles.length} file${images.length + unsupportedFiles.length === 1 ? '' : 's'} attached.` : ''}
         </p>
         <div className="composer__footer">
           <div className="composer__controls">
             <IconButton
-              label="Add skill"
+              label="Add context"
+              data-composer-menu-trigger
               aria-expanded={menu === 'add'}
               aria-controls={menu === 'add' ? menuId : undefined}
               onClick={() => {
@@ -672,13 +719,12 @@ export const Composer = memo(function Composer({
               <Plus size={17} />
             </IconButton>
             <input
-              ref={imageInputRef}
+              ref={fileInputRef}
               className="sr-only"
               type="file"
-              accept={COMPOSER_IMAGE_ACCEPT}
               multiple
               tabIndex={-1}
-              aria-label="Choose images to attach"
+              aria-label="Choose files to attach"
               aria-describedby={imageStatusId}
               disabled={disabled || loading || submitting}
               onChange={(event) => {
@@ -687,9 +733,6 @@ export const Composer = memo(function Composer({
                 void imageAttachments.ingest(files)
               }}
             />
-            <IconButton label="Attach images" disabled={disabled || loading || submitting} onClick={() => imageInputRef.current?.click()}>
-              <ImageIcon size={16} />
-            </IconButton>
             <SelectControl label="Model" compact icon={<Brain size={14} />} value={model} onChange={(event) => onModelChange(event.target.value)}>
               <option value="auto">Auto</option>
               {modelOptions}
@@ -806,7 +849,7 @@ export const Composer = memo(function Composer({
                 type="button"
                 className="send-button"
                 aria-label="Send message"
-                disabled={(!value.trim() && images.length === 0 && annotations.length === 0 && !terminalSelection?.text) || processingImages || submitting || loading || disabled}
+                disabled={(!value.trim() && images.length === 0 && unsupportedFiles.length === 0 && annotations.length === 0 && !terminalSelection?.text) || processingImages || submitting || loading || disabled}
                 onClick={() => void submit()}
               >
                 <ArrowUp size={17} />
