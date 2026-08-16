@@ -48,6 +48,7 @@ describe('realtime voice surface', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     localStorage.clear()
   })
@@ -71,7 +72,7 @@ describe('realtime voice surface', () => {
       executeTool: vi.fn(),
     } as unknown as PrimeWorkApi['voice']
     await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" onClose={vi.fn()} onTaskStarted={vi.fn()} />))
-    expect(voice.createRealtimeCall).toHaveBeenCalledWith({ mode: 'conversation', sdp: 'v=0\r\no=test-offer-value', harness: 'omp' })
+    expect(voice.createRealtimeCall).toHaveBeenCalledWith({ mode: 'conversation', setupId: expect.any(String), sdp: 'v=0\r\no=test-offer-value', harness: 'omp' })
     const mute = container.querySelector<HTMLButtonElement>('[aria-label="Mute realtime voice"]')!
     expect(container.querySelector('[aria-label="Close realtime voice"]')).not.toBeNull()
     await act(async () => mute.click())
@@ -164,6 +165,25 @@ describe('realtime voice surface', () => {
     const context = FakePeer.latest.channel.send.mock.calls.map(([value]) => JSON.parse(value)).find((message) => message.type === 'delegation.context.append')
     expect(context).toMatchObject({ delegation_item_id: 'delegate-1', channel: 'speakable' })
     expect(context.content[0].text).toContain('The start_task tool returned: {"started":true}')
+  })
+
+  it('reports a Codex task as started but not opened when navigation fails', async () => {
+    const task = { projectId: 'p1', projectName: 'GooeyPi', harness: 'omp' as const, runtimeId: 'r1', sessionFile: '/tmp/session.jsonl' }
+    const executeTool = vi.fn(async () => ({ output: '{"started":true}', task }))
+    const onTaskStarted = vi.fn(async () => { throw new Error('Session did not appear') })
+    const voice = { createRealtimeCall: vi.fn(async () => codexAnswer), executeTool } as unknown as PrimeWorkApi['voice']
+    await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" projectId="p1" onClose={vi.fn()} onTaskStarted={onTaskStarted} />))
+    await act(async () => {
+      FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+        type: 'delegation.created',
+        item: { type: 'delegation', target: 'client', id: 'delegate-navigation', content: [{ type: 'input_text', text: JSON.stringify({ name: 'start_task', arguments: { project_id: 'p1', prompt: 'Implement it' } }) }] },
+      }) }))
+      await Promise.resolve()
+    })
+    const context = FakePeer.latest.channel.send.mock.calls.map(([value]) => JSON.parse(value)).find((message) => message.delegation_item_id === 'delegate-navigation')
+    expect(context.content[0].text).toContain('The task started, but GooeyPi could not open it in the sidebar: Session did not appear')
+    expect(context.content[0].text).not.toContain('also opened the task')
+    expect(container.textContent).toContain('The task started, but GooeyPi could not open it: Session did not appear')
   })
 
   it('fails closed on an invalid Codex delegation', async () => {
@@ -311,18 +331,19 @@ describe('realtime voice surface', () => {
     consoleError.mockRestore()
   })
 
-  it('keeps tool calls bound to the harness selected when the orb opened', async () => {
-    const executeTool = vi.fn(async () => ({ output: '{"active_harness":"omp"}' }))
+  it('reconnects and executes tools with the current harness and project atomically', async () => {
+    const executeTool = vi.fn(async () => ({ output: '{"active_harness":"prime"}' }))
     const voice = { createRealtimeCall: vi.fn(async () => openAiAnswer), executeTool } as unknown as PrimeWorkApi['voice']
     const onClose = vi.fn()
     const onTaskStarted = vi.fn(async () => undefined)
-    await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" onClose={onClose} onTaskStarted={onTaskStarted} />))
-    await act(async () => root.render(<VoiceOrb voice={voice} harness="prime" onClose={onClose} onTaskStarted={onTaskStarted} />))
+    await act(async () => root.render(<VoiceOrb voice={voice} harness="omp" projectId="omp-project" onClose={onClose} onTaskStarted={onTaskStarted} />))
+    await act(async () => root.render(<VoiceOrb voice={voice} harness="prime" projectId="prime-project" onClose={onClose} onTaskStarted={onTaskStarted} />))
+    expect(voice.createRealtimeCall).toHaveBeenLastCalledWith(expect.objectContaining({ harness: 'prime', projectId: 'prime-project' }))
     await act(async () => {
       FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'call-context', name: 'get_local_context', arguments: '{}' }) }))
       await Promise.resolve()
     })
-    expect(executeTool).toHaveBeenCalledWith({ name: 'get_local_context', arguments: {} }, 'omp')
+    expect(executeTool).toHaveBeenCalledWith({ name: 'get_local_context', arguments: {} }, 'prime')
   })
 
   it('restarts the voice session when the selected project changes', async () => {
@@ -333,6 +354,80 @@ describe('realtime voice surface', () => {
     await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
     expect(firstPeer.close).toHaveBeenCalledOnce()
     expect(voice.createRealtimeCall).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: 'project-2' }))
+  })
+
+  it('keeps the replacement microphone muted after a project reconnect', async () => {
+    const replacementTrack = { enabled: true, stop: vi.fn() }
+    const replacementStream = { getTracks: () => [replacementTrack], getAudioTracks: () => [replacementTrack] }
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn()
+      .mockResolvedValueOnce(stream)
+      .mockResolvedValueOnce(replacementStream) } })
+    const voice = { createRealtimeCall: vi.fn(async () => openAiAnswer), executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted: vi.fn(async () => undefined) }
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-1" />))
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Mute realtime voice"]')!.click())
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
+    expect(replacementTrack.enabled).toBe(false)
+    expect(container.textContent).toContain('Muted')
+  })
+
+  it('cancels an in-flight backend setup when the project changes', async () => {
+    let resolveOld!: (answer: typeof openAiAnswer) => void
+    const cancelRealtimeCall = vi.fn(async () => undefined)
+    const createRealtimeCall = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof openAiAnswer>((resolve) => { resolveOld = resolve }))
+      .mockResolvedValue(openAiAnswer)
+    const voice = { createRealtimeCall, cancelRealtimeCall, executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted: vi.fn(async () => undefined) }
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-1" />))
+    const firstSetupId = createRealtimeCall.mock.calls[0]![0].setupId
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
+    expect(cancelRealtimeCall).toHaveBeenCalledWith(firstSetupId)
+    await act(async () => resolveOld(openAiAnswer))
+  })
+
+  it('does not issue a stale realtime call when media setup finishes after reconnecting', async () => {
+    let resolveOldMedia!: (value: typeof stream) => void
+    const getUserMedia = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof stream>((resolve) => { resolveOldMedia = resolve }))
+      .mockResolvedValue(stream)
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia } })
+    const cancelRealtimeCall = vi.fn(async () => undefined)
+    const createRealtimeCall = vi.fn(async () => openAiAnswer)
+    const voice = { createRealtimeCall, cancelRealtimeCall, executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted: vi.fn(async () => undefined) }
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-1" />))
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
+    await act(async () => resolveOldMedia(stream))
+    expect(createRealtimeCall).toHaveBeenCalledTimes(1)
+    expect(createRealtimeCall).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-2' }))
+  })
+
+  it('surfaces a task that finishes starting after the voice scope changes', async () => {
+    const task = { projectId: 'project-1', projectName: 'First', harness: 'omp' as const, runtimeId: 'runtime-1', sessionFile: '/tmp/session.jsonl' }
+    let resolveTask!: (result: { output: string; task: typeof task }) => void
+    const executeTool = vi.fn(() => new Promise<{ output: string; task: typeof task }>((resolve) => { resolveTask = resolve }))
+    const onTaskStarted = vi.fn(async () => undefined)
+    const voice = { createRealtimeCall: vi.fn(async () => openAiAnswer), executeTool } as unknown as PrimeWorkApi['voice']
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted }
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-1" />))
+    const firstChannel = FakePeer.latest.channel
+    await act(async () => firstChannel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.function_call_arguments.done', call_id: 'late-task', name: 'start_task', arguments: JSON.stringify({ project_id: 'project-1', prompt: 'Build it' }) }) })))
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
+    await act(async () => resolveTask({ output: '{"started":true}', task }))
+    expect(onTaskStarted).toHaveBeenCalledWith(task)
+  })
+
+  it('clears a session error when a replacement session starts', async () => {
+    const voice = { createRealtimeCall: vi.fn(async () => openAiAnswer), executeTool: vi.fn() } as unknown as PrimeWorkApi['voice']
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const props = { voice, harness: 'omp' as const, onClose: vi.fn(), onTaskStarted: vi.fn(async () => undefined) }
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-1" />))
+    await act(async () => FakePeer.latest.channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'error', error: { message: 'Old session failed.' } }) })))
+    expect(container.textContent).toContain('Old session failed.')
+    await act(async () => root.render(<VoiceOrb {...props} projectId="project-2" />))
+    expect(container.textContent).not.toContain('Old session failed.')
+    consoleError.mockRestore()
   })
 
   it('shows a durable failure instead of claiming an unconfirmed task started', async () => {

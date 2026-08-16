@@ -500,7 +500,7 @@ export interface VoiceCredentialStatus {
 }
 
 export type VoiceRealtimeCallRequest =
-  | { mode: 'conversation'; sdp: string; harness: HarnessId; projectId?: string }
+  | { mode: 'conversation'; setupId: string; sdp: string; harness: HarnessId; projectId?: string }
   | { mode: 'transcription'; sdp: string }
 
 export interface VoiceRealtimeCallResult {
@@ -735,6 +735,7 @@ export interface PrimeWorkApi {
     saveApiKey(provider: VoiceCredentialProvider, apiKey: string): Promise<VoiceCredentialStatus>
     deleteApiKey(provider: VoiceCredentialProvider): Promise<VoiceCredentialStatus>
     createRealtimeCall(request: VoiceRealtimeCallRequest): Promise<VoiceRealtimeCallResult>
+    cancelRealtimeCall(setupId: string): Promise<void>
     transcribe(request: VoiceTranscriptionRequest): Promise<string>
     testSelfHosted(request: VoiceSelfHostedTestRequest): Promise<boolean>
     executeTool(request: VoiceToolRequest, harness: HarnessId): Promise<VoiceToolResult>

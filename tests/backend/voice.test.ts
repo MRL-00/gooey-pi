@@ -252,6 +252,8 @@ describe('VoiceService', () => {
       expect(session.instructions).toContain('{"name":"tool_name","arguments":{...}}')
       expect(session.instructions).toContain('"name":"list_projects"')
       expect(session.instructions).toContain('"name":"start_task"')
+      expect(session.instructions).not.toContain('"name":"search_web"')
+      expect(session.instructions).toContain('web access that is unavailable in this connection')
       expect(session.instructions).toContain('"required":["project_id","prompt"]')
       expect(session.delegation).toEqual({ type: 'client', ack_filler: true })
       expect(session.audio.output.voice).toBe('cove')
@@ -259,8 +261,40 @@ describe('VoiceService', () => {
     })
     const { service } = makeService({ settings: () => settings, fetch: fetchMock as typeof fetch })
     await service.saveApiKey('openai', 'sk-test')
-    await expect(service.createRealtimeCall({ mode: 'conversation', sdp: 'v=0\r\no=offer-value', harness: 'omp', projectId: 'omp-project' })).resolves.toEqual({ sdp: 'v=0\r\no=answer', protocol: 'codex-v3' })
+    await expect(service.createRealtimeCall({ mode: 'conversation', setupId: 'codex-setup', sdp: 'v=0\r\no=offer-value', harness: 'omp', projectId: 'omp-project' })).resolves.toEqual({ sdp: 'v=0\r\no=answer', protocol: 'codex-v3' })
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('allows an unscoped Codex conversation while rejecting an inferred project', async () => {
+    const settings = { ...defaultSettings(), voiceRealtimeProvider: 'openai-codex' as const }
+    const fetchMock = vi.fn(async () => new Response('v=0\r\no=answer', { status: 201 }))
+    const { service } = makeService({
+      settings: () => settings,
+      fetch: fetchMock as typeof fetch,
+      projects: {
+        prime: { list: vi.fn(async () => [project('prime')]) },
+        omp: { list: vi.fn(async () => [project('omp', true)]) },
+        pi: { list: vi.fn(async () => [project('pi')]) },
+      } as unknown as VoiceServiceOptions['projects'],
+    })
+
+    await expect(service.createRealtimeCall({ mode: 'conversation', setupId: 'unscoped', sdp: 'v=0\r\no=offer-value', harness: 'omp' }))
+      .resolves.toEqual({ sdp: 'v=0\r\no=answer', protocol: 'codex-v3' })
+    await expect(service.createRealtimeCall({ mode: 'conversation', setupId: 'inferred', sdp: 'v=0\r\no=offer-value', harness: 'omp', projectId: 'omp-project' }))
+      .rejects.toThrow(/not explicitly granted/)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('cancels an in-flight realtime setup by setup ID', async () => {
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+    }))
+    const { service } = makeService({ fetch: fetchMock as typeof fetch })
+    await service.saveApiKey('openai', 'sk-test')
+    const setup = service.createRealtimeCall({ mode: 'conversation', setupId: 'cancel-me', sdp: 'v=0\r\no=offer-value', harness: 'omp' })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    service.cancelRealtimeCall('cancel-me')
+    await expect(setup).rejects.toThrow('Realtime setup was cancelled')
   })
 
   it('keeps the selected OpenAI API realtime route and tools when Codex is also connected', async () => {
@@ -276,7 +310,7 @@ describe('VoiceService', () => {
     const { service, options } = makeService({ fetch: fetchMock as typeof fetch, codexVoiceConfigured: () => true })
     await service.saveApiKey('openai', 'sk-test')
 
-    await expect(service.createRealtimeCall({ mode: 'conversation', sdp: 'v=0\r\no=offer-value', harness: 'omp' }))
+    await expect(service.createRealtimeCall({ mode: 'conversation', setupId: 'openai-setup', sdp: 'v=0\r\no=offer-value', harness: 'omp' }))
       .resolves.toEqual({ sdp: 'v=0\r\no=api-answer', protocol: 'openai' })
     expect(options.codexVoiceAuth).not.toHaveBeenCalled()
   })

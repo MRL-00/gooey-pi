@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthStorage } from 'prime-agent'
-import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
+import { codexRealtimeBaseUrl, MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
 import type { PrimeModelCatalog } from '../../src/types/api'
 
 const dirs: string[] = []
@@ -83,6 +83,17 @@ function expectRelationalIntegrity(catalog: PrimeModelCatalog): void {
 }
 
 describe('Prime provider adapter', () => {
+  it.each([
+    ['https://chatgpt.com/backend-api', 'https://chatgpt.com/backend-api/codex'],
+    ['https://chatgpt.com/backend-api/', 'https://chatgpt.com/backend-api/codex'],
+    ['https://chatgpt.com/backend-api/codex', 'https://chatgpt.com/backend-api/codex'],
+    ['https://chatgpt.com/backend-api/codex/', 'https://chatgpt.com/backend-api/codex'],
+    ['https://chatgpt.com/backend-api/codex/responses', 'https://chatgpt.com/backend-api/codex'],
+    ['https://proxy.example.test/responses', 'https://proxy.example.test/codex'],
+  ])('normalizes Codex realtime base URL %s', (baseUrl, expected) => {
+    expect(codexRealtimeBaseUrl(baseUrl)).toBe(expected)
+  })
+
   it('resolves realtime subscription voice only from Codex OAuth credentials', async () => {
     const providerService = service()
     const internals = providerService as unknown as {

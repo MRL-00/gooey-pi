@@ -61,6 +61,7 @@ function voiceBridge(overrides: Partial<PrimeWorkApi['voice']> = {}): PrimeWorkA
     saveApiKey: vi.fn().mockResolvedValue(emptyStatus),
     deleteApiKey: vi.fn().mockResolvedValue(emptyStatus),
     createRealtimeCall: vi.fn(),
+    cancelRealtimeCall: vi.fn(),
     transcribe: vi.fn(),
     testSelfHosted: vi.fn().mockResolvedValue(true),
     executeTool: vi.fn(),

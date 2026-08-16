@@ -295,14 +295,16 @@ class VoiceSecretStore {
   }
 }
 
-function orchestrationInstructions(harness: HarnessId): string {
+function orchestrationInstructions(harness: HarnessId, webSearch: boolean): string {
   const harnessName = HARNESSES[harness].agentName
   return [
     'You are the voice orchestrator inside GooeyPi, a desktop client for the Prime Agent, OMP, and Pi harnesses.',
     `This voice session is locked to the currently selected ${harnessName} harness. Never switch harnesses.`,
     'Be concise and conversational. Answer general questions directly.',
-    'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels.',
-    'For local weather or another location-sensitive lookup when the user did not name a place: first call get_local_context, then call search_web with its location_hint included in the query. Do not ask the user for a location unless get_local_context returns no usable location_hint. Treat the hint as approximate.',
+    webSearch
+      ? 'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use search_web for current information. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels.'
+      : 'Use get_local_context for the local date, time, time zone, approximate location, locale, or selected harness. Use list_projects to resolve a project within the selected harness. Use list_models to resolve a requested model and its supported reasoning levels. Explain when a current-information request needs web access that is unavailable in this connection.',
+    ...(webSearch ? ['For local weather or another location-sensitive lookup when the user did not name a place: first call get_local_context, then call search_web with its location_hint included in the query. Do not ask the user for a location unless get_local_context returns no usable location_hint. Treat the hint as approximate.'] : []),
     'Call start_task only when the user explicitly asks you to start, create, kick off, delegate, or run a task.',
     'An explicit request to start work is sufficient authorization. Do not ask for a second confirmation.',
     'Only start tasks inside projects returned by list_projects. Never invent project IDs.',
@@ -316,74 +318,75 @@ function orchestrationInstructions(harness: HarnessId): string {
   ].join(' ')
 }
 
-function realtimeSession(settings: AppSettings, harness: HarnessId): Record<string, unknown> {
+function voiceToolContracts(harness: HarnessId, webSearch: boolean): Array<Record<string, unknown>> {
   const harnessName = HARNESSES[harness].agentName
+  const tools: Array<Record<string, unknown>> = [
+    {
+      type: 'function', name: 'list_projects',
+      description: `Find explicitly granted projects in the currently selected ${harnessName} harness. Projects from other harnesses are never returned.`,
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: { query: { type: 'string', description: 'Optional project-name search.' } },
+      },
+    },
+    {
+      type: 'function', name: 'list_models',
+      description: `Find task models available from providers currently shown as active in GooeyPi for the selected ${harnessName} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: { query: { type: 'string', description: 'Optional approximate model name, provider, family, or spoken model wording. Use this whenever the user mentions a model.' } },
+      },
+    },
+    {
+      type: 'function', name: 'start_task',
+      description: `Immediately create and start a new task in the currently selected ${harnessName} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions. Optional model and reasoning preferences are resolved against active GUI providers and applied before the prompt.`,
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          project_id: { type: 'string', description: 'An exact ID returned by list_projects.' },
+          prompt: { type: 'string', description: 'A concise, self-contained task with the actual goal, useful user constraints, and requested output. Exclude session/thread creation, project/harness routing, agent-role preambles, and generic filler.' },
+          title: { type: 'string', description: 'Optional concise title describing only the delegated work.' },
+          model: { type: 'string', description: 'Optional exact model key returned by list_models. Approximate wording is also accepted as a fallback.' },
+          reasoning: { type: 'string', description: 'Optional requested reasoning intensity in natural language or as a named level. The closest level supported by the selected model is used.' },
+        },
+        required: ['project_id', 'prompt'],
+      },
+    },
+    {
+      type: 'function', name: 'get_local_context',
+      description: 'Get the local date, time, time zone, timezone-derived approximate location hint, locale, UTC offset, and selected harness.',
+      parameters: { type: 'object', additionalProperties: false, properties: {} },
+    },
+  ]
+  if (webSearch) tools.push({
+    type: 'function', name: 'search_web',
+    description: 'Search the live web for a quick current-information question and return a cited answer. For local weather with no named place, first call get_local_context and include its location_hint in this query.',
+    parameters: {
+      type: 'object', additionalProperties: false,
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+    },
+  })
+  return tools
+}
+
+function realtimeSession(settings: AppSettings, harness: HarnessId): Record<string, unknown> {
   return {
     type: 'realtime',
     model: settings.voiceRealtimeModel,
-    instructions: orchestrationInstructions(harness),
+    instructions: orchestrationInstructions(harness, true),
     audio: { output: { voice: settings.voiceRealtimeVoice } },
     tool_choice: 'auto',
-    tools: [
-      {
-        type: 'function', name: 'list_projects',
-        description: `Find explicitly granted projects in the currently selected ${harnessName} harness. Projects from other harnesses are never returned.`,
-        parameters: {
-          type: 'object', additionalProperties: false,
-          properties: {
-            query: { type: 'string', description: 'Optional project-name search.' },
-          },
-        },
-      },
-      {
-        type: 'function', name: 'list_models',
-        description: `Find task models available from providers currently shown as active in GooeyPi for the selected ${harnessName} harness. Search with the user’s approximate model wording; hidden, disabled, and unavailable models are never returned. Each result includes the exact key and supported reasoning levels.`,
-        parameters: {
-          type: 'object', additionalProperties: false,
-          properties: {
-            query: { type: 'string', description: 'Optional approximate model name, provider, family, or spoken model wording. Use this whenever the user mentions a model.' },
-          },
-        },
-      },
-      {
-        type: 'function', name: 'start_task',
-        description: `Immediately create and start a new task in the currently selected ${harnessName} harness after an explicit request. The prompt must contain only the delegated work, never voice-orchestration or routing instructions. Optional model and reasoning preferences are resolved against active GUI providers and applied before the prompt.`,
-        parameters: {
-          type: 'object', additionalProperties: false,
-          properties: {
-            project_id: { type: 'string', description: 'An exact ID returned by list_projects.' },
-            prompt: { type: 'string', description: 'A concise, self-contained task with the actual goal, useful user constraints, and requested output. Exclude session/thread creation, project/harness routing, agent-role preambles, and generic filler.' },
-            title: { type: 'string', description: 'Optional concise title describing only the delegated work.' },
-            model: { type: 'string', description: 'Optional exact model key returned by list_models. Approximate wording is also accepted as a fallback.' },
-            reasoning: { type: 'string', description: 'Optional requested reasoning intensity in natural language or as a named level. The closest level supported by the selected model is used.' },
-          },
-          required: ['project_id', 'prompt'],
-        },
-      },
-      {
-        type: 'function', name: 'get_local_context',
-        description: 'Get the local date, time, time zone, timezone-derived approximate location hint, locale, UTC offset, and selected harness. Call this before local weather or another location-sensitive lookup when the user did not name a place.',
-        parameters: { type: 'object', additionalProperties: false, properties: {} },
-      },
-      {
-        type: 'function', name: 'search_web',
-        description: 'Search the live web for a quick current-information question and return a cited answer. For local weather with no named place, first call get_local_context and include its location_hint in this query.',
-        parameters: {
-          type: 'object', additionalProperties: false,
-          properties: { query: { type: 'string' } },
-          required: ['query'],
-        },
-      },
-    ],
+    tools: voiceToolContracts(harness, true),
   }
 }
 
-function codexRealtimeSession(settings: AppSettings, harness: HarnessId, projectName?: string): Record<string, unknown> {
-  const toolContracts = realtimeSession(settings, harness).tools
+function codexRealtimeSession(harness: HarnessId, projectName?: string): Record<string, unknown> {
+  const toolContracts = voiceToolContracts(harness, false)
   return {
     model: CODEX_REALTIME_MODEL,
     instructions: [
-      orchestrationInstructions(harness),
+      orchestrationInstructions(harness, false),
       projectName ? `The project currently open in GooeyPi is ${JSON.stringify(projectName)}.` : 'No project is currently open in GooeyPi.',
       'The client exposes the named GooeyPi tools through delegation rather than native function calls.',
       'To call a tool, delegate exactly one JSON object with shape {"name":"tool_name","arguments":{...}} and no Markdown or surrounding prose.',
@@ -416,6 +419,7 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export class VoiceService {
   private readonly secrets: VoiceSecretStore
   private readonly fetchImpl: typeof fetch
+  private readonly realtimeSetups = new Map<string, AbortController>()
 
   constructor(private readonly options: VoiceServiceOptions) {
     this.secrets = new VoiceSecretStore(options.secretPath, options.secretCodec, options.environment ?? process.env)
@@ -439,6 +443,21 @@ export class VoiceService {
     if (request.mode !== 'conversation' && request.mode !== 'transcription') throw new TypeError('Invalid realtime call mode')
     const sdp = requireString(request.sdp, 'sdp', { min: 16, max: MAX_SDP_BYTES })
     if (!sdp.startsWith('v=0')) throw new TypeError('Invalid WebRTC session description')
+    const setupId = request.mode === 'conversation' ? requireId(request.setupId, 'setupId') : undefined
+    const abort = setupId ? new AbortController() : undefined
+    if (setupId) {
+      if (this.realtimeSetups.has(setupId)) throw new Error('Realtime setup is already active')
+      this.realtimeSetups.set(setupId, abort!)
+    }
+    try { return await this.establishRealtimeCall(request, sdp, abort?.signal) }
+    finally { if (setupId && this.realtimeSetups.get(setupId) === abort) this.realtimeSetups.delete(setupId) }
+  }
+
+  cancelRealtimeCall(raw: unknown): void {
+    this.realtimeSetups.get(requireId(raw, 'setupId'))?.abort()
+  }
+
+  private async establishRealtimeCall(request: Record<string, unknown>, sdp: string, signal?: AbortSignal): Promise<VoiceRealtimeCallResult> {
     const settings = this.options.settings()
     const useOpenAi = request.mode === 'transcription' || settings.voiceRealtimeProvider === 'openai'
     let response: Response
@@ -460,8 +479,8 @@ export class VoiceService {
       const endpoint = `${auth.baseUrl.replace(/\/+$/, '')}/realtime/calls?intent=quicksilver&architecture=avas`
       response = await this.withTimeout(endpoint, {
         method: 'POST', headers,
-        body: JSON.stringify({ sdp, session: codexRealtimeSession(settings, harness, project?.name) }),
-      }, 30_000)
+        body: JSON.stringify({ sdp, session: codexRealtimeSession(harness, project?.name) }),
+      }, 30_000, signal)
       protocol = 'codex-v3'
     } else {
       const key = await this.secrets.get('openai')
@@ -470,7 +489,7 @@ export class VoiceService {
       form.set('session', JSON.stringify(request.mode === 'conversation' ? realtimeSession(settings, harnessId(request.harness)) : transcriptionSession(settings)))
       response = await this.withTimeout('https://api.openai.com/v1/realtime/calls', {
         method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form,
-      }, 30_000)
+      }, 30_000, signal)
       protocol = 'openai'
     }
     const answer = await this.boundedResponseText(response, 'Realtime setup', MAX_SDP_BYTES)
@@ -738,13 +757,15 @@ export class VoiceService {
     return new TextDecoder().decode(bytes)
   }
 
-  private async withTimeout(url: string, init: RequestInit, timeoutMs = REMOTE_TIMEOUT_MS): Promise<Response> {
-    const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(), timeoutMs)
+  private async withTimeout(url: string, init: RequestInit, timeoutMs = REMOTE_TIMEOUT_MS, externalSignal?: AbortSignal): Promise<Response> {
+    const timeout = new AbortController()
+    const timer = setTimeout(() => timeout.abort(), timeoutMs)
+    const signal = externalSignal ? AbortSignal.any([timeout.signal, externalSignal]) : timeout.signal
     timer.unref()
-    try { return await this.fetchImpl(url, { ...init, signal: abort.signal }) }
+    try { return await this.fetchImpl(url, { ...init, signal }) }
     catch (error) {
-      if (abort.signal.aborted) throw new Error('Voice provider request timed out')
+      if (timeout.signal.aborted) throw new Error('Voice provider request timed out')
+      if (externalSignal?.aborted) throw new Error('Realtime setup was cancelled')
       throw error
     } finally { clearTimeout(timer) }
   }
