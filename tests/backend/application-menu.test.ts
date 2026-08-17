@@ -47,15 +47,16 @@ describe('application update menu', () => {
     }
   })
 
-  it('disables Check for Updates when the build has no update service', () => {
+  it('keeps manual update checks available when automatic updates are unsupported', () => {
     for (const platform of ['darwin', 'win32', 'linux'] as const) {
-      const template = buildApplicationMenuTemplate({ platform, appName: 'GooeyPi', updatesEnabled: false, checkForUpdates: vi.fn(), closeWindow: vi.fn() })
+      const checkForUpdates = vi.fn()
+      const template = buildApplicationMenuTemplate({ platform, appName: 'GooeyPi', checkForUpdates, closeWindow: vi.fn() })
       const owner = platform === 'darwin' ? template[0] : template.at(-1)
       const updateItem = submenu(owner).find((item) => item.label === 'Check for Updates…')
-      expect(updateItem?.enabled).toBe(false)
+      expect(updateItem?.enabled).not.toBe(false)
+      updateItem?.click?.(undefined as never, undefined as never, undefined as never)
+      expect(checkForUpdates).toHaveBeenCalledOnce()
     }
-    const enabled = buildApplicationMenuTemplate({ platform: 'linux', appName: 'GooeyPi', checkForUpdates: vi.fn(), closeWindow: vi.fn() })
-    expect(submenu(enabled.at(-1)).find((item) => item.label === 'Check for Updates…')?.enabled).toBe(true)
   })
 
   it('installs the native application menu', () => {

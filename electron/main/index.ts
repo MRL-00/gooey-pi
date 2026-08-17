@@ -40,6 +40,12 @@ import { VoiceService, voiceSecretStorageStatus } from './voice'
 import { isAllowedRendererAudioPermission } from './voice-permissions'
 import { createManualUpdateCheck, getAutoUpdater, UpdateService } from './updates'
 
+const APPLICATION_NAME = 'GooeyPi'
+
+// Development builds otherwise inherit Electron's executable name in macOS
+// system surfaces, including the active application name beside the Apple menu.
+app.setName(APPLICATION_NAME)
+
 protocol.registerSchemesAsPrivileged([{ scheme: 'prime-work', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 let mainWindow: BrowserWindow | null = null
@@ -1045,8 +1051,7 @@ async function bootstrap(): Promise<void> {
     }
   })
   installApplicationMenu({
-    appName: 'GooeyPi',
-    updatesEnabled: updates.isEnabled(),
+    appName: APPLICATION_NAME,
     closeWindow: () => {
       const window = mainWindow
       if (!window || window.isDestroyed()) app.quit()
