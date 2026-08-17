@@ -115,6 +115,14 @@ export function persistNpmShimDirectory(shimDirectory, githubPath = process.env.
   return true
 }
 
+export function persistNpmCliPath(cliPath, githubEnv = process.env.GITHUB_ENV, platform = process.platform) {
+  const validatedCliPath = validateAbsoluteSingleLinePath(cliPath, 'npm CLI path', platform)
+  if (!githubEnv) return false
+  const destination = validateAbsoluteSingleLinePath(githubEnv, 'GITHUB_ENV', platform)
+  appendFileSync(destination, `npm_execpath=${validatedCliPath}\n`, 'utf8')
+  return true
+}
+
 export function bootstrapNpm(options = {}) {
   const env = options.env ?? process.env
   const platform = options.platform ?? process.platform
@@ -149,8 +157,9 @@ export function bootstrapNpm(options = {}) {
   if (installed !== toolchain.npm) throw new Error(`Expected pinned npm ${toolchain.npm} after bootstrap, found ${installed}`)
 
   const githubPathUpdated = persist(layout.shimDirectory, env.GITHUB_PATH, platform)
+  const githubEnvUpdated = persistNpmCliPath(layout.cliPath, env.GITHUB_ENV, platform)
   console.log(`Repository toolchain bootstrap passed: Node ${nodeVersion} and npm ${installed}.`)
-  return { current, installed, artifactPath: artifact.path, artifactIntegrity: artifact.integrity, ...layout, githubPathUpdated }
+  return { current, installed, artifactPath: artifact.path, artifactIntegrity: artifact.integrity, ...layout, githubPathUpdated, githubEnvUpdated }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

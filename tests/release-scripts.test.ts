@@ -6,7 +6,15 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { bootstrapNpm, parsePinnedNpmArtifact, persistNpmShimDirectory, readPinnedNpmArtifact, resolveNpmGlobalLayout, verifyPinnedNpmArtifact } from '../scripts/release/bootstrap-npm.mjs'
+import {
+  bootstrapNpm,
+  parsePinnedNpmArtifact,
+  persistNpmCliPath,
+  persistNpmShimDirectory,
+  readPinnedNpmArtifact,
+  resolveNpmGlobalLayout,
+  verifyPinnedNpmArtifact,
+} from '../scripts/release/bootstrap-npm.mjs'
 import { installAppDependencies } from '../scripts/release/install-app-deps.mjs'
 import {
   artifactArchitectures,
@@ -510,6 +518,20 @@ else if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(expectedInstal
       expect(entries.at(-1)).toBe('/opt/repository-npm/bin')
       expect(() => persistNpmShimDirectory('/opt/npm\n/injected', githubPath, 'linux')).toThrow(/absolute single-line path/)
       expect(() => persistNpmShimDirectory('/opt/npm/bin', 'relative/github-path', 'linux')).toThrow(/absolute single-line path/)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('persists the bootstrapped npm CLI for direct Node release entry points', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'gooeypi-github-env-'))
+    const githubEnv = join(directory, 'github-env')
+    writeFileSync(githubEnv, '')
+    try {
+      expect(persistNpmCliPath('/opt/repository-npm/lib/node_modules/npm/bin/npm-cli.js', githubEnv, 'linux')).toBe(true)
+      expect(readFileSync(githubEnv, 'utf8')).toBe('npm_execpath=/opt/repository-npm/lib/node_modules/npm/bin/npm-cli.js\n')
+      expect(() => persistNpmCliPath('/opt/npm\n/injected', githubEnv, 'linux')).toThrow(/absolute single-line path/)
+      expect(() => persistNpmCliPath('/opt/npm/bin/npm-cli.js', 'relative/github-env', 'linux')).toThrow(/absolute single-line path/)
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
