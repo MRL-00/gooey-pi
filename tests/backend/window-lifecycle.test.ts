@@ -7,6 +7,7 @@ const electron = vi.hoisted(() => ({
     on: vi.fn(),
     quit: vi.fn(),
     requestSingleInstanceLock: vi.fn(() => false),
+    setName: vi.fn(),
   },
   BrowserWindow: class {},
   dialog: { showMessageBox: vi.fn(async () => ({ response: 0 })) },
