@@ -4,7 +4,7 @@ import { errorMessage } from '@/lib/errors'
 import { useI18n, type MessageKey } from '@/lib/i18n'
 import { detectRendererPlatform } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, Modal } from '@/components/ui'
-import type { AppMeta, AppSettings, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
+import type { AppMeta, AppSettings, AppUpdateState, PrimeModelCatalog, PrimeWorkApi } from '@/types/api'
 import { AboutSettings } from './settings/AboutSettings'
 import { AgentSettings } from './settings/AgentSettings'
 import { AppearanceSettings } from './settings/AppearanceSettings'
@@ -36,7 +36,9 @@ interface SettingsPageProps {
   providerCatalog: PrimeModelCatalog | null
   voice: PrimeWorkApi['voice'] | null
   pets: PrimeWorkApi['pets'] | null
+  updateState: AppUpdateState
   onUpdate: SettingsUpdate
+  onCheckForUpdates(): Promise<void> | void
   onResetBrowser(): Promise<void> | void
   onOpenDocs(): void
   onRefreshProviders(): Promise<void>
@@ -53,7 +55,7 @@ interface SettingsPageProps {
   initialSectionRequestId?: number
 }
 
-export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onUpdate, onResetBrowser, onOpenDocs, onRefreshProviders, onRefreshHarnesses, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onSetModelEnabled, onStartProviderOAuth, initialSection = 'general', initialSectionRequestId = 0 }: SettingsPageProps) {
+export function SettingsPage({ settings, meta, providerCatalog, voice, pets, updateState, onUpdate, onCheckForUpdates, onResetBrowser, onOpenDocs, onRefreshProviders, onRefreshHarnesses, onSaveProviderApiKey, onLogoutProvider, onSetProviderEnabled, onSetAllProvidersEnabled, onSetAllProvidersDisabled, onSetModelEnabled, onStartProviderOAuth, initialSection = 'general', initialSectionRequestId = 0 }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -87,7 +89,7 @@ export function SettingsPage({ settings, meta, providerCatalog, voice, pets, onU
       case 'browser': return <BrowserSettings settings={settings} onUpdate={onUpdate} onRequestReset={() => { setResetError(''); setConfirmReset(true) }} />
       case 'terminal': return <TerminalSettings settings={settings} onUpdate={onUpdate} platform={platform} />
       case 'privacy': return <PrivacySettings settings={settings} onUpdate={onUpdate} />
-      case 'about': return <AboutSettings meta={meta} onOpenDocs={onOpenDocs} />
+      case 'about': return <AboutSettings meta={meta} updateState={updateState} onCheckForUpdates={onCheckForUpdates} onOpenDocs={onOpenDocs} />
     }
   })()
 

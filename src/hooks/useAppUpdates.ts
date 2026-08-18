@@ -22,16 +22,25 @@ export function useAppUpdates(bridge: PrimeWorkApi | null, reportError: (error: 
     }
   }, [bridge, reportError])
 
+  const check = useCallback(async () => {
+    if (!bridge) return
+    try {
+      await bridge.updates.check()
+    } catch (error) {
+      reportError(error)
+    }
+  }, [bridge, reportError])
+
   const act = useCallback(async () => {
     if (!bridge) return
     try {
       // The onChanged subscription is the single writer for main-process state.
       if (state.phase === 'available' || state.phase === 'downloaded') await bridge.updates.downloadAndInstall()
-      else await bridge.updates.check()
+      else await check()
     } catch (error) {
       reportError(error)
     }
-  }, [bridge, reportError, state.phase])
+  }, [bridge, check, reportError, state.phase])
 
-  return { state, act }
+  return { state, act, check }
 }
