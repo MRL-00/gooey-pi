@@ -2,7 +2,6 @@ import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } 
 import type { AppUpdateState } from '../../src/types/api'
 
 export const DEFAULT_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
-const INITIAL_CHECK_DELAY_MS = 8_000
 
 export interface UpdateAdapter {
   autoDownload: boolean
@@ -19,10 +18,8 @@ export interface UpdateAdapter {
 export interface UpdateServiceOptions {
   enabled: boolean
   checkIntervalMs?: number
-  initialCheckDelayMs?: number
   setInterval?: typeof globalThis.setInterval
   clearInterval?: typeof globalThis.clearInterval
-  setTimeout?: typeof globalThis.setTimeout
 }
 
 function errorMessage(error: unknown): string {
@@ -85,16 +82,13 @@ export class UpdateService {
   /** Version of the discovered update, kept independent of the last published phase. */
   private discoveredVersion: string | undefined
   private interval: ReturnType<typeof globalThis.setInterval> | null = null
-  private initialTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   private readonly setIntervalFn: typeof globalThis.setInterval
   private readonly clearIntervalFn: typeof globalThis.clearInterval
-  private readonly setTimeoutFn: typeof globalThis.setTimeout
 
   constructor(private readonly updater: UpdateAdapter, private readonly options: UpdateServiceOptions) {
     this.state = options.enabled ? { phase: 'idle' } : { phase: 'unsupported', message: 'Automatic updates are available in installed builds.' }
     this.setIntervalFn = options.setInterval ?? globalThis.setInterval
     this.clearIntervalFn = options.clearInterval ?? globalThis.clearInterval
-    this.setTimeoutFn = options.setTimeout ?? globalThis.setTimeout
     if (!options.enabled) return
 
     updater.autoDownload = false
@@ -127,12 +121,8 @@ export class UpdateService {
   }
 
   start(): void {
-    if (!this.options.enabled || this.interval || this.initialTimer) return
-    this.initialTimer = this.setTimeoutFn(() => {
-      this.initialTimer = null
-      this.runScheduledCheck()
-    }, this.options.initialCheckDelayMs ?? INITIAL_CHECK_DELAY_MS)
-    this.initialTimer.unref?.()
+    if (!this.options.enabled || this.interval) return
+    this.runScheduledCheck()
     this.interval = this.setIntervalFn(() => { this.runScheduledCheck() }, this.options.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS)
     this.interval.unref?.()
   }
@@ -202,9 +192,7 @@ export class UpdateService {
 
   private stopScheduledChecks(): void {
     if (this.interval) this.clearIntervalFn(this.interval)
-    if (this.initialTimer) clearTimeout(this.initialTimer)
     this.interval = null
-    this.initialTimer = null
   }
 
   private publish(state: AppUpdateState): void {

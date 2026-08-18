@@ -53,12 +53,11 @@ describe('automatic update service', () => {
   it('automatically checks installed builds without downloading or installing on quit', async () => {
     vi.useFakeTimers()
     const updater = new FakeUpdater()
-    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true, initialCheckDelayMs: 25, checkIntervalMs: 100 })
+    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true, checkIntervalMs: 100 })
     expect(updater.autoDownload).toBe(false)
     expect(updater.autoInstallOnAppQuit).toBe(false)
 
     service.start()
-    await vi.advanceTimersByTimeAsync(25)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(100)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
@@ -71,9 +70,8 @@ describe('automatic update service', () => {
     const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true })
 
     service.start()
-    await vi.advanceTimersByTimeAsync(8_000)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(DEFAULT_CHECK_INTERVAL_MS - 8_001)
+    await vi.advanceTimersByTimeAsync(DEFAULT_CHECK_INTERVAL_MS - 1)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
@@ -195,10 +193,9 @@ describe('automatic update service', () => {
   it('stops the periodic check once an update has been downloaded', async () => {
     vi.useFakeTimers()
     const updater = new FakeUpdater()
-    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true, initialCheckDelayMs: 25, checkIntervalMs: 100 })
+    const service = new UpdateService(updater as unknown as UpdateAdapter, { enabled: true, checkIntervalMs: 100 })
 
     service.start()
-    await vi.advanceTimersByTimeAsync(25)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
 
     updater.emit('update-downloaded', { version: '0.2.0' })
