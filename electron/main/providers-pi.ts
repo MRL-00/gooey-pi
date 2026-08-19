@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { PRIME_THINKING_LEVELS, type PrimeModelDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import { CliModelCatalogService, validateModelEntry, type CliModelCatalogOptions } from './model-catalog-cli'
-import { killProcessTree, prepareExecutableSpawnAsync, safeChildEnvironment, waitForProcessExit } from './process-utils'
+import { killProcessTree, safeChildEnvironment, waitForProcessExit } from './process-utils'
+import { prepareExecutableSpawnAsync } from './process-utils'
 
 export { MAX_CATALOG_PROVIDERS } from './model-catalog-cli'
 

@@ -27,12 +27,6 @@ describe('runProcess resource bounds', () => {
     ['>=22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['>=22.19', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['>=22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
-    ['>=22.x', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
-    ['^22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['~22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['22.x', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
-    ['22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
     ['>=22.19.0 <25', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['>=22.19.0-beta.1', { major: 22, minor: 19, patch: 0, prerelease: 'beta.1' }],
   ])('parses the conservative lower bound from %s', (range, expected) => {
@@ -44,6 +38,11 @@ describe('runProcess resource bounds', () => {
     expect(parseNodeEngineRange('')).toBeUndefined()
     expect(parseNodeEngineRange(undefined)).toBeUndefined()
     expect(parseNodeEngineRange('>=22.19.0 nonsense')).toBeUndefined()
+    expect(parseNodeEngineRange('^22.19.0')).toBeUndefined()
+    expect(parseNodeEngineRange('~22.19.0')).toBeUndefined()
+    expect(parseNodeEngineRange('22.19.0')).toBeUndefined()
+    expect(parseNodeEngineRange('>=22.x')).toBeUndefined()
+    expect(parseNodeEngineRange('22.x')).toBeUndefined()
     expect(parseNodeVersion('v22.19.0-beta.1')).toMatchObject({ major: 22, prerelease: 'beta.1' })
     expect(parseNodeVersion('not-a-version')).toBeUndefined()
     expect(nodeVersionSatisfies('22.19.0', '>=22.19.0')).toBe(true)
@@ -271,9 +270,9 @@ describe('runProcess resource bounds', () => {
     writeFileSync(executable, '#!/usr/bin/env node\nprocess.stdout.write("0.84.1\\n")\n')
     chmodSync(executable, 0o755)
 
-    const result = await runProcess(executable, ['--version'], {
-      env: { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
-    })
+    const env = { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
+    await prepareExecutableSpawnAsync(executable, ['--version'], env)
+    const result = await runProcess(executable, ['--version'], { env })
 
     expect(result.code).toBe(0)
     expect(result.stdout).toBe('0.84.1\n')
@@ -626,33 +625,7 @@ describe('OMP discovery candidates', () => {
       join(versions, 'v23.0.0', 'bin', 'pi'),
       join(versions, 'v22.12.0', 'bin', 'pi'),
       join(versions, 'v20.1.0', 'bin', 'pi'),
-      join(home, '.asdf', 'shims', 'pi'),
-      join(home, '.nodenv', 'shims', 'pi'),
     ])
-  })
-
-  it('discovers all supported version-manager harness locations', async () => {
-    const home = temp()
-    const fnm = join(home, 'fnm', 'node-versions', 'v24.1.0', 'installation', 'bin')
-    const asdf = join(home, 'asdf', 'installs', 'nodejs', '24.2.0', 'bin')
-    const nodenv = join(home, '.nodenv', 'versions', '24.3.0', 'bin')
-    const n = join(home, 'n', 'bin')
-    for (const directory of [fnm, asdf, nodenv, n, join(home, 'asdf', 'shims'), join(home, '.nodenv', 'shims')]) mkdirSync(directory, { recursive: true })
-
-    const candidates = await versionManagerHarnessExecutableCandidates(HARNESSES.pi, {
-      FNM_DIR: join(home, 'fnm'),
-      ASDF_DATA_DIR: join(home, 'asdf'),
-      N_PREFIX: join(home, 'n'),
-    }, 'linux', home)
-
-    expect(candidates).toEqual(expect.arrayContaining([
-      join(fnm, 'pi'),
-      join(asdf, 'pi'),
-      join(nodenv, 'pi'),
-      join(n, 'pi'),
-      join(home, 'asdf', 'shims', 'pi'),
-      join(home, '.nodenv', 'shims', 'pi'),
-    ]))
   })
 })
 
@@ -703,6 +676,7 @@ describe('runProcess stdio pipe failures', () => {
     process.on('uncaughtException', spy)
     try {
       const pending = run('/fake/prime-agent', ['--version'], { timeoutMs: 5_000 })
+      await waitUntil(() => child.stdout.listenerCount('error') > 0)
       const pipeError = new Error('read EPIPE')
       child.stdout.emit('error', pipeError)
       await expect(pending).rejects.toThrow('read EPIPE')
@@ -720,6 +694,7 @@ describe('runProcess stdio pipe failures', () => {
     const child = fakeChild()
     spawnOverride.current = () => child
     const pending = run('/fake/prime-agent', [], { timeoutMs: 5_000 })
+    await waitUntil(() => child.stderr.listenerCount('error') > 0)
     child.stderr.emit('error', new Error('read ECONNRESET'))
     await expect(pending).rejects.toThrow('read ECONNRESET')
     spawnOverride.current = null

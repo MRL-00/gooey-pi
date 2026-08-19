@@ -1,12 +1,29 @@
-import { accessSync, closeSync, constants as fsConstants, openSync, readSync, readdirSync, realpathSync } from 'node:fs'
-import { access, open as openAsync, realpath as realpathAsync } from 'node:fs/promises'
+import { constants as fsConstants, realpathSync } from 'node:fs'
+import { access, realpath } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
 import { HARNESSES, type HarnessDescriptor } from './harness'
+import {
+  NODE_INTERPRETER_CACHE,
+  NODE_VERSION_CACHE,
+  canAccessPath,
+  clearNodeInterpreterCache,
+  nodeVersionSatisfies,
+  parseNodeEngineRange,
+  parseNodeVersion,
+  owningNodePackage,
+  nodeCandidateExecutables,
+  readFilePrefixAsync,
+  compareNodeVersions,
+  sharedHarnessCandidateDirs,
+  type NodeVersionResult,
+  versionManagerRuntimeDirs,
+} from './node-interpreter-primitives'
 
 import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
+export { clearNodeInterpreterCache, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion }
 
 export interface ProcessResult {
   code: number
@@ -242,310 +259,23 @@ export interface ExecutableSpawnInvocation {
   env: NodeJS.ProcessEnv
 }
 
-interface NodeVersion {
-  major: number
-  minor: number
-  patch: number
-  prerelease: string | undefined
-}
-
-const NODE_SHEBANG_BYTES = 4 * 1024
-const NODE_PACKAGE_BYTES = 64 * 1024
-const NODE_VERSION_TIMEOUT_MS = 2_000
-const NODE_VERSION_OUTPUT_BYTES = 1_024
-const NODE_INTERPRETER_PROBE_LIMIT = 12
-interface NodeVersionResult {
-  text: string
-  parsed: NodeVersion
-}
-const NODE_VERSION_CACHE = new Map<string, NodeVersionResult | null>()
-type NodeInterpreterMemo =
-  | { interpreter: string }
-  | { error: string }
-const NODE_INTERPRETER_CACHE = new Map<string, NodeInterpreterMemo>()
-const NODE_SHEBANG_CACHE = new Map<string, boolean>()
-
-export function clearNodeInterpreterCache(): void {
-  NODE_VERSION_CACHE.clear()
-  NODE_INTERPRETER_CACHE.clear()
-  NODE_SHEBANG_CACHE.clear()
-}
-
-export function parseNodeVersion(value: string): NodeVersion | undefined {
-  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(-([0-9A-Za-z.-]+))?$/)
-  if (!match) return undefined
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[5],
-  }
-}
-
-export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
-  if (typeof value !== 'string') return undefined
-  const range = value.trim()
-  if (!range) return undefined
-  const parseVersion = (token: string, wildcards = false): NodeVersion | undefined => {
-    const match = token.match(/^(\d+)(?:\.(\d+|x|X))?(?:\.(\d+|x|X))?(?:-([0-9A-Za-z.-]+))?$/)
-    if (!match) return undefined
-    if (!wildcards && (match[2] === 'x' || match[2] === 'X' || match[3] === 'x' || match[3] === 'X')) return undefined
-    if (match[4] && (match[2] === undefined || match[3] === undefined)) return undefined
-    return {
-      major: Number(match[1]),
-      minor: match[2] === undefined || match[2] === 'x' || match[2] === 'X' ? 0 : Number(match[2]),
-      patch: match[3] === undefined || match[3] === 'x' || match[3] === 'X' ? 0 : Number(match[3]),
-      prerelease: match[4],
-    }
-  }
-  const lowerBound = range.match(/^>=\s*([0-9]+(?:\.(?:[0-9]+|x|X)){0,2}(?:-[0-9A-Za-z.-]+)?)(?:\s+<\s*\S+)?$/)
-  if (lowerBound) return parseVersion(lowerBound[1], true)
-  const shorthand = range.match(/^(?:\^|~)\s*(\S+)$/)
-  if (shorthand) return parseVersion(shorthand[1])
-  const exact = range.match(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
-  if (exact) return parseVersion(exact[0])
-  const wildcard = range.match(/^(\d+)(?:\.(?:x|X|\d+))?$/)
-  return wildcard ? parseVersion(wildcard[0], true) : undefined
-}
-
-function compareNodeVersions(left: NodeVersion, right: NodeVersion): number {
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    if (left[key] !== right[key]) return left[key] - right[key]
-  }
-  if (left.prerelease === right.prerelease) return 0
-  return left.prerelease ? -1 : 1
-}
-
-export function nodeVersionSatisfies(version: string, range: unknown): boolean {
-  const parsedVersion = parseNodeVersion(version)
-  if (!parsedVersion) return false
-  const minimum = parseNodeEngineRange(range)
-  return minimum ? compareNodeVersions(parsedVersion, minimum) >= 0 : true
-}
-
 export class NodeInterpreterResolutionError extends Error {
   constructor(readonly detail: string) {
     super(detail)
   }
 }
 
-function readFilePrefix(path: string, maxBytes: number): string | undefined {
-  let descriptor: number
-  try { descriptor = openSync(path, 'r') } catch { return undefined }
-  try {
-    const buffer = Buffer.alloc(maxBytes)
-    const bytes = readSync(descriptor, buffer, 0, maxBytes, 0)
-    return buffer.subarray(0, bytes).toString('utf8')
-  } catch { return undefined } finally { closeSync(descriptor) }
-}
-
-async function readFilePrefixAsync(path: string, maxBytes: number): Promise<string | undefined> {
-  let handle: Awaited<ReturnType<typeof openAsync>>
-  try { handle = await openAsync(path, 'r') } catch { return undefined }
-  try {
-    const buffer = Buffer.alloc(maxBytes)
-    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0)
-    return buffer.subarray(0, bytesRead).toString('utf8')
-  } catch {
-    return undefined
-  } finally {
-    await handle.close().catch(() => undefined)
-  }
-}
-
-function nodeShebangTarget(path: string): boolean {
-  const cached = NODE_SHEBANG_CACHE.get(path)
-  if (cached !== undefined) return cached
-  const firstLine = readFilePrefix(path, NODE_SHEBANG_BYTES)?.split(/\r?\n/u, 1)[0]?.trim()
-  if (!firstLine?.startsWith('#!')) {
-    NODE_SHEBANG_CACHE.set(path, false)
-    return false
-  }
-  const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
-  const result = match?.[1].trim().split(/\s+/u)[0] === 'node'
-  NODE_SHEBANG_CACHE.set(path, result)
-  return result
-}
-
-async function nodeShebangTargetAsync(path: string): Promise<boolean> {
-  const cached = NODE_SHEBANG_CACHE.get(path)
-  if (cached !== undefined) return cached
-  const firstLine = (await readFilePrefixAsync(path, NODE_SHEBANG_BYTES))?.split(/\r?\n/u, 1)[0]?.trim()
-  if (!firstLine?.startsWith('#!')) {
-    NODE_SHEBANG_CACHE.set(path, false)
-    return false
-  }
-  const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
-  const result = match?.[1].trim().split(/\s+/u)[0] === 'node'
-  NODE_SHEBANG_CACHE.set(path, result)
-  return result
-}
-
-async function owningNodePackageAsync(script: string): Promise<{ name?: string; enginesNode?: unknown }> {
-  let directory = posix.dirname(script)
-  while (true) {
-    const manifest = posix.join(directory, 'package.json')
-    try {
-      await access(manifest, fsConstants.F_OK)
-    } catch (error) {
-      const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined
-      if (code !== 'ENOENT') return {}
-      const parent = posix.dirname(directory)
-      if (parent === directory) return {}
-      directory = parent
-      continue
-    }
-    const contents = await readFilePrefixAsync(manifest, NODE_PACKAGE_BYTES)
-    if (contents === undefined) return {}
-    let value: unknown
-    try { value = JSON.parse(contents) } catch { return {} }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-    const packageJson = value as { name?: unknown; engines?: unknown }
-    const engines = packageJson.engines && typeof packageJson.engines === 'object' && !Array.isArray(packageJson.engines)
-      ? packageJson.engines as { node?: unknown }
-      : undefined
-    return {
-      name: typeof packageJson.name === 'string' ? packageJson.name : undefined,
-      enginesNode: engines?.node,
-    }
-  }
-}
-
-function nodeCandidateExecutables(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  home: string,
-  preferredPath = env.PATH ?? '',
-): string[] {
-  if (platform === 'win32') return []
-  const directories = [
-    ...preferredPath.split(delimiter),
-    ...(preferredPath === env.PATH ? [] : (env.PATH ?? '').split(delimiter)),
-    ...versionManagerRuntimeDirs(env, platform, home),
-    ...sharedHarnessCandidateDirs(env, platform, home),
-  ]
-  const seen = new Set<string>()
-  return directories
-    .filter((directory) => directory && posix.isAbsolute(directory))
-    .map((directory) => posix.join(directory, 'node'))
-    .filter((candidate) => {
-      if (seen.has(candidate)) return false
-      seen.add(candidate)
-      return canAccessPath(candidate, fsConstants.X_OK)
-    })
-}
-
-async function nodeVersionAsync(candidate: string, env: NodeJS.ProcessEnv): Promise<NodeVersionResult | null> {
-  const key = await realpathAsync(candidate)
-  const cached = NODE_VERSION_CACHE.get(key)
-  if (NODE_VERSION_CACHE.has(key)) return cached ?? null
-  const result = await runProcess(key, ['--version'], {
-    env,
-    timeoutMs: NODE_VERSION_TIMEOUT_MS,
-    maxBytes: NODE_VERSION_OUTPUT_BYTES,
-  })
-  const trimmed = result.stdout.trim()
-  const parsed = parseNodeVersion(trimmed)
-  const version = parsed ? { text: trimmed, parsed } : null
-  NODE_VERSION_CACHE.set(key, version)
-  return version
-}
-
-function nodeInterpreterRequirementText(requirement: NodeVersion): string {
-  const version = `${requirement.major}.${requirement.minor}.${requirement.patch}`
-  return requirement.prerelease ? `${version}-${requirement.prerelease}` : version
-}
-
-function nodeInterpreterFailure(
-  packageJson: { name?: string; enginesNode?: unknown },
-  requirement: NodeVersion | undefined,
-  newest: { path: string; version: NodeVersionResult } | undefined,
-): NodeInterpreterResolutionError {
-  if (requirement) {
-    const newestText = newest ? `; the newest Node GooeyPi can find is ${newest.version.text} at ${newest.path}` : '; no working Node interpreter was found'
-    const label = packageJson.name ?? 'The harness'
-    return new NodeInterpreterResolutionError(`${label} requires Node >=${nodeInterpreterRequirementText(requirement)}${newestText}`)
-  }
-  return new NodeInterpreterResolutionError('Node.js was not found for the env-node harness executable')
-}
-
-async function resolveNodeInterpreterAsyncForScript(
-  script: string,
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  home: string,
-  preferredPath?: string,
-): Promise<string | undefined> {
-  if (platform === 'win32') return undefined
-  const resolvedFile = await realpathAsync(script).catch(() => undefined)
-  if (!resolvedFile || !(await nodeShebangTargetAsync(resolvedFile))) return undefined
-  const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
-  if (cached) {
-    if ('error' in cached) throw new NodeInterpreterResolutionError(cached.error)
-    return cached.interpreter
-  }
-  const packageJson = await owningNodePackageAsync(resolvedFile)
-  const requirement = parseNodeEngineRange(packageJson.enginesNode)
-  let newest: { path: string; version: NodeVersionResult } | undefined
-  try {
-    for (const candidate of nodeCandidateExecutables(env, platform, home, preferredPath).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
-      let version: NodeVersionResult | null
-      try { version = await nodeVersionAsync(candidate, env) } catch { continue }
-      if (!version) continue
-      if (!newest || compareNodeVersions(version.parsed, newest.version.parsed) > 0) newest = { path: candidate, version }
-      if (!requirement || compareNodeVersions(version.parsed, requirement) >= 0) {
-        const interpreter = await realpathAsync(candidate)
-        NODE_INTERPRETER_CACHE.set(resolvedFile, { interpreter })
-        return interpreter
-      }
-    }
-  } catch {
-    // Candidate probing failures are handled as unavailable interpreters below.
-  }
-  const error = nodeInterpreterFailure(packageJson, requirement, newest)
-  NODE_INTERPRETER_CACHE.set(resolvedFile, { error: error.detail })
-  throw error
-}
-
-export async function prepareExecutableSpawnAsync(
-  file: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv = safeChildEnvironment(),
-  options: PrepareExecutableSpawnOptions = {},
-): Promise<ExecutableSpawnInvocation> {
-  const platform = options.platform ?? process.platform
-  const childEnvironment = executableChildEnvironment(file, env, platform)
-  if (platform !== 'win32') {
-    const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
-    await resolveNodeInterpreterAsyncForScript(file, childEnvironment, platform, home, env.PATH)
-  }
-  return prepareExecutableSpawnWithEnvironment(file, args, childEnvironment, platform, options)
-}
-
-function needsNodeInterpreterResolution(script: string): boolean {
-  let resolvedFile: string
-  try { resolvedFile = realpathSync(script) } catch { return false }
-  return nodeShebangTarget(resolvedFile) && !NODE_INTERPRETER_CACHE.has(resolvedFile)
-}
-
-function resolveNodeInterpreter(script: string): string | undefined {
-  let resolvedFile: string
-  try { resolvedFile = realpathSync(script) } catch { return undefined }
-  if (!nodeShebangTarget(resolvedFile)) return undefined
+function lookupNodeInterpreter(resolvedFile: string): string | undefined {
   const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
   if (!cached) return undefined
-  if ('error' in cached) throw new NodeInterpreterResolutionError(cached.error)
-  return cached.interpreter
+  if (typeof cached !== 'string') throw new NodeInterpreterResolutionError(cached.error)
+  return cached
 }
 
-interface PrepareExecutableSpawnOptions {
+export interface PrepareExecutableSpawnOptions {
   platform?: NodeJS.Platform
   home?: string
   canAccess?: (candidate: string, mode: number) => boolean
-}
-
-function canAccessPath(candidate: string, mode: number): boolean {
-  try { accessSync(candidate, mode); return true } catch { return false }
 }
 
 /**
@@ -553,13 +283,14 @@ function canAccessPath(candidate: string, mode: number): boolean {
  * the package entry point below the shim directory, so GooeyPi can invoke that
  * fixed JavaScript file with a validated Node executable and keep shell=false.
  */
-function prepareExecutableSpawnWithEnvironment(
+export function prepareExecutableSpawn(
   file: string,
   args: readonly string[],
-  childEnvironment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
   options: PrepareExecutableSpawnOptions = {},
 ): ExecutableSpawnInvocation {
+  const platform = options.platform ?? process.platform
+  const childEnvironment = executableChildEnvironment(file, env, platform)
   if (platform !== 'win32' || win32.basename(file).toLowerCase() !== 'pi.cmd') {
     if (platform === 'win32') return { file, args: [...args], env: childEnvironment }
     let resolvedFile: string
@@ -568,8 +299,7 @@ function prepareExecutableSpawnWithEnvironment(
     } catch {
       return { file, args: [...args], env: childEnvironment }
     }
-    if (!nodeShebangTarget(resolvedFile)) return { file, args: [...args], env: childEnvironment }
-    const node = resolveNodeInterpreter(resolvedFile)
+    const node = lookupNodeInterpreter(resolvedFile)
     return node ? { file: node, args: [resolvedFile, ...args], env: childEnvironment } : { file, args: [...args], env: childEnvironment }
   }
 
@@ -602,67 +332,6 @@ function prepareExecutableSpawnWithEnvironment(
   return { file: node, args: [entrypoint, ...args], env: childEnvironment }
 }
 
-export function prepareExecutableSpawn(
-  file: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv = safeChildEnvironment(),
-  options: PrepareExecutableSpawnOptions = {},
-): ExecutableSpawnInvocation {
-  const platform = options.platform ?? process.platform
-  return prepareExecutableSpawnWithEnvironment(file, args, executableChildEnvironment(file, env, platform), platform, options)
-}
-
-/**
- * Returns bounded Node-version-manager runtime directories for env shebangs.
- * A package-manager shim can live outside the Node installation that owns its
- * interpreter (for example pnpm under ~/Library/pnpm with Node under nvm).
- */
-function versionManagerRuntimeDirs(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  home: string,
-): string[] {
-  if (platform === 'win32') {
-    return [env.NVM_SYMLINK, env.NVM_HOME]
-      .filter((directory): directory is string => Boolean(directory && win32.isAbsolute(directory)))
-  }
-  const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
-  const versionsRoot = posix.join(root, 'versions', 'node')
-  const boundedVersionDirs = (rootPath: string, childSegments: string[], tailSegments: string[]): string[] => {
-    try {
-      return readdirSync(posix.join(rootPath, ...childSegments), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-        .map((entry) => entry.name)
-        .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
-        .slice(0, 64)
-        .map((version) => posix.join(rootPath, ...childSegments, version, ...tailSegments))
-    } catch { return [] }
-  }
-  const fnmRoot = env.FNM_DIR && posix.isAbsolute(env.FNM_DIR)
-    ? env.FNM_DIR
-    : platform === 'darwin' ? posix.join(home, 'Library', 'Application Support', 'fnm') : posix.join(home, '.local', 'share', 'fnm')
-  const asdfRoot = env.ASDF_DATA_DIR && posix.isAbsolute(env.ASDF_DATA_DIR) ? env.ASDF_DATA_DIR : posix.join(home, '.asdf')
-  const nodenvRoot = posix.join(home, '.nodenv')
-  let nvmDirectories: string[] = []
-  try {
-    nvmDirectories = readdirSync(versionsRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-      .map((entry) => entry.name)
-      .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
-      .slice(0, 64)
-      .map((version) => posix.join(versionsRoot, version, 'bin'))
-  } catch { /* continue with other managers */ }
-  return [
-    ...nvmDirectories,
-    ...boundedVersionDirs(fnmRoot, ['node-versions'], ['installation', 'bin']),
-    posix.join(asdfRoot, 'shims'),
-    ...boundedVersionDirs(asdfRoot, ['installs', 'nodejs'], ['bin']),
-    posix.join(nodenvRoot, 'shims'),
-    ...boundedVersionDirs(nodenvRoot, ['versions'], ['bin']),
-    ...(env.N_PREFIX && posix.isAbsolute(env.N_PREFIX) ? [posix.join(env.N_PREFIX, 'bin')] : []),
-  ]
-}
-
 export function restrictedGitEnvironment(): NodeJS.ProcessEnv {
   // Git is invoked for repository-derived work, so inherit only process-location
   // values rather than credentials, provider tokens, signing agents, or Git's
@@ -692,54 +361,6 @@ export function restrictedGitEnvironment(): NodeJS.ProcessEnv {
 
 export function isAbsolutePathForPlatform(value: string, platform = process.platform): boolean {
   return platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value)
-}
-
-function sharedHarnessCandidateDirs(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  home: string,
-): string[] {
-  const pathApi = platform === 'win32' ? win32 : posix
-  const fromRoot = (root: string | undefined, ...segments: string[]) => root ? pathApi.join(root, ...segments) : ''
-  const compact = (values: Array<string | undefined>): string[] => values.filter((value): value is string => Boolean(value))
-  const environmentDirs = [
-    env.NVM_BIN,
-    fromRoot(env.NPM_CONFIG_PREFIX, 'bin'),
-    fromRoot(env.BUN_INSTALL, 'bin'),
-    fromRoot(env.VOLTA_HOME, 'bin'),
-    env.PNPM_HOME,
-    fromRoot(env.PNPM_HOME, 'bin'),
-  ]
-  if (platform === 'win32') {
-    return compact([
-      ...environmentDirs,
-      env.NPM_CONFIG_PREFIX,
-      fromRoot(env.APPDATA, 'npm'),
-      fromRoot(env.LOCALAPPDATA, 'pnpm'),
-      fromRoot(env.LOCALAPPDATA, 'pnpm', 'bin'),
-      fromRoot(env.LOCALAPPDATA, 'mise', 'shims'),
-      win32.join(home, '.bun', 'bin'),
-      win32.join(home, '.volta', 'bin'),
-    ])
-  }
-  const dataHome = env.XDG_DATA_HOME ?? posix.join(home, '.local', 'share')
-  return compact([
-    ...environmentDirs,
-    posix.join(home, '.local', 'bin'),
-    posix.join(home, '.bun', 'bin'),
-    posix.join(home, '.volta', 'bin'),
-    posix.join(dataHome, 'pnpm'),
-    posix.join(dataHome, 'pnpm', 'bin'),
-    posix.join(dataHome, 'mise', 'shims'),
-    posix.join(home, '.nix-profile', 'bin'),
-    posix.join('/opt', 'local', 'bin'),
-    ...(platform === 'darwin'
-      ? [posix.join(home, 'Library', 'pnpm'), posix.join(home, 'Library', 'pnpm', 'bin')]
-      : ['/home/linuxbrew/.linuxbrew/bin']),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-  ])
 }
 
 export function harnessExecutableCandidates(
@@ -842,6 +463,11 @@ export function primeAgentCandidates(env: NodeJS.ProcessEnv = process.env, platf
 export async function findPrimeAgent(): Promise<string | null> {
   return findHarnessExecutable(HARNESSES.prime)
 }
+
+const NODE_VERSION_TIMEOUT_MS = 2_000
+const NODE_VERSION_OUTPUT_BYTES = 1_024
+const NODE_INTERPRETER_PROBE_LIMIT = 12
+const NODE_SHEBANG_BYTES = 4 * 1024
 
 export function runProcess(file: string, args: readonly string[], options: {
   cwd?: string
@@ -952,8 +578,87 @@ export function runProcess(file: string, args: readonly string[], options: {
     })
     if (options.input !== undefined) child.stdin?.end(options.input)
   }))
-  if (!needsNodeInterpreterResolution(file)) {
-    try { return startProcess(prepareExecutableSpawn(file, args, environment)) } catch (error) { return Promise.reject(error) }
-  }
   return prepareExecutableSpawnAsync(file, args, environment).then(startProcess)
+}
+
+async function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): Promise<NodeVersionResult | null> {
+  const key = await realpath(candidate)
+  const cached = NODE_VERSION_CACHE.get(key)
+  if (cached !== undefined) return cached
+  const result = await runProcess(key, ['--version'], {
+    env,
+    timeoutMs: NODE_VERSION_TIMEOUT_MS,
+    maxBytes: NODE_VERSION_OUTPUT_BYTES,
+  })
+  const trimmed = result.stdout.trim()
+  const parsed = parseNodeVersion(trimmed)
+  const version = parsed ? { text: trimmed, parsed } : null
+  NODE_VERSION_CACHE.set(key, version)
+  return version
+}
+
+export async function resolveNodeInterpreter(
+  script: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  home: string,
+): Promise<string | undefined> {
+  if (platform === 'win32') return undefined
+  const resolvedFile = await realpath(script).catch(() => undefined)
+  if (!resolvedFile) return undefined
+  const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
+  if (cached) {
+    if (typeof cached !== 'string') throw new NodeInterpreterResolutionError(cached.error)
+    return cached
+  }
+  const firstLine = (await readFilePrefixAsync(resolvedFile, NODE_SHEBANG_BYTES))?.split(/\r?\n/u, 1)[0]?.trim()
+  const nodeShebang = firstLine?.startsWith('#!') && firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)?.[1].trim().split(/\s+/u)[0] === 'node'
+  if (!nodeShebang) {
+    NODE_INTERPRETER_CACHE.set(resolvedFile, null)
+    return undefined
+  }
+  const packageJson = await owningNodePackage(resolvedFile)
+  const requirement = parseNodeEngineRange(packageJson.enginesNode)
+  let newest: { path: string; version: NodeVersionResult } | undefined
+  try {
+    for (const candidate of nodeCandidateExecutables(env, platform, home).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
+      let version: NodeVersionResult | null
+      try { version = await nodeVersion(candidate, env) } catch { continue }
+      if (!version) continue
+      if (!newest || compareNodeVersions(version.parsed, newest.version.parsed) > 0) {
+        newest = { path: candidate, version }
+      }
+      if (!requirement || compareNodeVersions(version.parsed, requirement) >= 0) {
+        const interpreter = await realpath(candidate)
+        NODE_INTERPRETER_CACHE.set(resolvedFile, interpreter)
+        return interpreter
+      }
+    }
+  } catch {
+    // Candidate probing failures are handled as unavailable interpreters below.
+  }
+  const detail = requirement
+    ? `${packageJson.name ?? 'The harness'} requires Node >=${requirement.major}.${requirement.minor}.${requirement.patch}${requirement.prerelease ? `-${requirement.prerelease}` : ''}${newest ? `; the newest Node GooeyPi can find is ${newest.version.text} at ${newest.path}` : '; no working Node interpreter was found'}`
+    : 'Node.js was not found for the env-node harness executable'
+  NODE_INTERPRETER_CACHE.set(resolvedFile, { error: detail })
+  throw new NodeInterpreterResolutionError(detail)
+}
+
+export async function prepareExecutableSpawnAsync(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  options: PrepareExecutableSpawnOptions = {},
+): Promise<ExecutableSpawnInvocation> {
+  const platform = options.platform ?? process.platform
+  const childEnvironment = executableChildEnvironment(file, env, platform)
+  if (platform !== 'win32') {
+    const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
+    const resolutionEnvironment = {
+      ...childEnvironment,
+      PATH: [env.PATH, childEnvironment.PATH].filter(Boolean).join(delimiter),
+    }
+    await resolveNodeInterpreter(file, resolutionEnvironment, platform, home)
+  }
+  return prepareExecutableSpawn(file, args, env, options)
 }
