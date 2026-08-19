@@ -21,6 +21,7 @@ import {
   assertArchitectureCoverage,
   assertAsarLayout,
   assertExactArchitectures,
+  assertPackagedExtensions,
   assertSupportedNpm,
   assertSupportedNode,
   assertSupportedToolchain,
@@ -38,6 +39,7 @@ import {
   validateWindowsReleaseCredentials,
   withoutReleaseCredentials,
 } from '../scripts/release/lib.mjs'
+import { SHIPPED_EXTENSION_FILENAMES } from '../electron/main/extension-manifest'
 import { producedReleaseArtifactNames, readElectronBuilderConfig, RELEASE_BUILD_MATRIX } from '../scripts/release/artifact-names.mjs'
 import {
   expectedDownloadedReleaseAssets,
@@ -1718,6 +1720,35 @@ describe('production dependency audit', () => {
     expect(exceptions.length).toBeGreaterThan(0)
     for (const entry of exceptions) {
       expect(entry.expiresAt, `audit exception for ${entry.advisory} has expired; re-check for a fix`).toBeGreaterThan(Date.now())
+    }
+  })
+})
+
+describe('packaged extension resources', () => {
+  function createFixture() {
+    const directory = mkdtempSync(join(tmpdir(), 'gooeypi-packaged-extensions-'))
+    const resources = join(directory, 'resources')
+    const extensions = join(resources, 'extensions')
+    mkdirSync(extensions, { recursive: true })
+    for (const filename of SHIPPED_EXTENSION_FILENAMES) writeFileSync(join(extensions, filename), 'fixture')
+    return { directory, resources, extensions }
+  }
+
+  test('accepts exactly the manifest extension files and rejects missing, extra, and non-file entries', () => {
+    const exact = createFixture()
+    const missing = createFixture()
+    const extra = createFixture()
+    const nonFile = createFixture()
+    try {
+      expect(() => assertPackagedExtensions(exact.resources)).not.toThrow()
+      rmSync(join(missing.extensions, SHIPPED_EXTENSION_FILENAMES[0]))
+      expect(() => assertPackagedExtensions(missing.resources)).toThrow(/missing:/)
+      writeFileSync(join(extra.extensions, 'unexpected.ts'), 'fixture')
+      expect(() => assertPackagedExtensions(extra.resources)).toThrow(/extra:/)
+      mkdirSync(join(nonFile.extensions, 'nested'))
+      expect(() => assertPackagedExtensions(nonFile.resources)).toThrow(/non-file:/)
+    } finally {
+      for (const fixture of [exact, missing, extra, nonFile]) rmSync(fixture.directory, { recursive: true, force: true })
     }
   })
 })
