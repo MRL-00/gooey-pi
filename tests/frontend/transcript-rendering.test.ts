@@ -350,27 +350,36 @@ describe('transcript rendering', () => {
   })
 
   it('shows live elapsed time while work is running and keeps the final duration once finished', () => {
-    const running = render([{
-      id: 'live-active',
-      role: 'assistant',
-      timestamp: Date.now() - 65_000,
-      startedAt: Date.now() - 65_000,
-      streaming: true,
-      parts: [{ type: 'thinking', text: 'Still thinking.' }],
-    }], true)
-    expect(running).toContain('live-elapsed')
-    expect(running).toContain('1m05s')
+    vi.useFakeTimers()
+    const now = new Date('2026-01-01T00:00:00.000Z')
+    vi.setSystemTime(now)
+    try {
+      const runningStartedAt = now.getTime() - 65_000
+      const running = render([{
+        id: 'live-active',
+        role: 'assistant',
+        timestamp: runningStartedAt,
+        startedAt: runningStartedAt,
+        streaming: true,
+        parts: [{ type: 'thinking', text: 'Still thinking.' }],
+      }], true)
+      expect(running).toContain('live-elapsed')
+      expect(running).toContain('1m05s')
 
-    const finished = render([{
-      id: 'live-done',
-      role: 'assistant',
-      timestamp: Date.now() - 66_000,
-      startedAt: Date.now() - 66_000,
-      completedAt: Date.now() - 1_000,
-      parts: [{ type: 'thinking', text: 'Done thinking.' }],
-    }], false)
-    expect(finished).toContain('Worked for 1m05s')
-    expect(finished).not.toContain('live-elapsed')
+      const finishedStartedAt = now.getTime() - 66_000
+      const finished = render([{
+        id: 'live-done',
+        role: 'assistant',
+        timestamp: finishedStartedAt,
+        startedAt: finishedStartedAt,
+        completedAt: now.getTime() - 1_000,
+        parts: [{ type: 'thinking', text: 'Done thinking.' }],
+      }], false)
+      expect(finished).toContain('Worked for 1m05s')
+      expect(finished).not.toContain('live-elapsed')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('omits the live elapsed label when no start time is available', () => {
