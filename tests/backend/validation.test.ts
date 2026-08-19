@@ -227,7 +227,7 @@ describe('requireSelfHostedVoiceUrl', () => {
       'http://[fc::1]:8000/',
       'http://[fd::5]:8000/',
       'http://[fd0::1]:8000/',
-      'http://[fe90::1]:8000/',
+      'http://[fec0::1]:8000/',
     ]) expect(() => requireSelfHostedVoiceUrl(url), url).toThrow(/private network/)
     expect(requireSelfHostedVoiceUrl('https://example.com/v1/')).toBe('https://example.com/v1/')
     expect(requireSelfHostedVoiceUrl('https://1.2.3.4:8000/')).toBe('https://1.2.3.4:8000/')
