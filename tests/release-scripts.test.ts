@@ -1715,7 +1715,7 @@ describe('production dependency audit', () => {
   test('the checked-in exception list is valid and every entry still expires in the future', () => {
     const exceptions = readAuditExceptions()
 
-    expect(exceptions.length).toBeGreaterThan(0)
+    expect(exceptions).toEqual([])
     for (const entry of exceptions) {
       expect(entry.expiresAt, `audit exception for ${entry.advisory} has expired; re-check for a fix`).toBeGreaterThan(Date.now())
     }
