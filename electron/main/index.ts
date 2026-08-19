@@ -31,6 +31,7 @@ import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
 import { AgentCollaborationBridge } from './collaboration/agent-bridge'
 import { configureGooeyPiAgentMessageSigning, loadOrCreateGooeyPiAgentMessageKey } from './collaboration/message-envelope'
+import { extensionInjection, resolveExtensionPath, type ExtensionCapability } from './extension-manifest'
 import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
 import { piSessionServiceOptions } from './sessions/pi'
@@ -750,21 +751,19 @@ async function bootstrap(): Promise<void> {
   const computerUseSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'gooeypi-computer-use', 'SKILL.md')
     : join(app.getAppPath(), 'assets', 'skills', 'gooeypi-computer-use', 'SKILL.md')
-  const ompBrowserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
-  const ompScheduleExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
-  const ompAskUserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
-  const collaborationExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-collaboration.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-collaboration.ts')
-  const piFastModeExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'pi-work-fast-mode.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'pi-work-fast-mode.ts')
+  const extensionPathContext = {
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+  }
+  const extensionPathFor = (harness: HarnessId, capability: ExtensionCapability): string =>
+    resolveExtensionPath(extensionInjection(harness, capability).filename, extensionPathContext)
+  const primeBrowserExtensionPath = extensionPathFor('prime', 'browser')
+  const ompBrowserExtensionPath = extensionPathFor('omp', 'browser')
+  const ompScheduleExtensionPath = extensionPathFor('omp', 'schedule')
+  const ompAskUserExtensionPath = extensionPathFor('omp', 'askUser')
+  const collaborationExtensionPath = extensionPathFor('omp', 'collaboration')
+  const piFastModeExtensionPath = extensionPathFor('pi', 'piFastMode')
   const computerUseSkill = async () => {
     const status = await cuaDriver.status()
     return {
@@ -918,10 +917,7 @@ async function bootstrap(): Promise<void> {
     },
   })
   agentBrowser = browserService
-  const browserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'prime-work-browser.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'prime-work-browser.ts')
-  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
+  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: primeBrowserExtensionPath, skillPath: browserSkillPath })
   const collaborationBridge = new AgentCollaborationBridge({
     extensionPath: collaborationExtensionPath,
     sessions: { prime: sessions, omp: ompSessions, pi: piSessions },
