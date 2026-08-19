@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
-import { createCoverageInventory } from './scripts/release/coverage-inventory'
+import { createCoverageInventory, familyCoverageThresholds } from './scripts/release/coverage-inventory'
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 const coverageInventory = createCoverageInventory(projectRoot)
@@ -21,6 +21,7 @@ export default defineConfig({
         branches: 50,
         functions: 70,
         lines: 75,
+        ...familyCoverageThresholds(),
       },
     },
   },

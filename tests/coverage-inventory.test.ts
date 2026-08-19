@@ -9,6 +9,7 @@ import {
   COVERAGE_RUNTIME_EXTENSIONS,
   COVERAGE_TECHNICAL_EXCLUSIONS,
   createCoverageInventory,
+  familyCoverageThresholds,
   type CoverageFamily,
   type CoverageTechnicalExclusion,
 } from '../scripts/release/coverage-inventory'
@@ -70,7 +71,18 @@ describe('safety-critical coverage inventory', () => {
       branches: 50,
       functions: 70,
       lines: 75,
+      ...familyCoverageThresholds(),
     })
+    const familyThresholds = familyCoverageThresholds()
+    expect(Object.keys(familyThresholds).sort()).toEqual(COVERAGE_FAMILIES.map(({ root }) => `${root}/**`).sort())
+    for (const family of COVERAGE_FAMILIES) {
+      expect(familyThresholds[`${family.root}/**`]).toEqual(family.thresholds)
+      for (const value of Object.values(family.thresholds)) {
+        expect(Number.isInteger(value)).toBe(true)
+        expect(value).toBeGreaterThanOrEqual(1)
+        expect(value).toBeLessThanOrEqual(100)
+      }
+    }
     expect(inventory.includedFiles).toEqual(expect.arrayContaining([...REQUIRED_SAFETY_MODULES]))
   })
 
@@ -98,6 +110,7 @@ describe('safety-critical coverage inventory', () => {
         root: 'production',
         runtimeExtensions: ['.ts'],
         responsibility: 'Fixture safety authority.',
+        thresholds: { statements: 50, branches: 50, functions: 50, lines: 50 },
       },
     ]
     expect(createCoverageInventory(projectRoot, { families, exclusions: [] }).includedFiles).toEqual(['production/existing.ts'])
@@ -119,6 +132,7 @@ describe('safety-critical coverage inventory', () => {
       root,
       runtimeExtensions: ['.ts'],
       responsibility: 'Fixture safety authority.',
+      thresholds: { statements: 50, branches: 50, functions: 50, lines: 50 },
     })
 
     expect(() => createCoverageInventory(projectRoot, { families: [family('linked-production')], exclusions: [] })).toThrow(/family root must be a real directory/)
@@ -180,6 +194,7 @@ describe('safety-critical coverage inventory', () => {
         root: 'production',
         runtimeExtensions: ['.ts'],
         responsibility: 'Fixture safety authority.',
+        thresholds: { statements: 50, branches: 50, functions: 50, lines: 50 },
       },
     ]
     const documented: CoverageTechnicalExclusion = {

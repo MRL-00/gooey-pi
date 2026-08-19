@@ -12,6 +12,7 @@ const families: readonly CoverageFamily[] = [
     root: 'src',
     runtimeExtensions: ['.ts'],
     responsibility: 'Fixture safety authority.',
+    thresholds: { statements: 50, branches: 50, functions: 50, lines: 50 },
   },
 ]
 const inventory = createCoverageInventory(projectRoot, { families, exclusions: [] })

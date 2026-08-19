@@ -1,11 +1,19 @@
 import { lstatSync, readdirSync } from 'node:fs'
 import { extname, isAbsolute, posix, relative, resolve } from 'node:path'
 
+export interface CoverageFamilyThresholds {
+  statements: number
+  branches: number
+  functions: number
+  lines: number
+}
+
 export interface CoverageFamily {
   id: string
   root: string
   runtimeExtensions: readonly string[]
   responsibility: string
+  thresholds: CoverageFamilyThresholds
 }
 
 export interface CoverageTechnicalExclusion {
@@ -34,42 +42,49 @@ export const COVERAGE_FAMILIES: readonly CoverageFamily[] = Object.freeze([
     root: 'electron/main',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Electron IPC, capability brokers, collaboration, schedules, project/store authority, package execution, MCP policy, and process composition.',
+    thresholds: { statements: 77, branches: 71, functions: 76, lines: 83 },
   },
   {
     id: 'preload-capability-bridge',
     root: 'electron/preload',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'The isolated renderer-to-main capability surface exposed by Electron preload.',
+    thresholds: { statements: 14, branches: 10, functions: 9, lines: 12 },
   },
   {
     id: 'renderer-application-authority',
     root: 'src/app',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Renderer state admission, reconciliation, workspace scoping, and request routing.',
+    thresholds: { statements: 92, branches: 88, functions: 93, lines: 94 },
   },
   {
     id: 'renderer-safety-library',
     root: 'src/lib',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Shared validation, event reduction, command policy, annotations, and bounded rendering logic.',
+    thresholds: { statements: 90, branches: 85, functions: 92, lines: 92 },
   },
   {
     id: 'renderer-capability-hooks',
     root: 'src/hooks',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Renderer orchestration that invokes or revokes desktop capabilities and maintains live authority state.',
+    thresholds: { statements: 56, branches: 46, functions: 59, lines: 64 },
   },
   {
     id: 'release-verification',
     root: 'scripts/release',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Toolchain, packaging, artifact, dependency, extension, and cross-platform release verification.',
+    thresholds: { statements: 63, branches: 58, functions: 79, lines: 66 },
   },
   {
     id: 'shipped-extensions',
     root: 'assets/extensions',
     runtimeExtensions: COVERAGE_RUNTIME_EXTENSIONS,
     responsibility: 'Every first-party extension shipped as an Electron extra resource.',
+    thresholds: { statements: 59, branches: 45, functions: 54, lines: 63 },
   },
 ])
 
@@ -103,6 +118,10 @@ function collectRuntimeFiles(projectRoot: string, family: CoverageFamily): strin
   if (family.runtimeExtensions.length === 0 || family.runtimeExtensions.some((extension) => !/^\.[a-z0-9]+$/i.test(extension))) {
     throw new Error(`coverage family ${family.id} must declare runtime file extensions`)
   }
+  const thresholdValues = [family.thresholds.statements, family.thresholds.branches, family.thresholds.functions, family.thresholds.lines]
+  if (thresholdValues.some((value) => !Number.isInteger(value) || value < 1 || value > 100)) {
+    throw new Error(`coverage family ${family.id} must declare integer coverage thresholds between 1 and 100`)
+  }
 
   const absoluteProjectRoot = resolve(projectRoot)
   const absoluteFamilyRoot = resolve(absoluteProjectRoot, familyRoot)
@@ -135,6 +154,17 @@ function collectRuntimeFiles(projectRoot: string, family: CoverageFamily): strin
   }
   visit(absoluteFamilyRoot, familyRoot)
   return files.sort()
+}
+
+export function familyCoverageThresholds(families: readonly CoverageFamily[] = COVERAGE_FAMILIES): Record<string, CoverageFamilyThresholds> {
+  const thresholds: Record<string, CoverageFamilyThresholds> = {}
+  for (const family of families) {
+    const familyRoot = normalizeRepositoryPath(family.root, `coverage family ${family.id} root`)
+    const pattern = `${familyRoot}/**`
+    if (pattern in thresholds) throw new Error(`duplicate coverage family root: ${familyRoot}`)
+    thresholds[pattern] = { ...family.thresholds }
+  }
+  return thresholds
 }
 
 export function createCoverageInventory(projectRoot = process.cwd(), options: CoverageInventoryOptions = {}): CoverageInventory {
