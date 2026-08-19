@@ -255,7 +255,7 @@ describe('catalog merges over live session state', () => {
       0,
     )
 
-    expect(sameRevision.unread).toBe(false)
+    expect(sameRevision.unread).toBeUndefined()
     expect(nextRevision.unread).toBe(true)
   })
 
