@@ -23,9 +23,9 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     const match = /^Error invoking remote method '[^']+': ([A-Za-z_$][\w$]*): ([\s\S]*)$/.exec(error.message)
     if (!match) throw error
     console.error('Electron IPC invocation failed:', error)
-    const unwrapped = Object.create(Object.getPrototypeOf(error)) as Error
-    Object.defineProperties(unwrapped, Object.getOwnPropertyDescriptors(error))
-    Object.defineProperty(unwrapped, 'message', { value: match[2], configurable: true, writable: true })
+    const unwrapped = new Error(match[2])
+    Object.setPrototypeOf(unwrapped, Object.getPrototypeOf(error))
+    unwrapped.name = error.name
     Object.defineProperty(unwrapped, 'cause', { value: error, configurable: true })
     throw unwrapped
   })
