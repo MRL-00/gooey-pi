@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, prepareExecutableSpawn, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -23,7 +23,7 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
-  it('runs a pnpm env-node CLI whose nvm interpreter is elsewhere under a Finder-style minimal PATH', async () => {
+  it('runs a pnpm CLI under a Finder-style minimal PATH', async () => {
     const home = temp()
     const shimDirectory = join(home, 'Library', 'pnpm', 'bin')
     const runtimeDirectory = join(home, '.nvm', 'versions', 'node', 'v25.2.1', 'bin')
@@ -440,6 +440,7 @@ describe('runProcess stdio pipe failures', () => {
     process.on('uncaughtException', spy)
     try {
       const pending = run('/fake/prime-agent', ['--version'], { timeoutMs: 5_000 })
+      await waitUntil(() => child.stdout.listenerCount('error') > 0)
       const pipeError = new Error('read EPIPE')
       child.stdout.emit('error', pipeError)
       await expect(pending).rejects.toThrow('read EPIPE')
@@ -457,6 +458,7 @@ describe('runProcess stdio pipe failures', () => {
     const child = fakeChild()
     spawnOverride.current = () => child
     const pending = run('/fake/prime-agent', [], { timeoutMs: 5_000 })
+    await waitUntil(() => child.stderr.listenerCount('error') > 0)
     child.stderr.emit('error', new Error('read ECONNRESET'))
     await expect(pending).rejects.toThrow('read ECONNRESET')
     spawnOverride.current = null
