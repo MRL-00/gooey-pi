@@ -73,8 +73,8 @@ describe('runProcess resource bounds', () => {
       chmodSync(node, 0o755)
     }
     makeNode(lowDirectory, 'v20.18.1')
-    makeNode(highDirectory, 'v22.19.0')
-    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=22.19.0' } }))
+    makeNode(highDirectory, 'v99.0.0')
+    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=99.0.0' } }))
     const script = join(packageDirectory, 'cli.js')
     writeFileSync(script, '#!/usr/bin/env node\nprocess.stdout.write("ok\\n")\n')
     chmodSync(script, 0o755)
