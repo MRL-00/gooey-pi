@@ -263,10 +263,12 @@ type NodeInterpreterMemo =
   | { interpreter: string }
   | { error: string }
 const NODE_INTERPRETER_CACHE = new Map<string, NodeInterpreterMemo>()
+const NODE_SHEBANG_CACHE = new Map<string, boolean>()
 
 export function clearNodeInterpreterCache(): void {
   NODE_VERSION_CACHE.clear()
   NODE_INTERPRETER_CACHE.clear()
+  NODE_SHEBANG_CACHE.clear()
 }
 
 export function parseNodeVersion(value: string): NodeVersion | undefined {
@@ -296,10 +298,12 @@ export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
       prerelease: match[4],
     }
   }
-  const lowerBound = range.match(/^>=\s*([0-9]+(?:\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?)(?:\s+<\s*\S+)?$/)
-  if (lowerBound) return parseVersion(lowerBound[1])
+  const lowerBound = range.match(/^>=\s*([0-9]+(?:\.(?:[0-9]+|x|X)){0,2}(?:-[0-9A-Za-z.-]+)?)(?:\s+<\s*\S+)?$/)
+  if (lowerBound) return parseVersion(lowerBound[1], true)
   const shorthand = range.match(/^(?:\^|~)\s*(\S+)$/)
   if (shorthand) return parseVersion(shorthand[1])
+  const exact = range.match(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+  if (exact) return parseVersion(exact[0])
   const wildcard = range.match(/^(\d+)(?:\.(?:x|X|\d+))?$/)
   return wildcard ? parseVersion(wildcard[0], true) : undefined
 }
@@ -350,17 +354,31 @@ async function readFilePrefixAsync(path: string, maxBytes: number): Promise<stri
 }
 
 function nodeShebangTarget(path: string): boolean {
+  const cached = NODE_SHEBANG_CACHE.get(path)
+  if (cached !== undefined) return cached
   const firstLine = readFilePrefix(path, NODE_SHEBANG_BYTES)?.split(/\r?\n/u, 1)[0]?.trim()
-  if (!firstLine?.startsWith('#!')) return false
+  if (!firstLine?.startsWith('#!')) {
+    NODE_SHEBANG_CACHE.set(path, false)
+    return false
+  }
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
-  return match?.[1].trim().split(/\s+/u)[0] === 'node'
+  const result = match?.[1].trim().split(/\s+/u)[0] === 'node'
+  NODE_SHEBANG_CACHE.set(path, result)
+  return result
 }
 
 async function nodeShebangTargetAsync(path: string): Promise<boolean> {
+  const cached = NODE_SHEBANG_CACHE.get(path)
+  if (cached !== undefined) return cached
   const firstLine = (await readFilePrefixAsync(path, NODE_SHEBANG_BYTES))?.split(/\r?\n/u, 1)[0]?.trim()
-  if (!firstLine?.startsWith('#!')) return false
+  if (!firstLine?.startsWith('#!')) {
+    NODE_SHEBANG_CACHE.set(path, false)
+    return false
+  }
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
-  return match?.[1].trim().split(/\s+/u)[0] === 'node'
+  const result = match?.[1].trim().split(/\s+/u)[0] === 'node'
+  NODE_SHEBANG_CACHE.set(path, result)
+  return result
 }
 
 async function owningNodePackageAsync(script: string): Promise<{ name?: string; enginesNode?: unknown }> {
@@ -397,10 +415,12 @@ function nodeCandidateExecutables(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
   home: string,
+  preferredPath = env.PATH ?? '',
 ): string[] {
   if (platform === 'win32') return []
   const directories = [
-    ...(env.PATH ?? '').split(delimiter),
+    ...preferredPath.split(delimiter),
+    ...(preferredPath === env.PATH ? [] : (env.PATH ?? '').split(delimiter)),
     ...versionManagerRuntimeDirs(env, platform, home),
     ...sharedHarnessCandidateDirs(env, platform, home),
   ]
@@ -454,6 +474,7 @@ async function resolveNodeInterpreterAsyncForScript(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
   home: string,
+  preferredPath?: string,
 ): Promise<string | undefined> {
   if (platform === 'win32') return undefined
   const resolvedFile = await realpathAsync(script).catch(() => undefined)
@@ -467,7 +488,7 @@ async function resolveNodeInterpreterAsyncForScript(
   const requirement = parseNodeEngineRange(packageJson.enginesNode)
   let newest: { path: string; version: NodeVersionResult } | undefined
   try {
-    for (const candidate of nodeCandidateExecutables(env, platform, home).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
+    for (const candidate of nodeCandidateExecutables(env, platform, home, preferredPath).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
       let version: NodeVersionResult | null
       try { version = await nodeVersionAsync(candidate, env) } catch { continue }
       if (!version) continue
@@ -493,11 +514,12 @@ export async function prepareExecutableSpawnAsync(
   options: PrepareExecutableSpawnOptions = {},
 ): Promise<ExecutableSpawnInvocation> {
   const platform = options.platform ?? process.platform
+  const childEnvironment = executableChildEnvironment(file, env, platform)
   if (platform !== 'win32') {
-    const home = env.HOME && posix.isAbsolute(env.HOME) ? env.HOME : homedir()
-    await resolveNodeInterpreterAsyncForScript(file, env, platform, home)
+    const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
+    await resolveNodeInterpreterAsyncForScript(file, childEnvironment, platform, home, env.PATH)
   }
-  return prepareExecutableSpawn(file, args, env, options)
+  return prepareExecutableSpawnWithEnvironment(file, args, childEnvironment, platform, options)
 }
 
 function needsNodeInterpreterResolution(script: string): boolean {
@@ -531,14 +553,13 @@ function canAccessPath(candidate: string, mode: number): boolean {
  * the package entry point below the shim directory, so GooeyPi can invoke that
  * fixed JavaScript file with a validated Node executable and keep shell=false.
  */
-export function prepareExecutableSpawn(
+function prepareExecutableSpawnWithEnvironment(
   file: string,
   args: readonly string[],
-  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  childEnvironment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
   options: PrepareExecutableSpawnOptions = {},
 ): ExecutableSpawnInvocation {
-  const platform = options.platform ?? process.platform
-  const childEnvironment = executableChildEnvironment(file, env, platform)
   if (platform !== 'win32' || win32.basename(file).toLowerCase() !== 'pi.cmd') {
     if (platform === 'win32') return { file, args: [...args], env: childEnvironment }
     let resolvedFile: string
@@ -579,6 +600,16 @@ export function prepareExecutableSpawn(
     .find((candidate) => canAccess(candidate, fsConstants.X_OK))
   if (!node) throw new Error('Node.js was not found for the Pi npm command shim')
   return { file: node, args: [entrypoint, ...args], env: childEnvironment }
+}
+
+export function prepareExecutableSpawn(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  options: PrepareExecutableSpawnOptions = {},
+): ExecutableSpawnInvocation {
+  const platform = options.platform ?? process.platform
+  return prepareExecutableSpawnWithEnvironment(file, args, executableChildEnvironment(file, env, platform), platform, options)
 }
 
 /**

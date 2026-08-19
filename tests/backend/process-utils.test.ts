@@ -27,8 +27,10 @@ describe('runProcess resource bounds', () => {
     ['>=22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['>=22.19', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['>=22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
+    ['>=22.x', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
     ['^22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['~22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
     ['22.x', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
     ['22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
     ['>=22.19.0 <25', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
@@ -73,6 +75,24 @@ describe('runProcess resource bounds', () => {
       file: '/bin/echo',
       args: ['ok'],
     })
+  })
+
+  it('resolves interpreters from the executable directory added to the child PATH', async () => {
+    const home = temp()
+    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
+    mkdirSync(packageDirectory, { recursive: true })
+    const node = join(packageDirectory, 'node')
+    writeFileSync(node, '#!/bin/sh\nprintf "v99.0.0\\n"\n')
+    chmodSync(node, 0o755)
+    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=99.0.0' } }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = await prepareExecutableSpawnAsync(script, [], { HOME: home, PATH: '' }, { platform: 'linux', home })
+
+    expect(invocation).toMatchObject({ file: node, args: [script] })
   })
 
   it('leaves a cold synchronous preparation unchanged until async resolution warms the memo', async () => {
