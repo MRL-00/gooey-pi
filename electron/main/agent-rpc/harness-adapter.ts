@@ -34,8 +34,6 @@ export interface HarnessRpcAdapter {
   readonly id: HarnessId
   /** Product-facing agent name used in error messages. */
   readonly agentName: string
-  /** Verified only against Prime; Pi/OMP require real 0.84.2/17.3.4 verification. */
-  readonly acceptsStreamingBehaviorOnPrompt: boolean
   /** Protocol version to negotiate before the first get_state; undefined skips negotiation. */
   readonly negotiateProtocolVersion?: number
   /** Whether v2 base64 rpc_chunk frames may arrive and must be reassembled. */
@@ -70,7 +68,6 @@ const unsafeArgValue = (value: string): boolean => value.startsWith('-') || /[\r
 export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'prime',
   agentName: HARNESSES.prime.agentName,
-  acceptsStreamingBehaviorOnPrompt: true,
   chunkedFrames: false,
   buildStartArgs: (input) => {
     const args = ['--mode', 'rpc', '--cwd', input.cwd]
@@ -107,7 +104,6 @@ const OMP_APPROVAL_MODES = new Set(['always-ask', 'write', 'yolo'])
 export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'omp',
   agentName: HARNESSES.omp.agentName,
-  acceptsStreamingBehaviorOnPrompt: false,
   negotiateProtocolVersion: 2,
   chunkedFrames: true,
   buildStartArgs: (input) => {
@@ -138,6 +134,11 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
   translateCommand: (command) => {
     const type = String(command.type)
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the OMP harness`)
+    if (type === 'prompt' && command.streamingBehavior !== undefined) {
+      // OMP compatibility drop pending verification against supported versions.
+      const { streamingBehavior: _, ...rest } = command
+      return rest
+    }
     if (type === 'fork') return { ...command, type: 'branch' }
     if (type === 'get_fork_messages') return { ...command, type: 'get_branch_messages' }
     return command
@@ -169,7 +170,6 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
 export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'pi',
   agentName: HARNESSES.pi.agentName,
-  acceptsStreamingBehaviorOnPrompt: false,
   chunkedFrames: false,
   // pi has no --cwd flag: the session bucket derives from the child process
   // working directory, which the runtime sets to the authorized cwd.
@@ -196,6 +196,11 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
   },
   translateCommand: (command) => {
     const type = String(command.type)
+    if (type === 'prompt' && command.streamingBehavior !== undefined) {
+      // Pi compatibility drop pending verification against supported versions.
+      const { streamingBehavior: _, ...rest } = command
+      return rest
+    }
     // pi keeps Prime's vocabulary (fork/get_fork_messages pass through
     // untranslated) but lacks the same Prime-only daemon/heartbeat family OMP
     // rejects, clone included.

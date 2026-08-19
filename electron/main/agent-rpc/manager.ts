@@ -197,14 +197,6 @@ export class AgentRpcManager {
     // it. set_service_tier passes through untranslated because the fast-mode
     // interception below routes it via runtime.setServiceTier instead.
     const translated = this.adapter.translateCommand(command)
-    let wireCommand = translated
-    if (command.type === 'prompt'
-      && !this.adapter.acceptsStreamingBehaviorOnPrompt
-      && translated.streamingBehavior !== undefined) {
-      // Pi and OMP intentionally receive the pre-existing prompt shape; this is a silent compatibility drop.
-      const { streamingBehavior: _streamingBehavior, ...withoutStreamingBehavior } = translated
-      wireCommand = withoutStreamingBehavior
-    }
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())
     }
@@ -217,7 +209,7 @@ export class AgentRpcManager {
     if (Array.isArray(command.images) && command.images.length > 0 && runtime.snapshot().imageInputSupported === false) {
       throw new Error('The active model does not accept images. Choose a vision model and try again.')
     }
-    const response = await runtime.command(wireCommand)
+    const response = await runtime.command(translated)
     if (command.type === 'steer') {
       // A steer can be admitted and consumed before its two action-update
       // edges cross IPC. Refresh after the admission response and attach the
