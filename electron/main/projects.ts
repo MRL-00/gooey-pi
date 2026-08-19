@@ -429,7 +429,6 @@ export class ProjectService {
         readOnly: true,
       }
       records.push(record)
-      branchTargets.push({ record, cwd: canonical })
     }
 
     // Branch enrichment runs after the swap: authorization must never wait on
@@ -713,7 +712,7 @@ export class ProjectService {
     }
     const authorizationRevision = this.authorizationRevision
     const snapshot = this.store.snapshot()
-    const dismissed = new Set(snapshot.dismissedProjectPaths.map((p) => resolve(p)))
+    const dismissed = await this.resolveDismissedProjectPaths(snapshot.dismissedProjectPaths)
     const ownPersistedFolders = new Set(this.ownProjects(snapshot.projects).flatMap((p) => p.folders.map((f) => resolve(f))))
 
     const checkRoots = async (map: Map<string, FolderIdentity>, isReadOnlyMap: boolean): Promise<string | undefined> => {

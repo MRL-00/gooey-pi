@@ -190,6 +190,42 @@ describe('ProjectService list enrichment', () => {
     expect(records.some((record) => record.path === resolve(missing))).toBe(false)
   })
 
+  it('enriches persisted branches without spawning git for inferred roots', async () => {
+    const { root, service, store } = setup()
+    const inferredRoots = [1, 2, 3].map((index) => `${root}-inferred-${index}`)
+    for (const inferredRoot of inferredRoots) mkdirSync(inferredRoot)
+    const now = '2026-01-01T00:00:00.000Z'
+    await store.update((state) => {
+      state.projects.push({
+        id: 'persisted',
+        harness: 'prime',
+        name: 'Persisted',
+        path: root,
+        folders: [root],
+        primaryFolder: root,
+        pinned: false,
+        createdAt: now,
+        lastOpenedAt: now,
+        folderIdentities: identities(root),
+      })
+    })
+    const sessions = inferredRoots.map((path, index) => session(`inferred-${index}`, path, now, now))
+    const branchCwds: string[] = []
+    service.bindProviders({
+      sessions: async () => sessions,
+      branch: async (cwd) => {
+        branchCwds.push(cwd)
+        return 'main'
+      },
+    })
+
+    const records = await service.list()
+    expect(branchCwds).toEqual([root])
+    expect(records.find((record) => record.id === 'persisted')?.gitBranch).toBe('main')
+    expect(records.filter((record) => record.inferred)).toHaveLength(inferredRoots.length)
+    expect(records.filter((record) => record.inferred).every((record) => record.gitBranch === undefined)).toBe(true)
+  })
+
   it('bounds overlapping branch enrichment without changing record order or undefined branches', async () => {
     const { root, service, store } = setup()
     const concurrencyLimit = 4
@@ -531,6 +567,21 @@ describe('ProjectService file listing', () => {
 
     expect(await service.remove(listed[0].id)).toBe(true)
     await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('revokes read-only authorization when a symlinked dismissal names the project', async () => {
+    const { root, service, store } = setup()
+    const alias = `${root}-alias`
+    symlinkSync(root, alias)
+    service.bindProviders({
+      sessions: async () => [session('session-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')],
+      branch: async () => undefined,
+    })
+
+    await service.list()
+    await expect(service.authorizeReadOnlyCwd(root)).resolves.toBe(realpathSync(root))
+    await store.update((state) => { state.dismissedProjectPaths.push(alias) })
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside an added Prime Work project/)
   })
 
   it('safely ignores stale and nonexistent session project paths during file listing', async () => {

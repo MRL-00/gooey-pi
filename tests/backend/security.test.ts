@@ -51,12 +51,12 @@ describe('security boundaries', () => {
     let branchCalls = 0
     service.bindProviders({
       sessions: async () => [{ id: 'session', harness: 'prime', filePath: join(dir, 'session.jsonl'), projectPath: folder, title: 'session', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'idle', depth: 0, pinned: false, unread: false } satisfies SessionRecord],
-      branch: async (cwd) => { branchCalls += 1; await service.authorizeReadOnlyCwd(cwd); return undefined },
+      branch: async () => { branchCalls += 1; return undefined },
     })
     const listed = await service.list()
     expect(listed).toHaveLength(1)
     expect(listed[0].inferred).toBe(true)
-    expect(branchCalls).toBe(1)
+    expect(branchCalls).toBe(0)
     expect(await service.authorizeReadOnlyCwd(folder)).toBe(realpathSync(folder))
     expect(await service.listFiles(folder)).toEqual({ entries: [{ path: 'README.md', type: 'file' }], skipped: 0 })
     await expect(service.authorizeCwd(folder)).rejects.toThrow(/not inside/)
