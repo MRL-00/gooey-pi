@@ -17,9 +17,10 @@ Candidates are deduplicated and must be executable. GooeyPi then runs a bounded 
 
 When a resolved POSIX candidate is an actual `#!/usr/bin/env node` (including
 `env -S node ...`) script, GooeyPi resolves the script's real path, walks to
-its owning `package.json`, and reads `engines.node`. It probes the Node
-executables from the same bounded version-manager, shared, and PATH directory
-list used by discovery, then launches the first executable satisfying the
+its owning `package.json`, and reads `engines.node`. It probes at most 12 Node
+executables per resolution (with results cached), from the same bounded
+version-manager, shared, and PATH directory list used by discovery, then
+launches the first executable satisfying the
 supported `>=x.y.z` form. Missing or unsupported engine declarations impose no
 constraint. Native binaries and every non-node shebang keep their original
 invocation; Windows Pi shim handling is unchanged.

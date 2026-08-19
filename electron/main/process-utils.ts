@@ -1,4 +1,4 @@
-import { accessSync, closeSync, constants as fsConstants, openSync, readFileSync, readSync, readdirSync, realpathSync } from 'node:fs'
+import { accessSync, closeSync, constants as fsConstants, openSync, readSync, readdirSync, realpathSync } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
@@ -20,7 +20,7 @@ export interface ProcessResult {
 }
 
 /** Classifies a completed subprocess: overflow, then timeout, then exit status. */
-export function processFailureReason(result: ProcessResult): ProcessFailureReason | undefined {
+export function processFailureReason(result: ProcessResult): Exclude<ProcessFailureReason, 'blocked'> | undefined {
   if (result.outputExceeded) return 'overflow'
   if (result.timedOut) return 'timeout'
   if (result.code !== 0) return 'exit'
@@ -246,7 +246,12 @@ const NODE_SHEBANG_BYTES = 4 * 1024
 const NODE_PACKAGE_BYTES = 64 * 1024
 const NODE_VERSION_TIMEOUT_MS = 2_000
 const NODE_VERSION_OUTPUT_BYTES = 1_024
-const NODE_VERSION_CACHE = new Map<string, string | null>()
+const NODE_INTERPRETER_PROBE_LIMIT = 12
+interface NodeVersionResult {
+  text: string
+  parsed: NodeVersion
+}
+const NODE_VERSION_CACHE = new Map<string, NodeVersionResult | null>()
 
 export function clearNodeInterpreterCache(): void {
   NODE_VERSION_CACHE.clear()
@@ -285,8 +290,7 @@ export function nodeVersionSatisfies(version: string, range: unknown): boolean {
   return minimum ? compareNodeVersions(parsedVersion, minimum) >= 0 : true
 }
 
-class NodeInterpreterResolutionError extends Error {
-  readonly code = 'ENGINE_UNSATISFIED'
+export class NodeInterpreterResolutionError extends Error {
   constructor(readonly detail: string) {
     super(detail)
   }
@@ -312,21 +316,30 @@ function nodeShebangTarget(path: string): boolean {
 function owningNodePackage(script: string): { name?: string; enginesNode?: unknown } {
   let directory = posix.dirname(script)
   while (true) {
+    const manifest = posix.join(directory, 'package.json')
     try {
-      const value: unknown = JSON.parse(readFileSync(posix.join(directory, 'package.json'), { encoding: 'utf8' }).slice(0, NODE_PACKAGE_BYTES))
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-      const packageJson = value as { name?: unknown; engines?: unknown }
-      const engines = packageJson.engines && typeof packageJson.engines === 'object' && !Array.isArray(packageJson.engines)
-        ? packageJson.engines as { node?: unknown }
-        : undefined
-      return {
-        name: typeof packageJson.name === 'string' ? packageJson.name : undefined,
-        enginesNode: engines?.node,
-      }
-    } catch { /* walk to the next parent */ }
-    const parent = posix.dirname(directory)
-    if (parent === directory) return {}
-    directory = parent
+      accessSync(manifest, fsConstants.F_OK)
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined
+      if (code !== 'ENOENT') return {}
+      const parent = posix.dirname(directory)
+      if (parent === directory) return {}
+      directory = parent
+      continue
+    }
+    const contents = readFilePrefix(manifest, NODE_PACKAGE_BYTES)
+    if (contents === undefined) return {}
+    let value: unknown
+    try { value = JSON.parse(contents) } catch { return {} }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    const packageJson = value as { name?: unknown; engines?: unknown }
+    const engines = packageJson.engines && typeof packageJson.engines === 'object' && !Array.isArray(packageJson.engines)
+      ? packageJson.engines as { node?: unknown }
+      : undefined
+    return {
+      name: typeof packageJson.name === 'string' ? packageJson.name : undefined,
+      enginesNode: engines?.node,
+    }
   }
 }
 
@@ -352,7 +365,7 @@ function nodeCandidateExecutables(
     })
 }
 
-function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): string | null {
+function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): NodeVersionResult | null {
   const key = realpathSync(candidate)
   const cached = NODE_VERSION_CACHE.get(key)
   if (NODE_VERSION_CACHE.has(key)) return cached ?? null
@@ -367,7 +380,8 @@ function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): string | null {
   })
   const output = typeof result.stdout === 'string' ? result.stdout : ''
   const trimmed = output.trim()
-  const version = parseNodeVersion(trimmed) ? trimmed : null
+  const parsed = parseNodeVersion(trimmed)
+  const version = parsed ? { text: trimmed, parsed } : null
   NODE_VERSION_CACHE.set(key, version)
   return version
 }
@@ -375,18 +389,18 @@ function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): string | null {
 function resolveNodeInterpreter(script: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): string {
   const packageJson = owningNodePackage(script)
   const requirement = parseNodeEngineRange(packageJson.enginesNode)
-  let newest: { path: string; version: string } | undefined
-  for (const candidate of nodeCandidateExecutables(env, platform, home)) {
-    let version: string | null
+  let newest: { path: string; version: NodeVersionResult } | undefined
+  for (const candidate of nodeCandidateExecutables(env, platform, home).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
+    let version: NodeVersionResult | null
     try { version = nodeVersion(candidate, env) } catch { continue }
     if (!version) continue
-    if (!newest || compareNodeVersions(parseNodeVersion(version)!, parseNodeVersion(newest.version)!) > 0) newest = { path: candidate, version }
-    if (!requirement || compareNodeVersions(parseNodeVersion(version)!, requirement) >= 0) return realpathSync(candidate)
+    if (!newest || compareNodeVersions(version.parsed, newest.version.parsed) > 0) newest = { path: candidate, version }
+    if (!requirement || compareNodeVersions(version.parsed, requirement) >= 0) return realpathSync(candidate)
   }
   if (requirement) {
     const requirementText = `>=${requirement.major}.${requirement.minor}.${requirement.patch}`
-    const newestText = newest ? `; the newest Node GooeyPi can find is ${newest.version} at ${newest.path}` : '; no working Node interpreter was found'
-    const label = packageJson.name?.includes('pi-coding-agent') ? 'Pi' : 'Harness'
+    const newestText = newest ? `; the newest Node GooeyPi can find is ${newest.version.text} at ${newest.path}` : '; no working Node interpreter was found'
+    const label = packageJson.name ?? 'The harness'
     throw new NodeInterpreterResolutionError(`${label} requires Node ${requirementText}${newestText}`)
   }
   throw new NodeInterpreterResolutionError('Node.js was not found for the env-node harness executable')
@@ -579,8 +593,6 @@ function sharedHarnessCandidateDirs(
     posix.join(dataHome, 'mise', 'shims'),
     posix.join(home, '.nix-profile', 'bin'),
     posix.join('/opt', 'local', 'bin'),
-    posix.join(env.ASDF_DATA_DIR ?? posix.join(home, '.asdf'), 'shims'),
-    posix.join(home, '.nodenv', 'shims'),
     ...(platform === 'darwin'
       ? [posix.join(home, 'Library', 'pnpm'), posix.join(home, 'Library', 'pnpm', 'bin')]
       : ['/home/linuxbrew/.linuxbrew/bin']),
@@ -617,7 +629,6 @@ export function harnessExecutableCandidates(
   // globally installed harnesses after an explicit fixture binary disappears.
   const fallbackDirs = env.PRIME_WORK_E2E_HIDE_WINDOWS === '1' ? [] : [
     ...descriptor.candidateDirs(platform, home, env),
-    ...versionManagerRuntimeDirs(env, platform, home),
     ...sharedHarnessCandidateDirs(env, platform, home),
   ]
   for (const directory of fallbackDirs) {
@@ -634,18 +645,15 @@ export function harnessExecutableCandidates(
   })
 }
 
-/** Bounded, shell-free discovery for nvm installs that a desktop app's PATH does not inherit. */
-export async function nvmHarnessExecutableCandidates(
+/** Bounded, shell-free discovery for version-manager installs outside a desktop app's PATH. */
+export async function versionManagerHarnessExecutableCandidates(
   descriptor: HarnessDescriptor,
   env: NodeJS.ProcessEnv = process.env,
   platform = process.platform,
   home = homedir(),
 ): Promise<string[]> {
   if (platform === 'win32' || env.PRIME_WORK_E2E_HIDE_WINDOWS === '1') return []
-  const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
-  const versionsRoot = posix.join(root, 'versions', 'node')
   return versionManagerRuntimeDirs(env, platform, home)
-    .filter((directory) => directory.startsWith(`${versionsRoot}/`))
     .map((directory) => posix.join(directory, descriptor.executableName(platform)))
 }
 
@@ -657,7 +665,7 @@ export async function findHarnessExecutable(
 ): Promise<string | null> {
   const candidates = [
     ...harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath),
-    ...await nvmHarnessExecutableCandidates(descriptor),
+    ...await versionManagerHarnessExecutableCandidates(descriptor),
   ]
   for (const candidate of candidates) {
     try {

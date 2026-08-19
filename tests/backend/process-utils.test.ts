@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, nvmHarnessExecutableCandidates, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -109,11 +109,61 @@ describe('runProcess resource bounds', () => {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: nodeDirectory,
-    }, { platform: 'linux', home })).toThrow('Pi requires Node >=999.0.0')
+    }, { platform: 'linux', home })).toThrow('@earendil-works/pi-coding-agent requires Node >=999.0.0')
     return expect(probeHarnessExecutable(script)).resolves.toMatchObject({
       runnable: false,
-      failure: { kind: 'spawn', detail: expect.stringContaining('Pi requires Node >=999.0.0') },
+      failure: { kind: 'spawn', detail: expect.stringContaining('@earendil-works/pi-coding-agent requires Node >=999.0.0') },
     })
+  })
+
+  it('does not inherit a parent engine from a malformed owning manifest', () => {
+    const home = temp()
+    const nodeDirectory = join(home, 'node')
+    const packageDirectory = join(home, 'child', 'dist')
+    mkdirSync(nodeDirectory, { recursive: true })
+    mkdirSync(packageDirectory, { recursive: true })
+    const node = join(nodeDirectory, 'node')
+    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
+    chmodSync(node, 0o755)
+    writeFileSync(join(home, 'package.json'), JSON.stringify({ engines: { node: '>=999.0.0' } }))
+    writeFileSync(join(home, 'child', 'package.json'), '{ malformed')
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = prepareExecutableSpawn(script, [], {
+      HOME: home,
+      NVM_DIR: join(home, 'missing-nvm'),
+      PATH: nodeDirectory,
+    }, { platform: 'linux', home })
+    expect(invocation.file).not.toBe(script)
+    expect(invocation.args).toEqual([script])
+  })
+
+  it('does not parse a truncated owning manifest or adopt a parent constraint', () => {
+    const home = temp()
+    const nodeDirectory = join(home, 'node')
+    const packageDirectory = join(home, 'child', 'dist')
+    mkdirSync(nodeDirectory, { recursive: true })
+    mkdirSync(packageDirectory, { recursive: true })
+    const node = join(nodeDirectory, 'node')
+    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
+    chmodSync(node, 0o755)
+    writeFileSync(join(home, 'package.json'), JSON.stringify({ engines: { node: '>=999.0.0' } }))
+    writeFileSync(join(home, 'child', 'package.json'), JSON.stringify({ name: 'child', padding: 'x'.repeat(70 * 1024) }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = prepareExecutableSpawn(script, [], {
+      HOME: home,
+      NVM_DIR: join(home, 'missing-nvm'),
+      PATH: nodeDirectory,
+    }, { platform: 'linux', home })
+    expect(invocation.file).not.toBe(script)
+    expect(invocation.args).toEqual([script])
   })
 
   it('runs a pnpm env-node CLI whose nvm interpreter is elsewhere under a Finder-style minimal PATH', async () => {
@@ -462,7 +512,7 @@ describe('OMP discovery candidates', () => {
   it('keeps E2E discovery hermetic when a fixture executable disappears', async () => {
     const env = { PRIME_WORK_E2E_HIDE_WINDOWS: '1', PATH: '/fixture/bin' }
     expect(harnessExecutableCandidates(HARNESSES.pi, env, 'darwin', undefined, '/fixture/home')).toEqual(['/fixture/bin/pi'])
-    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, env, 'darwin', '/fixture/home')).resolves.toEqual([])
+    await expect(versionManagerHarnessExecutableCandidates(HARNESSES.pi, env, 'darwin', '/fixture/home')).resolves.toEqual([])
   })
 
   it('adds official standalone-node locations for Pi and Prime on Linux', () => {
@@ -478,11 +528,37 @@ describe('OMP discovery candidates', () => {
     for (const version of ['v20.1.0', 'v22.12.0', 'v23.0.0']) {
       mkdirSync(join(versions, version), { recursive: true })
     }
-    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, {}, 'linux', home)).resolves.toEqual([
+    await expect(versionManagerHarnessExecutableCandidates(HARNESSES.pi, {}, 'linux', home)).resolves.toEqual([
       join(versions, 'v23.0.0', 'bin', 'pi'),
       join(versions, 'v22.12.0', 'bin', 'pi'),
       join(versions, 'v20.1.0', 'bin', 'pi'),
+      join(home, '.asdf', 'shims', 'pi'),
+      join(home, '.nodenv', 'shims', 'pi'),
     ])
+  })
+
+  it('discovers all supported version-manager harness locations', async () => {
+    const home = temp()
+    const fnm = join(home, 'fnm', 'node-versions', 'v24.1.0', 'installation', 'bin')
+    const asdf = join(home, 'asdf', 'installs', 'nodejs', '24.2.0', 'bin')
+    const nodenv = join(home, '.nodenv', 'versions', '24.3.0', 'bin')
+    const n = join(home, 'n', 'bin')
+    for (const directory of [fnm, asdf, nodenv, n, join(home, 'asdf', 'shims'), join(home, '.nodenv', 'shims')]) mkdirSync(directory, { recursive: true })
+
+    const candidates = await versionManagerHarnessExecutableCandidates(HARNESSES.pi, {
+      FNM_DIR: join(home, 'fnm'),
+      ASDF_DATA_DIR: join(home, 'asdf'),
+      N_PREFIX: join(home, 'n'),
+    }, 'linux', home)
+
+    expect(candidates).toEqual(expect.arrayContaining([
+      join(fnm, 'pi'),
+      join(asdf, 'pi'),
+      join(nodenv, 'pi'),
+      join(n, 'pi'),
+      join(home, 'asdf', 'shims', 'pi'),
+      join(home, '.nodenv', 'shims', 'pi'),
+    ]))
   })
 })
 
