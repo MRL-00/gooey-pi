@@ -46,20 +46,32 @@ export function killProcessTree(child, platform = process.platform) {
     spawn(taskkill.command, taskkill.args, { stdio: 'ignore' }).unref()
     return
   }
-  try { process.kill(-child.pid, 'SIGKILL') } catch { child.kill('SIGKILL') }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    child.kill('SIGKILL')
+  }
 }
 
 /** The readiness marker the packaged application wrote; its renderer URL is validated against the shared contract inside the application before the marker is created. */
 export function parseReadinessMarker(raw) {
   if (Buffer.byteLength(raw, 'utf8') > MAX_MARKER_BYTES) throw new Error(`Readiness marker exceeds ${MAX_MARKER_BYTES} bytes`)
   let marker
-  try { marker = JSON.parse(raw) } catch { throw new Error('Readiness marker is not valid JSON') }
+  try {
+    marker = JSON.parse(raw)
+  } catch {
+    throw new Error('Readiness marker is not valid JSON')
+  }
   if (!marker || typeof marker !== 'object') throw new Error('Readiness marker is not an object')
   if (marker.event !== PACKAGED_SMOKE_READY_EVENT) throw new Error(`Readiness marker reported an unexpected event: ${String(marker.event)}`)
   if (typeof marker.version !== 'string' || !marker.version) throw new Error('Readiness marker is missing the application version')
   if (typeof marker.url !== 'string') throw new Error('Readiness marker is missing the renderer URL')
   let url
-  try { url = new URL(marker.url) } catch { throw new Error(`Readiness marker reported an invalid renderer URL: ${marker.url}`) }
+  try {
+    url = new URL(marker.url)
+  } catch {
+    throw new Error(`Readiness marker reported an invalid renderer URL: ${marker.url}`)
+  }
   return { event: marker.event, url: url.href, version: marker.version }
 }
 
@@ -146,7 +158,9 @@ export async function smokePackagedApp(target, architecture, { timeoutMs = SMOKE
     return marker
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const launched = launch ? `${launch.command} ${launch.args.join(' ')}\nexit code: ${launch.code ?? 'null'}\nsignal: ${launch.signal ?? 'none'}\ntimed out: ${launch.timedOut}\n\n${launch.diagnostics}\n\n` : ''
+    const launched = launch
+      ? `${launch.command} ${launch.args.join(' ')}\nexit code: ${launch.code ?? 'null'}\nsignal: ${launch.signal ?? 'none'}\ntimed out: ${launch.timedOut}\n\n${launch.diagnostics}\n\n`
+      : ''
     writeDiagnostics(report, `${launched}${message}\n`)
     throw new Error(`${message} (diagnostics: ${report})`)
   } finally {
