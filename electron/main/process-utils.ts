@@ -18,54 +18,6 @@ export interface ProcessResult {
   stderrBytes: number
 }
 
-interface NodeVersion {
-  major: number
-  minor: number
-  patch: number
-  prerelease: string | undefined
-}
-
-export function parseNodeVersion(value: string): NodeVersion | undefined {
-  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(-([0-9A-Za-z.-]+))?$/)
-  if (!match) return undefined
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[5],
-  }
-}
-
-export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
-  if (typeof value !== 'string') return undefined
-  const range = value.trim()
-  if (!range) return undefined
-  const match = range.match(/^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\s+<\s*\S+)?$/)
-  if (!match) return undefined
-  if (match[4] && (match[2] === undefined || match[3] === undefined)) return undefined
-  return {
-    major: Number(match[1]),
-    minor: match[2] === undefined ? 0 : Number(match[2]),
-    patch: match[3] === undefined ? 0 : Number(match[3]),
-    prerelease: match[4],
-  }
-}
-
-function compareNodeVersions(left: NodeVersion, right: NodeVersion): number {
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    if (left[key] !== right[key]) return left[key] - right[key]
-  }
-  if (left.prerelease === right.prerelease) return 0
-  return left.prerelease ? -1 : 1
-}
-
-export function nodeVersionSatisfies(version: string, range: unknown): boolean {
-  const parsedVersion = parseNodeVersion(version)
-  if (!parsedVersion) return false
-  const minimum = parseNodeEngineRange(range)
-  return minimum ? compareNodeVersions(parsedVersion, minimum) >= 0 : true
-}
-
 export type ExecutableCandidateFailureKind = 'missing' | 'rejected'
 export interface ExecutableCandidateFailure {
   path: string

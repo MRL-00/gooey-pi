@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, prepareExecutableSpawn, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -23,35 +23,6 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
-  it.each([
-    ['>=22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['>=22.19', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['>=22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
-    ['>=22.19.0 <25', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
-    ['>=22.19.0-beta.1', { major: 22, minor: 19, patch: 0, prerelease: 'beta.1' }],
-  ])('parses the conservative lower bound from %s', (range, expected) => {
-    expect(parseNodeEngineRange(range)).toEqual(expected)
-  })
-
-  it('treats genuinely unrecognized Node engine ranges as unconstrained', () => {
-    expect(parseNodeEngineRange('garbage')).toBeUndefined()
-    expect(parseNodeEngineRange('')).toBeUndefined()
-    expect(parseNodeEngineRange(undefined)).toBeUndefined()
-    expect(parseNodeEngineRange('>=22.19.0 nonsense')).toBeUndefined()
-    expect(parseNodeEngineRange('^22.19.0')).toBeUndefined()
-    expect(parseNodeEngineRange('~22.19.0')).toBeUndefined()
-    expect(parseNodeEngineRange('22.19.0')).toBeUndefined()
-    expect(parseNodeEngineRange('>=22.x')).toBeUndefined()
-    expect(parseNodeEngineRange('22.x')).toBeUndefined()
-    expect(parseNodeVersion('v22.19.0-beta.1')).toMatchObject({ major: 22, prerelease: 'beta.1' })
-    expect(parseNodeVersion('not-a-version')).toBeUndefined()
-    expect(nodeVersionSatisfies('22.19.0', '>=22.19.0')).toBe(true)
-    expect(nodeVersionSatisfies('22.19.0-beta.1', '>=22.19.0')).toBe(false)
-    expect(nodeVersionSatisfies('garbage', '>=22.19.0')).toBe(false)
-    expect(nodeVersionSatisfies('20.0.0', undefined)).toBe(true)
-    expect(nodeVersionSatisfies('20.0.0', 'unsupported-range')).toBe(true)
-  })
-
   it('runs a pnpm CLI under a Finder-style minimal PATH', async () => {
     const home = temp()
     const shimDirectory = join(home, 'Library', 'pnpm', 'bin')
