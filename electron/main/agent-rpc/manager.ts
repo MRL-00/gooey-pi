@@ -200,7 +200,8 @@ export class AgentRpcManager {
     const wireCommand = command.type === 'prompt'
       && !this.adapter.acceptsStreamingBehaviorOnPrompt
       && translated.streamingBehavior !== undefined
-      ? Object.fromEntries(Object.entries(translated).filter(([key]) => key !== 'streamingBehavior'))
+      // Pi and OMP intentionally receive the pre-existing prompt shape; this is a silent compatibility drop.
+      ? (({ streamingBehavior: _streamingBehavior, ...withoutStreamingBehavior }) => withoutStreamingBehavior)(translated)
       : translated
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())

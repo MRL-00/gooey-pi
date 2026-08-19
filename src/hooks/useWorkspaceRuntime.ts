@@ -448,10 +448,13 @@ export function useWorkspaceRuntime({
     }
   }, [])
   const clearQueuedPromptFlushFailures = useCallback(() => {
-    const nextActive = pendingQueuedPromptsRef.current.map(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
-    pendingQueuedPromptsRef.current = nextActive
-    setPendingQueuedPrompts(nextActive)
+    if (pendingQueuedPromptsRef.current.some((prompt) => prompt.flushAttemptFailed)) {
+      const nextActive = pendingQueuedPromptsRef.current.map(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
+      pendingQueuedPromptsRef.current = nextActive
+      setPendingQueuedPrompts(nextActive)
+    }
     for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
+      if (!prompts.some((prompt) => prompt.flushAttemptFailed)) continue
       const next = prompts.map(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
       queuedPromptsByOwnerRef.current.set(owner, next)
     }

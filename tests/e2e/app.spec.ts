@@ -284,6 +284,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         return
       }
       fs.writeFileSync(barrierAccepted, JSON.stringify(command))
+      const completedAt = new Date().toISOString()
+      fs.appendFileSync(sessionFile, [
+        JSON.stringify({ type: 'message', id: 'fixture-barrier-user', parentId: 'fixture-goal-summary',
+          timestamp: completedAt, message: { role: 'user', content: command.message } }),
+        JSON.stringify({ type: 'message', id: 'fixture-barrier-assistant', parentId: 'fixture-barrier-user',
+          timestamp: completedAt, message: { role: 'assistant', content: 'The barrier follow-up was accepted.' } }),
+      ].join('\\n') + '\\n')
       streaming = false
       send({ type: 'agent_start' })
       send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })

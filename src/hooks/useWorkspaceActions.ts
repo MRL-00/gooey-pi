@@ -384,10 +384,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           }
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await followUpExternalSession(selected.sessionFile)) {
-              if (intent === 'steer') appendUserMessage()
-              completeQueuedFlush()
-              return
-            }
+            if (intent === 'steer') appendUserMessage()
+            completeQueuedFlush()
+            return
+          }
           try {
             activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast, harness: activeHarness })
           } catch (startError) {

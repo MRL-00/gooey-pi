@@ -25,7 +25,12 @@ afterEach(() => {
 describe('queued prompt flush admission', () => {
   it('does not retry a failed head until its marker is cleared', async () => {
     const sendPrompt = vi.fn(async (..._args: [string, PromptImage[], PromptDeliveryIntent, string]) => undefined)
-    let controls!: { clearFailure(): void }
+    let controls!: {
+      clearFailure(): void
+      setBusy(value: boolean): void
+      setSubmitting(value: boolean): void
+      cloneQueue(): void
+    }
 
     function Probe() {
       const [queue, setQueue] = useState<QueuedPrompt[]>([{
@@ -33,15 +38,20 @@ describe('queued prompt flush admission', () => {
         text: 'retry after boundary',
         intent: 'queue',
       }])
+      const [busy, setBusy] = useState(false)
+      const [submitting, setSubmitting] = useState(false)
       const queuedFlushRef = useRef(false)
       controls = {
         clearFailure: () => setQueue((items) => items.map((item) => ({ ...item, flushAttemptFailed: undefined }))),
+        setBusy,
+        setSubmitting,
+        cloneQueue: () => setQueue((items) => items.map((item) => ({ ...item }))),
       }
       useQueuedPromptFlush({
         bridge: {} as PrimeWorkApi,
-        busy: false,
+        busy,
         externalSessionRunning: false,
-        submitting: false,
+        submitting,
         queuedMessages: queue,
         queuedFlushRef,
         sendPrompt: async (...args) => {
@@ -54,7 +64,12 @@ describe('queued prompt flush admission', () => {
 
     await act(async () => { root.render(createElement(Probe)); await Promise.resolve() })
     expect(sendPrompt).toHaveBeenCalledOnce()
-    await act(async () => { await Promise.resolve() })
+
+    await act(async () => { controls.setBusy(true); await Promise.resolve() })
+    await act(async () => { controls.setBusy(false); await Promise.resolve() })
+    await act(async () => { controls.setSubmitting(true); await Promise.resolve() })
+    await act(async () => { controls.setSubmitting(false); await Promise.resolve() })
+    await act(async () => { controls.cloneQueue(); await Promise.resolve() })
     expect(sendPrompt).toHaveBeenCalledOnce()
 
     await act(async () => {
