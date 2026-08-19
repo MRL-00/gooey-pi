@@ -92,7 +92,12 @@ export function isPrivateOrLoopbackHostname(value: string): boolean {
     : isIPv6(host)
       ? host
       : undefined
-  if (ipv6 && (ipv6 === '::1' || ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd'))) return true
+  if (ipv6) {
+    const firstHextet = parseInt(ipv6.startsWith('::') ? '0' : ipv6.slice(0, ipv6.indexOf(':')), 16)
+    if (ipv6 === '::1'
+      || firstHextet >= 0xfc00 && firstHextet <= 0xfdff
+      || firstHextet >= 0xfe80 && firstHextet <= 0xfebf) return true
+  }
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (ipv4) {
     const first = Number(ipv4[1])

@@ -202,7 +202,10 @@ describe('requireSelfHostedVoiceUrl', () => {
       'http://172.31.255.254:9000',
       'http://[fd12::1]:8000/',
       'http://[fc00::5]:8000/',
+      'http://[fc00::1]:8000/',
+      'http://[fdff::1]:8000/',
       'http://[fe80::1]:8000/',
+      'http://[febf::1]:8000/',
     ]) expect(requireSelfHostedVoiceUrl(url), url).toMatch(/^https?:/)
   })
 
@@ -221,6 +224,10 @@ describe('requireSelfHostedVoiceUrl', () => {
       'http://fcserver.attacker.com/',
       'http://fe80.example.com/',
       'http://[::ffff:10.0.0.1]:8000/',
+      'http://[fc::1]:8000/',
+      'http://[fd::5]:8000/',
+      'http://[fd0::1]:8000/',
+      'http://[fe90::1]:8000/',
     ]) expect(() => requireSelfHostedVoiceUrl(url), url).toThrow(/private network/)
     expect(requireSelfHostedVoiceUrl('https://example.com/v1/')).toBe('https://example.com/v1/')
     expect(requireSelfHostedVoiceUrl('https://1.2.3.4:8000/')).toBe('https://1.2.3.4:8000/')
