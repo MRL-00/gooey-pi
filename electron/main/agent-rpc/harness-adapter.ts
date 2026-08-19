@@ -65,6 +65,13 @@ export function parseContextUsage(raw: unknown): PrimeContextUsage | null {
 
 const unsafeArgValue = (value: string): boolean => value.startsWith('-') || /[\r\n]/.test(value)
 
+const stripPromptMode = (command: RpcObject): RpcObject => {
+  if (command.type !== 'prompt' || command.streamingBehavior === undefined) return command
+  // Pi and OMP compatibility drop pending verification against supported versions.
+  const { streamingBehavior: _, ...rest } = command
+  return rest
+}
+
 export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'prime',
   agentName: HARNESSES.prime.agentName,
@@ -134,14 +141,9 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
   translateCommand: (command) => {
     const type = String(command.type)
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the OMP harness`)
-    if (type === 'prompt' && command.streamingBehavior !== undefined) {
-      // OMP compatibility drop pending verification against supported versions.
-      const { streamingBehavior: _, ...rest } = command
-      return rest
-    }
     if (type === 'fork') return { ...command, type: 'branch' }
     if (type === 'get_fork_messages') return { ...command, type: 'get_branch_messages' }
-    return command
+    return stripPromptMode(command)
   },
   normalizeEvent: (event) => {
     if (event.type === 'auto_compaction_start') return { ...event, type: 'compaction_start' }
@@ -196,16 +198,11 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
   },
   translateCommand: (command) => {
     const type = String(command.type)
-    if (type === 'prompt' && command.streamingBehavior !== undefined) {
-      // Pi compatibility drop pending verification against supported versions.
-      const { streamingBehavior: _, ...rest } = command
-      return rest
-    }
     // pi keeps Prime's vocabulary (fork/get_fork_messages pass through
     // untranslated) but lacks the same Prime-only daemon/heartbeat family OMP
     // rejects, clone included.
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the Pi harness`)
-    return command
+    return stripPromptMode(command)
   },
   normalizeEvent: (event) => event,
   // Pi has no native tier command. Its prompt RPC invokes the bundled private
