@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { PRIME_THINKING_LEVELS, type PrimeModelDescriptor, type PrimeThinkingLevel } from '../../src/types/api'
 import { CliModelCatalogService, validateModelEntry, type CliModelCatalogOptions } from './model-catalog-cli'
-import { killProcessTree, prepareExecutableSpawn, waitForProcessExit } from './process-utils'
+import { killProcessTree, prepareExecutableSpawnAsync, safeChildEnvironment, waitForProcessExit } from './process-utils'
 
 export { MAX_CATALOG_PROVIDERS } from './model-catalog-cli'
 
@@ -52,9 +52,13 @@ function parseProbeResponse(line: string): Record<string, unknown> | null {
  * pipes (stderr is swallowed but counted), spawned with a fixed argv array,
  * a sanitized environment, and a non-project cwd; every line is untrusted.
  */
-function runModelProbe(executable: string, options: { timeoutMs: number; maxOutputBytes: number }): Promise<Record<string, unknown>> {
+async function runModelProbe(executable: string, options: { timeoutMs: number; maxOutputBytes: number }): Promise<Record<string, unknown>> {
+  const invocation = await prepareExecutableSpawnAsync(
+    executable,
+    ['--mode', 'rpc', '--no-session', '--offline'],
+    safeChildEnvironment(),
+  )
   return new Promise((resolve, reject) => {
-    const invocation = prepareExecutableSpawn(executable, ['--mode', 'rpc', '--no-session', '--offline'])
     const child = spawn(invocation.file, invocation.args, {
       cwd: tmpdir(),
       env: invocation.env,

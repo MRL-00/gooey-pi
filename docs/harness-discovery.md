@@ -17,13 +17,24 @@ Candidates are deduplicated and must be executable. GooeyPi then runs a bounded 
 
 When a resolved POSIX candidate is an actual `#!/usr/bin/env node` (including
 `env -S node ...`) script, GooeyPi resolves the script's real path, walks to
-its owning `package.json`, and reads `engines.node`. It probes at most 12 Node
-executables per resolution (with results cached), from the same bounded
-version-manager, shared, and PATH directory list used by discovery, then
-launches the first executable satisfying the
-supported `>=x.y.z` form. Missing or unsupported engine declarations impose no
-constraint. Native binaries and every non-node shebang keep their original
-invocation; Windows Pi shim handling is unchanged.
+its owning `package.json`, and reads `engines.node` asynchronously before the
+child is spawned. It probes at most 12 Node executables per resolution (with
+results cached), checking PATH first, then the bounded version-manager
+directories, then the remaining shared directories. The supported lower-bound
+forms include `>=X`, `>=X.Y`, `>=X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `X`, `X.x`, and
+compound ranges such as `>=X.Y.Z <Y`; upper bounds are deliberately ignored
+because a too-new Node is a less likely failure than a too-old one, and any
+actual incompatibility now surfaces as its own discovery reason. Missing or
+unrecognizable engine declarations impose no constraint. Native binaries and
+every non-node shebang keep their original invocation; Windows Pi shim
+handling is unchanged.
+
+The synchronous spawn-preparation path only performs bounded file reads and
+looks up the memoized result from asynchronous resolution. Until that result
+is available it leaves the invocation unchanged, so it never blocks the
+Electron main thread with a synchronous subprocess probe. Harness discovery
+warms this memo while its asynchronous `--version` probe runs, and the same
+async preparation is performed before runtime and Pi model-probe spawns.
 
 The relevant upstream install layouts are documented by [Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md), [OMP](https://github.com/can1357/oh-my-pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent#readme), [npm](https://docs.npmjs.com/files/folders.html), [Bun](https://bun.sh/docs/installation), [pnpm](https://pnpm.io/settings/other#globalbindir), [mise](https://mise.jdx.dev/dev-tools/shims.html), and [Volta](https://docs.volta.sh/guide/getting-started).
 

@@ -1,7 +1,7 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
 import { parseSessionActionSnapshot } from '../../../src/lib/session-actions'
-import { resolveExecutable, type ExecutableSource } from '../process-utils'
+import { prepareExecutableSpawnAsync, resolveExecutable, safeChildEnvironment, type ExecutableSource } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
 import { isThinkingLevel, validateRpcCommand } from './command-schema'
@@ -117,6 +117,11 @@ export class AgentRpcManager {
         approvalMode: this.approvalMode(),
         environment: runtimeEnvironment,
       })
+      const preparedInvocation = await prepareExecutableSpawnAsync(
+        executable,
+        args,
+        safeChildEnvironment(runtimeEnvironment),
+      )
       runtime = await this.admitRuntime(() => {
         const created = new RpcRuntime(
           executable,
@@ -132,6 +137,8 @@ export class AgentRpcManager {
           runtimeEnvironment,
           {},
           this.adapter,
+          undefined,
+          preparedInvocation,
         )
         // Record the environment generation before admission resolves so a
         // concurrent settings refresh cannot mistake this child for a new one.

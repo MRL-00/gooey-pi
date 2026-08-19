@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, prepareExecutableSpawnAsync, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -23,9 +23,25 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
-  it('compares supported Node engine ranges without accepting prereleases or garbage versions', () => {
-    expect(parseNodeEngineRange('>=22.19.0')).toMatchObject({ major: 22, minor: 19, patch: 0 })
-    expect(parseNodeEngineRange('^22.19.0')).toBeUndefined()
+  it.each([
+    ['>=22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['>=22.19', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['>=22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
+    ['^22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['~22.19.0', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['22.x', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
+    ['22', { major: 22, minor: 0, patch: 0, prerelease: undefined }],
+    ['>=22.19.0 <25', { major: 22, minor: 19, patch: 0, prerelease: undefined }],
+    ['>=22.19.0-beta.1', { major: 22, minor: 19, patch: 0, prerelease: 'beta.1' }],
+  ])('parses the conservative lower bound from %s', (range, expected) => {
+    expect(parseNodeEngineRange(range)).toEqual(expected)
+  })
+
+  it('treats genuinely unrecognized Node engine ranges as unconstrained', () => {
+    expect(parseNodeEngineRange('garbage')).toBeUndefined()
+    expect(parseNodeEngineRange('')).toBeUndefined()
+    expect(parseNodeEngineRange(undefined)).toBeUndefined()
+    expect(parseNodeEngineRange('>=22.19.0 nonsense')).toBeUndefined()
     expect(parseNodeVersion('v22.19.0-beta.1')).toMatchObject({ major: 22, prerelease: 'beta.1' })
     expect(parseNodeVersion('not-a-version')).toBeUndefined()
     expect(nodeVersionSatisfies('22.19.0', '>=22.19.0')).toBe(true)
@@ -35,7 +51,7 @@ describe('runProcess resource bounds', () => {
     expect(nodeVersionSatisfies('20.0.0', 'unsupported-range')).toBe(true)
   })
 
-  it('reroutes only env-node shebangs and parses env -S trailing flags', () => {
+  it('reroutes only env-node shebangs and parses env -S trailing flags', async () => {
     const home = temp()
     const directory = join(home, 'bin')
     mkdirSync(directory, { recursive: true })
@@ -44,7 +60,7 @@ describe('runProcess resource bounds', () => {
     chmodSync(script, 0o755)
     clearNodeInterpreterCache()
 
-    const invocation = prepareExecutableSpawn(script, ['--version'], {
+    const invocation = await prepareExecutableSpawnAsync(script, ['--version'], {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: dirname(process.execPath),
@@ -59,7 +75,33 @@ describe('runProcess resource bounds', () => {
     })
   })
 
-  it('selects the first working Node that satisfies the owning package engine range', () => {
+  it('leaves a cold synchronous preparation unchanged until async resolution warms the memo', async () => {
+    const home = temp()
+    const nodeDirectory = join(home, 'node')
+    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
+    mkdirSync(nodeDirectory, { recursive: true })
+    mkdirSync(packageDirectory, { recursive: true })
+    const node = join(nodeDirectory, 'node')
+    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
+    chmodSync(node, 0o755)
+    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=22.0.0' } }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    expect(prepareExecutableSpawn(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })).toMatchObject({
+      file: script,
+      args: [],
+    })
+    await prepareExecutableSpawnAsync(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })
+    expect(prepareExecutableSpawn(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })).toMatchObject({
+      file: node,
+      args: [script],
+    })
+  })
+
+  it('selects the first working Node that satisfies the owning package engine range', async () => {
     const home = temp()
     const lowDirectory = join(home, 'node-low')
     const highDirectory = join(home, 'node-high')
@@ -80,7 +122,7 @@ describe('runProcess resource bounds', () => {
     chmodSync(script, 0o755)
     clearNodeInterpreterCache()
 
-    const invocation = prepareExecutableSpawn(script, ['--version'], {
+    const invocation = await prepareExecutableSpawnAsync(script, ['--version'], {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: `${lowDirectory}:${highDirectory}`,
@@ -90,7 +132,39 @@ describe('runProcess resource bounds', () => {
     expect(invocation.args).toEqual([script, '--version'])
   })
 
-  it('reports when no discovered Node satisfies the package engine range', () => {
+  it('probes PATH before exhausting version-manager candidates', async () => {
+    const home = temp()
+    const nvmRoot = join(home, '.nvm')
+    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
+    const pathDirectory = join(home, 'path-node')
+    mkdirSync(packageDirectory, { recursive: true })
+    mkdirSync(pathDirectory, { recursive: true })
+    const makeNode = (directory: string, version: string) => {
+      mkdirSync(directory, { recursive: true })
+      const node = join(directory, 'node')
+      writeFileSync(node, `#!/bin/sh\nprintf '${version}\\n'\n`)
+      chmodSync(node, 0o755)
+    }
+    for (let index = 0; index < 13; index += 1) {
+      makeNode(join(nvmRoot, 'versions', 'node', `v${40 - index}.0.0`, 'bin'), 'v20.18.1')
+    }
+    makeNode(pathDirectory, 'v99.0.0')
+    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=99.0.0' } }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = await prepareExecutableSpawnAsync(script, [], {
+      HOME: home,
+      NVM_DIR: nvmRoot,
+      PATH: pathDirectory,
+    }, { platform: 'linux', home })
+
+    expect(invocation.file).toBe(join(pathDirectory, 'node'))
+  })
+
+  it('reports when no discovered Node satisfies the package engine range', async () => {
     const home = temp()
     const nodeDirectory = join(home, 'node')
     const packageDirectory = join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist')
@@ -105,18 +179,18 @@ describe('runProcess resource bounds', () => {
     chmodSync(script, 0o755)
     clearNodeInterpreterCache()
 
-    expect(() => prepareExecutableSpawn(script, [], {
+    await expect(prepareExecutableSpawnAsync(script, [], {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: nodeDirectory,
-    }, { platform: 'linux', home })).toThrow('@earendil-works/pi-coding-agent requires Node >=999.0.0')
+    }, { platform: 'linux', home })).rejects.toThrow('@earendil-works/pi-coding-agent requires Node >=999.0.0')
     return expect(probeHarnessExecutable(script)).resolves.toMatchObject({
       runnable: false,
       failure: { kind: 'spawn', detail: expect.stringContaining('@earendil-works/pi-coding-agent requires Node >=999.0.0') },
     })
   })
 
-  it('does not inherit a parent engine from a malformed owning manifest', () => {
+  it('does not inherit a parent engine from a malformed owning manifest', async () => {
     const home = temp()
     const nodeDirectory = join(home, 'node')
     const packageDirectory = join(home, 'child', 'dist')
@@ -132,7 +206,7 @@ describe('runProcess resource bounds', () => {
     chmodSync(script, 0o755)
     clearNodeInterpreterCache()
 
-    const invocation = prepareExecutableSpawn(script, [], {
+    const invocation = await prepareExecutableSpawnAsync(script, [], {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: nodeDirectory,
@@ -141,7 +215,7 @@ describe('runProcess resource bounds', () => {
     expect(invocation.args).toEqual([script])
   })
 
-  it('does not parse a truncated owning manifest or adopt a parent constraint', () => {
+  it('does not parse a truncated owning manifest or adopt a parent constraint', async () => {
     const home = temp()
     const nodeDirectory = join(home, 'node')
     const packageDirectory = join(home, 'child', 'dist')
@@ -157,7 +231,7 @@ describe('runProcess resource bounds', () => {
     chmodSync(script, 0o755)
     clearNodeInterpreterCache()
 
-    const invocation = prepareExecutableSpawn(script, [], {
+    const invocation = await prepareExecutableSpawnAsync(script, [], {
       HOME: home,
       NVM_DIR: join(home, 'missing-nvm'),
       PATH: nodeDirectory,

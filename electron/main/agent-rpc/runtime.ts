@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks'
 import type { PrimeContextUsage, PrimeEventEnvelope, PrimeModelDescriptor, PrimeServiceTier, RuntimeInfo } from '../../../src/types/api'
 import { emptySessionActionSnapshot, parseSessionActionSnapshot } from '../../../src/lib/session-actions'
 import { RPC_READ_FRAME_LIMIT_BYTES } from '../jsonl-limits'
-import { killProcessTree, prepareExecutableSpawn, safeChildEnvironment, waitForProcessExit } from '../process-utils'
+import { killProcessTree, prepareExecutableSpawn, safeChildEnvironment, waitForProcessExit, type ExecutableSpawnInvocation } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { errorMessage, isRecord } from '../validation'
 import { AgentEventForwarder } from './events'
@@ -127,6 +127,7 @@ export class RpcRuntime {
     watchdogTimings: Partial<CompactionWatchdogTimings> = {},
     private readonly adapter: HarnessRpcAdapter = PRIME_RPC_ADAPTER,
     private readonly chunkAssemblyTiming: RpcChunkAssemblyTiming = DEFAULT_RPC_CHUNK_ASSEMBLY_TIMING,
+    preparedInvocation?: ExecutableSpawnInvocation,
   ) {
     this.watchdogTimings = { ...DEFAULT_COMPACTION_WATCHDOG_TIMINGS, ...watchdogTimings }
     this.info = { runtimeId: this.runtimeId, harness: this.adapter.id, cwd, isStreaming: false, isCompacting: false, sessionActions: emptySessionActionSnapshot() }
@@ -134,7 +135,7 @@ export class RpcRuntime {
     // Every harness child is spawned with the authorized cwd as its working
     // directory. Adapters that declare spawnsInCwd (pi has no --cwd flag and
     // buckets its sessions by the process working directory) depend on this.
-    const invocation = prepareExecutableSpawn(executable, args, safeChildEnvironment(extraEnvironment))
+    const invocation = preparedInvocation ?? prepareExecutableSpawn(executable, args, safeChildEnvironment(extraEnvironment))
     this.child = spawn(invocation.file, invocation.args, { cwd, env: invocation.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     this.transport = new FramedRpcTransport(
       this.child,

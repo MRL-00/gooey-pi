@@ -1,7 +1,7 @@
 import { accessSync, closeSync, constants as fsConstants, openSync, readSync, readdirSync, realpathSync } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, open as openAsync, realpath as realpathAsync } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
 import { HARNESSES, type HarnessDescriptor } from './harness'
@@ -259,9 +259,14 @@ interface NodeVersionResult {
   parsed: NodeVersion
 }
 const NODE_VERSION_CACHE = new Map<string, NodeVersionResult | null>()
+type NodeInterpreterMemo =
+  | { interpreter: string }
+  | { error: string }
+const NODE_INTERPRETER_CACHE = new Map<string, NodeInterpreterMemo>()
 
 export function clearNodeInterpreterCache(): void {
   NODE_VERSION_CACHE.clear()
+  NODE_INTERPRETER_CACHE.clear()
 }
 
 export function parseNodeVersion(value: string): NodeVersion | undefined {
@@ -277,9 +282,26 @@ export function parseNodeVersion(value: string): NodeVersion | undefined {
 
 export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
   if (typeof value !== 'string') return undefined
-  const match = value.trim().match(/^>=\s*(\d+)\.(\d+)\.(\d+)$/)
-  if (!match) return undefined
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: undefined }
+  const range = value.trim()
+  if (!range) return undefined
+  const parseVersion = (token: string, wildcards = false): NodeVersion | undefined => {
+    const match = token.match(/^(\d+)(?:\.(\d+|x|X))?(?:\.(\d+|x|X))?(?:-([0-9A-Za-z.-]+))?$/)
+    if (!match) return undefined
+    if (!wildcards && (match[2] === 'x' || match[2] === 'X' || match[3] === 'x' || match[3] === 'X')) return undefined
+    if (match[4] && (match[2] === undefined || match[3] === undefined)) return undefined
+    return {
+      major: Number(match[1]),
+      minor: match[2] === undefined || match[2] === 'x' || match[2] === 'X' ? 0 : Number(match[2]),
+      patch: match[3] === undefined || match[3] === 'x' || match[3] === 'X' ? 0 : Number(match[3]),
+      prerelease: match[4],
+    }
+  }
+  const lowerBound = range.match(/^>=\s*([0-9]+(?:\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?)(?:\s+<\s*\S+)?$/)
+  if (lowerBound) return parseVersion(lowerBound[1])
+  const shorthand = range.match(/^(?:\^|~)\s*(\S+)$/)
+  if (shorthand) return parseVersion(shorthand[1])
+  const wildcard = range.match(/^(\d+)(?:\.(?:x|X|\d+))?$/)
+  return wildcard ? parseVersion(wildcard[0], true) : undefined
 }
 
 function compareNodeVersions(left: NodeVersion, right: NodeVersion): number {
@@ -313,6 +335,20 @@ function readFilePrefix(path: string, maxBytes: number): string | undefined {
   } catch { return undefined } finally { closeSync(descriptor) }
 }
 
+async function readFilePrefixAsync(path: string, maxBytes: number): Promise<string | undefined> {
+  let handle: Awaited<ReturnType<typeof openAsync>>
+  try { handle = await openAsync(path, 'r') } catch { return undefined }
+  try {
+    const buffer = Buffer.alloc(maxBytes)
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0)
+    return buffer.subarray(0, bytesRead).toString('utf8')
+  } catch {
+    return undefined
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
+}
+
 function nodeShebangTarget(path: string): boolean {
   const firstLine = readFilePrefix(path, NODE_SHEBANG_BYTES)?.split(/\r?\n/u, 1)[0]?.trim()
   if (!firstLine?.startsWith('#!')) return false
@@ -320,12 +356,19 @@ function nodeShebangTarget(path: string): boolean {
   return match?.[1].trim().split(/\s+/u)[0] === 'node'
 }
 
-function owningNodePackage(script: string): { name?: string; enginesNode?: unknown } {
+async function nodeShebangTargetAsync(path: string): Promise<boolean> {
+  const firstLine = (await readFilePrefixAsync(path, NODE_SHEBANG_BYTES))?.split(/\r?\n/u, 1)[0]?.trim()
+  if (!firstLine?.startsWith('#!')) return false
+  const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
+  return match?.[1].trim().split(/\s+/u)[0] === 'node'
+}
+
+async function owningNodePackageAsync(script: string): Promise<{ name?: string; enginesNode?: unknown }> {
   let directory = posix.dirname(script)
   while (true) {
     const manifest = posix.join(directory, 'package.json')
     try {
-      accessSync(manifest, fsConstants.F_OK)
+      await access(manifest, fsConstants.F_OK)
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined
       if (code !== 'ENOENT') return {}
@@ -334,7 +377,7 @@ function owningNodePackage(script: string): { name?: string; enginesNode?: unkno
       directory = parent
       continue
     }
-    const contents = readFilePrefix(manifest, NODE_PACKAGE_BYTES)
+    const contents = await readFilePrefixAsync(manifest, NODE_PACKAGE_BYTES)
     if (contents === undefined) return {}
     let value: unknown
     try { value = JSON.parse(contents) } catch { return {} }
@@ -357,9 +400,9 @@ function nodeCandidateExecutables(
 ): string[] {
   if (platform === 'win32') return []
   const directories = [
+    ...(env.PATH ?? '').split(delimiter),
     ...versionManagerRuntimeDirs(env, platform, home),
     ...sharedHarnessCandidateDirs(env, platform, home),
-    ...(env.PATH ?? '').split(delimiter),
   ]
   const seen = new Set<string>()
   return directories
@@ -372,45 +415,105 @@ function nodeCandidateExecutables(
     })
 }
 
-function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): NodeVersionResult | null {
-  const key = realpathSync(candidate)
+async function nodeVersionAsync(candidate: string, env: NodeJS.ProcessEnv): Promise<NodeVersionResult | null> {
+  const key = await realpathAsync(candidate)
   const cached = NODE_VERSION_CACHE.get(key)
   if (NODE_VERSION_CACHE.has(key)) return cached ?? null
-  const result = spawnSync(key, ['--version'], {
+  const result = await runProcess(key, ['--version'], {
     env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: NODE_VERSION_TIMEOUT_MS,
-    maxBuffer: NODE_VERSION_OUTPUT_BYTES,
-    encoding: 'utf8',
-    windowsHide: true,
+    timeoutMs: NODE_VERSION_TIMEOUT_MS,
+    maxBytes: NODE_VERSION_OUTPUT_BYTES,
   })
-  const output = typeof result.stdout === 'string' ? result.stdout : ''
-  const trimmed = output.trim()
+  const trimmed = result.stdout.trim()
   const parsed = parseNodeVersion(trimmed)
   const version = parsed ? { text: trimmed, parsed } : null
   NODE_VERSION_CACHE.set(key, version)
   return version
 }
 
-function resolveNodeInterpreter(script: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): string {
-  const packageJson = owningNodePackage(script)
-  const requirement = parseNodeEngineRange(packageJson.enginesNode)
-  let newest: { path: string; version: NodeVersionResult } | undefined
-  for (const candidate of nodeCandidateExecutables(env, platform, home).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
-    let version: NodeVersionResult | null
-    try { version = nodeVersion(candidate, env) } catch { continue }
-    if (!version) continue
-    if (!newest || compareNodeVersions(version.parsed, newest.version.parsed) > 0) newest = { path: candidate, version }
-    if (!requirement || compareNodeVersions(version.parsed, requirement) >= 0) return realpathSync(candidate)
-  }
+function nodeInterpreterRequirementText(requirement: NodeVersion): string {
+  const version = `${requirement.major}.${requirement.minor}.${requirement.patch}`
+  return requirement.prerelease ? `${version}-${requirement.prerelease}` : version
+}
+
+function nodeInterpreterFailure(
+  packageJson: { name?: string; enginesNode?: unknown },
+  requirement: NodeVersion | undefined,
+  newest: { path: string; version: NodeVersionResult } | undefined,
+): NodeInterpreterResolutionError {
   if (requirement) {
-    const requirementText = `>=${requirement.major}.${requirement.minor}.${requirement.patch}`
     const newestText = newest ? `; the newest Node GooeyPi can find is ${newest.version.text} at ${newest.path}` : '; no working Node interpreter was found'
     const label = packageJson.name ?? 'The harness'
-    throw new NodeInterpreterResolutionError(`${label} requires Node ${requirementText}${newestText}`)
+    return new NodeInterpreterResolutionError(`${label} requires Node >=${nodeInterpreterRequirementText(requirement)}${newestText}`)
   }
-  throw new NodeInterpreterResolutionError('Node.js was not found for the env-node harness executable')
+  return new NodeInterpreterResolutionError('Node.js was not found for the env-node harness executable')
+}
+
+async function resolveNodeInterpreterAsyncForScript(
+  script: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  home: string,
+): Promise<string | undefined> {
+  if (platform === 'win32') return undefined
+  const resolvedFile = await realpathAsync(script).catch(() => undefined)
+  if (!resolvedFile || !(await nodeShebangTargetAsync(resolvedFile))) return undefined
+  const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
+  if (cached) {
+    if ('error' in cached) throw new NodeInterpreterResolutionError(cached.error)
+    return cached.interpreter
+  }
+  const packageJson = await owningNodePackageAsync(resolvedFile)
+  const requirement = parseNodeEngineRange(packageJson.enginesNode)
+  let newest: { path: string; version: NodeVersionResult } | undefined
+  try {
+    for (const candidate of nodeCandidateExecutables(env, platform, home).slice(0, NODE_INTERPRETER_PROBE_LIMIT)) {
+      let version: NodeVersionResult | null
+      try { version = await nodeVersionAsync(candidate, env) } catch { continue }
+      if (!version) continue
+      if (!newest || compareNodeVersions(version.parsed, newest.version.parsed) > 0) newest = { path: candidate, version }
+      if (!requirement || compareNodeVersions(version.parsed, requirement) >= 0) {
+        const interpreter = await realpathAsync(candidate)
+        NODE_INTERPRETER_CACHE.set(resolvedFile, { interpreter })
+        return interpreter
+      }
+    }
+  } catch {
+    // Candidate probing failures are handled as unavailable interpreters below.
+  }
+  const error = nodeInterpreterFailure(packageJson, requirement, newest)
+  NODE_INTERPRETER_CACHE.set(resolvedFile, { error: error.detail })
+  throw error
+}
+
+export async function prepareExecutableSpawnAsync(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = safeChildEnvironment(),
+  options: PrepareExecutableSpawnOptions = {},
+): Promise<ExecutableSpawnInvocation> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32') {
+    const home = env.HOME && posix.isAbsolute(env.HOME) ? env.HOME : homedir()
+    await resolveNodeInterpreterAsyncForScript(file, env, platform, home)
+  }
+  return prepareExecutableSpawn(file, args, env, options)
+}
+
+function needsNodeInterpreterResolution(script: string): boolean {
+  let resolvedFile: string
+  try { resolvedFile = realpathSync(script) } catch { return false }
+  return nodeShebangTarget(resolvedFile) && !NODE_INTERPRETER_CACHE.has(resolvedFile)
+}
+
+function resolveNodeInterpreter(script: string): string | undefined {
+  let resolvedFile: string
+  try { resolvedFile = realpathSync(script) } catch { return undefined }
+  if (!nodeShebangTarget(resolvedFile)) return undefined
+  const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
+  if (!cached) return undefined
+  if ('error' in cached) throw new NodeInterpreterResolutionError(cached.error)
+  return cached.interpreter
 }
 
 interface PrepareExecutableSpawnOptions {
@@ -445,9 +548,8 @@ export function prepareExecutableSpawn(
       return { file, args: [...args], env: childEnvironment }
     }
     if (!nodeShebangTarget(resolvedFile)) return { file, args: [...args], env: childEnvironment }
-    const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
-    const node = resolveNodeInterpreter(resolvedFile, childEnvironment, platform, home)
-    return { file: node, args: [resolvedFile, ...args], env: childEnvironment }
+    const node = resolveNodeInterpreter(resolvedFile)
+    return node ? { file: node, args: [resolvedFile, ...args], env: childEnvironment } : { file, args: [...args], env: childEnvironment }
   }
 
   const canAccess = options.canAccess ?? canAccessPath
@@ -726,8 +828,8 @@ export function runProcess(file: string, args: readonly string[], options: {
     return Promise.reject(new TypeError(`process input must not exceed ${PROCESS_INPUT_LIMIT} bytes`))
   }
 
-  return processAdmission.run(() => new Promise((resolve, reject) => {
-    const invocation = prepareExecutableSpawn(file, args, options.env ?? safeChildEnvironment())
+  const environment = options.env ?? safeChildEnvironment()
+  const startProcess = (invocation: ExecutableSpawnInvocation): Promise<ProcessResult> => processAdmission.run(() => new Promise((resolve, reject) => {
     const child = spawn(invocation.file, invocation.args, {
       cwd: options.cwd,
       env: invocation.env,
@@ -819,4 +921,8 @@ export function runProcess(file: string, args: readonly string[], options: {
     })
     if (options.input !== undefined) child.stdin?.end(options.input)
   }))
+  if (!needsNodeInterpreterResolution(file)) {
+    try { return startProcess(prepareExecutableSpawn(file, args, environment)) } catch (error) { return Promise.reject(error) }
+  }
+  return prepareExecutableSpawnAsync(file, args, environment).then(startProcess)
 }
