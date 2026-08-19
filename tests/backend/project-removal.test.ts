@@ -246,6 +246,29 @@ describe('project removal', () => {
     await expect(service.authorizeReadOnlyCwd(folder)).rejects.toThrow(/not inside/)
   })
 
+  it('releases pending removal state when inferred discovery rejects', async () => {
+    const { folder, store, session } = fixture()
+    const discovery = new ProjectService(store, () => null)
+    discovery.bindProviders({ sessions: async () => [session], branch: async () => undefined })
+    const [inferred] = await discovery.list()
+    const service = new ProjectService(store, () => null)
+    const failure = new Error('session discovery failed')
+    let rejectDiscovery = true
+    service.bindProviders({
+      sessions: async () => {
+        if (rejectDiscovery) {
+          rejectDiscovery = false
+          throw failure
+        }
+        return [session]
+      },
+      branch: async () => undefined,
+    })
+
+    await expect(service.remove(inferred.id)).rejects.toBe(failure)
+    await expect(service.authorizeReadOnlyCwd(folder)).resolves.toBe(realpathSync(folder))
+  })
+
   it('keeps authorization revoked while rebuildAuthorizedRoots awaits a deferred session provider', async () => {
     const { folder, session, service } = fixture()
     const [inferred] = await service.list()

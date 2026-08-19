@@ -63,6 +63,35 @@ function deferred<T>() {
 }
 
 describe('ProjectService list enrichment', () => {
+  it('coalesces concurrent denied read-only checks without branch enrichment', async () => {
+    const { root, service } = setup()
+    const sessionsStarted = deferred<void>()
+    const releaseSessions = deferred<void>()
+    let discoveryCalls = 0
+    let branchCalls = 0
+    service.bindProviders({
+      sessions: async () => {
+        discoveryCalls += 1
+        sessionsStarted.resolve()
+        await releaseSessions.promise
+        return []
+      },
+      branch: async () => {
+        branchCalls += 1
+        return 'main'
+      },
+    })
+
+    const checks = Promise.all(Array.from({ length: 4 }, () => service.authorizeReadOnlyCwd(root).catch((error: unknown) => error)))
+    await sessionsStarted.promise
+    expect(discoveryCalls).toBe(1)
+    expect(branchCalls).toBe(0)
+    releaseSessions.resolve()
+    const errors = await checks
+    expect(errors).toHaveLength(4)
+    expect(errors.every((error) => error instanceof TypeError)).toBe(true)
+  })
+
   it('aggregates canonical session metadata once for persisted and inferred projects', async () => {
     const { root, service, store } = setup()
     const projectAlias = `${root}-alias`
@@ -115,6 +144,7 @@ describe('ProjectService list enrichment', () => {
       lastOpenedAt: '2026-03-07T00:00:00.000Z',
       sessionCount: 2,
       inferred: true,
+      readOnly: true,
     })
     expect(records.some((record) => record.path === realpathSync(dismissed))).toBe(false)
     expect(records.some((record) => record.path === resolve(missing))).toBe(false)
