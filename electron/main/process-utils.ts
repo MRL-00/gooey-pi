@@ -19,6 +19,13 @@ export interface ProcessResult {
   stderrBytes: number
 }
 
+export type ExecutableCandidateFailureKind = 'missing' | 'rejected'
+export interface ExecutableCandidateFailure {
+  path: string
+  reason: string
+  kind: ExecutableCandidateFailureKind
+}
+
 /** Classifies a completed subprocess: overflow, then timeout, then exit status. */
 export function processFailureReason(result: ProcessResult): Exclude<ProcessFailureReason, 'blocked'> | undefined {
   if (result.outputExceeded) return 'overflow'
@@ -661,7 +668,7 @@ export async function findHarnessExecutable(
   descriptor: HarnessDescriptor,
   configuredPath?: string,
   accept: (candidate: string) => Promise<boolean> = async () => true,
-  onFailure?: (failure: { path: string; reason: string }) => void,
+  onFailure?: (failure: ExecutableCandidateFailure) => void,
 ): Promise<string | null> {
   const candidates = [
     ...harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath),
@@ -671,13 +678,13 @@ export async function findHarnessExecutable(
     try {
       await access(candidate, fsConstants.X_OK)
       if (await accept(candidate)) return candidate
-      onFailure?.({ path: candidate, reason: 'probe failed' })
+      onFailure?.({ path: candidate, reason: 'probe failed', kind: 'rejected' })
     } catch {
       try {
         await access(candidate, fsConstants.F_OK)
-        onFailure?.({ path: candidate, reason: 'not executable' })
+        onFailure?.({ path: candidate, reason: 'not executable', kind: 'rejected' })
       } catch {
-        onFailure?.({ path: candidate, reason: 'path does not exist' })
+        onFailure?.({ path: candidate, reason: 'path does not exist', kind: 'missing' })
       }
     }
   }

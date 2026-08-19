@@ -579,6 +579,8 @@ describe('harness settings surfaces', () => {
       root.render(<AgentSettings settings={{ ...DEFAULT_SETTINGS, activeHarness: 'prime' }} meta={problemMeta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />)
     })
 
+    const piCard = [...container.querySelectorAll('.runtime-card')].find((card) => card.textContent?.includes('Pi not detected'))
+    expect(piCard?.querySelector('small')?.getAttribute('title')).toBe('/Users/you/.local/bin/pi: exited with code 1: Node.js is too old')
     expect(container.textContent).toContain('/Users/you/.local/bin/pi: exited with code 1: Node.js is too old')
   })
 

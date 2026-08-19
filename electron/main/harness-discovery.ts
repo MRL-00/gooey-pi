@@ -1,9 +1,10 @@
 import { HARNESS_IDS, type AppSettings, type HarnessId, type HarnessStatus } from '../../src/types/api'
 import { HARNESSES, type HarnessDescriptor } from './harness'
-import { clearNodeInterpreterCache, findHarnessExecutable, NodeInterpreterResolutionError, processFailureReason, runProcess } from './process-utils'
+import { clearNodeInterpreterCache, findHarnessExecutable, NodeInterpreterResolutionError, processFailureReason, runProcess, type ExecutableCandidateFailure } from './process-utils'
 import type { JsonStateStore } from './store'
 
 type RuntimePaths = Record<HarnessId, string>
+type HarnessProblem = NonNullable<HarnessStatus['problem']>
 export type HarnessProbeFailureKind = 'spawn' | 'exit' | 'timeout' | 'overflow'
 export interface HarnessProbeFailure {
   kind: HarnessProbeFailureKind
@@ -11,10 +12,6 @@ export interface HarnessProbeFailure {
   detail: string
 }
 export interface HarnessProbe { runnable: boolean; version: string | null; failure?: HarnessProbeFailure }
-export interface ExecutableCandidateFailure {
-  path: string
-  reason: string
-}
 type ExecutableFinder = (
   descriptor: HarnessDescriptor,
   configuredPath?: string,
@@ -143,8 +140,8 @@ export class HarnessDiscoveryService {
     const runtimePaths = this.runtimePaths()
     const discovered = await Promise.all(HARNESS_IDS.map(async (harness): Promise<HarnessStatus> => {
       const probes = new Map<string, HarnessProbe>()
-      let lastFailure: ExecutableCandidateFailure | undefined
-      let overrideFailure: ExecutableCandidateFailure | undefined
+      let lastFailure: HarnessProblem | undefined
+      let overrideFailure: HarnessProblem | undefined
       const probe = async (candidate: string) => {
         const result = await this.probeExecutable(candidate)
         probes.set(candidate, result)
@@ -152,10 +149,10 @@ export class HarnessDiscoveryService {
       }
       const onFailure = (failure: ExecutableCandidateFailure): void => {
         const probeResult = probes.get(failure.path)
-        const reported = probeResult?.failure
+        const reported: HarnessProblem = probeResult?.failure
           ? { path: failure.path, reason: probeFailureDetail(probeResult.failure) }
-          : failure
-        lastFailure = reported
+          : { path: failure.path, reason: failure.reason }
+        if (failure.kind !== 'missing') lastFailure = reported
         const environmentOverride = process.env[HARNESSES[harness].binaryEnvVar]
         if ((runtimePaths[harness] && failure.path === runtimePaths[harness]) || (environmentOverride && failure.path === environmentOverride)) {
           overrideFailure = reported

@@ -122,7 +122,7 @@ describe('HarnessDiscoveryService', () => {
         findExecutable: async (descriptor, _configured, accept, onFailure) => {
           if (descriptor.id !== 'pi' || !accept) return null
           await accept('/broken/pi')
-          onFailure?.({ path: '/broken/pi', reason: 'probe failed' })
+          onFailure?.({ path: '/broken/pi', reason: 'probe failed', kind: 'rejected' })
           return null
         },
         probeExecutable: async () => ({ runnable: false, version: null, failure: probeFailure }),
@@ -143,14 +143,64 @@ describe('HarnessDiscoveryService', () => {
     try {
       const missingFailures: Array<{ path: string; reason: string }> = []
       await findHarnessExecutable(HARNESSES.pi, missing, async () => false, (failure) => missingFailures.push(failure))
-      expect(missingFailures.find((failure) => failure.path === missing)).toEqual({ path: missing, reason: 'path does not exist' })
+      expect(missingFailures.find((failure) => failure.path === missing)).toEqual({ path: missing, reason: 'path does not exist', kind: 'missing' })
 
       const nonExecutableFailures: Array<{ path: string; reason: string }> = []
       await findHarnessExecutable(HARNESSES.pi, nonExecutable, async () => false, (failure) => nonExecutableFailures.push(failure))
-      expect(nonExecutableFailures.find((failure) => failure.path === nonExecutable)).toEqual({ path: nonExecutable, reason: 'not executable' })
+      expect(nonExecutableFailures.find((failure) => failure.path === nonExecutable)).toEqual({ path: nonExecutable, reason: 'not executable', kind: 'rejected' })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('does not report an absent automatic candidate', async () => {
+    const discovery = new HarnessDiscoveryService(
+      () => ({ omp: '', prime: '', pi: '' }),
+      {
+        findExecutable: async (descriptor, _configured, _accept, onFailure) => {
+          if (descriptor.id === 'pi') onFailure?.({ path: '/automatic/pi', reason: 'path does not exist', kind: 'missing' })
+          return null
+        },
+      },
+    )
+
+    const statuses = await discovery.refresh()
+    expect(statuses).toMatchObject({
+      pi: { path: null, version: null },
+    })
+    expect(statuses.pi.problem).toBeUndefined()
+  })
+
+  it('reports an automatic candidate that exists but is rejected', async () => {
+    const discovery = new HarnessDiscoveryService(
+      () => ({ omp: '', prime: '', pi: '' }),
+      {
+        findExecutable: async (descriptor, _configured, _accept, onFailure) => {
+          if (descriptor.id === 'pi') onFailure?.({ path: '/automatic/pi', reason: 'probe failed', kind: 'rejected' })
+          return null
+        },
+      },
+    )
+
+    await expect(discovery.refresh()).resolves.toMatchObject({
+      pi: { path: null, version: null, problem: { path: '/automatic/pi', reason: 'probe failed' } },
+    })
+  })
+
+  it('reports an absent configured override', async () => {
+    const discovery = new HarnessDiscoveryService(
+      () => ({ omp: '', prime: '', pi: '/configured/pi' }),
+      {
+        findExecutable: async (descriptor, _configured, _accept, onFailure) => {
+          if (descriptor.id === 'pi') onFailure?.({ path: '/configured/pi', reason: 'path does not exist', kind: 'missing' })
+          return null
+        },
+      },
+    )
+
+    await expect(discovery.refresh()).resolves.toMatchObject({
+      pi: { path: null, version: null, problem: { path: '/configured/pi', reason: 'path does not exist' } },
+    })
   })
 
   it('keeps the meaningful last stderr line in a probe failure', async () => {
