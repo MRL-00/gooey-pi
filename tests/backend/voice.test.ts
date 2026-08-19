@@ -226,7 +226,7 @@ describe('VoiceService', () => {
 
   it('rejects insecure remote self-hosted URLs and oversized provider responses', async () => {
     const { service } = makeService()
-    await expect(service.testSelfHosted({ url: 'http://192.168.1.20:9000', model: '' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
+    await expect(service.testSelfHosted({ url: 'http://8.8.8.8:9000', model: '' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
 
     const settings = { ...defaultSettings(), voiceSelfHostedUrl: 'https://speech.example.test', voiceSelfHostedModel: '' }
     const fetchMock = vi.fn(async () => new Response('{}', { headers: { 'content-length': String(2 * 1024 * 1024 + 1) } }))
