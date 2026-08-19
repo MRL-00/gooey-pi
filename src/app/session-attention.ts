@@ -60,10 +60,20 @@ export function sessionCompanionNotificationSignature(session: SessionRecord): s
   return session.unread ? `unread:${revision}` : undefined
 }
 
+export function signatureCleared(signature: string | undefined, clearedSignature: string | undefined, unread = false): boolean {
+  if (!signature || !clearedSignature) return false
+  if (signature === clearedSignature) return true
+  const separator = signature.indexOf(':')
+  const clearedSeparator = clearedSignature.indexOf(':')
+  if (separator < 0 || clearedSeparator < 0 || signature.slice(separator + 1) !== clearedSignature.slice(clearedSeparator + 1)) return false
+  const status = signature.slice(0, separator)
+  return status === 'idle' || status === 'complete' && !unread
+}
+
 export function sessionShowsCompanionNotification(session: SessionRecord, clearedSignature?: string): boolean {
   if (session.archived) return false
   const signature = sessionCompanionNotificationSignature(session)
-  return Boolean(signature && signature !== clearedSignature)
+  return Boolean(signature && !signatureCleared(signature, clearedSignature, session.unread))
 }
 
 export function activityNotificationSignature(session: SessionRecord): string | undefined {
