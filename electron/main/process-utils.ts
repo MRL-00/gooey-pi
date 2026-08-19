@@ -57,8 +57,8 @@ export function processOutcome(result: ProcessResult, output: string): ProcessOu
   return reason ? { ok: false, output, reason } : { ok: true, output }
 }
 
-const PROCESS_CONCURRENCY_LIMIT = 8
-const PROCESS_QUEUE_LIMIT = 64
+export const PROCESS_CONCURRENCY_LIMIT = 8
+export const PROCESS_QUEUE_LIMIT = 64
 
 const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
 const activeChildren = new Set<ChildProcess>()
@@ -520,6 +520,8 @@ export function runProcess(file: string, args: readonly string[], options: {
       if (outputExceeded) return
       outputExceeded = true
       terminateChild(child, 'SIGTERM')
+      // Output limits need their own short escalation rather than waiting for
+      // the operation timeout while a producer ignores TERM.
       if (limitKillTimer) clearTimeout(limitKillTimer)
       limitKillTimer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) terminateChild(child, 'SIGKILL')
@@ -550,6 +552,8 @@ export function runProcess(file: string, args: readonly string[], options: {
       reject(error)
     }
     child.once('error', fail)
+    // Read-pipe errors (EPIPE/ECONNRESET from a killed child) would otherwise be
+    // uncaught 'error' events that crash the main process.
     const failPipe = (error: Error): void => {
       if (settled) return
       terminateChild(child, 'SIGTERM')
