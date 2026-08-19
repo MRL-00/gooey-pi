@@ -1,4 +1,5 @@
 import type { HarnessId } from '../../src/types/api'
+import { join } from 'node:path'
 
 export type ExtensionCapability = 'schedule' | 'browser' | 'askUser' | 'collaboration' | 'piFastMode'
 
@@ -51,12 +52,7 @@ export interface ExtensionPathContext {
   readonly resourcesPath: string
 }
 
-function appendPath(root: string, ...parts: string[]): string {
-  const separator = root.includes('\\') ? '\\' : '/'
-  return [root.replace(/[\\/]+$/, ''), ...parts].join(separator)
-}
-
 export function resolveExtensionPath(filename: string, context: ExtensionPathContext): string {
-  const root = context.isPackaged ? context.resourcesPath : appendPath(context.appPath, 'assets')
-  return appendPath(root, 'extensions', filename)
+  const root = context.isPackaged ? context.resourcesPath : join(context.appPath, 'assets')
+  return join(root, 'extensions', filename)
 }
