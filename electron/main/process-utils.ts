@@ -40,7 +40,7 @@ export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
   if (typeof value !== 'string') return undefined
   const range = value.trim()
   if (!range) return undefined
-  const match = range.match(/^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\s+<\s+\S+)?$/)
+  const match = range.match(/^>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\s+<\s*\S+)?$/)
   if (!match) return undefined
   if (match[4] && (match[2] === undefined || match[3] === undefined)) return undefined
   return {
