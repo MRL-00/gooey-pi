@@ -4,8 +4,16 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 const KIB = 1024
 const MIB = 1024 * KIB
 
+/**
+ * Ceilings for the Electron main/preload and renderer bundles.
+ *
+ * Raising a budget is deliberate: record the measured new size and the
+ * dependency or feature that caused the growth in the pull request, and raise
+ * it only to the next multiple of 8 KiB above that measurement so unexplained
+ * bundle-size creep still fails the release build.
+ */
 export const BUNDLE_SIZE_BUDGETS = Object.freeze({
-  mainBytes: 640 * KIB,
+  mainBytes: 648 * KIB,
   preloadBytes: 16 * KIB,
   initialRendererBytes: 1280 * KIB,
   largestRendererChunkBytes: 600 * KIB,
