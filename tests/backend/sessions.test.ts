@@ -374,6 +374,9 @@ describe('Prime task-state freshness', () => {
 
     appendFileSync(file, `${JSON.stringify({ type: 'agent_status', status: { summary: 'Waiting again', taskState: 'needs_input', basedOnMessageCount: 2 } })}\n`)
     expect((await reader(file)).status).toBe('waiting')
+
+    appendFileSync(file, `${JSON.stringify({ type: 'agent_status', status: { summary: 'Waiting without a count', taskState: 'needs_input' } })}\n`)
+    expect((await reader(file)).status).toBe('waiting')
   })
 })
 
