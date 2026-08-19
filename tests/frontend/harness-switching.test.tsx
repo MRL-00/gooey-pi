@@ -579,7 +579,7 @@ describe('harness settings surfaces', () => {
       root.render(<AgentSettings settings={{ ...DEFAULT_SETTINGS, activeHarness: 'prime' }} meta={problemMeta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />)
     })
 
-    expect(container.textContent).toContain('exited with code 1: Node.js is too old')
+    expect(container.textContent).toContain('/Users/you/.local/bin/pi: exited with code 1: Node.js is too old')
   })
 
   it('renders OMP provider toggles while keeping credentials CLI-owned', async () => {

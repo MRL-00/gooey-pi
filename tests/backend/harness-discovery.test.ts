@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HarnessDiscoveryService, detectedHarnesses, reconcileActiveHarness, type HarnessProbeFailure } from '../../electron/main/harness-discovery'
+import { HarnessDiscoveryService, detectedHarnesses, probeHarnessExecutable, reconcileActiveHarness, type HarnessProbeFailure } from '../../electron/main/harness-discovery'
 import { defaultSettings, type DesktopState } from '../../electron/main/store'
 import { HARNESSES, type HarnessDescriptor } from '../../electron/main/harness'
 import { findHarnessExecutable } from '../../electron/main/process-utils'
@@ -61,7 +61,7 @@ describe('HarnessDiscoveryService', () => {
     })
     expect(discovery.executable('omp')).toBe('/configured/omp')
     expect(detectedHarnesses(statuses)).toEqual(['omp', 'pi'])
-    expect(findExecutable).toHaveBeenCalledWith(expect.objectContaining({ id: 'omp' }), '/configured/omp', expect.any(Function))
+    expect(findExecutable).toHaveBeenCalledWith(expect.objectContaining({ id: 'omp' }), '/configured/omp', expect.any(Function), expect.any(Function))
   })
 
   it('excludes existing but non-runnable candidates and continues discovery', async () => {
@@ -148,6 +148,21 @@ describe('HarnessDiscoveryService', () => {
       const nonExecutableFailures: Array<{ path: string; reason: string }> = []
       await findHarnessExecutable(HARNESSES.pi, nonExecutable, async () => false, (failure) => nonExecutableFailures.push(failure))
       expect(nonExecutableFailures.find((failure) => failure.path === nonExecutable)).toEqual({ path: nonExecutable, reason: 'not executable' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the meaningful last stderr line in a probe failure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gooeypi-probe-'))
+    const executable = join(dir, 'pi')
+    writeFileSync(executable, '#!/bin/sh\nprintf "warning noise\\n(node:123) ExperimentalWarning: noisy\\nTypeError: webidl.util.markAsUncloneable is not a function\\n" >&2\nexit 1\n')
+    chmodSync(executable, 0o755)
+    try {
+      await expect(probeHarnessExecutable(executable)).resolves.toMatchObject({
+        runnable: false,
+        failure: { kind: 'exit', detail: 'TypeError: webidl.util.markAsUncloneable is not a function' },
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

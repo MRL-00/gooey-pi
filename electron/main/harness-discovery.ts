@@ -1,6 +1,6 @@
 import { HARNESS_IDS, type AppSettings, type HarnessId, type HarnessStatus } from '../../src/types/api'
 import { HARNESSES, type HarnessDescriptor } from './harness'
-import { clearNodeInterpreterCache, findHarnessExecutable, processFailureReason, runProcess } from './process-utils'
+import { clearNodeInterpreterCache, findHarnessExecutable, NodeInterpreterResolutionError, processFailureReason, runProcess } from './process-utils'
 import type { JsonStateStore } from './store'
 
 type RuntimePaths = Record<HarnessId, string>
@@ -39,6 +39,11 @@ function sanitizedDetail(value: string): string {
   return [...value].filter((character) => !hasControlCharacter(character)).join('').trim().slice(0, 200)
 }
 
+function processDetail(stdout: string, stderr: string): string {
+  const lastNonEmptyLine = (value: string): string | undefined => value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).at(-1)
+  return sanitizedDetail(lastNonEmptyLine(stderr) ?? lastNonEmptyLine(stdout) ?? '')
+}
+
 function probeFailureDetail(failure: HarnessProbeFailure): string {
   const suffix = failure.detail ? `: ${failure.detail}` : ''
   if (failure.kind === 'exit') return `exited with code ${failure.code ?? 'unknown'}${suffix}`
@@ -48,10 +53,8 @@ function probeFailureDetail(failure: HarnessProbeFailure): string {
 }
 
 function spawnFailure(error: unknown): HarnessProbeFailure {
+  if (error instanceof NodeInterpreterResolutionError) return { kind: 'spawn', detail: sanitizedDetail(error.detail) }
   const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN'
-  if (code === 'ENGINE_UNSATISFIED' && typeof error === 'object' && error !== null && 'detail' in error && typeof error.detail === 'string') {
-    return { kind: 'spawn', detail: sanitizedDetail(error.detail) }
-  }
   const detail = code === 'ENOENT'
     ? 'path does not exist'
     : code === 'EACCES' || code === 'EPERM'
@@ -71,14 +74,13 @@ export async function probeHarnessExecutable(executable: string): Promise<Harnes
     const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 16 * 1024 })
     const failure = processFailureReason(result)
     if (failure) {
-      const kind: HarnessProbeFailureKind = failure === 'exit' || failure === 'timeout' || failure === 'overflow' ? failure : 'spawn'
       return {
         runnable: false,
         version: null,
         failure: {
-          kind,
-          ...(kind === 'exit' ? { code: result.code } : {}),
-          detail: sanitizedDetail(result.stderr),
+          kind: failure,
+          ...(failure === 'exit' ? { code: result.code } : {}),
+          detail: processDetail(result.stdout, result.stderr),
         },
       }
     }
@@ -154,11 +156,12 @@ export class HarnessDiscoveryService {
           ? { path: failure.path, reason: probeFailureDetail(probeResult.failure) }
           : failure
         lastFailure = reported
-        if (runtimePaths[harness] && failure.path === runtimePaths[harness]) overrideFailure = reported
+        const environmentOverride = process.env[HARNESSES[harness].binaryEnvVar]
+        if ((runtimePaths[harness] && failure.path === runtimePaths[harness]) || (environmentOverride && failure.path === environmentOverride)) {
+          overrideFailure = reported
+        }
       }
-      const path = await (this.findExecutable === findHarnessExecutable
-        ? this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe, onFailure)
-        : this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe))
+      const path = await this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe, onFailure)
       if (!path) {
         const lastProbe = [...probes.values()].at(-1)
         const problem = overrideFailure ?? lastFailure ?? (lastProbe?.failure
