@@ -1,7 +1,7 @@
 import { Bell, CheckCircle2, CircleAlert, Clock3, LoaderCircle, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ProjectRecord, SessionRecord } from '@/types/api'
-import { activityNotificationSignature } from '@/app/session-attention'
+import { activityNotificationSignature, signatureCleared } from '@/app/session-attention'
 import { formatRelative } from '@/lib/data'
 import { EmptyState, Segmented } from '@/components/ui'
 
@@ -37,11 +37,11 @@ export function ActivityPage({ sessions, projects, clearedActivity, onOpen, onCl
   const normalized = query.trim().toLowerCase()
   const clearable = useMemo(() => sessions.filter((session) => {
     const signature = activityNotificationSignature(session)
-    return Boolean(signature && clearedActivity[session.id] !== signature)
+    return Boolean(signature && !signatureCleared(signature, clearedActivity[session.id], session.unread))
   }), [clearedActivity, sessions])
   const visible = useMemo(() => sessions.filter((session) => {
     const signature = activityNotificationSignature(session)
-    const statusMatches = !session.archived && (!signature || clearedActivity[session.id] !== signature) && (
+    const statusMatches = !session.archived && (!signature || !signatureCleared(signature, clearedActivity[session.id], session.unread)) && (
       filter === 'all'
       || filter === 'attention' && (session.unread || session.status === 'waiting' || session.status === 'failed')
       || filter === 'running' && session.status === 'running'
