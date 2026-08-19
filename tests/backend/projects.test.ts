@@ -92,6 +92,46 @@ describe('ProjectService list enrichment', () => {
     expect(errors.every((error) => error instanceof TypeError)).toBe(true)
   })
 
+  it('does not resurrect an inferred root from a stale list during removal', async () => {
+    const { root, service } = setup()
+    const current = session('session', root, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')
+    service.bindProviders({ sessions: async () => [current], branch: async () => undefined })
+    const [inferred] = await service.list()
+
+    const sessionsStarted = deferred<void>()
+    const staleSessions = deferred<SessionRecord[]>()
+    const stopStarted = deferred<void>()
+    const releaseStop = deferred<void>()
+    let sessionCalls = 0
+    service.bindProviders({
+      sessions: async () => {
+        sessionCalls += 1
+        if (sessionCalls === 1) {
+          sessionsStarted.resolve()
+          return staleSessions.promise
+        }
+        return []
+      },
+      branch: async () => undefined,
+      stopProjectProcesses: async () => {
+        stopStarted.resolve()
+        await releaseStop.promise
+      },
+    })
+
+    const removal = service.remove(inferred.id)
+    await stopStarted.promise
+    const staleList = service.list()
+    await sessionsStarted.promise
+    releaseStop.resolve()
+    await expect(removal).resolves.toBe(true)
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside/)
+
+    staleSessions.resolve([current])
+    await staleList
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside/)
+  })
+
   it('aggregates canonical session metadata once for persisted and inferred projects', async () => {
     const { root, service, store } = setup()
     const projectAlias = `${root}-alias`

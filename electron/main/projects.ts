@@ -334,12 +334,6 @@ export class ProjectService {
       const folderSet = new Set<string>()
       let primaryGranted = false
       for (const folder of project.folders) {
-        if (authorizationRevision !== this.authorizationRevision) return {
-          sessions: [],
-          canonicalSessionPaths: new Map(),
-          persisted,
-          discoveredSessionRoots: [],
-        }
         const { configured, canonical, expected, verified } = await this.resolveFolderAuthorization(project, folder)
         folderSet.add(canonical)
         represented.add(configured)
@@ -379,9 +373,10 @@ export class ProjectService {
     return { sessions, canonicalSessionPaths, persisted, discoveredSessionRoots }
   }
 
-  private refreshAuthorization(): Promise<AuthorizationContext> {
+  private refreshAuthorization(force = false): Promise<AuthorizationContext> {
+    if (force) this.authorizationRevision += 1
     const revision = this.authorizationRevision
-    if (this.authorizationRefresh?.revision === revision) return this.authorizationRefresh.promise
+    if (!force && this.authorizationRefresh?.revision === revision) return this.authorizationRefresh.promise
     const promise = this.buildAuthorizationContext(revision)
     const tracked = promise.then(
       (context) => {
@@ -648,7 +643,7 @@ export class ProjectService {
   /** Rebuilds authorization into fresh maps and swaps them in one step. */
   private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
     if (authorizationRevision !== this.authorizationRevision) return
-    await this.refreshAuthorization()
+    await this.refreshAuthorization(true)
   }
 
   async touch(idValue: unknown): Promise<boolean> {
@@ -745,6 +740,7 @@ export class ProjectService {
             }], authorizationRevision)
             if (!refreshed.has(configured)) { map.delete(configured); continue }
           }
+          // Read-only roots are re-captured by the next discovery pass; refreshing in place would only hide drift.
           if (!isReadOnlyMap) map.set(configured, verified.identity)
         }
         if (this.removalRoots.has(verified.path) || this.pendingRemovalIds.has(inferredId(verified.path))) continue
