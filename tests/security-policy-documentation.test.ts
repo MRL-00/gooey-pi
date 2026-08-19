@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { localMarkdownTargets } from './helpers/markdown'
 
 const policyPath = resolve('.github/SECURITY.md')
 const readmePath = resolve('README.md')
@@ -8,15 +9,6 @@ const securityModelPath = resolve('docs/security.md')
 const policy = readFileSync(policyPath, 'utf8')
 const readme = readFileSync(readmePath, 'utf8')
 const securityModel = readFileSync(securityModelPath, 'utf8')
-
-function localMarkdownTargets(sourcePath: string, source: string): string[] {
-  return [...source.matchAll(/\]\(([^)]+)\)/g)]
-    .map((match) => match[1].trim().replace(/^<|>$/g, ''))
-    .filter((target) => !/^(?:https?:|mailto:|#)/.test(target))
-    .map((target) => target.split('#')[0])
-    .filter(Boolean)
-    .map((target) => resolve(dirname(sourcePath), target))
-}
 
 describe('repository security policy', () => {
   test('uses GitHub-recognized placement and identifies supported versions', () => {
