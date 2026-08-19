@@ -33,6 +33,7 @@ import { useStableCallback } from '@/hooks/useStableCallback'
 import { useToast } from '@/hooks/useToast'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
+import { useQueuedPromptFlush } from '@/hooks/useQueuedPromptFlush'
 import { HARNESS_IDS, type GitStatus, type GitWorktree, type HarnessId, type NativeHeartbeatRecord, type PrimeModelDescriptor, type PrimeProviderDescriptor, type ProjectRecord, type AutomationScheduleRecord, type QueuedPrompt, type ScheduleTiming, type SessionRecord, type TerminalSelectionContext, type VoiceTaskStarted, type WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
@@ -251,6 +252,7 @@ export default function App() {
     bridge, runtimeIdRef: workspace.runtimeIdRef, runtimeSessionsRef: workspace.runtimeSessionsRef,
     runtimeOwnerRef: workspace.runtimeOwnerRef, workspaceRef: workspace.workspaceRef,
     setSessions, setRuntime: workspace.setRuntime, reconcileQueuedPrompts: workspace.reconcileQueuedPrompts,
+    clearQueuedPromptFlushFailures: workspace.clearQueuedPromptFlushFailures,
     clearQueuedPrompts: workspace.clearQueuedPrompts, queueAgentEvent: workspace.queueAgentEvent,
     reconcileTranscriptForEvent: workspace.reconcileTranscriptForEvent,
     showExtensionUi: extension.showExtensionUi, clearExtensionUi: extension.clearExtensionUi,
@@ -491,15 +493,15 @@ export default function App() {
     setRestorePetVoiceFocus(false)
     setVoiceOrbOpen(nextOpen)
   }, [voiceOrbOpen])
-  useEffect(() => {
-    if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || queuedMessages.length === 0) return
-    const next = queuedMessages[0]
-    queuedFlushRef.current = true
-    void sendPrompt(next.text, [], 'queue')
-      // Remove on failure too: sendPrompt already surfaced the error, and
-      // leaving the prompt queued would retry in a hot loop.
-      .finally(() => { workspace.removeQueuedPrompt(next.id); queuedFlushRef.current = false })
-  }, [bridge, busy, externalSessionRunning, queuedMessages, sendPrompt, submitting, workspace.removeQueuedPrompt])
+  useQueuedPromptFlush({
+    bridge,
+    busy,
+    externalSessionRunning,
+    submitting,
+    queuedMessages,
+    queuedFlushRef,
+    sendPrompt,
+  })
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} clearedActivity={clearedActivity} onOpen={selectSession} onClear={clearActivity} />

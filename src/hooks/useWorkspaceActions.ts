@@ -251,7 +251,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error) }
   }
 
-  const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
+  const sendPrompt = async (
+    prompt: string,
+    images: PromptImage[] = [],
+    intent: PromptDeliveryIntent = 'queue',
+    queuedFlushPromptId?: string,
+  ) => {
     const { bridge, sessions, workspace, provider, settingsState, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, setView, setToast, reportError } = getDeps()
     const commandHarness = workspace.workspaceRef?.current?.project?.harness ?? settingsState.settings.activeHarness
     const mcpCommand = parseMcpCommand(prompt, commandHarness)
@@ -274,9 +279,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       && currentOwner?.runtimeId === currentRuntime.runtimeId
       && currentOwner.generation === currentWorkspace.generation,
     )
+    const completeQueuedFlush = () => {
+      if (queuedFlushPromptId) workspace.removeQueuedPrompt(queuedFlushPromptId)
+    }
     if (ownsStreamingRuntime && currentRuntime && bridge) {
       if (intent === 'queue' && images.length === 0) {
-        workspace.queuePrompt(prompt, intent)
+        if (!queuedFlushPromptId) workspace.queuePrompt(prompt, intent)
         return
       }
       if (intent === 'steer') {
@@ -313,6 +321,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       const generation = admitted.generation
       let startedPrompt = false
       let queuedPromptId: string | undefined
+      const sentAt = Date.now()
+      const sentAtIso = new Date(sentAt).toISOString()
+      const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
+      let userMessageAppended = false
       const followUpExternalSession = async (sessionFile: string): Promise<boolean> => {
         if (!bridge) return false
         // The daemon owns the message once accepted; queuing it locally as
@@ -331,10 +343,6 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           return
         }
         if (!workspace.prepareForPrompt(generation)) return
-        const sentAt = Date.now()
-        const sentAtIso = new Date(sentAt).toISOString()
-        const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
-        let userMessageAppended = false
         const appendUserMessage = () => {
           if (userMessageAppended) return
           // The workspace may have switched while a command was in flight;
@@ -364,7 +372,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         let activeRuntime = belongsHere ? tracked : findRuntimeForWorkspace(liveRuntimes, selected.cwd, selected.sessionFile)
         const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
         if (intent === 'queue' && images.length === 0 && (activeRuntime?.isStreaming || selectedSession?.status === 'running')) {
-          queuedPromptId = workspace.queuePrompt(prompt, intent)
+          if (!queuedFlushPromptId) queuedPromptId = workspace.queuePrompt(prompt, intent)
           return
         }
         let startedRuntime = false
@@ -374,16 +382,18 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           if (images.length > 0 && selected.sessionFile && selectedSession?.status === 'running') {
             throw new Error('Image attachments cannot be queued while this session is active outside GooeyPi. Wait for it to finish, then try again.')
           }
-          if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
+            if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await followUpExternalSession(selected.sessionFile)) {
-            if (intent === 'steer') appendUserMessage()
-            return
-          }
+              if (intent === 'steer') appendUserMessage()
+              completeQueuedFlush()
+              return
+            }
           try {
             activeRuntime = await bridge.agent.start({ cwd: selected.cwd, sessionPath: selected.sessionFile, model: provider.model === 'auto' ? undefined : provider.model, thinking: provider.effort, fast: provider.fast, harness: activeHarness })
           } catch (startError) {
             if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) {
               if (intent === 'steer') appendUserMessage()
+              completeQueuedFlush()
               return
             }
             throw startError
@@ -418,6 +428,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             const actions = parseSessionActionSnapshot(response.sessionActions)
             if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
           }
+          completeQueuedFlush()
         } else {
           startedPrompt = true
           appendUserMessage()
@@ -443,6 +454,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           }
         }
       } catch (error) {
+        if (queuedFlushPromptId) {
+          workspace.markQueuedPromptFlushFailed(queuedFlushPromptId)
+          if (userMessageAppended) {
+            workspace.setMessages((items) => items.filter((item) => item.id !== userMessage.id))
+          }
+        }
         if (queuedPromptId) workspace.removeQueuedPrompt(queuedPromptId)
         if (workspace.workspaceRef.current.generation !== generation) return
         const failure = requestFailureMessage(error)
