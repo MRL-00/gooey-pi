@@ -63,6 +63,75 @@ function deferred<T>() {
 }
 
 describe('ProjectService list enrichment', () => {
+  it('coalesces concurrent denied read-only checks without branch enrichment', async () => {
+    const { root, service } = setup()
+    const sessionsStarted = deferred<void>()
+    const releaseSessions = deferred<void>()
+    let discoveryCalls = 0
+    let branchCalls = 0
+    service.bindProviders({
+      sessions: async () => {
+        discoveryCalls += 1
+        sessionsStarted.resolve()
+        await releaseSessions.promise
+        return []
+      },
+      branch: async () => {
+        branchCalls += 1
+        return 'main'
+      },
+    })
+
+    const checks = Promise.all(Array.from({ length: 4 }, () => service.authorizeReadOnlyCwd(root).catch((error: unknown) => error)))
+    await sessionsStarted.promise
+    expect(discoveryCalls).toBe(1)
+    expect(branchCalls).toBe(0)
+    releaseSessions.resolve()
+    const errors = await checks
+    expect(errors).toHaveLength(4)
+    expect(errors.every((error) => error instanceof TypeError)).toBe(true)
+  })
+
+  it('does not resurrect an inferred root from a stale list during removal', async () => {
+    const { root, service } = setup()
+    const current = session('session', root, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')
+    service.bindProviders({ sessions: async () => [current], branch: async () => undefined })
+    const [inferred] = await service.list()
+
+    const sessionsStarted = deferred<void>()
+    const staleSessions = deferred<SessionRecord[]>()
+    const stopStarted = deferred<void>()
+    const releaseStop = deferred<void>()
+    let sessionCalls = 0
+    service.bindProviders({
+      sessions: async () => {
+        sessionCalls += 1
+        if (sessionCalls === 1) {
+          sessionsStarted.resolve()
+          return staleSessions.promise
+        }
+        return []
+      },
+      branch: async () => undefined,
+      stopProjectProcesses: async () => {
+        stopStarted.resolve()
+        await releaseStop.promise
+      },
+    })
+
+    const removal = service.remove(inferred.id)
+    await stopStarted.promise
+    const staleList = service.list()
+    await sessionsStarted.promise
+    releaseStop.resolve()
+    await expect(removal).resolves.toBe(true)
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside/)
+
+    staleSessions.resolve([current])
+    await staleList
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside/)
+  })
+
   it('aggregates canonical session metadata once for persisted and inferred projects', async () => {
     const { root, service, store } = setup()
     const projectAlias = `${root}-alias`
@@ -115,9 +184,46 @@ describe('ProjectService list enrichment', () => {
       lastOpenedAt: '2026-03-07T00:00:00.000Z',
       sessionCount: 2,
       inferred: true,
+      readOnly: true,
     })
     expect(records.some((record) => record.path === realpathSync(dismissed))).toBe(false)
     expect(records.some((record) => record.path === resolve(missing))).toBe(false)
+  })
+
+  it('enriches persisted branches without spawning git for inferred roots', async () => {
+    const { root, service, store } = setup()
+    const inferredRoots = [1, 2, 3].map((index) => `${root}-inferred-${index}`)
+    for (const inferredRoot of inferredRoots) mkdirSync(inferredRoot)
+    const now = '2026-01-01T00:00:00.000Z'
+    await store.update((state) => {
+      state.projects.push({
+        id: 'persisted',
+        harness: 'prime',
+        name: 'Persisted',
+        path: root,
+        folders: [root],
+        primaryFolder: root,
+        pinned: false,
+        createdAt: now,
+        lastOpenedAt: now,
+        folderIdentities: identities(root),
+      })
+    })
+    const sessions = inferredRoots.map((path, index) => session(`inferred-${index}`, path, now, now))
+    const branchCwds: string[] = []
+    service.bindProviders({
+      sessions: async () => sessions,
+      branch: async (cwd) => {
+        branchCwds.push(cwd)
+        return 'main'
+      },
+    })
+
+    const records = await service.list()
+    expect(branchCwds).toEqual([root])
+    expect(records.find((record) => record.id === 'persisted')?.gitBranch).toBe('main')
+    expect(records.filter((record) => record.inferred)).toHaveLength(inferredRoots.length)
+    expect(records.filter((record) => record.inferred).every((record) => record.gitBranch === undefined)).toBe(true)
   })
 
   it('bounds overlapping branch enrichment without changing record order or undefined branches', async () => {
@@ -366,6 +472,185 @@ describe('ProjectService file listing', () => {
   it('rejects paths that have not been added as projects', async () => {
     const { root, service } = setup()
     await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('lists files for an inferred project discovered from sessions without manual addition', async () => {
+    const { root, service } = setup()
+    writeFileSync(join(root, 'README.md'), 'inferred project readme')
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'src', 'main.ts'), 'console.log("hello")')
+    service.bindProviders({
+      sessions: async () => [session('session-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')],
+      branch: async () => undefined,
+    })
+
+    const listing = await service.listFiles(root)
+    expect(listing).toEqual({
+      entries: [
+        { path: 'src', type: 'directory' },
+        { path: 'src/main.ts', type: 'file' },
+        { path: 'README.md', type: 'file' },
+      ],
+      skipped: 0,
+    })
+  })
+
+  it('lists files for an inferred Pi Work project discovered from Pi agent sessions', async () => {
+    const { root, store } = setup()
+    const piService = new ProjectService(store, () => null, 'pi')
+    writeFileSync(join(root, 'config.json'), '{}')
+    piService.bindProviders({
+      sessions: async () => [{
+        id: 'pi-session-1',
+        harness: 'pi',
+        filePath: join(root, 'pi-session-1.jsonl'),
+        projectPath: root,
+        title: 'Pi Session',
+        createdAt: '2026-03-01T00:00:00.000Z',
+        updatedAt: '2026-03-02T00:00:00.000Z',
+        status: 'idle',
+        depth: 0,
+        archived: false,
+      }],
+      branch: async () => undefined,
+    })
+
+    const listing = await piService.listFiles(root)
+    expect(listing).toEqual({
+      entries: [
+        { path: 'config.json', type: 'file' },
+      ],
+      skipped: 0,
+    })
+  })
+
+  it('lists files for an inferred OMP project discovered from OMP sessions', async () => {
+    const { root, store } = setup()
+    const ompService = new ProjectService(store, () => null, 'omp')
+    writeFileSync(join(root, 'omp-config.yaml'), 'version: 1')
+    ompService.bindProviders({
+      sessions: async () => [{
+        id: 'omp-session-1',
+        harness: 'omp',
+        filePath: join(root, 'omp-session-1.jsonl'),
+        projectPath: root,
+        title: 'OMP Session',
+        createdAt: '2026-03-01T00:00:00.000Z',
+        updatedAt: '2026-03-02T00:00:00.000Z',
+        status: 'idle',
+        depth: 0,
+        archived: false,
+      }],
+      branch: async () => undefined,
+    })
+
+    const listing = await ompService.listFiles(root)
+    expect(listing).toEqual({
+      entries: [
+        { path: 'omp-config.yaml', type: 'file' },
+      ],
+      skipped: 0,
+    })
+  })
+
+  it('revokes file listing authorization when an inferred project is dismissed', async () => {
+    const { root, service } = setup()
+    writeFileSync(join(root, 'README.md'), 'readme')
+    service.bindProviders({
+      sessions: async () => [session('session-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')],
+      branch: async () => undefined,
+    })
+
+    const listed = await service.list()
+    expect(listed).toHaveLength(1)
+    expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'README.md', type: 'file' }], skipped: 0 })
+
+    expect(await service.remove(listed[0].id)).toBe(true)
+    await expect(service.listFiles(root)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('revokes read-only authorization when a symlinked dismissal names the project', async () => {
+    const { root, service, store } = setup()
+    const alias = `${root}-alias`
+    symlinkSync(root, alias)
+    service.bindProviders({
+      sessions: async () => [session('session-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')],
+      branch: async () => undefined,
+    })
+
+    await service.list()
+    await expect(service.authorizeReadOnlyCwd(root)).resolves.toBe(realpathSync(root))
+    await store.update((state) => { state.dismissedProjectPaths.push(alias) })
+    await expect(service.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside an added Prime Work project/)
+  })
+
+  it('safely ignores stale and nonexistent session project paths during file listing', async () => {
+    const { root, service } = setup()
+    writeFileSync(join(root, 'index.ts'), 'export {}')
+    const nonexistent = join(root, 'does-not-exist')
+    service.bindProviders({
+      sessions: async () => [
+        session('stale-session', nonexistent, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'),
+        session('valid-session', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'),
+      ],
+      branch: async () => undefined,
+    })
+
+    expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'index.ts', type: 'file' }], skipped: 0 })
+  })
+
+  it('continues rebuild past empty projectPath entries to authorize later valid session roots', async () => {
+    const { root, service } = setup()
+    writeFileSync(join(root, 'main.ts'), 'export const x = 1')
+    service.bindProviders({
+      sessions: async () => [
+        session('empty-1', '', '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'),
+        session('valid-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'),
+      ],
+      branch: async () => undefined,
+    })
+
+    await service.list()
+    expect(await service.listFiles(root)).toEqual({ entries: [{ path: 'main.ts', type: 'file' }], skipped: 0 })
+  })
+
+  it('lazily re-lists and authorizes newly discovered session roots during file listing', async () => {
+    const { root, service } = setup()
+    const newlyDiscovered = `${root}-newly-discovered`
+    mkdirSync(newlyDiscovered)
+    writeFileSync(join(newlyDiscovered, 'app.ts'), 'console.log("new")')
+    let sessionsList: SessionRecord[] = []
+    service.bindProviders({
+      sessions: async () => sessionsList,
+      branch: async () => undefined,
+    })
+
+    await service.list()
+    await expect(service.listFiles(newlyDiscovered)).rejects.toThrow(/not inside/)
+
+    sessionsList = [session('new-session', newlyDiscovered, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')]
+    const listing = await service.listFiles(newlyDiscovered)
+    expect(listing).toEqual({ entries: [{ path: 'app.ts', type: 'file' }], skipped: 0 })
+  })
+
+  it('canonicalizes symlinked session roots and deduplicates aliases', async () => {
+    const { root, service } = setup()
+    const symlinkAlias = `${root}-alias`
+    symlinkSync(root, symlinkAlias)
+    writeFileSync(join(root, 'index.ts'), 'export {}')
+    service.bindProviders({
+      sessions: async () => [
+        session('s1', symlinkAlias, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z'),
+        session('s2', root, '2026-03-01T00:00:00.000Z', '2026-03-03T00:00:00.000Z'),
+      ],
+      branch: async () => undefined,
+    })
+
+    const records = await service.list()
+    expect(records).toHaveLength(1)
+    expect(records[0].path).toBe(realpathSync(root))
+    expect(records[0].sessionCount).toBe(2)
+    expect(await service.listFiles(symlinkAlias)).toEqual({ entries: [{ path: 'index.ts', type: 'file' }], skipped: 0 })
   })
 
   it.skipIf(process.platform === 'win32')('preserves backslashes in POSIX filenames', async () => {
@@ -642,6 +927,66 @@ describe('ProjectService harness scoping', () => {
     await expect(ompService.remove('omp-project')).resolves.toBe(true)
     expect(store.snapshot().projects.map((project) => project.id)).toEqual(['prime-project'])
     await expect(primeService.authorizeCwd(root)).resolves.toBe(realpathSync(root))
+  })
+
+  it('revokes session-derived read-only authorization across sibling harnesses when dismissed on one harness', async () => {
+    const { root, service: primeService, store } = setup()
+    const ompService = new ProjectService(store, () => null, 'omp')
+    const piService = new ProjectService(store, () => null, 'pi')
+    writeFileSync(join(root, 'file.txt'), 'content')
+
+    const sessions = [session('session-1', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')]
+    primeService.bindProviders({ sessions: async () => sessions, branch: async () => undefined })
+    ompService.bindProviders({ sessions: async () => sessions, branch: async () => undefined })
+    piService.bindProviders({ sessions: async () => sessions, branch: async () => undefined })
+
+    const [primeRecord] = await primeService.list()
+    const [ompRecord] = await ompService.list()
+    const [piRecord] = await piService.list()
+    expect(primeRecord.inferred).toBe(true)
+    expect(ompRecord.inferred).toBe(true)
+    expect(piRecord.inferred).toBe(true)
+
+    expect(await primeService.listFiles(root)).toEqual({ entries: [{ path: 'file.txt', type: 'file' }], skipped: 0 })
+    expect(await ompService.listFiles(root)).toEqual({ entries: [{ path: 'file.txt', type: 'file' }], skipped: 0 })
+    expect(await piService.listFiles(root)).toEqual({ entries: [{ path: 'file.txt', type: 'file' }], skipped: 0 })
+
+    // Prime dismisses the inferred project -> shared dismissedProjectPaths is updated
+    expect(await primeService.remove(primeRecord.id)).toBe(true)
+
+    // OMP and Pi must immediately reject without needing an explicit list() call
+    await expect(ompService.listFiles(root)).rejects.toThrow(/not inside an added OMP Work project/)
+    await expect(ompService.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside an added OMP Work project/)
+    await expect(piService.listFiles(root)).rejects.toThrow(/not inside an added Pi Work project/)
+    await expect(piService.authorizeReadOnlyCwd(root)).rejects.toThrow(/not inside an added Pi Work project/)
+  })
+
+  it('does not revoke an independent persisted grant on a sibling harness when an inferred project is removed', async () => {
+    const { root, service: primeService, store } = setup()
+    const ompRoot = `${root}-omp`
+    mkdirSync(ompRoot)
+    const ompService = new ProjectService(store, () => null, 'omp')
+    ompService.bindProviders({ sessions: async () => [], branch: async () => undefined })
+    const now = new Date().toISOString()
+    await store.update((state) => {
+      state.projects.push({
+        id: 'omp-project', harness: 'omp', name: 'OMP Persisted', path: ompRoot,
+        folders: [ompRoot], primaryFolder: ompRoot, pinned: false, createdAt: now, lastOpenedAt: now,
+        folderIdentities: identities(ompRoot),
+      })
+    })
+
+    primeService.bindProviders({
+      sessions: async () => [session('prime-inferred-session', root, '2026-03-01T00:00:00.000Z', '2026-03-02T00:00:00.000Z')],
+      branch: async () => undefined,
+    })
+
+    const [inferred] = await primeService.list()
+    expect(inferred.inferred).toBe(true)
+
+    expect(await primeService.remove(inferred.id)).toBe(true)
+    await expect(ompService.authorizeCwd(ompRoot)).resolves.toBe(realpathSync(ompRoot))
+    await expect(ompService.authorizeReadOnlyCwd(ompRoot)).resolves.toBe(realpathSync(ompRoot))
   })
 })
 

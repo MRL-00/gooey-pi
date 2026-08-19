@@ -30,6 +30,7 @@ function openApplicationMenu(menu: ApplicationMenuName, event: MouseEvent<HTMLBu
 
 interface TitleToolbarProps {
   project?: ProjectRecord
+  gitBranch?: string
   view: WorkspaceView
   /** Active harness product name; the session view's fallback title. */
   productName?: string
@@ -45,7 +46,7 @@ interface TitleToolbarProps {
   platform?: NodeJS.Platform
 }
 
-export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice, platform = 'darwin' }: TitleToolbarProps) {
+export function TitleToolbar({ project, gitBranch, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice, platform = 'darwin' }: TitleToolbarProps) {
   const { t } = useI18n()
   const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
   const terminalShortcut = shortcutLabel(platform, ['Primary', 'J'])
@@ -61,7 +62,7 @@ export function TitleToolbar({ project, view, productName = 'Prime Work', sideba
       </div>
       <div className="title-toolbar__identity">
         <strong>{project?.name ?? (view === 'session' ? productName : t(viewTitles[view]))}</strong>
-        {project?.gitBranch && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{project.gitBranch}</span> : null}
+        {(gitBranch ?? project?.gitBranch) && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{gitBranch ?? project?.gitBranch}</span> : null}
       </div>
       <div className="title-toolbar__actions no-drag">
         {view === 'session' && onToggleVoice ? <IconButton className={voiceOpen ? 'is-active voice-toggle--active' : ''} label={voiceOpen ? 'Close realtime voice' : 'Open realtime voice'} onClick={onToggleVoice}><AudioWaveform size={17} /></IconButton> : null}

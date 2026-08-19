@@ -86,8 +86,9 @@ export function mergeSessionCatalog(
     // snapshots, but a catalog transition to a different status takes
     // ownership. eventRevision itself remains monotonic for attention IDs.
     const statusEventRevision = status === previous?.status ? previous.statusEventRevision : undefined
+    const revisionAdvanced = !previous || Date.parse(record.updatedAt) > Date.parse(previous.updatedAt)
     const needsAttention = (record.status === 'waiting' || record.status === 'complete')
-      && previous?.status !== record.status
+      && previous?.status !== record.status && revisionAdvanced
     const recordChanged = !previous || sessionRecordChanged(previous, record, status)
     // A session's sync revision only advances when its own file changed:
     // catalog-wide ticks must not re-sync (or re-render) untouched sessions.
