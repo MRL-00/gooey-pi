@@ -158,6 +158,21 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - if: matrix.target != 'mac'
         run: node scripts/release/verify-cross-platform-package.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }} --unpacked-only
+      # The Linux packages install chrome-sandbox setuid-root, so the smoke restores
+      # those shipped permissions rather than launching with the sandbox disabled.
+      - if: matrix.target == 'linux'
+        run: |
+          sudo chown root:root release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
+      - name: Launch the packaged application
+        if: matrix.target != 'mac'
+        run: node scripts/release/smoke-packaged-app.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() && matrix.target != 'mac'
+        with:
+          name: packaged-smoke-diagnostics-${{ matrix.target }}-${{ matrix.arch }}
+          path: release/${{ matrix.target }}/${{ matrix.arch }}/packaged-smoke-diagnostics.log
+          if-no-files-found: error
 
   local-qa-package:
     if: github.event_name == 'workflow_dispatch'

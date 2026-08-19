@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell, webContents } from 'electron'
 import type { BrowserWindowConstructorOptions, Input, WebContents } from 'electron'
 import { extname, isAbsolute, join, relative, resolve, win32 as win32Path } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { assertNoMcpAuthenticationCommand } from '../../src/lib/mcp-policy'
@@ -20,6 +20,7 @@ import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { OmpModelCatalogService } from './providers-omp'
 import { PiModelCatalogService } from './providers-pi'
+import { PACKAGED_RENDERER_URL, PACKAGED_SMOKE_READY_EVENT, packagedSmokeMarker, packagedSmokeMarkerPath, serializePackagedSmokeMarker } from './packaged-smoke'
 import { PetService } from './pets'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
@@ -63,6 +64,7 @@ let shutdownStarted = false
 let shutdownApproved = false
 let confirmingShutdown = false
 let trustedRendererUrl = ''
+let packagedSmokeMarkerFile: string | null = null
 let windowCreation: Promise<BrowserWindow | null> | null = null
 let startInBackground = false
 const keepTestWindowsHidden = process.env.PRIME_WORK_E2E_HIDE_WINDOWS === '1'
@@ -126,7 +128,7 @@ export function resolveRendererAssetPath(rendererRoot: string, decodedPath: stri
 
 function resolveRendererUrl(): string {
   const developmentUrl = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
-  if (!developmentUrl) return app.isPackaged ? 'prime-work://app/index.html' : pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  if (!developmentUrl) return app.isPackaged ? PACKAGED_RENDERER_URL : pathToFileURL(join(__dirname, '../renderer/index.html')).href
   const parsed = new URL(developmentUrl)
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) {
     throw new Error('ELECTRON_RENDERER_URL must use an uncredentialed loopback HTTP(S) origin')
@@ -1058,13 +1060,40 @@ async function bootstrap(): Promise<void> {
     }),
   })
   backgroundMode.start()
-  await ensureWindow()
+  const window = await ensureWindow()
+  if (packagedSmokeMarkerFile) {
+    await runPackagedSmoke(window, packagedSmokeMarkerFile)
+    return
+  }
   updates.start()
+}
+
+/**
+ * Reports packaged readiness once the trusted renderer has completed an
+ * authorized IPC round trip, then quits. The launcher owns the deadline, so
+ * nothing here polls or waits on a timer.
+ */
+async function runPackagedSmoke(window: BrowserWindow | null, markerPath: string): Promise<void> {
+  if (!window || window.isDestroyed()) throw new Error('Packaged smoke mode could not open the renderer window')
+  if (!ipc) throw new Error('Packaged smoke mode has no registered IPC surface to observe')
+  await ipc.whenRendererReady
+  const marker = serializePackagedSmokeMarker(packagedSmokeMarker(trustedRendererUrl, app.getVersion()))
+  await writeFile(markerPath, marker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  console.log(`${PACKAGED_SMOKE_READY_EVENT} ${trustedRendererUrl}`)
+  shutdownApproved = true
+  app.quit()
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
 else void app.whenReady().then(async () => {
+  // Parsed from the first instance's own argv only: a second-instance command
+  // line must never be able to make a running application write a marker and quit.
+  const requestedSmokeMarker = packagedSmokeMarkerPath(process.argv)
+  if (requestedSmokeMarker) {
+    if (!app.isPackaged) throw new Error('Packaged smoke mode is only available in packaged builds')
+    packagedSmokeMarkerFile = requestedSmokeMarker
+  }
   registerRendererProtocol()
   let wasOpenedAtLogin = false
   if (process.platform === 'darwin' && app.isPackaged) {
