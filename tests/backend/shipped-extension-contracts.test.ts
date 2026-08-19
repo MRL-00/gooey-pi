@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ExtensionAPI } from 'prime-agent'
 import { EXTENSION_INJECTIONS, SHIPPED_EXTENSION_FILENAMES, type ExtensionInjection } from '../../electron/main/extension-manifest'
-import { readdirSync } from 'node:fs'
+import type { OmpExtensionApi } from '../../assets/extensions/omp-work-browser'
+import type { PiFastModeExtensionApi } from '../../assets/extensions/pi-work-fast-mode'
 
 type Registration = { kind: 'tool' | 'command' | 'event'; name: string }
 
@@ -11,14 +14,18 @@ interface Fixture {
   registrations: Registration[]
 }
 
+type PrimeFixtureApi = Pick<ExtensionAPI, 'registerTool'>
+type PiFixtureApi = PiFastModeExtensionApi & Omit<OmpExtensionApi, 'typebox'>
+
 function primeHost(): Fixture {
   const registrations: Registration[] = []
-  const target = {
-    registerTool: (tool: { name: string }) => { registrations.push({ kind: 'tool', name: tool.name }) },
+  const target: PrimeFixtureApi = {
+    registerTool: (tool) => { registrations.push({ kind: 'tool', name: tool.name }) },
   }
   const api = new Proxy(target, {
     get(object, property, receiver) {
       if (typeof property === 'symbol' || property === 'then' || property === 'constructor') return Reflect.get(object, property, receiver)
+      // Model the absent optional shim that shipped files probe before using their dynamic-import fallback.
       if (property === 'typebox') return undefined
       if (!(property in object)) throw new Error(`Prime fixture does not inject ${String(property)}`)
       return Reflect.get(object, property, receiver)
@@ -30,7 +37,7 @@ function primeHost(): Fixture {
 function ompHost(): Fixture {
   const registrations: Registration[] = []
   const schema = (kind: string) => (...args: unknown[]) => ({ kind, args })
-  const target = {
+  const target: OmpExtensionApi = {
     typebox: {
       Type: {
         Object: schema('object'),
@@ -42,7 +49,7 @@ function ompHost(): Fixture {
         Optional: schema('optional'),
       },
     },
-    registerTool: (tool: { name: string }) => { registrations.push({ kind: 'tool', name: tool.name }) },
+    registerTool: (tool) => { registrations.push({ kind: 'tool', name: tool.name }) },
   }
   const api = new Proxy(target, {
     get(object, property, receiver) {
@@ -56,14 +63,15 @@ function ompHost(): Fixture {
 
 function piHost(): Fixture {
   const registrations: Registration[] = []
-  const target = {
-    registerTool: (tool: { name: string }) => { registrations.push({ kind: 'tool', name: tool.name }) },
+  const target: PiFixtureApi = {
+    registerTool: (tool) => { registrations.push({ kind: 'tool', name: tool.name }) },
     registerCommand: (name: string) => { registrations.push({ kind: 'command', name }) },
     on: (event: string) => { registrations.push({ kind: 'event', name: event }) },
   }
   const api = new Proxy(target, {
     get(object, property, receiver) {
       if (typeof property === 'symbol' || property === 'then' || property === 'constructor') return Reflect.get(object, property, receiver)
+      // Model the absent optional shim that shipped files probe before using their dynamic-import fallback.
       if (property === 'typebox') return undefined
       if (!(property in object)) throw new Error(`Pi fixture does not inject ${String(property)}`)
       return Reflect.get(object, property, receiver)
@@ -104,8 +112,6 @@ const brokerVariables: Partial<Record<ExtensionInjection['capability'], readonly
   collaboration: ['GOOEYPI_COLLABORATION_URL', 'GOOEYPI_COLLABORATION_TOKEN'],
 }
 
-let importCounter = 0
-
 async function loadExtension(injection: ExtensionInjection, configured: boolean) {
   vi.resetModules()
   vi.unstubAllEnvs()
@@ -115,7 +121,7 @@ async function loadExtension(injection: ExtensionInjection, configured: boolean)
     vi.stubEnv(variables[1], 'inert-test-token')
   }
   const url = pathToFileURL(join(process.cwd(), 'assets', 'extensions', injection.filename)).href
-  return (await import(`${url}?contract=${importCounter++}`)).default as (api: object) => void | Promise<void>
+  return (await import(url)).default as (api: object) => void | Promise<void>
 }
 
 afterEach(() => {
@@ -125,6 +131,9 @@ afterEach(() => {
 
 describe('shipped extension contracts', () => {
   it('initializes every manifest injection against its genuine host surface', async () => {
+    for (const filename of SHIPPED_EXTENSION_FILENAMES) {
+      expect(expectedRegistrations[filename], `Missing registration contract for ${filename}`).toBeDefined()
+    }
     for (const [harness, injections] of Object.entries(EXTENSION_INJECTIONS)) {
       for (const injection of injections) {
         for (const configured of [false, true]) {
@@ -141,12 +150,19 @@ describe('shipped extension contracts', () => {
   })
 
   it('rejects an extension that reaches for a capability its host does not inject', () => {
-    const fixture = primeHost()
-    const badExtension = (api: object) => {
-      const unsupported = (api as { typebox: { Type: { Object(): unknown } } }).typebox
-      unsupported.Type.Object()
+    const badExtension = (api: OmpExtensionApi) => {
+      api.typebox!.Type.Object({})
     }
-    expect(() => badExtension(fixture.api)).toThrow()
+    expect(() => badExtension(ompHost().api as OmpExtensionApi)).not.toThrow()
+    expect(() => badExtension(primeHost().api as OmpExtensionApi)).toThrow()
+    expect(() => badExtension(piHost().api as OmpExtensionApi)).toThrow()
+  })
+
+  it('rejects properties outside each host fixture from the proxy trap', () => {
+    for (const [harness, factory] of Object.entries(fixtureFactories)) {
+      const fixture = factory()
+      expect(() => Reflect.get(fixture.api, 'unsupportedCapability'), harness).toThrow(`${harness === 'prime' ? 'Prime' : harness === 'omp' ? 'OMP' : 'Pi'} fixture does not inject unsupportedCapability`)
+    }
   })
 
   it('derives the shipped inventory from the actual extension directory', () => {
