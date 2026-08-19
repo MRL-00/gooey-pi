@@ -58,6 +58,7 @@ export interface ProjectRecord {
   sessionCount: number
   gitBranch?: string
   inferred?: boolean
+  readOnly?: boolean
 }
 
 export interface SessionRecord {

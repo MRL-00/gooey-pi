@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TitleToolbar } from '../../src/components/TitleToolbar'
 import { VoiceOrb } from '../../src/components/VoiceOrb'
-import type { PetDefinition, PrimeWorkApi } from '../../src/types/api'
+import type { PetDefinition, PrimeWorkApi, ProjectRecord } from '../../src/types/api'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -64,6 +64,27 @@ describe('realtime voice surface', () => {
     const labels = [...container.querySelectorAll<HTMLButtonElement>('.title-toolbar__actions button')].map((button) => button.getAttribute('aria-label'))
     expect(labels).toContain('Toggle terminal (Ctrl+J)')
     expect(labels).toContain('Open browser (Ctrl+Shift+B)')
+  })
+
+  it('prefers the live git branch for the session toolbar pill', () => {
+    const project: ProjectRecord = {
+      id: 'inferred-project',
+      harness: 'prime',
+      name: 'Inferred project',
+      path: '/project',
+      folders: ['/project'],
+      primaryFolder: '/project',
+      pinned: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      sessionCount: 1,
+      inferred: true,
+      readOnly: true,
+      gitBranch: 'record-branch',
+    }
+    act(() => root.render(<TitleToolbar project={project} gitBranch="live-branch" view="session" sidebarOpen inspectorOpen terminalOpen={false} onToggleSidebar={vi.fn()} onToggleInspector={vi.fn()} onToggleTerminal={vi.fn()} onOpenBrowser={vi.fn()} />))
+    expect(container.querySelector('.branch-pill')?.textContent).toContain('live-branch')
+    expect(container.querySelector('.branch-pill')?.textContent).not.toContain('record-branch')
   })
 
   it('shows mute and close controls and disables the microphone track when muted', async () => {
