@@ -63,6 +63,17 @@ afterEach(() => {
 const flush = async () => { await act(async () => { await Promise.resolve() }) }
 
 describe('prompt admission versus background transcript reads', () => {
+  it('marks failed queued flushes across the active owner and clears them at a boundary', () => {
+    act(() => { root.render(createElement(Probe, { bridge: null })) })
+    act(() => { latest.queuePrompt('retry this prompt', 'queue') })
+    const queuedId = latest.pendingQueuedPrompts[0].id
+    act(() => { latest.markQueuedPromptFlushFailed(queuedId) })
+    expect(latest.pendingQueuedPrompts).toMatchObject([{ id: queuedId, flushAttemptFailed: true }])
+    act(() => { latest.clearQueuedPromptFlushFailures() })
+    expect(latest.pendingQueuedPrompts).toMatchObject([{ id: queuedId }])
+    expect(latest.pendingQueuedPrompts[0].flushAttemptFailed).toBeUndefined()
+  })
+
   it('keeps queued prompts with their thread when navigating away and back', () => {
     const ompProject: ProjectRecord = {
       ...project,

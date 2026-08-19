@@ -385,6 +385,8 @@ export interface QueuedPrompt {
   /** Stable presentation data while a steer waits for the agent to pick it up. */
   timestamp?: number
   parts?: MessagePart[]
+  /** The most recent automatic flush attempt failed admission. */
+  flushAttemptFailed?: boolean
 }
 
 export interface SessionActionSnapshot {

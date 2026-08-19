@@ -209,3 +209,179 @@ describe('workspace MCP command policy', () => {
     expect(setToast).toHaveBeenCalledWith(`Network MCP authentication is managed outside GooeyPi. Use ${agentName} directly to sign in to ${server}.`)
   })
 })
+
+describe('idle prompt streaming behavior', () => {
+  const project = {
+    id: 'idle-project',
+    harness: 'prime' as const,
+    name: 'Idle project',
+    path: '/idle-project',
+    folders: ['/idle-project'],
+    primaryFolder: '/idle-project',
+    pinned: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastOpenedAt: '2026-01-01T00:00:00.000Z',
+    sessionCount: 1,
+  }
+  const session = {
+    id: 'idle-session',
+    harness: 'prime' as const,
+    filePath: '/idle-project/session.jsonl',
+    projectPath: '/idle-project',
+    title: 'Idle session',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    status: 'idle' as const,
+    depth: 0,
+  }
+
+  it.each([
+    ['queue', 'followUp'],
+    ['steer', 'steer'],
+  ] as const)('maps %s on an idle snapshot to %s', async (intent, streamingBehavior) => {
+    const command = vi.fn(async () => ({}))
+    let messages: TranscriptMessage[] = []
+    let currentRuntime: RuntimeInfo | null = null
+    const runtime = {
+      runtimeId: 'idle-runtime',
+      harness: 'prime' as const,
+      cwd: project.primaryFolder,
+      sessionFile: session.filePath,
+      isStreaming: false,
+    }
+    const workspaceRef = { current: { generation: 1, project, session, cwd: project.primaryFolder, sessionFile: session.filePath } }
+    const workspace = {
+      workspaceRef,
+      runtime: currentRuntime,
+      runtimeIdRef: { current: null },
+      runtimeOwnerRef: { current: null },
+      prepareForPrompt: () => true,
+      attachRuntime: (next: RuntimeInfo | undefined) => { currentRuntime = next ?? null },
+      setRuntime: (next: RuntimeInfo | ((current: RuntimeInfo | null) => RuntimeInfo | null)) => {
+        currentRuntime = typeof next === 'function' ? next(currentRuntime) : next
+      },
+      setMessages: (next: TranscriptMessage[] | ((current: TranscriptMessage[]) => TranscriptMessage[])) => {
+        messages = typeof next === 'function' ? next(messages) : next
+      },
+      queuePrompt: vi.fn(),
+      removeQueuedPrompt: vi.fn(),
+      markQueuedPromptFlushFailed: vi.fn(),
+    }
+    const actions = createWorkspaceActions(() => ({
+      bridge: {
+        agent: {
+          list: vi.fn(async () => [runtime]),
+          command,
+          start: vi.fn(),
+        },
+      },
+      projects: [project],
+      sessions: [session],
+      activeProject: project,
+      workspace,
+      settingsState: { settings: { activeHarness: 'prime' } },
+      provider: { model: 'auto', effort: 'medium', fast: false },
+      submissionAdmissionRef: { current: { active: false, run: async (task: () => Promise<void>) => { await task(); return true } } },
+      initialized: true,
+      layout: {},
+      pluginSkills: {},
+      gitRequestRef: { current: 0 },
+      demoTimerRef: { current: [] },
+      setProjects: vi.fn(),
+      setSessions: vi.fn(),
+      setGitSnapshot: vi.fn(),
+      setView: vi.fn(),
+      setPaletteOpen: vi.fn(),
+      setToast: vi.fn(),
+      setSubmitting: vi.fn(),
+      refreshSchedules: vi.fn(),
+      refreshHeartbeats: vi.fn(),
+      resetBrowserView: vi.fn(),
+      closeTerminalForSession: vi.fn(),
+      clearSessionAttention: vi.fn(),
+      reportError: vi.fn(),
+    } as unknown as WorkspaceActionsDeps))
+
+    await actions.sendPrompt(`idle ${intent}`, [], intent)
+
+    expect(command).toHaveBeenCalledOnce()
+    expect(command).toHaveBeenCalledWith('idle-runtime', {
+      type: 'prompt',
+      message: `idle ${intent}`,
+      streamingBehavior,
+    })
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(1)
+  })
+
+  it('rolls back the optimistic row on a failed flush and does not duplicate it on retry', async () => {
+    let messages: TranscriptMessage[] = []
+    let currentRuntime: RuntimeInfo | null = null
+    let flushFailed = false
+    const startedRuntime = { ...runtime('flush-runtime', false), cwd: project.primaryFolder, sessionFile: session.filePath }
+    const command = vi.fn()
+      .mockRejectedValueOnce(new Error('admission failed'))
+      .mockResolvedValueOnce({})
+    const workspace = {
+      workspaceRef: { current: { generation: 1, project, session, cwd: project.primaryFolder, sessionFile: session.filePath } },
+      runtime: currentRuntime,
+      runtimeIdRef: { current: null as string | null },
+      runtimeOwnerRef: { current: null as { runtimeId: string; generation: number } | null },
+      prepareForPrompt: () => true,
+      attachRuntime: (next: RuntimeInfo | undefined) => { currentRuntime = next ?? null },
+      setRuntime: (next: RuntimeInfo | ((current: RuntimeInfo | null) => RuntimeInfo | null)) => {
+        currentRuntime = typeof next === 'function' ? next(currentRuntime) : next
+      },
+      setMessages: (next: TranscriptMessage[] | ((current: TranscriptMessage[]) => TranscriptMessage[])) => {
+        messages = typeof next === 'function' ? next(messages) : next
+      },
+      queuePrompt: vi.fn(),
+      removeQueuedPrompt: vi.fn(),
+      markQueuedPromptFlushFailed: vi.fn(() => { flushFailed = true }),
+    }
+    const actions = createWorkspaceActions(() => ({
+      bridge: {
+        agent: {
+          list: vi.fn(async () => [startedRuntime]),
+          start: vi.fn(async () => startedRuntime),
+          command,
+          stop: vi.fn(async () => false),
+        },
+        sessions: { list: vi.fn(async () => [session]) },
+      },
+      projects: [project],
+      sessions: [session],
+      activeProject: project,
+      workspace,
+      settingsState: { settings: { activeHarness: 'prime' } },
+      provider: { model: 'auto', effort: 'medium', fast: false },
+      submissionAdmissionRef: { current: { active: false, run: async (task: () => Promise<void>) => { await task(); return true } } },
+      initialized: true,
+      layout: {},
+      pluginSkills: {},
+      gitRequestRef: { current: 0 },
+      demoTimerRef: { current: [] },
+      setProjects: vi.fn(),
+      setSessions: vi.fn(),
+      setGitSnapshot: vi.fn(),
+      setView: vi.fn(),
+      setPaletteOpen: vi.fn(),
+      setToast: vi.fn(),
+      setSubmitting: vi.fn(),
+      refreshSchedules: vi.fn(),
+      refreshHeartbeats: vi.fn(),
+      resetBrowserView: vi.fn(),
+      closeTerminalForSession: vi.fn(),
+      clearSessionAttention: vi.fn(),
+      reportError: vi.fn(),
+    } as unknown as WorkspaceActionsDeps))
+
+    await expect(actions.sendPrompt('flush this', [], 'queue', 'queued-flush')).rejects.toThrow('admission failed')
+    expect(flushFailed).toBe(true)
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(0)
+    expect(messages.filter((message) => message.role === 'system')).toHaveLength(1)
+
+    await actions.sendPrompt('flush this', [], 'queue', 'queued-flush')
+    expect(command).toHaveBeenCalledTimes(2)
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(1)
+  })
+})

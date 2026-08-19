@@ -65,6 +65,13 @@ export function parseContextUsage(raw: unknown): PrimeContextUsage | null {
 
 const unsafeArgValue = (value: string): boolean => value.startsWith('-') || /[\r\n]/.test(value)
 
+const stripStreamingBehavior = (command: RpcObject): RpcObject => {
+  if (command.type !== 'prompt' || command.streamingBehavior === undefined) return command
+  // Pi and OMP drop streamingBehavior pending compatibility verification.
+  const { streamingBehavior: _, ...rest } = command
+  return rest
+}
+
 export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'prime',
   agentName: HARNESSES.prime.agentName,
@@ -136,7 +143,7 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the OMP harness`)
     if (type === 'fork') return { ...command, type: 'branch' }
     if (type === 'get_fork_messages') return { ...command, type: 'get_branch_messages' }
-    return command
+    return stripStreamingBehavior(command)
   },
   normalizeEvent: (event) => {
     if (event.type === 'auto_compaction_start') return { ...event, type: 'compaction_start' }
@@ -195,7 +202,7 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     // untranslated) but lacks the same Prime-only daemon/heartbeat family OMP
     // rejects, clone included.
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the Pi harness`)
-    return command
+    return stripStreamingBehavior(command)
   },
   normalizeEvent: (event) => event,
   // Pi has no native tier command. Its prompt RPC invokes the bundled private
