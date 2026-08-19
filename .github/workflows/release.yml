@@ -205,6 +205,19 @@ jobs:
       - run: npm ci
       - run: npm run release:preflight:toolchain
       - run: npm run package:linux -- --skip-verify --arch ${{ matrix.arch }}
+      # The Linux packages install chrome-sandbox setuid-root, so the smoke restores
+      # those shipped permissions rather than launching with the sandbox disabled.
+      - run: |
+          sudo chown root:root release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
+      - name: Launch the packaged application
+        run: node scripts/release/smoke-packaged-app.mjs --platform linux --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: packaged-smoke-diagnostics-linux-${{ matrix.arch }}
+          path: release/linux/${{ matrix.arch }}/packaged-smoke-diagnostics.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-linux-${{ matrix.arch }}
@@ -249,6 +262,15 @@ jobs:
       - name: Build unsigned Windows packages for beta distribution
         if: (github.event_name == 'workflow_dispatch' && inputs.include_windows_unsigned && !inputs.include_windows) || (github.event_name == 'push' && vars.RELEASE_WINDOWS_UNSIGNED_ENABLED == 'true' && vars.RELEASE_WINDOWS_ENABLED != 'true')
         run: node scripts/release/package.mjs --qa --platform win --skip-verify
+      # Artifacts are only publishable once the packaged executable itself boots.
+      - name: Launch the packaged application
+        run: node scripts/release/smoke-packaged-app.mjs --platform win --arch x64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: packaged-smoke-diagnostics-win-x64
+          path: release/win/x64/packaged-smoke-diagnostics.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-windows
