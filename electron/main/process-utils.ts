@@ -1,7 +1,7 @@
-import { accessSync, constants as fsConstants, readdirSync } from 'node:fs'
-import { access, readdir } from 'node:fs/promises'
+import { accessSync, closeSync, constants as fsConstants, openSync, readFileSync, readSync, readdirSync, realpathSync } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { delimiter, posix, win32 } from 'node:path'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
 import { HARNESSES, type HarnessDescriptor } from './harness'
@@ -235,6 +235,163 @@ export interface ExecutableSpawnInvocation {
   env: NodeJS.ProcessEnv
 }
 
+interface NodeVersion {
+  major: number
+  minor: number
+  patch: number
+  prerelease: string | undefined
+}
+
+const NODE_SHEBANG_BYTES = 4 * 1024
+const NODE_PACKAGE_BYTES = 64 * 1024
+const NODE_VERSION_TIMEOUT_MS = 2_000
+const NODE_VERSION_OUTPUT_BYTES = 1_024
+const NODE_VERSION_CACHE = new Map<string, string | null>()
+
+export function clearNodeInterpreterCache(): void {
+  NODE_VERSION_CACHE.clear()
+}
+
+export function parseNodeVersion(value: string): NodeVersion | undefined {
+  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(-([0-9A-Za-z.-]+))?$/)
+  if (!match) return undefined
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[5],
+  }
+}
+
+export function parseNodeEngineRange(value: unknown): NodeVersion | undefined {
+  if (typeof value !== 'string') return undefined
+  const match = value.trim().match(/^>=\s*(\d+)\.(\d+)\.(\d+)$/)
+  if (!match) return undefined
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: undefined }
+}
+
+function compareNodeVersions(left: NodeVersion, right: NodeVersion): number {
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    if (left[key] !== right[key]) return left[key] - right[key]
+  }
+  if (left.prerelease === right.prerelease) return 0
+  return left.prerelease ? -1 : 1
+}
+
+export function nodeVersionSatisfies(version: string, range: unknown): boolean {
+  const parsedVersion = parseNodeVersion(version)
+  if (!parsedVersion) return false
+  const minimum = parseNodeEngineRange(range)
+  return minimum ? compareNodeVersions(parsedVersion, minimum) >= 0 : true
+}
+
+class NodeInterpreterResolutionError extends Error {
+  readonly code = 'ENGINE_UNSATISFIED'
+  constructor(readonly detail: string) {
+    super(detail)
+  }
+}
+
+function readFilePrefix(path: string, maxBytes: number): string | undefined {
+  let descriptor: number
+  try { descriptor = openSync(path, 'r') } catch { return undefined }
+  try {
+    const buffer = Buffer.alloc(maxBytes)
+    const bytes = readSync(descriptor, buffer, 0, maxBytes, 0)
+    return buffer.subarray(0, bytes).toString('utf8')
+  } catch { return undefined } finally { closeSync(descriptor) }
+}
+
+function nodeShebangTarget(path: string): boolean {
+  const firstLine = readFilePrefix(path, NODE_SHEBANG_BYTES)?.split(/\r?\n/u, 1)[0]?.trim()
+  if (!firstLine?.startsWith('#!')) return false
+  const match = firstLine.match(/^#!\s*\/usr\/bin\/env(?:\s+-S)?\s+(.+)$/u)
+  return match?.[1].trim().split(/\s+/u)[0] === 'node'
+}
+
+function owningNodePackage(script: string): { name?: string; enginesNode?: unknown } {
+  let directory = posix.dirname(script)
+  while (true) {
+    try {
+      const value: unknown = JSON.parse(readFileSync(posix.join(directory, 'package.json'), { encoding: 'utf8' }).slice(0, NODE_PACKAGE_BYTES))
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+      const packageJson = value as { name?: unknown; engines?: unknown }
+      const engines = packageJson.engines && typeof packageJson.engines === 'object' && !Array.isArray(packageJson.engines)
+        ? packageJson.engines as { node?: unknown }
+        : undefined
+      return {
+        name: typeof packageJson.name === 'string' ? packageJson.name : undefined,
+        enginesNode: engines?.node,
+      }
+    } catch { /* walk to the next parent */ }
+    const parent = posix.dirname(directory)
+    if (parent === directory) return {}
+    directory = parent
+  }
+}
+
+function nodeCandidateExecutables(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  home: string,
+): string[] {
+  if (platform === 'win32') return []
+  const directories = [
+    ...versionManagerRuntimeDirs(env, platform, home),
+    ...sharedHarnessCandidateDirs(env, platform, home),
+    ...(env.PATH ?? '').split(delimiter),
+  ]
+  const seen = new Set<string>()
+  return directories
+    .filter((directory) => directory && posix.isAbsolute(directory))
+    .map((directory) => posix.join(directory, 'node'))
+    .filter((candidate) => {
+      if (seen.has(candidate)) return false
+      seen.add(candidate)
+      return canAccessPath(candidate, fsConstants.X_OK)
+    })
+}
+
+function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): string | null {
+  const key = realpathSync(candidate)
+  const cached = NODE_VERSION_CACHE.get(key)
+  if (NODE_VERSION_CACHE.has(key)) return cached ?? null
+  const result = spawnSync(key, ['--version'], {
+    env,
+    shell: false,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: NODE_VERSION_TIMEOUT_MS,
+    maxBuffer: NODE_VERSION_OUTPUT_BYTES,
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  const output = typeof result.stdout === 'string' ? result.stdout : ''
+  const trimmed = output.trim()
+  const version = parseNodeVersion(trimmed) ? trimmed : null
+  NODE_VERSION_CACHE.set(key, version)
+  return version
+}
+
+function resolveNodeInterpreter(script: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): string {
+  const packageJson = owningNodePackage(script)
+  const requirement = parseNodeEngineRange(packageJson.enginesNode)
+  let newest: { path: string; version: string } | undefined
+  for (const candidate of nodeCandidateExecutables(env, platform, home)) {
+    let version: string | null
+    try { version = nodeVersion(candidate, env) } catch { continue }
+    if (!version) continue
+    if (!newest || compareNodeVersions(parseNodeVersion(version)!, parseNodeVersion(newest.version)!) > 0) newest = { path: candidate, version }
+    if (!requirement || compareNodeVersions(parseNodeVersion(version)!, requirement) >= 0) return realpathSync(candidate)
+  }
+  if (requirement) {
+    const requirementText = `>=${requirement.major}.${requirement.minor}.${requirement.patch}`
+    const newestText = newest ? `; the newest Node GooeyPi can find is ${newest.version} at ${newest.path}` : '; no working Node interpreter was found'
+    const label = packageJson.name?.includes('pi-coding-agent') ? 'Pi' : 'Harness'
+    throw new NodeInterpreterResolutionError(`${label} requires Node ${requirementText}${newestText}`)
+  }
+  throw new NodeInterpreterResolutionError('Node.js was not found for the env-node harness executable')
+}
+
 interface PrepareExecutableSpawnOptions {
   platform?: NodeJS.Platform
   home?: string
@@ -259,7 +416,17 @@ export function prepareExecutableSpawn(
   const platform = options.platform ?? process.platform
   const childEnvironment = executableChildEnvironment(file, env, platform)
   if (platform !== 'win32' || win32.basename(file).toLowerCase() !== 'pi.cmd') {
-    return { file, args: [...args], env: childEnvironment }
+    if (platform === 'win32') return { file, args: [...args], env: childEnvironment }
+    let resolvedFile: string
+    try {
+      resolvedFile = realpathSync(file)
+    } catch {
+      return { file, args: [...args], env: childEnvironment }
+    }
+    if (!nodeShebangTarget(resolvedFile)) return { file, args: [...args], env: childEnvironment }
+    const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
+    const node = resolveNodeInterpreter(resolvedFile, childEnvironment, platform, home)
+    return { file: node, args: [resolvedFile, ...args], env: childEnvironment }
   }
 
   const canAccess = options.canAccess ?? canAccessPath
@@ -307,14 +474,39 @@ function versionManagerRuntimeDirs(
   }
   const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
   const versionsRoot = posix.join(root, 'versions', 'node')
+  const boundedVersionDirs = (rootPath: string, childSegments: string[], tailSegments: string[]): string[] => {
+    try {
+      return readdirSync(posix.join(rootPath, ...childSegments), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map((entry) => entry.name)
+        .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
+        .slice(0, 64)
+        .map((version) => posix.join(rootPath, ...childSegments, version, ...tailSegments))
+    } catch { return [] }
+  }
+  const fnmRoot = env.FNM_DIR && posix.isAbsolute(env.FNM_DIR)
+    ? env.FNM_DIR
+    : platform === 'darwin' ? posix.join(home, 'Library', 'Application Support', 'fnm') : posix.join(home, '.local', 'share', 'fnm')
+  const asdfRoot = env.ASDF_DATA_DIR && posix.isAbsolute(env.ASDF_DATA_DIR) ? env.ASDF_DATA_DIR : posix.join(home, '.asdf')
+  const nodenvRoot = posix.join(home, '.nodenv')
+  let nvmDirectories: string[] = []
   try {
-    return readdirSync(versionsRoot, { withFileTypes: true })
+    nvmDirectories = readdirSync(versionsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name)
       .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
       .slice(0, 64)
       .map((version) => posix.join(versionsRoot, version, 'bin'))
-  } catch { return [] }
+  } catch { /* continue with other managers */ }
+  return [
+    ...nvmDirectories,
+    ...boundedVersionDirs(fnmRoot, ['node-versions'], ['installation', 'bin']),
+    posix.join(asdfRoot, 'shims'),
+    ...boundedVersionDirs(asdfRoot, ['installs', 'nodejs'], ['bin']),
+    posix.join(nodenvRoot, 'shims'),
+    ...boundedVersionDirs(nodenvRoot, ['versions'], ['bin']),
+    ...(env.N_PREFIX && posix.isAbsolute(env.N_PREFIX) ? [posix.join(env.N_PREFIX, 'bin')] : []),
+  ]
 }
 
 export function restrictedGitEnvironment(): NodeJS.ProcessEnv {
@@ -385,6 +577,10 @@ function sharedHarnessCandidateDirs(
     posix.join(dataHome, 'pnpm'),
     posix.join(dataHome, 'pnpm', 'bin'),
     posix.join(dataHome, 'mise', 'shims'),
+    posix.join(home, '.nix-profile', 'bin'),
+    posix.join('/opt', 'local', 'bin'),
+    posix.join(env.ASDF_DATA_DIR ?? posix.join(home, '.asdf'), 'shims'),
+    posix.join(home, '.nodenv', 'shims'),
     ...(platform === 'darwin'
       ? [posix.join(home, 'Library', 'pnpm'), posix.join(home, 'Library', 'pnpm', 'bin')]
       : ['/home/linuxbrew/.linuxbrew/bin']),
@@ -421,6 +617,7 @@ export function harnessExecutableCandidates(
   // globally installed harnesses after an explicit fixture binary disappears.
   const fallbackDirs = env.PRIME_WORK_E2E_HIDE_WINDOWS === '1' ? [] : [
     ...descriptor.candidateDirs(platform, home, env),
+    ...versionManagerRuntimeDirs(env, platform, home),
     ...sharedHarnessCandidateDirs(env, platform, home),
   ]
   for (const directory of fallbackDirs) {
@@ -447,15 +644,9 @@ export async function nvmHarnessExecutableCandidates(
   if (platform === 'win32' || env.PRIME_WORK_E2E_HIDE_WINDOWS === '1') return []
   const root = env.NVM_DIR && posix.isAbsolute(env.NVM_DIR) ? env.NVM_DIR : posix.join(home, '.nvm')
   const versionsRoot = posix.join(root, 'versions', 'node')
-  try {
-    const entries = await readdir(versionsRoot, { withFileTypes: true })
-    return entries
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-      .map((entry) => entry.name)
-      .sort((left, right) => right.localeCompare(left, 'en', { numeric: true }))
-      .slice(0, 64)
-      .map((version) => posix.join(versionsRoot, version, 'bin', descriptor.executableName(platform)))
-  } catch { return [] }
+  return versionManagerRuntimeDirs(env, platform, home)
+    .filter((directory) => directory.startsWith(`${versionsRoot}/`))
+    .map((directory) => posix.join(directory, descriptor.executableName(platform)))
 }
 
 export async function findHarnessExecutable(

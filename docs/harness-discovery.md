@@ -11,9 +11,18 @@ Each refresh checks, in order:
 3. Packaged application resources, when that harness can be bundled.
 4. Absolute directories in the process `PATH`/`Path` snapshot.
 5. Official harness-specific installer locations.
-6. Shared system and package-manager locations for npm, Bun, pnpm, mise, Volta, nvm, Homebrew, and Linuxbrew.
+6. Shared system and package-manager locations for npm, Bun, pnpm, mise, Volta, nvm, fnm, asdf, nodenv, `n`, Nix, MacPorts, Homebrew, and Linuxbrew. Version-manager directories are bounded to 64 entries and sorted by descending version.
 
 Candidates are deduplicated and must be executable. GooeyPi then runs a bounded `--version` probe with no shell; only an exit-zero candidate is published to the renderer. A broken override therefore falls through to later automatic candidates, but its own missing, permission, spawn, exit, timeout, or output-limit reason is retained for the settings card. If no candidate works, the card reports the configured override's reason when present, otherwise the last probed candidate's reason. Probe stderr is control-character-stripped and byte-capped before it crosses IPC.
+
+When a resolved POSIX candidate is an actual `#!/usr/bin/env node` (including
+`env -S node ...`) script, GooeyPi resolves the script's real path, walks to
+its owning `package.json`, and reads `engines.node`. It probes the Node
+executables from the same bounded version-manager, shared, and PATH directory
+list used by discovery, then launches the first executable satisfying the
+supported `>=x.y.z` form. Missing or unsupported engine declarations impose no
+constraint. Native binaries and every non-node shebang keep their original
+invocation; Windows Pi shim handling is unchanged.
 
 The relevant upstream install layouts are documented by [Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md), [OMP](https://github.com/can1357/oh-my-pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent#readme), [npm](https://docs.npmjs.com/files/folders.html), [Bun](https://bun.sh/docs/installation), [pnpm](https://pnpm.io/settings/other#globalbindir), [mise](https://mise.jdx.dev/dev-tools/shims.html), and [Volta](https://docs.volta.sh/guide/getting-started).
 

@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nvmHarnessExecutableCandidates, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, nvmHarnessExecutableCandidates, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -23,6 +23,99 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
+  it('compares supported Node engine ranges without accepting prereleases or garbage versions', () => {
+    expect(parseNodeEngineRange('>=22.19.0')).toMatchObject({ major: 22, minor: 19, patch: 0 })
+    expect(parseNodeEngineRange('^22.19.0')).toBeUndefined()
+    expect(parseNodeVersion('v22.19.0-beta.1')).toMatchObject({ major: 22, prerelease: 'beta.1' })
+    expect(parseNodeVersion('not-a-version')).toBeUndefined()
+    expect(nodeVersionSatisfies('22.19.0', '>=22.19.0')).toBe(true)
+    expect(nodeVersionSatisfies('22.19.0-beta.1', '>=22.19.0')).toBe(false)
+    expect(nodeVersionSatisfies('garbage', '>=22.19.0')).toBe(false)
+    expect(nodeVersionSatisfies('20.0.0', undefined)).toBe(true)
+    expect(nodeVersionSatisfies('20.0.0', 'unsupported-range')).toBe(true)
+  })
+
+  it('reroutes only env-node shebangs and parses env -S trailing flags', () => {
+    const home = temp()
+    const directory = join(home, 'bin')
+    mkdirSync(directory, { recursive: true })
+    const script = join(directory, 'pi')
+    writeFileSync(script, '#!/usr/bin/env -S node --no-warnings\nprocess.stdout.write("ok\\n")\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = prepareExecutableSpawn(script, ['--version'], {
+      HOME: home,
+      NVM_DIR: join(home, 'missing-nvm'),
+      PATH: dirname(process.execPath),
+    }, { platform: 'linux', home })
+
+    expect(invocation.file).not.toBe(script)
+    expect(invocation.file).toMatch(/node$/)
+    expect(invocation.args).toEqual([script, '--version'])
+    expect(prepareExecutableSpawn('/bin/echo', ['ok'], { HOME: home, PATH: '' }, { platform: 'linux', home })).toMatchObject({
+      file: '/bin/echo',
+      args: ['ok'],
+    })
+  })
+
+  it('selects the first working Node that satisfies the owning package engine range', () => {
+    const home = temp()
+    const lowDirectory = join(home, 'node-low')
+    const highDirectory = join(home, 'node-high')
+    const packageDirectory = join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist')
+    mkdirSync(lowDirectory, { recursive: true })
+    mkdirSync(highDirectory, { recursive: true })
+    mkdirSync(packageDirectory, { recursive: true })
+    const makeNode = (directory: string, version: string) => {
+      const node = join(directory, 'node')
+      writeFileSync(node, `#!/bin/sh\nprintf '${version}\\n'\n`)
+      chmodSync(node, 0o755)
+    }
+    makeNode(lowDirectory, 'v20.18.1')
+    makeNode(highDirectory, 'v22.19.0')
+    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=22.19.0' } }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\nprocess.stdout.write("ok\\n")\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    const invocation = prepareExecutableSpawn(script, ['--version'], {
+      HOME: home,
+      NVM_DIR: join(home, 'missing-nvm'),
+      PATH: `${lowDirectory}:${highDirectory}`,
+    }, { platform: 'linux', home })
+
+    expect(invocation.file).toBe(join(highDirectory, 'node'))
+    expect(invocation.args).toEqual([script, '--version'])
+  })
+
+  it('reports when no discovered Node satisfies the package engine range', () => {
+    const home = temp()
+    const nodeDirectory = join(home, 'node')
+    const packageDirectory = join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist')
+    mkdirSync(nodeDirectory, { recursive: true })
+    mkdirSync(packageDirectory, { recursive: true })
+    const node = join(nodeDirectory, 'node')
+    writeFileSync(node, '#!/bin/sh\nprintf "v20.18.1\\n"\n')
+    chmodSync(node, 0o755)
+    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=999.0.0' } }))
+    const script = join(packageDirectory, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    chmodSync(script, 0o755)
+    clearNodeInterpreterCache()
+
+    expect(() => prepareExecutableSpawn(script, [], {
+      HOME: home,
+      NVM_DIR: join(home, 'missing-nvm'),
+      PATH: nodeDirectory,
+    }, { platform: 'linux', home })).toThrow('Pi requires Node >=999.0.0')
+    return expect(probeHarnessExecutable(script)).resolves.toMatchObject({
+      runnable: false,
+      failure: { kind: 'spawn', detail: expect.stringContaining('Pi requires Node >=999.0.0') },
+    })
+  })
+
   it('runs a pnpm env-node CLI whose nvm interpreter is elsewhere under a Finder-style minimal PATH', async () => {
     const home = temp()
     const shimDirectory = join(home, 'Library', 'pnpm', 'bin')
