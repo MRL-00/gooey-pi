@@ -9,6 +9,11 @@ describe('i18n', () => {
     expect(resolveLocale('system', ['fr-FR', 'zh-SG'])).toBe('zh-CN')
   })
 
+  it('uses the first supported system locale in preference order', () => {
+    expect(resolveLocale('system', ['en-US', 'bg-US', 'zh-Hans-US'])).toBe('en')
+    expect(resolveLocale('system', ['zh-Hans-US', 'en-US'])).toBe('zh-CN')
+  })
+
   it('honors an explicit locale preference over the system locale', () => {
     expect(resolveLocale('en', ['zh-CN'])).toBe('en')
     expect(resolveLocale('zh-CN', ['en-US'])).toBe('zh-CN')

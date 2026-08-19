@@ -101,6 +101,7 @@ export function resolveLocale(preference: LocalePreference, languages: readonly 
   if (preference !== 'system') return preference
   for (const language of languages) {
     const normalized = language.toLowerCase()
+    if (normalized === 'en' || normalized.startsWith('en-')) return 'en'
     if (normalized === 'zh' || normalized === 'zh-cn' || normalized === 'zh-sg' || normalized === 'zh-hans' || normalized.startsWith('zh-hans-')) return 'zh-CN'
   }
   return 'en'
