@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityNotificationSignature, applySessionLifecycleEvent, readClearedActivity, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification } from '../../src/app/session-attention'
+import { activityNotificationSignature, applySessionLifecycleEvent, readClearedActivity, readClearedAttention, sessionAttentionSignature, sessionCompanionNotificationSignature, sessionShowsCompanionNotification, signatureCleared } from '../../src/app/session-attention'
 import { mergeSessionCatalog } from '../../src/hooks/useBootstrap'
 import type { SessionRecord } from '../../src/types/api'
 
@@ -56,6 +56,23 @@ describe('session lifecycle attention', () => {
     expect(sessionShowsCompanionNotification({ ...session(), status: 'complete', unread: true })).toBe(true)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' })).toBe(true)
     expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting' }, `waiting:${session().updatedAt}`)).toBe(false)
+  })
+
+  it('keeps de-escalated notifications cleared without suppressing same-revision escalations', () => {
+    const cleared = 'waiting:7'
+    expect(signatureCleared('idle:7', cleared)).toBe(true)
+    expect(signatureCleared('complete:7', cleared)).toBe(true)
+    expect(signatureCleared('complete:7', cleared, true)).toBe(false)
+    expect(signatureCleared('waiting:7', cleared)).toBe(true)
+    expect(signatureCleared('waiting:7', 'failed:7')).toBe(false)
+    expect(signatureCleared('failed:7', cleared)).toBe(false)
+    expect(signatureCleared('waiting:8', cleared)).toBe(false)
+  })
+
+  it('resurfaces same-revision waiting and failed companion notifications', () => {
+    const cleared = 'idle:7'
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'waiting', eventRevision: 7 }, cleared)).toBe(true)
+    expect(sessionShowsCompanionNotification({ ...session(), status: 'failed', eventRevision: 7 }, cleared)).toBe(true)
   })
 
   it('makes settled activity dismissible until a new revision and keeps running work visible', () => {
@@ -235,6 +252,27 @@ describe('catalog merges over live session state', () => {
 
     const [settled] = mergeSessionCatalog([waiting], [diskRecord], undefined, new Map(), 0, () => false)
     expect(settled.status).toBe('running')
+  })
+
+  it('does not mark a same-revision terminal transition unread', () => {
+    const idle = session()
+    const [sameRevision] = mergeSessionCatalog(
+      [idle],
+      [{ ...idle, status: 'complete' }],
+      undefined,
+      new Map(),
+      0,
+    )
+    const [nextRevision] = mergeSessionCatalog(
+      [idle],
+      [{ ...idle, status: 'complete', updatedAt: '2025-01-01T00:00:01.000Z' }],
+      undefined,
+      new Map(),
+      0,
+    )
+
+    expect(sameRevision.unread).toBeUndefined()
+    expect(nextRevision.unread).toBe(true)
   })
 
   it('keeps a newer optimistic lastUserMessageAt over the disk value', () => {
