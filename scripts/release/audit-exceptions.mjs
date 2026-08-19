@@ -36,11 +36,7 @@ export function collectAuditAdvisories(report) {
       if (!AUDIT_FAILING_SEVERITIES.has(via.severity)) continue
       const advisory = advisoryId(via)
       if (!advisory) throw new Error(`High or critical vulnerability entry ${packageKey} has no parseable advisory ID`)
-      const pkg = typeof via.name === 'string' && via.name.length
-        ? via.name
-        : typeof entry.name === 'string' && entry.name.length
-          ? entry.name
-          : undefined
+      const pkg = typeof via.name === 'string' && via.name.length ? via.name : typeof entry.name === 'string' && entry.name.length ? entry.name : undefined
       if (!pkg) throw new Error(`High or critical advisory ${advisory} in ${packageKey} has no package name`)
       advisories.set(`${advisory}\u0000${pkg}`, {
         advisory,
