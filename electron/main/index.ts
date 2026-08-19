@@ -1079,7 +1079,8 @@ async function bootstrap(): Promise<void> {
  */
 async function runPackagedSmoke(window: BrowserWindow | null, markerPath: string): Promise<void> {
   if (!window || window.isDestroyed()) throw new Error('Packaged smoke mode could not open the renderer window')
-  await ipc?.whenRendererReady
+  if (!ipc) throw new Error('Packaged smoke mode has no registered IPC surface to observe')
+  await ipc.whenRendererReady
   const marker = serializePackagedSmokeMarker(packagedSmokeMarker(trustedRendererUrl, app.getVersion()))
   await writeFile(markerPath, marker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
   console.log(`${PACKAGED_SMOKE_READY_EVENT} ${trustedRendererUrl}`)
