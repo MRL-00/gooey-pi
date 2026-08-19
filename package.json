@@ -116,7 +116,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/linux/**",
-        "!**/node_modules/zeromq/build/win32/**"
+        "!**/node_modules/zeromq/build/win32/**",
+        "!**/node_modules/extract-zip/index.linux-*.node",
+        "!**/node_modules/extract-zip/index.win32-*.node"
       ]
     },
     "linux": {
@@ -139,7 +141,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
-        "!**/node_modules/zeromq/build/win32/**"
+        "!**/node_modules/zeromq/build/win32/**",
+        "!**/node_modules/extract-zip/index.darwin-*.node",
+        "!**/node_modules/extract-zip/index.win32-*.node"
       ]
     },
     "win": {
@@ -164,7 +168,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
-        "!**/node_modules/zeromq/build/linux/**"
+        "!**/node_modules/zeromq/build/linux/**",
+        "!**/node_modules/extract-zip/index.darwin-*.node",
+        "!**/node_modules/extract-zip/index.linux-*.node"
       ]
     },
     "directories": {
