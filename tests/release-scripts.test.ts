@@ -1721,6 +1721,33 @@ describe('production dependency audit', () => {
     expect(collectAuditAdvisories(report)).toEqual([{ advisory: advisory.advisory, package: 'extract-zip', severity: 'high', title: 'extract-zip flaw' }])
   })
 
+  test('fails closed on malformed vulnerability entries and via arrays', () => {
+    expect(() => collectAuditAdvisories({ vulnerabilities: { broken: null } })).toThrow(/broken/)
+    expect(() => collectAuditAdvisories({ vulnerabilities: { broken: { name: 'broken', via: 'oops' } } })).toThrow(/via/)
+  })
+
+  test('fails closed on malformed via entries', () => {
+    expect(() => collectAuditAdvisories({ vulnerabilities: { broken: { name: 'broken', via: [42, null] } } })).toThrow(/via/)
+  })
+
+  test('fails closed when a via severity is missing or unknown', () => {
+    const missingSeverity = { url: `https://github.com/advisories/${advisory.advisory}`, title: 'missing severity' }
+    expect(() => collectAuditAdvisories({ vulnerabilities: { [advisory.package]: { name: advisory.package, via: [missingSeverity] } } })).toThrow(/severity/)
+    expect(() => collectAuditAdvisories({ vulnerabilities: { [advisory.package]: { name: advisory.package, via: [{ ...missingSeverity, severity: 'urgent' }] } } })).toThrow(/severity/)
+  })
+
+  test('fails closed when a high or critical via has no parseable advisory ID', () => {
+    const via = { name: advisory.package, severity: 'critical', title: 'unresolvable advisory', url: 'not-an-advisory-url' }
+
+    expect(() => collectAuditAdvisories({ vulnerabilities: { [advisory.package]: { name: advisory.package, via: [via] } } })).toThrow(/advisory ID/)
+  })
+
+  test('fails closed when a high or critical via has no package name', () => {
+    const via = { severity: 'high', title: 'unnamed advisory', url: `https://github.com/advisories/${advisory.advisory}` }
+
+    expect(() => collectAuditAdvisories({ vulnerabilities: { unknown: { via: [via] } } })).toThrow(/package name/)
+  })
+
   test('accepts a listed advisory while still failing on an unlisted one', () => {
     const unlisted = { package: 'tar-fs', advisory: 'GHSA-3333-3333-3333', severity: 'critical' }
     const evaluation = evaluateAuditReport(auditReport([advisory, unlisted]), exception, now)

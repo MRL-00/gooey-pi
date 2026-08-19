@@ -7,6 +7,7 @@ export const AUDIT_FAILING_SEVERITIES = new Set(['high', 'critical'])
 const EXCEPTIONS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'audit-exceptions.json')
 const ADVISORY_PATTERN = /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/
 const EXPIRY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+const AUDIT_KNOWN_SEVERITIES = new Set(['info', 'low', 'moderate', 'high', 'critical'])
 
 function advisoryId(via) {
   const fromUrl = /\/advisories\/(GHSA-[\w-]+)$/.exec(typeof via.url === 'string' ? via.url : '')?.[1]
@@ -25,13 +26,22 @@ export function collectAuditAdvisories(report) {
     throw new Error('Audit report has a malformed vulnerabilities section')
   }
   const advisories = new Map()
-  for (const entry of Object.values(vulnerabilities ?? {})) {
-    for (const via of Array.isArray(entry?.via) ? entry.via : []) {
-      if (typeof via !== 'object' || via === null) continue
+  for (const [packageKey, entry] of Object.entries(vulnerabilities ?? {})) {
+    if (typeof entry !== 'object' || entry === null) throw new Error(`Vulnerability entry ${packageKey} is not an object`)
+    if (!Array.isArray(entry.via)) throw new Error(`Vulnerability entry ${packageKey} has no via array`)
+    for (const [viaIndex, via] of entry.via.entries()) {
+      if (typeof via === 'string') continue
+      if (typeof via !== 'object' || via === null) throw new Error(`Vulnerability entry ${packageKey} has a malformed via entry at index ${viaIndex}`)
+      if (!AUDIT_KNOWN_SEVERITIES.has(via.severity)) throw new Error(`Vulnerability entry ${packageKey} has an unknown via severity`)
       if (!AUDIT_FAILING_SEVERITIES.has(via.severity)) continue
       const advisory = advisoryId(via)
-      if (!advisory) continue
-      const pkg = typeof via.name === 'string' ? via.name : entry.name
+      if (!advisory) throw new Error(`High or critical vulnerability entry ${packageKey} has no parseable advisory ID`)
+      const pkg = typeof via.name === 'string' && via.name.length
+        ? via.name
+        : typeof entry.name === 'string' && entry.name.length
+          ? entry.name
+          : undefined
+      if (!pkg) throw new Error(`High or critical advisory ${advisory} in ${packageKey} has no package name`)
       advisories.set(`${advisory}\u0000${pkg}`, {
         advisory,
         package: pkg,
