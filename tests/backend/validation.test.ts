@@ -216,6 +216,11 @@ describe('requireSelfHostedVoiceUrl', () => {
       'http://192.169.0.1/',
       'http://example.com/',
       'http://[2001:db8::1]:8000/',
+      'http://fdns.io/',
+      'http://fd.example.com/',
+      'http://fcserver.attacker.com/',
+      'http://fe80.example.com/',
+      'http://[::ffff:10.0.0.1]:8000/',
     ]) expect(() => requireSelfHostedVoiceUrl(url), url).toThrow(/private network/)
     expect(requireSelfHostedVoiceUrl('https://example.com/v1/')).toBe('https://example.com/v1/')
     expect(requireSelfHostedVoiceUrl('https://1.2.3.4:8000/')).toBe('https://1.2.3.4:8000/')
