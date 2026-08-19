@@ -28,7 +28,7 @@ import { formatRelative } from '@/lib/data'
 import { HARNESS_PRODUCT_NAMES, HARNESS_SELECTOR_ORDER, HARNESS_SHORT_NAMES } from '@/lib/harness'
 import { useI18n } from '@/lib/i18n'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
-import { sessionAttentionSignature } from '@/app/session-attention'
+import { sessionAttentionSignature, signatureCleared } from '@/app/session-attention'
 import { IconButton, Modal, OmpMark, PiMark, PrimeMark, useFocusTrap } from './ui'
 
 export interface SidebarProps {
@@ -194,7 +194,7 @@ function SidebarView({ projects, sessions, activeProjectId, activeSessionId, act
   const { activeSessions, sessionsByProject } = useMemo(() => indexSidebarSessions(projects, sessions), [projects, sessions])
   const needsAttention = (session: SessionRecord) => {
     const signature = sessionAttentionSignature(session)
-    return Boolean(signature && clearedAttention[session.id] !== signature)
+    return Boolean(signature && !signatureCleared(signature, clearedAttention[session.id], session.unread))
   }
   const unreadCount = activeSessions.reduce((count, session) => count + Number(needsAttention(session)), 0)
   const newSessionShortcut = shortcutLabel(platform, ['Primary', 'N'])
