@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, prepareExecutableSpawnAsync, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, prepareExecutableSpawnAsync, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -20,6 +20,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 const dirs: string[] = []
+const processConcurrencyLimit = 8
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'prime-work-process-')); dirs.push(dir); return dir }
 describe('runProcess resource bounds', () => {
@@ -278,7 +279,7 @@ describe('runProcess resource bounds', () => {
     expect(result.stdout).toBe('0.84.1\n')
     expect(executableChildEnvironment(executable, { HOME: home, PATH: '/usr/bin' }).PATH?.split(':').slice(0, 2)).toEqual([
       shimDirectory,
-      '/usr/bin',
+      runtimeDirectory,
     ])
 
     const primeExecutable = join(runtimeDirectory, 'prime-agent')
@@ -344,24 +345,24 @@ update(1)
 setTimeout(() => update(-1), 250)
 `)
 
-    const count = PROCESS_CONCURRENCY_LIMIT + 6
+    const count = processConcurrencyLimit + 6
     const results = await Promise.all(Array.from({ length: count }, () => runProcess(process.execPath, [workerPath, statePath], { timeoutMs: 5_000 })))
     expect(results.every((result) => result.code === 0)).toBe(true)
     const state = JSON.parse(readFileSync(statePath, 'utf8')) as { active: number; max: number }
     expect(state.active).toBe(0)
     expect(state.max).toBeGreaterThan(1)
-    expect(state.max).toBeLessThanOrEqual(PROCESS_CONCURRENCY_LIMIT)
+    expect(state.max).toBeLessThanOrEqual(processConcurrencyLimit)
   }, 15_000)
 
   it('closes queued admission and still terminates every active child during shutdown', async () => {
     const dir = temp()
-    const active = Array.from({ length: PROCESS_CONCURRENCY_LIMIT }, (_, index) => runProcess(process.execPath, ['-e', `
+    const active = Array.from({ length: processConcurrencyLimit }, (_, index) => runProcess(process.execPath, ['-e', `
 const fs = require('node:fs')
 process.on('SIGTERM', () => {})
 fs.writeFileSync(process.argv.at(-1), String(process.pid))
 setInterval(() => {}, 1000)
 `, join(dir, `active-${index}`)], { timeoutMs: 30_000 }))
-    await waitUntil(() => readdirSync(dir).filter((name) => name.startsWith('active-')).length === PROCESS_CONCURRENCY_LIMIT)
+    await waitUntil(() => readdirSync(dir).filter((name) => name.startsWith('active-')).length === processConcurrencyLimit)
 
     const deniedMarker = join(dir, 'queued-ran')
     const queued = runProcess(process.execPath, ['-e', `require('node:fs').writeFileSync(process.argv.at(-1), 'unexpected')`, deniedMarker])

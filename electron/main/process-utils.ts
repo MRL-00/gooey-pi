@@ -24,7 +24,6 @@ import {
 
 import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
 export { clearNodeInterpreterCache, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion }
-export { spawn }
 
 export interface ProcessResult {
   code: number
@@ -58,18 +57,18 @@ export function processOutcome(result: ProcessResult, output: string): ProcessOu
   return reason ? { ok: false, output, reason } : { ok: true, output }
 }
 
-export const PROCESS_CONCURRENCY_LIMIT = 8
-export const PROCESS_QUEUE_LIMIT = 64
+const PROCESS_CONCURRENCY_LIMIT = 8
+const PROCESS_QUEUE_LIMIT = 64
 
-export const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
-export const activeChildren = new Set<ChildProcess>()
-export const processAdmission = createAdmissionQueue({
+const PROCESS_INPUT_LIMIT = 4 * 1024 * 1024
+const activeChildren = new Set<ChildProcess>()
+const processAdmission = createAdmissionQueue({
   maxConcurrent: PROCESS_CONCURRENCY_LIMIT,
   maxPending: PROCESS_QUEUE_LIMIT,
   pendingLimitError: () => new Error(`Process queue limit of ${PROCESS_QUEUE_LIMIT} exceeded`),
   closedError: () => new Error('Process admission is closed during shutdown'),
 })
-export let processAdmissionClosed = false
+let processAdmissionClosed = false
 
 export function beginProcessShutdown(): void {
   if (processAdmissionClosed) return
@@ -181,7 +180,7 @@ export function waitForProcessExit(child: ChildProcess, timeoutMs: number): Prom
   })
 }
 
-export function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
+function terminateChild(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) {
     try { child.kill(signal) } catch { /* already exited */ }
     return
@@ -239,9 +238,9 @@ export function executableChildEnvironment(
   const home = homeValue && isAbsolutePathForPlatform(homeValue, platform) ? homeValue : homedir()
   const directories = [
     executableDirectory,
-    ...(result[pathKey] ?? '').split(separator),
     ...versionManagerRuntimeDirs(result, platform, home),
     ...sharedHarnessCandidateDirs(result, platform, home),
+    ...(result[pathKey] ?? '').split(separator),
   ]
   const seen = new Set<string>()
   result[pathKey] = directories.filter((directory) => {
@@ -266,9 +265,7 @@ export class NodeInterpreterResolutionError extends Error {
   }
 }
 
-function lookupNodeInterpreter(script: string): string | undefined {
-  let resolvedFile: string
-  try { resolvedFile = realpathSync(script) } catch { return undefined }
+function lookupNodeInterpreter(resolvedFile: string): string | undefined {
   const cached = NODE_INTERPRETER_CACHE.get(resolvedFile)
   if (!cached) return undefined
   if (typeof cached !== 'string') throw new NodeInterpreterResolutionError(cached.error)
@@ -583,7 +580,7 @@ export function runProcess(file: string, args: readonly string[], options: {
 async function nodeVersion(candidate: string, env: NodeJS.ProcessEnv): Promise<NodeVersionResult | null> {
   const key = await realpath(candidate)
   const cached = NODE_VERSION_CACHE.get(key)
-  if (NODE_VERSION_CACHE.has(key)) return cached ?? null
+  if (cached !== undefined) return cached
   const result = await runProcess(key, ['--version'], {
     env,
     timeoutMs: NODE_VERSION_TIMEOUT_MS,
@@ -653,7 +650,11 @@ export async function prepareExecutableSpawnAsync(
   const childEnvironment = executableChildEnvironment(file, env, platform)
   if (platform !== 'win32') {
     const home = childEnvironment.HOME && posix.isAbsolute(childEnvironment.HOME) ? childEnvironment.HOME : homedir()
-    await resolveNodeInterpreter(file, childEnvironment, platform, home)
+    const resolutionEnvironment = {
+      ...childEnvironment,
+      PATH: [env.PATH, childEnvironment.PATH].filter(Boolean).join(delimiter),
+    }
+    await resolveNodeInterpreter(file, resolutionEnvironment, platform, home)
   }
   return prepareExecutableSpawn(file, args, env, options)
 }
