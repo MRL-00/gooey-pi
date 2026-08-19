@@ -1,11 +1,26 @@
 import { HARNESS_IDS, type AppSettings, type HarnessId, type HarnessStatus } from '../../src/types/api'
 import { HARNESSES, type HarnessDescriptor } from './harness'
-import { findHarnessExecutable, runProcess } from './process-utils'
+import { findHarnessExecutable, processFailureReason, runProcess } from './process-utils'
 import type { JsonStateStore } from './store'
 
 type RuntimePaths = Record<HarnessId, string>
-interface HarnessProbe { runnable: boolean; version: string | null }
-type ExecutableFinder = (descriptor: HarnessDescriptor, configuredPath?: string, accept?: (candidate: string) => Promise<boolean>) => Promise<string | null>
+export type HarnessProbeFailureKind = 'spawn' | 'exit' | 'timeout' | 'overflow'
+export interface HarnessProbeFailure {
+  kind: HarnessProbeFailureKind
+  code?: number
+  detail: string
+}
+export interface HarnessProbe { runnable: boolean; version: string | null; failure?: HarnessProbeFailure }
+export interface ExecutableCandidateFailure {
+  path: string
+  reason: string
+}
+type ExecutableFinder = (
+  descriptor: HarnessDescriptor,
+  configuredPath?: string,
+  accept?: (candidate: string) => Promise<boolean>,
+  onFailure?: (failure: ExecutableCandidateFailure) => void,
+) => Promise<string | null>
 type ExecutableProbe = (executable: string) => Promise<HarnessProbe>
 
 export interface HarnessDiscoveryOptions {
@@ -20,6 +35,28 @@ function hasControlCharacter(value: string): boolean {
   })
 }
 
+function sanitizedDetail(value: string): string {
+  return [...value].filter((character) => !hasControlCharacter(character)).join('').trim().slice(0, 200)
+}
+
+function probeFailureDetail(failure: HarnessProbeFailure): string {
+  const suffix = failure.detail ? `: ${failure.detail}` : ''
+  if (failure.kind === 'exit') return `exited with code ${failure.code ?? 'unknown'}${suffix}`
+  if (failure.kind === 'timeout') return `timed out${suffix}`
+  if (failure.kind === 'overflow') return `output exceeded the probe limit${suffix}`
+  return `could not start${suffix}`
+}
+
+function spawnFailure(error: unknown): HarnessProbeFailure {
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN'
+  const detail = code === 'ENOENT'
+    ? 'path does not exist'
+    : code === 'EACCES' || code === 'EPERM'
+      ? 'permission denied'
+      : `spawn error ${code}`
+  return { kind: 'spawn', detail }
+}
+
 const emptyStatuses = (): Record<HarnessId, HarnessStatus> => ({
   omp: { path: null, version: null },
   prime: { path: null, version: null },
@@ -29,11 +66,25 @@ const emptyStatuses = (): Record<HarnessId, HarnessStatus> => ({
 export async function probeHarnessExecutable(executable: string): Promise<HarnessProbe> {
   try {
     const result = await runProcess(executable, ['--version'], { timeoutMs: 10_000, maxBytes: 16 * 1024 })
-    if (result.code !== 0 || result.timedOut || result.outputExceeded) return { runnable: false, version: null }
+    const failure = processFailureReason(result)
+    if (failure) {
+      const kind: HarnessProbeFailureKind = failure === 'exit' || failure === 'timeout' || failure === 'overflow' ? failure : 'spawn'
+      return {
+        runnable: false,
+        version: null,
+        failure: {
+          kind,
+          ...(kind === 'exit' ? { code: result.code } : {}),
+          detail: sanitizedDetail(result.stderr),
+        },
+      }
+    }
     const token = (result.stdout.trim() || result.stderr.trim()).split(/\s+/).at(-1) ?? ''
     const version = token && token.length <= 128 && !hasControlCharacter(token) ? token : null
     return { runnable: true, version }
-  } catch { return { runnable: false, version: null } }
+  } catch (error) {
+    return { runnable: false, version: null, failure: spawnFailure(error) }
+  }
 }
 
 export function detectedHarnesses(statuses: Record<HarnessId, HarnessStatus>): HarnessId[] {
@@ -86,15 +137,35 @@ export class HarnessDiscoveryService {
     const runtimePaths = this.runtimePaths()
     const discovered = await Promise.all(HARNESS_IDS.map(async (harness): Promise<HarnessStatus> => {
       const probes = new Map<string, HarnessProbe>()
+      let lastFailure: ExecutableCandidateFailure | undefined
+      let overrideFailure: ExecutableCandidateFailure | undefined
       const probe = async (candidate: string) => {
         const result = await this.probeExecutable(candidate)
         probes.set(candidate, result)
         return result.runnable
       }
-      const path = await this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe)
-      if (!path) return { path: null, version: null }
+      const onFailure = (failure: ExecutableCandidateFailure): void => {
+        const probeResult = probes.get(failure.path)
+        const reported = probeResult?.failure
+          ? { path: failure.path, reason: probeFailureDetail(probeResult.failure) }
+          : failure
+        lastFailure = reported
+        if (runtimePaths[harness] && failure.path === runtimePaths[harness]) overrideFailure = reported
+      }
+      const path = await (this.findExecutable === findHarnessExecutable
+        ? this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe, onFailure)
+        : this.findExecutable(HARNESSES[harness], runtimePaths[harness], probe))
+      if (!path) {
+        const lastProbe = [...probes.values()].at(-1)
+        const problem = overrideFailure ?? lastFailure ?? (lastProbe?.failure
+          ? { path: [...probes.keys()].at(-1) ?? '', reason: probeFailureDetail(lastProbe.failure) }
+          : undefined)
+        return problem ? { path: null, version: null, problem } : { path: null, version: null }
+      }
       const result = probes.get(path) ?? await this.probeExecutable(path)
-      return result.runnable ? { path, version: result.version } : { path: null, version: null }
+      return result.runnable
+        ? { path, version: result.version }
+        : { path: null, version: null, problem: { path, reason: result.failure ? probeFailureDetail(result.failure) : 'could not run' } }
     }))
     const next = emptyStatuses()
     for (const [index, harness] of HARNESS_IDS.entries()) {

@@ -70,7 +70,7 @@ export function AgentSettings({ settings, meta, onUpdate, onRefreshHarnesses }: 
               <span className={status?.path ? 'is-online' : ''}><Bot size={17} /></span>
               <div>
                 <strong>{status?.path ? `${name} is ready` : `${name} not detected`}</strong>
-                <small>{status?.path ?? `Install ${name}, then refresh harnesses.`}</small>
+                <small>{status?.path ?? status?.problem?.reason ?? `Install ${name}, then refresh harnesses.`}</small>
               </div>
               {status?.version ? <code>v{status.version}</code> : null}
             </div>

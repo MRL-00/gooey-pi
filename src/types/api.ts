@@ -24,6 +24,10 @@ export type OmpApprovalMode = (typeof OMP_APPROVAL_MODES)[number]
 export interface HarnessStatus {
   path: string | null
   version: string | null
+  problem?: {
+    path: string
+    reason: string
+  }
 }
 
 export interface AppMeta {

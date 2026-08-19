@@ -462,6 +462,7 @@ export async function findHarnessExecutable(
   descriptor: HarnessDescriptor,
   configuredPath?: string,
   accept: (candidate: string) => Promise<boolean> = async () => true,
+  onFailure?: (failure: { path: string; reason: string }) => void,
 ): Promise<string | null> {
   const candidates = [
     ...harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath),
@@ -471,7 +472,15 @@ export async function findHarnessExecutable(
     try {
       await access(candidate, fsConstants.X_OK)
       if (await accept(candidate)) return candidate
-    } catch { /* continue */ }
+      onFailure?.({ path: candidate, reason: 'probe failed' })
+    } catch {
+      try {
+        await access(candidate, fsConstants.F_OK)
+        onFailure?.({ path: candidate, reason: 'not executable' })
+      } catch {
+        onFailure?.({ path: candidate, reason: 'path does not exist' })
+      }
+    }
   }
   return null
 }
