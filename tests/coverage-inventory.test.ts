@@ -53,6 +53,7 @@ describe('safety-critical coverage inventory', () => {
           include?: string[]
           exclude?: string[]
           reporter?: string[]
+          reportOnFailure?: boolean
           thresholds?: { statements?: number; branches?: number; functions?: number; lines?: number }
         }
       }
@@ -65,6 +66,7 @@ describe('safety-critical coverage inventory', () => {
     expect(config.root).toBe(PROJECT_ROOT)
     expect(config.test?.coverage?.exclude).toBeUndefined()
     expect(config.test?.coverage?.reporter).toEqual(['text', 'html', 'json-summary'])
+    expect(config.test?.coverage?.reportOnFailure).toBe(true)
     expect((JSON.parse(readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts['test:coverage']).toBe('vitest run --coverage')
     expect(config.test?.coverage?.thresholds).toEqual({
       statements: 65,

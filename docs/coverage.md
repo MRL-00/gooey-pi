@@ -36,6 +36,8 @@ Global thresholds remain 65% statements, 50% branches, 70% functions, and 75% li
 
 Measured on the current base with Node 24.15.0 and npm 12.0.2 via `npm run test:coverage`, the inventory enrolls 143 modules (67 `electron/main`, 1 `electron/preload`, 6 `src/app`, 29 `src/lib`, 17 `src/hooks`, 17 `scripts/release`, 6 `assets/extensions`), against denominators of 15,531 statements, 11,297 branches, 3,044 functions, and 12,279 lines. Aggregate coverage was 75.74% statements, 70.00% branches, 74.73% functions, and 81.09% lines — above every global threshold with zero exclusions and no new characterization tests. Characterization tests are follow-up work per family, starting with `electron/preload/index.ts`.
 
+Coverage is reported with `reportOnFailure: true`, so the report and every threshold are still evaluated when unrelated tests fail; a failing suite can never silently skip the gate.
+
 Some release CLI entry points are deliberately exercised in bounded child-process tests, whose V8 data is not merged into the parent Vitest report. They remain in the denominator as uncovered code instead of receiving exclusions. This makes the aggregate conservative and ensures growth in those entry points consumes coverage headroom.
 
 When changing a family, reporter, threshold, or technical exclusion, repeat the before/after denominator, artifact-size, and wall-clock measurement and place commit-addressed pass evidence in the pull request or release record as described in the [validation guide](validation.md#recording-evidence).

@@ -16,6 +16,7 @@ export default defineConfig({
       provider: 'v8',
       include: coverageInventory.includePatterns,
       reporter: ['text', 'html', 'json-summary'],
+      reportOnFailure: true,
       thresholds: {
         statements: 65,
         branches: 50,
