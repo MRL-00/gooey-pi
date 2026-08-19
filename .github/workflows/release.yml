@@ -217,7 +217,7 @@ jobs:
         with:
           name: packaged-smoke-diagnostics-linux-${{ matrix.arch }}
           path: release/linux/${{ matrix.arch }}/packaged-smoke-diagnostics.log
-          if-no-files-found: ignore
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-linux-${{ matrix.arch }}
@@ -270,7 +270,7 @@ jobs:
         with:
           name: packaged-smoke-diagnostics-win-x64
           path: release/win/x64/packaged-smoke-diagnostics.log
-          if-no-files-found: ignore
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gooeypi-public-windows

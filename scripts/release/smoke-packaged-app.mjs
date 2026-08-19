@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { findUnpackedDirectory, packagedExecutablePath } from './verify-cross-platform-package.mjs'
 
@@ -13,7 +13,7 @@ import { findUnpackedDirectory, packagedExecutablePath } from './verify-cross-pl
  * before a single bounded deadline elapses. The structural verifier proves the
  * package's shape; this proves the package actually boots main, preload and the
  * trusted renderer. Contract values are asserted against
- * electron/main/packaged-smoke.ts by tests/backend/packaged-smoke.test.ts.
+ * electron/main/packaged-smoke.ts by tests/packaged-smoke.test.ts.
  */
 export const PACKAGED_SMOKE_FLAG = '--packaged-smoke='
 export const PACKAGED_SMOKE_READY_EVENT = 'gooeypi-packaged-smoke-ready'
@@ -63,13 +63,30 @@ export function parseReadinessMarker(raw) {
   return { event: marker.event, url: url.href, version: marker.version }
 }
 
+/** Diagnostics are a bounded tail: a failing launch can log without limit, and the artifact must stay small enough to upload. */
 export function boundedDiagnostics(chunks, maxBytes = MAX_DIAGNOSTICS_BYTES) {
   const text = chunks.join('')
-  const overflow = Buffer.byteLength(text, 'utf8') - maxBytes
-  return overflow > 0 ? `…${text.slice(overflow)}` : text
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
+  const ellipsis = '…'
+  const budget = maxBytes - Buffer.byteLength(ellipsis, 'utf8')
+  let tail = Buffer.from(text, 'utf8').subarray(-budget).toString('utf8')
+  // A tail cut inside a multi-byte sequence decodes to a wider replacement character.
+  while (Buffer.byteLength(tail, 'utf8') > budget) tail = tail.slice(1)
+  return `${ellipsis}${tail}`
+}
+
+/** Written for every failure so the CI artifact upload always has its file. */
+function writeDiagnostics(report, body) {
+  try {
+    mkdirSync(dirname(report), { recursive: true })
+    writeFileSync(report, boundedDiagnostics([body]), { encoding: 'utf8' })
+  } catch (error) {
+    console.error(`Could not write packaged smoke diagnostics to ${report}: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 function readMarker(markerPath) {
+  if (!existsSync(markerPath)) throw new Error('Packaged application exited without reporting renderer readiness')
   const size = statSync(markerPath).size
   if (size > MAX_MARKER_BYTES) throw new Error(`Readiness marker exceeds ${MAX_MARKER_BYTES} bytes`)
   return parseReadinessMarker(readFileSync(markerPath, 'utf8'))
@@ -113,26 +130,28 @@ function runPackagedApp(executable, args, { cwd, timeoutMs, platform = process.p
 
 export async function smokePackagedApp(target, architecture, { timeoutMs = SMOKE_TIMEOUT_MS, diagnosticsPath = '' } = {}) {
   const outputDirectory = resolve('release', target, architecture)
-  const unpacked = findUnpackedDirectory(outputDirectory, target)
-  const executable = packagedExecutablePath(unpacked, target)
-  const workspace = mkdtempSync(join(tmpdir(), 'gooeypi-packaged-smoke-'))
-  const markerPath = join(workspace, 'ready.json')
   const report = diagnosticsPath || join(outputDirectory, 'packaged-smoke-diagnostics.log')
+  let workspace = ''
+  let launch = null
   try {
-    const result = await runPackagedApp(executable, smokeArguments(markerPath, join(workspace, 'user-data')), { cwd: unpacked, timeoutMs })
-    try {
-      if (result.timedOut) throw new Error(`Packaged application did not report renderer readiness within ${timeoutMs}ms`)
-      if (result.code !== 0) throw new Error(`Packaged application exited with code ${result.code ?? 'null'} (signal ${result.signal ?? 'none'})`)
-      const marker = readMarker(markerPath)
-      console.log(`Smoked ${target}/${architecture} packaged application: ${executable} reported ${marker.event} for ${marker.url} (version ${marker.version}).`)
-      return marker
-    } catch (error) {
-      writeFileSync(report, `${result.command} ${result.args.join(' ')}\nexit code: ${result.code ?? 'null'}\nsignal: ${result.signal ?? 'none'}\ntimed out: ${result.timedOut}\n\n${result.diagnostics}`, { encoding: 'utf8' })
-      throw new Error(`${error instanceof Error ? error.message : String(error)} (diagnostics: ${report})`)
-    }
+    const unpacked = findUnpackedDirectory(outputDirectory, target)
+    const executable = packagedExecutablePath(unpacked, target)
+    workspace = mkdtempSync(join(tmpdir(), 'gooeypi-packaged-smoke-'))
+    const markerPath = join(workspace, 'ready.json')
+    launch = await runPackagedApp(executable, smokeArguments(markerPath, join(workspace, 'user-data')), { cwd: unpacked, timeoutMs })
+    if (launch.timedOut) throw new Error(`Packaged application did not report renderer readiness within ${timeoutMs}ms`)
+    if (launch.code !== 0) throw new Error(`Packaged application exited with code ${launch.code ?? 'null'} (signal ${launch.signal ?? 'none'})`)
+    const marker = readMarker(markerPath)
+    console.log(`Smoked ${target}/${architecture} packaged application: ${executable} reported ${marker.event} for ${marker.url} (version ${marker.version}).`)
+    return marker
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const launched = launch ? `${launch.command} ${launch.args.join(' ')}\nexit code: ${launch.code ?? 'null'}\nsignal: ${launch.signal ?? 'none'}\ntimed out: ${launch.timedOut}\n\n${launch.diagnostics}\n\n` : ''
+    writeDiagnostics(report, `${launched}${message}\n`)
+    throw new Error(`${message} (diagnostics: ${report})`)
   } finally {
     // The isolated user data and marker never outlive the smoke, however it ended.
-    rmSync(workspace, { recursive: true, force: true })
+    if (workspace) rmSync(workspace, { recursive: true, force: true })
   }
 }
 

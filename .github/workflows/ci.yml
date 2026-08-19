@@ -154,7 +154,7 @@ jobs:
         with:
           name: packaged-smoke-diagnostics-${{ matrix.target }}-${{ matrix.arch }}
           path: release/${{ matrix.target }}/${{ matrix.arch }}/packaged-smoke-diagnostics.log
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   local-qa-package:
     if: github.event_name == 'workflow_dispatch'
