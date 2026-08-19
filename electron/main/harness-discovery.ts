@@ -1,6 +1,6 @@
 import { HARNESS_IDS, type AppSettings, type HarnessId, type HarnessStatus } from '../../src/types/api'
 import { HARNESSES, type HarnessDescriptor } from './harness'
-import { clearNodeInterpreterCache, findHarnessExecutable, NodeInterpreterResolutionError, processFailureReason, runProcess, type ExecutableCandidateFailure } from './process-utils'
+import { findHarnessExecutable, processFailureReason, runProcess, type ExecutableCandidateFailure } from './process-utils'
 import type { JsonStateStore } from './store'
 
 type RuntimePaths = Record<HarnessId, string>
@@ -50,7 +50,6 @@ function probeFailureDetail(failure: HarnessProbeFailure): string {
 }
 
 function spawnFailure(error: unknown): HarnessProbeFailure {
-  if (error instanceof NodeInterpreterResolutionError) return { kind: 'spawn', detail: sanitizedDetail(error.detail) }
   const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN'
   const detail = code === 'ENOENT'
     ? 'path does not exist'
@@ -136,7 +135,6 @@ export class HarnessDiscoveryService {
 
   async refresh(): Promise<Record<HarnessId, HarnessStatus>> {
     const revision = ++this.refreshRevision
-    clearNodeInterpreterCache()
     const runtimePaths = this.runtimePaths()
     const discovered = await Promise.all(HARNESS_IDS.map(async (harness): Promise<HarnessStatus> => {
       const probes = new Map<string, HarnessProbe>()

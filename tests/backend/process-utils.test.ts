@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { probeHarnessExecutable } from '../../electron/main/harness-discovery'
 import { HARNESSES } from '../../electron/main/harness'
-import { PROCESS_CONCURRENCY_LIMIT, clearNodeInterpreterCache, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, prepareExecutableSpawnAsync, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, versionManagerHarnessExecutableCandidates, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
+import { PROCESS_CONCURRENCY_LIMIT, executableChildEnvironment, harnessExecutableCandidates, isAbsolutePathForPlatform, killProcessTree, nodeVersionSatisfies, parseNodeEngineRange, parseNodeVersion, prepareExecutableSpawn, nvmHarnessExecutableCandidates, primeAgentCandidates, primeAgentExecutableName, processFailureReason, processOutcome, runProcess, stopChildProcesses, waitForProcessExit, type ProcessResult } from '../../electron/main/process-utils'
 import { waitUntil } from '../helpers/wait'
 
 const spawnOverride = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => unknown) }))
@@ -52,214 +52,7 @@ describe('runProcess resource bounds', () => {
     expect(nodeVersionSatisfies('20.0.0', 'unsupported-range')).toBe(true)
   })
 
-  it('reroutes only env-node shebangs and parses env -S trailing flags', async () => {
-    const home = temp()
-    const directory = join(home, 'bin')
-    mkdirSync(directory, { recursive: true })
-    const script = join(directory, 'pi')
-    writeFileSync(script, '#!/usr/bin/env -S node --no-warnings\nprocess.stdout.write("ok\\n")\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, ['--version'], {
-      HOME: home,
-      NVM_DIR: join(home, 'missing-nvm'),
-      PATH: dirname(process.execPath),
-    }, { platform: 'linux', home })
-
-    expect(invocation.file).not.toBe(script)
-    expect(invocation.file).toMatch(/node$/)
-    expect(invocation.args).toEqual([script, '--version'])
-    expect(prepareExecutableSpawn('/bin/echo', ['ok'], { HOME: home, PATH: '' }, { platform: 'linux', home })).toMatchObject({
-      file: '/bin/echo',
-      args: ['ok'],
-    })
-  })
-
-  it('resolves interpreters from the executable directory added to the child PATH', async () => {
-    const home = temp()
-    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
-    mkdirSync(packageDirectory, { recursive: true })
-    const node = join(packageDirectory, 'node')
-    writeFileSync(node, '#!/bin/sh\nprintf "v99.0.0\\n"\n')
-    chmodSync(node, 0o755)
-    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=99.0.0' } }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, [], { HOME: home, PATH: '' }, { platform: 'linux', home })
-
-    expect(invocation).toMatchObject({ file: node, args: [script] })
-  })
-
-  it('leaves a cold synchronous preparation unchanged until async resolution warms the memo', async () => {
-    const home = temp()
-    const nodeDirectory = join(home, 'node')
-    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
-    mkdirSync(nodeDirectory, { recursive: true })
-    mkdirSync(packageDirectory, { recursive: true })
-    const node = join(nodeDirectory, 'node')
-    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
-    chmodSync(node, 0o755)
-    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=22.0.0' } }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    expect(prepareExecutableSpawn(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })).toMatchObject({
-      file: script,
-      args: [],
-    })
-    await prepareExecutableSpawnAsync(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })
-    expect(prepareExecutableSpawn(script, [], { HOME: home, PATH: nodeDirectory }, { platform: 'linux', home })).toMatchObject({
-      file: node,
-      args: [script],
-    })
-  })
-
-  it('selects the first working Node that satisfies the owning package engine range', async () => {
-    const home = temp()
-    const lowDirectory = join(home, 'node-low')
-    const highDirectory = join(home, 'node-high')
-    const packageDirectory = join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist')
-    mkdirSync(lowDirectory, { recursive: true })
-    mkdirSync(highDirectory, { recursive: true })
-    mkdirSync(packageDirectory, { recursive: true })
-    const makeNode = (directory: string, version: string) => {
-      const node = join(directory, 'node')
-      writeFileSync(node, `#!/bin/sh\nprintf '${version}\\n'\n`)
-      chmodSync(node, 0o755)
-    }
-    makeNode(lowDirectory, 'v20.18.1')
-    makeNode(highDirectory, 'v99.0.0')
-    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=99.0.0' } }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\nprocess.stdout.write("ok\\n")\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, ['--version'], {
-      HOME: home,
-      NVM_DIR: join(home, 'missing-nvm'),
-      PATH: `${lowDirectory}:${highDirectory}`,
-    }, { platform: 'linux', home })
-
-    expect(invocation.file).toBe(join(highDirectory, 'node'))
-    expect(invocation.args).toEqual([script, '--version'])
-  })
-
-  it('probes PATH before exhausting version-manager candidates', async () => {
-    const home = temp()
-    const nvmRoot = join(home, '.nvm')
-    const packageDirectory = join(home, 'node_modules', 'fixture', 'dist')
-    const pathDirectory = join(home, 'path-node')
-    mkdirSync(packageDirectory, { recursive: true })
-    mkdirSync(pathDirectory, { recursive: true })
-    const makeNode = (directory: string, version: string) => {
-      mkdirSync(directory, { recursive: true })
-      const node = join(directory, 'node')
-      writeFileSync(node, `#!/bin/sh\nprintf '${version}\\n'\n`)
-      chmodSync(node, 0o755)
-    }
-    for (let index = 0; index < 13; index += 1) {
-      makeNode(join(nvmRoot, 'versions', 'node', `v${40 - index}.0.0`, 'bin'), 'v20.18.1')
-    }
-    makeNode(pathDirectory, 'v99.0.0')
-    writeFileSync(join(home, 'node_modules', 'fixture', 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=99.0.0' } }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, [], {
-      HOME: home,
-      NVM_DIR: nvmRoot,
-      PATH: pathDirectory,
-    }, { platform: 'linux', home })
-
-    expect(invocation.file).toBe(join(pathDirectory, 'node'))
-  })
-
-  it('reports when no discovered Node satisfies the package engine range', async () => {
-    const home = temp()
-    const nodeDirectory = join(home, 'node')
-    const packageDirectory = join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist')
-    mkdirSync(nodeDirectory, { recursive: true })
-    mkdirSync(packageDirectory, { recursive: true })
-    const node = join(nodeDirectory, 'node')
-    writeFileSync(node, '#!/bin/sh\nprintf "v20.18.1\\n"\n')
-    chmodSync(node, 0o755)
-    writeFileSync(join(home, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', engines: { node: '>=999.0.0' } }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    await expect(prepareExecutableSpawnAsync(script, [], {
-      HOME: home,
-      NVM_DIR: join(home, 'missing-nvm'),
-      PATH: nodeDirectory,
-    }, { platform: 'linux', home })).rejects.toThrow('@earendil-works/pi-coding-agent requires Node >=999.0.0')
-    return expect(probeHarnessExecutable(script)).resolves.toMatchObject({
-      runnable: false,
-      failure: { kind: 'spawn', detail: expect.stringContaining('@earendil-works/pi-coding-agent requires Node >=999.0.0') },
-    })
-  })
-
-  it('does not inherit a parent engine from a malformed owning manifest', async () => {
-    const home = temp()
-    const nodeDirectory = join(home, 'node')
-    const packageDirectory = join(home, 'child', 'dist')
-    mkdirSync(nodeDirectory, { recursive: true })
-    mkdirSync(packageDirectory, { recursive: true })
-    const node = join(nodeDirectory, 'node')
-    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
-    chmodSync(node, 0o755)
-    writeFileSync(join(home, 'package.json'), JSON.stringify({ engines: { node: '>=999.0.0' } }))
-    writeFileSync(join(home, 'child', 'package.json'), '{ malformed')
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, [], {
-      HOME: home,
-      NVM_DIR: join(home, 'missing-nvm'),
-      PATH: nodeDirectory,
-    }, { platform: 'linux', home })
-    expect(invocation.file).not.toBe(script)
-    expect(invocation.args).toEqual([script])
-  })
-
-  it('does not parse a truncated owning manifest or adopt a parent constraint', async () => {
-    const home = temp()
-    const nodeDirectory = join(home, 'node')
-    const packageDirectory = join(home, 'child', 'dist')
-    mkdirSync(nodeDirectory, { recursive: true })
-    mkdirSync(packageDirectory, { recursive: true })
-    const node = join(nodeDirectory, 'node')
-    writeFileSync(node, '#!/bin/sh\nprintf "v24.15.0\\n"\n')
-    chmodSync(node, 0o755)
-    writeFileSync(join(home, 'package.json'), JSON.stringify({ engines: { node: '>=999.0.0' } }))
-    writeFileSync(join(home, 'child', 'package.json'), JSON.stringify({ name: 'child', padding: 'x'.repeat(70 * 1024) }))
-    const script = join(packageDirectory, 'cli.js')
-    writeFileSync(script, '#!/usr/bin/env node\n')
-    chmodSync(script, 0o755)
-    clearNodeInterpreterCache()
-
-    const invocation = await prepareExecutableSpawnAsync(script, [], {
-      HOME: home,
-      NVM_DIR: join(home, 'missing-nvm'),
-      PATH: nodeDirectory,
-    }, { platform: 'linux', home })
-    expect(invocation.file).not.toBe(script)
-    expect(invocation.args).toEqual([script])
-  })
-
-  it('runs a pnpm env-node CLI whose nvm interpreter is elsewhere under a Finder-style minimal PATH', async () => {
+  it('runs a pnpm CLI under a Finder-style minimal PATH', async () => {
     const home = temp()
     const shimDirectory = join(home, 'Library', 'pnpm', 'bin')
     const runtimeDirectory = join(home, '.nvm', 'versions', 'node', 'v25.2.1', 'bin')
@@ -270,9 +63,9 @@ describe('runProcess resource bounds', () => {
     writeFileSync(executable, '#!/usr/bin/env node\nprocess.stdout.write("0.84.1\\n")\n')
     chmodSync(executable, 0o755)
 
-    const env = { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
-    await prepareExecutableSpawnAsync(executable, ['--version'], env)
-    const result = await runProcess(executable, ['--version'], { env })
+    const result = await runProcess(executable, ['--version'], {
+      env: { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+    })
 
     expect(result.code).toBe(0)
     expect(result.stdout).toBe('0.84.1\n')
@@ -605,7 +398,7 @@ describe('OMP discovery candidates', () => {
   it('keeps E2E discovery hermetic when a fixture executable disappears', async () => {
     const env = { PRIME_WORK_E2E_HIDE_WINDOWS: '1', PATH: '/fixture/bin' }
     expect(harnessExecutableCandidates(HARNESSES.pi, env, 'darwin', undefined, '/fixture/home')).toEqual(['/fixture/bin/pi'])
-    await expect(versionManagerHarnessExecutableCandidates(HARNESSES.pi, env, 'darwin', '/fixture/home')).resolves.toEqual([])
+    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, env, 'darwin', '/fixture/home')).resolves.toEqual([])
   })
 
   it('adds official standalone-node locations for Pi and Prime on Linux', () => {
@@ -621,7 +414,7 @@ describe('OMP discovery candidates', () => {
     for (const version of ['v20.1.0', 'v22.12.0', 'v23.0.0']) {
       mkdirSync(join(versions, version), { recursive: true })
     }
-    await expect(versionManagerHarnessExecutableCandidates(HARNESSES.pi, {}, 'linux', home)).resolves.toEqual([
+    await expect(nvmHarnessExecutableCandidates(HARNESSES.pi, {}, 'linux', home)).resolves.toEqual([
       join(versions, 'v23.0.0', 'bin', 'pi'),
       join(versions, 'v22.12.0', 'bin', 'pi'),
       join(versions, 'v20.1.0', 'bin', 'pi'),
