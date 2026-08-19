@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readFileSync, readdirSync } from 'node:fs'
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SHIPPED_EXTENSION_FILENAMES } from '../../electron/main/extension-manifest.ts'
 
 const localRequire = createRequire(import.meta.url)
 const packageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url))
@@ -272,6 +273,28 @@ export function assertAsarLayout(entries) {
   const forbiddenPrefixes = ['node_modules/@xterm/', 'node_modules/lucide-react/', 'node_modules/react/', 'node_modules/react-dom/', 'node_modules/react-markdown/', 'node_modules/remark-gfm/']
   const forbidden = [...normalized].find((entry) => forbiddenPrefixes.some((prefix) => entry.startsWith(prefix)))
   if (forbidden) throw new Error(`Renderer-only dependency was duplicated into the ASAR: ${forbidden}`)
+}
+
+export function assertPackagedExtensions(resourcesDirectory) {
+  const extensionsDirectory = join(resourcesDirectory, 'extensions')
+  if (!existsSync(extensionsDirectory) || !lstatSync(extensionsDirectory).isDirectory()) {
+    throw new Error(`Packaged application must contain a resources/extensions directory: ${extensionsDirectory}`)
+  }
+  const entries = readdirSync(extensionsDirectory, { withFileTypes: true })
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  const nonFiles = entries
+    .filter((entry) => !entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  const expected = [...SHIPPED_EXTENSION_FILENAMES].sort()
+  const missing = expected.filter((name) => !files.includes(name))
+  const extra = files.filter((name) => !expected.includes(name))
+  if (missing.length || extra.length || nonFiles.length) {
+    throw new Error(`Unexpected packaged extension layout (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'}; non-file: ${nonFiles.join(', ') || 'none'})`)
+  }
 }
 
 const NODE_PTY_UNPACKED_FILES = ['node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper']
