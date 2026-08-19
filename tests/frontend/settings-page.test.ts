@@ -186,7 +186,6 @@ describe('settings field ownership', () => {
       voiceSelfHostedModel: 'voice',
       voiceLocalWhisperExecutable: 'voice',
       voiceLocalWhisperModel: 'voice',
-      voiceRealtimeProvider: 'voice',
       voiceRealtimeModel: 'voice',
       voiceRealtimeVoice: 'voice',
     })
