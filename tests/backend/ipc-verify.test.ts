@@ -173,6 +173,31 @@ describe('registerIpc verify gate', () => {
     registration.dispose()
   })
 
+  it('reports renderer readiness once the trusted renderer completes its bootstrap invoke', async () => {
+    const event = fakeEvent()
+    let ready = false
+    void registration.whenRendererReady.then(() => { ready = true })
+
+    registration.authorize(event.sender as never)
+    handlers.get('app:get-meta')!(event)
+    await registration.whenRendererReady
+
+    expect(ready).toBe(true)
+    registration.dispose()
+  })
+
+  it('never reports renderer readiness for a rejected sender', async () => {
+    const untrusted = fakeEvent({ subFrame: true })
+    registration.authorize(untrusted.sender as never)
+    expect(() => handlers.get('app:get-meta')!(untrusted)).toThrow('IPC sender is not authorized')
+
+    const unauthorized = fakeEvent({ id: 42 })
+    expect(() => handlers.get('app:get-meta')!(unauthorized)).toThrow('IPC sender is not authorized')
+
+    await expect(Promise.race([registration.whenRendererReady, Promise.resolve('pending')])).resolves.toBe('pending')
+    registration.dispose()
+  })
+
   it('rejects a destroyed sender that is still in the authorized set', () => {
     const event = fakeEvent({ destroyed: true })
     registration.authorize(event.sender as never)

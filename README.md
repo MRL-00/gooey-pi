@@ -176,6 +176,8 @@ npm run test:e2e
 npm run build
 ```
 
+See the [validation guide](docs/validation.md) for the source-of-truth checks and reproducible commands.
+
 To make an installable local QA build, run the command for your operating system:
 
 ```bash
