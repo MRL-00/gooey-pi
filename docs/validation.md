@@ -6,8 +6,9 @@ This page explains how to reproduce and interpret GooeyPi's validation gates. It
 
 The repository's `main` branch protection must require pull requests and require status checks to pass with **Require branches to be up to date before merging** enabled (`required_status_checks.strict: true`). This strict latest-main requirement prevents a PR from merging on a newer base than the integration state validated by CI.
 
-The required checks are exactly the six normal pull-request gates:
+The required checks are exactly the seven normal pull-request gates:
 
+- `production-audit`
 - `quality`
 - `hermetic-e2e`
 - `windows-state-migration`
@@ -67,6 +68,7 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pull requests, pushes to 
 
 | Job | When it runs | What a pass establishes |
 |---|---|---|
+| `production-audit` | Pull request, `main`, manual dispatch | The exception-aware production dependency audit passes for the exact checked-out commit. |
 | `quality` | Pull request, `main`, manual dispatch | TypeScript checks; configured lint and format checks; the coverage suite and thresholds; production bundle creation; bundle-size budgets; coverage artifact upload. |
 | `hermetic-e2e` | Pull request, `main`, manual dispatch | The built application passes the Playwright Electron suite on the pinned macOS runner without relying on developer state. Failure artifacts are uploaded when available. |
 | `windows-state-migration` | Pull request, `main`, manual dispatch | The state migration suite passes on a real `windows-2022` runner, including the production-platform fresh-install, migration, restart, and update path. Simulating `platform: 'win32'` on another OS is useful unit coverage but is not a substitute for this job. |
@@ -120,6 +122,7 @@ The [release workflow](../.github/workflows/release.yml) runs for a semantic-ver
 | Release job | Responsibility |
 |---|---|
 | `validate` | Enforce the repository toolchain, validate tag/package versions and `main` ancestry, and expose the exact release SHA. |
+| `production-audit` | Apply the exception-aware production dependency audit to that immutable SHA before any package job. |
 | `quality` | Run `release:verify:package` for that SHA. |
 | `hermetic-e2e` | Build and run the Electron E2E suite for that SHA. |
 | `package` | Build both native macOS architectures. Credential preflight is fail-closed; public verification checks the signing identity, required microphone entitlements on the app and every Electron helper, the notarization staple on each packaged app, Gatekeeper, artifact integrity, fuses, native layout/architecture, and package budgets. |
