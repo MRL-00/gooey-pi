@@ -1,4 +1,5 @@
 import type { HarnessId, PrimeContextUsage } from '../../../src/types/api'
+import { extensionInjections } from '../extension-manifest'
 import { HARNESSES } from '../harness'
 import { isRecord } from '../validation'
 import type { RpcObject } from './types'
@@ -80,11 +81,8 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
     for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH, input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
-    for (const extensionPath of [
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('prime')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args
@@ -127,12 +125,8 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--append-system-prompt', computerUseSkillPath)
     // OMP has no --skill flag: app capabilities are injected as explicit,
     // self-contained extensions while normal OMP skills remain discovery-based.
-    for (const extensionPath of [
-      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('omp')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args
@@ -189,13 +183,8 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--skill', computerUseSkillPath)
     // App capabilities are injected as explicit, self-contained extensions
     // (the same decision as OMP); pi's --skill flag stays unused.
-    for (const extensionPath of [
-      input.environment.GOOEYPI_PI_FAST_MODE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('pi')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args

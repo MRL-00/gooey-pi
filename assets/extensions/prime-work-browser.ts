@@ -7,7 +7,7 @@
  * runtime's thread, so tools in one thread can never reach another thread's
  * tabs. Everything read back from a page is untrusted content.
  */
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import type { ExtensionAPI } from 'prime-agent'
 import { Type } from 'typebox'
 import { StringEnum } from '@earendil-works/pi-ai'
 
