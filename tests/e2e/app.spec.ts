@@ -246,6 +246,10 @@ fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prime-runtime-args.json'))}
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
 let streaming = false
+let barrierWatcher
+const barrierRelease = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-release'))}
+const barrierStarted = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-started'))}
+const barrierAccepted = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-accepted'))}
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
@@ -259,6 +263,34 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     setTimeout(() => send({ type: 'response', id: command.id, command: command.type, success: true, data: {} }), 500)
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
+    if (typeof command.message === 'string' && command.message.includes('barrier turn')) {
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
+      fs.writeFileSync(barrierStarted, 'ready')
+      streaming = true
+      send({ type: 'agent_start' })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      barrierWatcher = fs.watch(${JSON.stringify(fixtureRoot)}, (_event, filename) => {
+        if (filename?.toString() !== 'prompt-admission-barrier-release' || !fs.existsSync(barrierRelease)) return
+        barrierWatcher?.close()
+        barrierWatcher = undefined
+        send({ type: 'agent_end' })
+      })
+      return
+    }
+    if (typeof command.message === 'string' && command.message.includes('barrier follow-up')) {
+      if (command.streamingBehavior === undefined) {
+        send({ id: command.id, type: 'response', command: command.type, success: false,
+          error: 'Cannot send prompt while agent is streaming without streamingBehavior' })
+        return
+      }
+      fs.writeFileSync(barrierAccepted, JSON.stringify(command))
+      streaming = false
+      send({ type: 'agent_start' })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      send({ type: 'agent_end' })
+      pendingPrompt = undefined
+      return
+    }
     if (typeof command.message === 'string' && command.message.includes('stay busy')) {
       fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
       streaming = true
@@ -571,6 +603,32 @@ test.describe('Prime Work desktop smoke', () => {
     }).toBe('change direction now')
     expect(JSON.parse(readFileSync(marker, 'utf8'))).toMatchObject({ type: 'steer', message: 'change direction now' })
     await expect(composer).toHaveValue('')
+  })
+
+  test('admits a queued prompt across the Prime terminal-event barrier', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('barrier turn')
+    await composer.press('Enter')
+    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-admission-barrier-started'))).toBe(true)
+    await expect(page.getByRole('button', { name: 'Stop Prime' })).toBeVisible()
+
+    await composer.fill('barrier follow-up')
+    await composer.press('Enter')
+    const queuedTray = page.getByRole('region', { name: 'Queued messages' })
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(1)
+
+    writeFileSync(join(fixtureRoot, 'prompt-admission-barrier-release'), 'release')
+    const acceptedPath = join(fixtureRoot, 'prompt-admission-barrier-accepted')
+    await expect.poll(() => existsSync(acceptedPath)).toBe(true)
+    expect(JSON.parse(readFileSync(acceptedPath, 'utf8'))).toMatchObject({
+      type: 'prompt',
+      message: 'barrier follow-up',
+      streamingBehavior: 'followUp',
+    })
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(0)
+    await expect(page.locator('.message--user').filter({ hasText: 'barrier follow-up' })).toHaveCount(1)
+    await expect(page.locator('.message--activity').filter({ hasText: 'Cannot send prompt' })).toHaveCount(0)
   })
 
   test('centers the compact context-usage dial', async () => {

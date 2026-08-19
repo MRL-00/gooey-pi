@@ -116,6 +116,58 @@ describe('agent RPC command frame bounds', () => {
   })
 })
 
+describe('agent RPC prompt admission capabilities', () => {
+  it.each([
+    ['prime', PRIME_RPC_ADAPTER, true],
+    ['omp', OMP_RPC_ADAPTER, false],
+    ['pi', PI_RPC_ADAPTER, false],
+  ] as const)('keeps or strips streamingBehavior for %s at the wire seam', async (harness, adapter, accepts) => {
+    const cwd = mkdtempSync(join(tmpdir(), `prompt-capability-${harness}-`))
+    dirs.push(cwd)
+    const executable = join(cwd, 'fake-agent.cjs')
+    const wirePath = join(cwd, 'wire-command.json')
+    writeFileSync(executable, `#!/usr/bin/env node
+const fs = require('node:fs')
+const readline = require('node:readline')
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const command = JSON.parse(line)
+  if (command.type === 'negotiate_protocol') {
+    send({ id: command.id, type: 'response', command: command.type, success: true })
+  } else if (command.type === 'get_state') {
+    send({ id: command.id, type: 'response', command: command.type, success: true,
+      data: { sessionId: 'capability-session', isStreaming: false } })
+  } else if (command.type === 'prompt') {
+    fs.writeFileSync(${JSON.stringify(wirePath)}, JSON.stringify(command))
+    send({ id: command.id, type: 'response', command: command.type, success: true })
+  } else if (command.type === 'abort') {
+    send({ id: command.id, type: 'response', command: command.type, success: true })
+  }
+})
+`)
+    chmodSync(executable, 0o755)
+    const manager = new AgentRpcManager(executable, async (path) => path, async (path) => path, undefined, () => new Set(), adapter)
+    managers.push(manager)
+    const runtime = await manager.start({ cwd })
+    await manager.command(runtime.runtimeId, {
+      type: 'prompt',
+      message: 'admit this prompt',
+      streamingBehavior: 'steer',
+      images: [{ type: 'image', mimeType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64') }],
+    })
+
+    const wire = JSON.parse(readFileSync(wirePath, 'utf8'))
+    expect(wire).toMatchObject({
+      type: 'prompt',
+      message: 'admit this prompt',
+      ...(accepts ? { streamingBehavior: 'steer' } : {}),
+      images: [{ type: 'image', mimeType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64') }],
+    })
+    expect(wire.id).toEqual(expect.any(String))
+    if (!accepts) expect(wire).not.toHaveProperty('streamingBehavior')
+  })
+})
+
 describe('agent RPC responses', () => {
   it('uses a newly discovered executable for future runtime starts', async () => {
     const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
