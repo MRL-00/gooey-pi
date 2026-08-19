@@ -137,6 +137,22 @@ describe('catalog merges over live session state', () => {
     expect(externalIdle.status).toBe('idle')
   })
 
+  it('does not resurrect cleared attention when live metadata settles a fallback record', () => {
+    const fallback: SessionRecord = {
+      ...session(),
+      status: 'waiting',
+      updatedAt: '2025-01-01T00:00:01.000Z',
+    }
+    const [fromFallback] = mergeSessionCatalog([], [fallback], undefined, new Map(), 0)
+    const cleared = { ...fromFallback, unread: false }
+    const live: SessionRecord = { ...fallback, status: 'idle', unread: false }
+
+    const [merged] = mergeSessionCatalog([cleared], [live], undefined, new Map(), 0)
+
+    expect(merged).toMatchObject({ status: 'idle', unread: false })
+    expect(sessionAttentionSignature(merged)).toBeUndefined()
+  })
+
   it.each(['unknown', 'running', 'waiting', 'failed'] as const)(
     'keeps an authoritative non-idle catalog transition to %s',
     (catalogStatus) => {
