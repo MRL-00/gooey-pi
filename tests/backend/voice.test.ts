@@ -332,7 +332,9 @@ describe('VoiceService', () => {
     const { service, agent } = makeService()
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'prime-project', prompt: 'Implement the feature', title: 'Voice feature' } }, 'prime')
     expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
-    expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'prompt', message: 'Implement the feature' })
+    expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', {
+      type: 'prompt', message: 'Implement the feature', streamingBehavior: 'followUp',
+    })
     expect(agent.command).toHaveBeenCalledWith('runtime-1', { type: 'get_state' })
     expect(result.task).toEqual({
       projectId: 'prime-project', projectName: 'prime project', harness: 'prime',
@@ -434,7 +436,9 @@ describe('VoiceService', () => {
     }, 'prime')
     expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
     expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'set_thinking_level', level: 'high' })
-    expect(agent.command).toHaveBeenNthCalledWith(2, 'runtime-1', { type: 'prompt', message: 'Implement it' })
+    expect(agent.command).toHaveBeenNthCalledWith(2, 'runtime-1', {
+      type: 'prompt', message: 'Implement it', streamingBehavior: 'followUp',
+    })
     expect(result.task?.reasoning).toBe('high')
   })
 
@@ -473,7 +477,9 @@ describe('VoiceService', () => {
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'omp-project', prompt: 'Determine the next logical feature.' } }, 'omp')
     expect(primeAgent.start).not.toHaveBeenCalled()
     expect(ompAgent.start).toHaveBeenCalledWith({ cwd: '/tmp/omp' })
-    expect(ompAgent.command).toHaveBeenNthCalledWith(1, 'omp-runtime', { type: 'prompt', message: 'Determine the next logical feature.' })
+    expect(ompAgent.command).toHaveBeenNthCalledWith(1, 'omp-runtime', {
+      type: 'prompt', message: 'Determine the next logical feature.', streamingBehavior: 'followUp',
+    })
     expect(result.task?.harness).toBe('omp')
   })
 
