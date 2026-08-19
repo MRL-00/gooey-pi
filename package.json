@@ -53,7 +53,8 @@
   "overrides": {
     "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",
     "@earendil-works/pi-ai": "$prime-agent-ai",
-    "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz"
+    "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz",
+    "extract-zip": "npm:@electron-internal/extract-zip@1.0.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
@@ -70,6 +71,7 @@
     "electron": "^43.4.0",
     "electron-builder": "^26.15.7",
     "electron-vite": "^5.0.0",
+    "extract-zip": "npm:@electron-internal/extract-zip@1.0.5",
     "jsdom": "^30.0.1",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
