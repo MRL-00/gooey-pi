@@ -125,7 +125,7 @@ describe('SettingsService.update', () => {
     await expect(service.update({ voiceRealtimeProvider: 'whichever-works' })).rejects.toThrow(/Invalid realtime voice provider/)
     await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
     await expect(service.update({ voiceSelfHostedUrl: 'ftp://speech.example.test' })).rejects.toThrow(/scheme/)
-    await expect(service.update({ voiceSelfHostedUrl: 'http://192.168.1.20:9000' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
+    await expect(service.update({ voiceSelfHostedUrl: 'http://8.8.8.8:9000' })).rejects.toThrow(/use HTTPS for public hosts/)
     await expect(service.update({ voiceSelfHostedUrl: 'https://user:secret@speech.example.test' })).rejects.toThrow(/credentials/)
     await expect(service.update({ voiceSelfHostedUrl: 'https://speech.example.test/#secret' })).rejects.toThrow(/query or fragment/)
     await expect(service.update({ voiceSelfHostedModel: '../bad model' })).rejects.toThrow(/not valid/)

@@ -1,3 +1,4 @@
+import { isIPv6 } from 'node:net'
 import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 
@@ -82,11 +83,35 @@ export function isLoopbackHostname(value: string): boolean {
   return host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1' || host === '[::1]' || host === '::1'
 }
 
+/** Private-network (RFC1918/ULA) or loopback hosts: the safe scope for plaintext-HTTP voice traffic. */
+export function isPrivateOrLoopbackHostname(value: string): boolean {
+  const host = value.toLowerCase()
+  if (isLoopbackHostname(host)) return true
+  const ipv6 = host.startsWith('[') && host.endsWith(']')
+    ? host.slice(1, -1)
+    : isIPv6(host)
+      ? host
+      : undefined
+  if (ipv6) {
+    const firstHextet = parseInt(ipv6.startsWith('::') ? '0' : ipv6.slice(0, ipv6.indexOf(':')), 16)
+    if (ipv6 === '::1'
+      || firstHextet >= 0xfc00 && firstHextet <= 0xfdff
+      || firstHextet >= 0xfe80 && firstHextet <= 0xfebf) return true
+  }
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4) {
+    const first = Number(ipv4[1])
+    const second = Number(ipv4[2])
+    return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
+  }
+  return false
+}
+
 export function requireSelfHostedVoiceUrl(value: unknown): string {
   const normalized = requireWebUrl(value, { max: 2_048 })
   const parsed = new URL(normalized)
   if (parsed.search || parsed.hash) throw new TypeError('Self-hosted voice URL cannot contain a query or fragment')
-  if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)) throw new TypeError('Self-hosted voice HTTP is allowed only on this computer; use HTTPS or an SSH tunnel for another host')
+  if (parsed.protocol === 'http:' && !isPrivateOrLoopbackHostname(parsed.hostname)) throw new TypeError('Self-hosted voice HTTP is allowed on this computer or private network addresses (10.x, 172.16-31.x, 192.168.x); use HTTPS for public hosts')
   return parsed.toString()
 }
 
