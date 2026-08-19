@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { listPackage } from '@electron/asar'
@@ -21,12 +21,26 @@ function listFiles(directory, found = []) {
   return found
 }
 
-function findUnpackedDirectory(outputDirectory, target) {
+export function findUnpackedDirectory(outputDirectory, target) {
   const matches = readdirSync(outputDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith(target) && entry.name.endsWith('-unpacked'))
     .map((entry) => join(outputDirectory, entry.name))
   if (matches.length !== 1) throw new Error(`Expected exactly one ${target} unpacked application, found ${matches.length}`)
   return matches[0]
+}
+
+const { build: buildConfiguration } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
+
+/**
+ * The packaged binary inside an unpacked application directory. electron-builder
+ * names the Windows executable after `build.productName` and the Linux one
+ * after its lowercased form, so package.json stays the only inventory of it.
+ */
+export function packagedExecutablePath(unpackedDirectory, target) {
+  const name = target === 'win' ? `${buildConfiguration.productName}.exe` : buildConfiguration.productName.toLowerCase()
+  const path = join(unpackedDirectory, name)
+  if (!existsSync(path) || !lstatSync(path).isFile()) throw new Error(`Packaged ${target} application is missing its executable: ${path}`)
+  return path
 }
 
 export function expectedArtifactExtensions(target) {
@@ -155,7 +169,7 @@ export function verifyPackage(target, architecture, { unpackedOnly = false, mode
     const installer = artifacts.find((name) => name.endsWith('.exe'))
     if (!installer) throw new Error('Windows installer is missing')
     assertValidAuthenticode(join(outputDirectory, installer))
-    assertValidAuthenticode(join(app, 'GooeyPi.exe'))
+    assertValidAuthenticode(packagedExecutablePath(app, target))
   }
   const scope = unpackedOnly ? 'unpacked directory build' : 'installable artifacts'
   const signature = !unpackedOnly && target === 'win' && mode === 'public' ? ', and valid Authenticode signatures' : ''
