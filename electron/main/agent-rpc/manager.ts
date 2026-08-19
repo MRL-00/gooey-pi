@@ -197,12 +197,14 @@ export class AgentRpcManager {
     // it. set_service_tier passes through untranslated because the fast-mode
     // interception below routes it via runtime.setServiceTier instead.
     const translated = this.adapter.translateCommand(command)
-    const wireCommand = command.type === 'prompt'
+    let wireCommand = translated
+    if (command.type === 'prompt'
       && !this.adapter.acceptsStreamingBehaviorOnPrompt
-      && translated.streamingBehavior !== undefined
+      && translated.streamingBehavior !== undefined) {
       // Pi and OMP intentionally receive the pre-existing prompt shape; this is a silent compatibility drop.
-      ? (({ streamingBehavior: _streamingBehavior, ...withoutStreamingBehavior }) => withoutStreamingBehavior)(translated)
-      : translated
+      const { streamingBehavior: _streamingBehavior, ...withoutStreamingBehavior } = translated
+      wireCommand = withoutStreamingBehavior
+    }
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())
     }
