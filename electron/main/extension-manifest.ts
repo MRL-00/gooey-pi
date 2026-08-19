@@ -1,5 +1,5 @@
-import type { HarnessId } from '../../src/types/api'
 import { join } from 'node:path'
+import type { HarnessId } from '../../src/types/api'
 
 export type ExtensionCapability = 'schedule' | 'browser' | 'askUser' | 'collaboration' | 'piFastMode'
 
