@@ -1309,11 +1309,32 @@ describe('post-package verification helpers', () => {
     expect(script).toContain('$certificate.Thumbprint.ToUpperInvariant() -ne $env:GOOEYPI_WINDOWS_CERT_THUMBPRINT')
   })
 
-  test('excludes other platform ZeroMQ build trees and declares zeromq directly', () => {
+  test('excludes other platform native build trees and declares zeromq directly', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    expect(packageJson.build.mac.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/linux/**', '!**/node_modules/zeromq/build/win32/**'])
-    expect(packageJson.build.linux.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/win32/**'])
-    expect(packageJson.build.win.files).toEqual(['out/**/*', 'package.json', '!**/node_modules/zeromq/build/darwin/**', '!**/node_modules/zeromq/build/linux/**'])
+    expect(packageJson.build.mac.files).toEqual([
+      'out/**/*',
+      'package.json',
+      '!**/node_modules/zeromq/build/linux/**',
+      '!**/node_modules/zeromq/build/win32/**',
+      '!**/node_modules/extract-zip/index.linux-*.node',
+      '!**/node_modules/extract-zip/index.win32-*.node',
+    ])
+    expect(packageJson.build.linux.files).toEqual([
+      'out/**/*',
+      'package.json',
+      '!**/node_modules/zeromq/build/darwin/**',
+      '!**/node_modules/zeromq/build/win32/**',
+      '!**/node_modules/extract-zip/index.darwin-*.node',
+      '!**/node_modules/extract-zip/index.win32-*.node',
+    ])
+    expect(packageJson.build.win.files).toEqual([
+      'out/**/*',
+      'package.json',
+      '!**/node_modules/zeromq/build/darwin/**',
+      '!**/node_modules/zeromq/build/linux/**',
+      '!**/node_modules/extract-zip/index.darwin-*.node',
+      '!**/node_modules/extract-zip/index.linux-*.node',
+    ])
     // Pin the app to the zeromq range prime-agent uses so the packaged addon
     // and the agent's runtime expectations cannot drift apart silently.
     const primeAgent = JSON.parse(readFileSync(new URL('../node_modules/prime-agent/package.json', import.meta.url), 'utf8'))
@@ -1794,7 +1815,7 @@ describe('production dependency audit', () => {
   test('the checked-in exception list is valid and every entry still expires in the future', () => {
     const exceptions = readAuditExceptions()
 
-    expect(exceptions.length).toBeGreaterThan(0)
+    expect(exceptions).toEqual([])
     for (const entry of exceptions) {
       expect(entry.expiresAt, `audit exception for ${entry.advisory} has expired; re-check for a fix`).toBeGreaterThan(Date.now())
     }
