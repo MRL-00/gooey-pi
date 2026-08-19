@@ -12,7 +12,7 @@ This document is the working spec for adding base Pi (`pi`, [pi.dev](https://pi.
 
 ## Pi facts (verified on this machine, pi 0.84.1)
 
-- Binary: `pi` (searched: `$PI_BINARY`, PATH, and GooeyPi's bounded shared executable directories, including npm/Bun/pnpm/mise/Volta/nvm/fnm/asdf/nodenv/`n`/Nix/MacPorts/Homebrew locations). Installed here at `/opt/homebrew/bin/pi`.
+- Binary: `pi` (searched: `$PI_BINARY`, PATH, and GooeyPi's bounded shared executable directories, including npm/Bun/pnpm/mise/Volta/nvm/Homebrew locations). Installed here at `/opt/homebrew/bin/pi`.
 - Spawn for embedding: `pi --mode rpc` plus:
   - **no `--cwd` flag exists** — the session bucket derives from the child's working directory, so the manager must spawn pi with the authorized cwd as the child process cwd.
   - resume: `--session <path>` (exact file path; `--resume` is an *interactive selector* and must not be used).
