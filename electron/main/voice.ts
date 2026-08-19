@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { VOICE_CREDENTIAL_PROVIDERS } from '../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../src/lib/mcp-policy'
+import { streamingBehaviorForIntent } from '../../src/lib/session-actions'
 import type {
   AppSettings,
   HarnessId,
@@ -625,7 +626,11 @@ export class VoiceService {
         appliedReasoning = resolveReasoning(reasoningQuery, runtime.availableThinkingLevels ?? [])
         await manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: appliedReasoning })
       }
-      await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
+      await manager.command(runtime.runtimeId, {
+        type: 'prompt',
+        message: prompt,
+        streamingBehavior: streamingBehaviorForIntent('queue'),
+      })
       if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
       await manager.command(runtime.runtimeId, { type: 'get_state' })
     } catch (error) {

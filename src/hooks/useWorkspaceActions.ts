@@ -4,7 +4,7 @@ import { requestFailureMessage } from '@/app/workspace'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { parseMcpAuthenticationCommand } from '@/lib/mcp-policy'
-import { parseSessionActionSnapshot } from '@/lib/session-actions'
+import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '@/lib/session-actions'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
 import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, HarnessId, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
@@ -423,7 +423,13 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           appendUserMessage()
           workspace.setRuntime({ ...activeRuntime, isStreaming: true })
           workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
-          await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
+          await bridge.agent.command(activeRuntime.runtimeId, {
+            type: 'prompt',
+            message: prompt,
+            streamingBehavior: streamingBehaviorForIntent(intent),
+            ...(images.length ? { images } : {}),
+          })
+          completeQueuedFlush()
           if (startedRuntime && startedSessionNeedsTitle) {
             void titleStartedSession({
               bridge,

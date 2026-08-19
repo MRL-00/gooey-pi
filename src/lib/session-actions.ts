@@ -1,4 +1,4 @@
-import type { SessionActionSnapshot } from '../types/api'
+import type { PromptDeliveryIntent, SessionActionSnapshot } from '../types/api'
 
 export const MAX_QUEUED_ACTIONS = 128
 export const MAX_PREVIEW_LENGTH = 4_096
@@ -32,4 +32,8 @@ export function parseSessionActionSnapshot(value: unknown): SessionActionSnapsho
 
 export function emptySessionActionSnapshot(): SessionActionSnapshot {
   return { queuedCount: 0, steering: [], followUps: [] }
+}
+
+export function streamingBehaviorForIntent(intent: PromptDeliveryIntent): 'steer' | 'followUp' {
+  return intent === 'steer' ? 'steer' : 'followUp'
 }

@@ -33,6 +33,8 @@ export interface HarnessRpcAdapter {
   readonly id: HarnessId
   /** Product-facing agent name used in error messages. */
   readonly agentName: string
+  /** Verified only against Prime; Pi/OMP require real 0.84.2/17.3.4 verification. */
+  readonly acceptsStreamingBehaviorOnPrompt: boolean
   /** Protocol version to negotiate before the first get_state; undefined skips negotiation. */
   readonly negotiateProtocolVersion?: number
   /** Whether v2 base64 rpc_chunk frames may arrive and must be reassembled. */
@@ -67,6 +69,7 @@ const unsafeArgValue = (value: string): boolean => value.startsWith('-') || /[\r
 export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'prime',
   agentName: HARNESSES.prime.agentName,
+  acceptsStreamingBehaviorOnPrompt: true,
   chunkedFrames: false,
   buildStartArgs: (input) => {
     const args = ['--mode', 'rpc', '--cwd', input.cwd]
@@ -106,6 +109,7 @@ const OMP_APPROVAL_MODES = new Set(['always-ask', 'write', 'yolo'])
 export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'omp',
   agentName: HARNESSES.omp.agentName,
+  acceptsStreamingBehaviorOnPrompt: false,
   negotiateProtocolVersion: 2,
   chunkedFrames: true,
   buildStartArgs: (input) => {
@@ -171,6 +175,7 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
 export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'pi',
   agentName: HARNESSES.pi.agentName,
+  acceptsStreamingBehaviorOnPrompt: false,
   chunkedFrames: false,
   // pi has no --cwd flag: the session bucket derives from the child process
   // working directory, which the runtime sets to the authorized cwd.

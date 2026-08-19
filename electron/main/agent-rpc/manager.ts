@@ -1,6 +1,6 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
-import { parseSessionActionSnapshot } from '../../../src/lib/session-actions'
+import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import { resolveExecutable, type ExecutableSource } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
@@ -197,6 +197,11 @@ export class AgentRpcManager {
     // it. set_service_tier passes through untranslated because the fast-mode
     // interception below routes it via runtime.setServiceTier instead.
     const translated = this.adapter.translateCommand(command)
+    const wireCommand = command.type === 'prompt'
+      && !this.adapter.acceptsStreamingBehaviorOnPrompt
+      && translated.streamingBehavior !== undefined
+      ? Object.fromEntries(Object.entries(translated).filter(([key]) => key !== 'streamingBehavior'))
+      : translated
     if (command.type === 'set_model' && this.providers) {
       await this.providers.requireAvailableModel(`${String(command.provider)}/${String(command.modelId)}`, this.disabledProviders(), this.disabledModels())
     }
@@ -209,7 +214,7 @@ export class AgentRpcManager {
     if (Array.isArray(command.images) && command.images.length > 0 && runtime.snapshot().imageInputSupported === false) {
       throw new Error('The active model does not accept images. Choose a vision model and try again.')
     }
-    const response = await runtime.command(translated)
+    const response = await runtime.command(wireCommand)
     if (command.type === 'steer') {
       // A steer can be admitted and consumed before its two action-update
       // edges cross IPC. Refresh after the admission response and attach the
@@ -239,7 +244,11 @@ export class AgentRpcManager {
     const runtime = this.requireRuntime(id)
     const startedAt = Date.now()
     let observedBusy = runtime.snapshot().isStreaming
-    await this.command(id, { type: 'prompt', message })
+    await this.command(id, {
+      type: 'prompt',
+      message,
+      streamingBehavior: streamingBehaviorForIntent('queue'),
+    })
     while (Date.now() - startedAt < timeoutMs) {
       await new Promise<void>((resolveDelay) => {
         const timer = setTimeout(resolveDelay, 200)
