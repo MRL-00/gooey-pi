@@ -1,3 +1,4 @@
+import { isIPv6 } from 'node:net'
 import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 
@@ -86,8 +87,12 @@ export function isLoopbackHostname(value: string): boolean {
 export function isPrivateOrLoopbackHostname(value: string): boolean {
   const host = value.toLowerCase()
   if (isLoopbackHostname(host)) return true
-  const bare = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host
-  if (bare === '::1' || bare.startsWith('fe80:') || bare.startsWith('fc') || bare.startsWith('fd')) return true
+  const ipv6 = host.startsWith('[') && host.endsWith(']')
+    ? host.slice(1, -1)
+    : isIPv6(host)
+      ? host
+      : undefined
+  if (ipv6 && (ipv6 === '::1' || ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd'))) return true
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (ipv4) {
     const first = Number(ipv4[1])
