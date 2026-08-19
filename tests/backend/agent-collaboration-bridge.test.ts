@@ -334,7 +334,9 @@ describe('AgentCollaborationBridge', () => {
     expect(primeManager.start).toHaveBeenCalledWith({
       cwd: '/project', model: 'openai-codex/gpt-5.6-sol', thinking: 'max', fast: true,
     })
-    expect(primeManager.command).toHaveBeenNthCalledWith(1, 'runtime-created', { type: 'prompt', message: 'Review the model integration.' })
+    expect(primeManager.command).toHaveBeenNthCalledWith(1, 'runtime-created', {
+      type: 'prompt', message: 'Review the model integration.', streamingBehavior: 'followUp',
+    })
     expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'set_session_name', name: 'Model reviewer' })
     expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'get_state' })
     const createdList = await call('list', {}, createdEnvironment.GOOEYPI_COLLABORATION_TOKEN)

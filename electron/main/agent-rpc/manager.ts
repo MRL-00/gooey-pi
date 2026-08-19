@@ -1,6 +1,6 @@
 import type { PrimeEventEnvelope, PrimeModelDescriptor, RuntimeInfo } from '../../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
-import { parseSessionActionSnapshot } from '../../../src/lib/session-actions'
+import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import { prepareExecutableSpawnAsync, resolveExecutable, safeChildEnvironment, type ExecutableSource } from '../process-utils'
 import { canonicalSessionPath } from '../session-paths'
 import { isPathWithin, isRecord, rejectUnknownKeys, requireId, requireRecord, requireString } from '../validation'
@@ -246,7 +246,11 @@ export class AgentRpcManager {
     const runtime = this.requireRuntime(id)
     const startedAt = Date.now()
     let observedBusy = runtime.snapshot().isStreaming
-    await this.command(id, { type: 'prompt', message })
+    await this.command(id, {
+      type: 'prompt',
+      message,
+      streamingBehavior: streamingBehaviorForIntent('queue'),
+    })
     while (Date.now() - startedAt < timeoutMs) {
       await new Promise<void>((resolveDelay) => {
         const timer = setTimeout(resolveDelay, 200)

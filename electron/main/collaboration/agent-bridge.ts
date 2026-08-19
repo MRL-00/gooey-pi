@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { HarnessId, PrimeModelDescriptor, RuntimeInfo, SessionRecord, TranscriptMessage } from '../../../src/types/api'
 import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
+import { streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import type { AgentRpcManager } from '../agent-rpc'
 import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
 import type { ModelCatalogProvider } from '../model-catalog'
@@ -300,7 +301,11 @@ export class AgentCollaborationBridge extends CapabilityBridge {
         appliedReasoning = resolveReasoning(reasoningQuery, runtime.availableThinkingLevels ?? [])
         await manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: appliedReasoning })
       }
-      await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
+      await manager.command(runtime.runtimeId, {
+        type: 'prompt',
+        message: prompt,
+        streamingBehavior: streamingBehaviorForIntent('queue'),
+      })
       if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
       await manager.command(runtime.runtimeId, { type: 'get_state' })
     } catch (error) {
