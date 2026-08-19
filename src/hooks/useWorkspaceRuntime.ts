@@ -427,38 +427,34 @@ export function useWorkspaceRuntime({
       return
     }
   }, [])
+  const updateQueuedPrompts = useCallback((transform: (prompt: QueuedPrompt) => QueuedPrompt) => {
+    const update = (prompts: QueuedPrompt[]) => {
+      let changed = false
+      const next = prompts.map((prompt) => {
+        const updated = transform(prompt)
+        if (updated !== prompt) changed = true
+        return updated
+      })
+      return changed ? next : prompts
+    }
+    const nextActive = update(pendingQueuedPromptsRef.current)
+    if (nextActive !== pendingQueuedPromptsRef.current) {
+      pendingQueuedPromptsRef.current = nextActive
+      setPendingQueuedPrompts(nextActive)
+    }
+    for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
+      const next = update(prompts)
+      if (next !== prompts) queuedPromptsByOwnerRef.current.set(owner, next)
+    }
+  }, [])
   const markQueuedPromptFlushFailed = useCallback((id: string) => {
-    let activeChanged = false
-    const nextActive = pendingQueuedPromptsRef.current.map((prompt) => {
-      if (prompt.id !== id || prompt.flushAttemptFailed) return prompt
-      activeChanged = true
-      return { ...prompt, flushAttemptFailed: true }
-    })
-    if (activeChanged) {
-      pendingQueuedPromptsRef.current = nextActive
-      setPendingQueuedPrompts(nextActive)
-    }
-    for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
-      const next = prompts.map((prompt) => prompt.id === id && !prompt.flushAttemptFailed
-        ? { ...prompt, flushAttemptFailed: true }
-        : prompt)
-      if (next.some((prompt, index) => prompt !== prompts[index])) {
-        queuedPromptsByOwnerRef.current.set(owner, next)
-      }
-    }
-  }, [])
+    updateQueuedPrompts((prompt) => prompt.id === id && !prompt.flushAttemptFailed
+      ? { ...prompt, flushAttemptFailed: true }
+      : prompt)
+  }, [updateQueuedPrompts])
   const clearQueuedPromptFlushFailures = useCallback(() => {
-    if (pendingQueuedPromptsRef.current.some((prompt) => prompt.flushAttemptFailed)) {
-      const nextActive = pendingQueuedPromptsRef.current.map(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
-      pendingQueuedPromptsRef.current = nextActive
-      setPendingQueuedPrompts(nextActive)
-    }
-    for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
-      if (!prompts.some((prompt) => prompt.flushAttemptFailed)) continue
-      const next = prompts.map(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
-      queuedPromptsByOwnerRef.current.set(owner, next)
-    }
-  }, [])
+    updateQueuedPrompts(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
+  }, [updateQueuedPrompts])
   const clearQueuedPrompts = useCallback(() => {
     const owner = activeQueuedPromptOwnerRef.current
     if (owner) queuedPromptsByOwnerRef.current.delete(owner)

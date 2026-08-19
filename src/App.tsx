@@ -33,7 +33,6 @@ import { useStableCallback } from '@/hooks/useStableCallback'
 import { useToast } from '@/hooks/useToast'
 import { useWorkspaceActions } from '@/hooks/useWorkspaceActions'
 import { useWorkspaceRuntime } from '@/hooks/useWorkspaceRuntime'
-import { useQueuedPromptFlush } from '@/hooks/useQueuedPromptFlush'
 import { HARNESS_IDS, type GitStatus, type GitWorktree, type HarnessId, type NativeHeartbeatRecord, type PrimeModelDescriptor, type PrimeProviderDescriptor, type ProjectRecord, type AutomationScheduleRecord, type QueuedPrompt, type ScheduleTiming, type SessionRecord, type TerminalSelectionContext, type VoiceTaskStarted, type WorkspaceView } from '@/types/api'
 
 const Transcript = lazy(() => import('@/components/Transcript').then((module) => ({ default: module.Transcript })))
@@ -493,15 +492,14 @@ export default function App() {
     setRestorePetVoiceFocus(false)
     setVoiceOrbOpen(nextOpen)
   }, [voiceOrbOpen])
-  useQueuedPromptFlush({
-    bridge,
-    busy,
-    externalSessionRunning,
-    submitting,
-    queuedMessages,
-    queuedFlushRef,
-    sendPrompt,
-  })
+  useEffect(() => {
+    if (!bridge || busy || externalSessionRunning || submitting || queuedFlushRef.current || queuedMessages.length === 0) return
+    const next = queuedMessages[0]
+    if (next.flushAttemptFailed) return
+    queuedFlushRef.current = true
+    void sendPrompt(next.text, [], 'queue', next.id)
+      .finally(() => { queuedFlushRef.current = false })
+  }, [bridge, busy, externalSessionRunning, queuedMessages, sendPrompt, submitting])
 
   const page = view === 'projects' ? <ProjectsPage projects={projects} onAdd={() => void addProject()} onOpen={selectProject} onRemove={(project) => void removeProject(project)} />
     : view === 'activity' ? <ActivityPage sessions={sessions} projects={projects} clearedActivity={clearedActivity} onOpen={selectSession} onClear={clearActivity} />
