@@ -159,7 +159,10 @@ function ingestMetadataLine(state: MetadataAccumulator, line: string): void {
 function metadataFromAccumulator(state: MetadataAccumulator, filePath: string, fallbackUpdated: string): SessionMetadata {
   const title = compactText(state.sessionName || state.firstUser, 100) || 'Untitled session'
   // Prime verdicts describe exactly the message count they were generated from.
-  const taskState = state.taskStateBasedOnMessageCount === state.messageCount ? state.taskState : undefined
+  const taskState = typeof state.taskStateBasedOnMessageCount !== 'number'
+    || state.taskStateBasedOnMessageCount === state.messageCount
+    ? state.taskState
+    : undefined
   return {
     id: state.id,
     filePath,
