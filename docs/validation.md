@@ -13,7 +13,7 @@ The required checks are exactly the seven normal pull-request gates:
 - `hermetic-e2e`
 - `windows-state-migration`
 - `packaging-smoke (macos-14, mac, arm64, --config.mac.identity=null)`
-- `packaging-smoke (ubuntu-22.04, linux, x64, linux-unpacked)`
+- `packaging-smoke (ubuntu-22.04, linux, x64)`
 - `packaging-smoke (windows-2022, win, x64)`
 
 Do not require `local-qa-package`: it is manual local QA, runs only through `workflow_dispatch`, and is intentionally excluded from pull-request validation.
