@@ -364,6 +364,7 @@ function sharedHarnessCandidateDirs(
   const compact = (values: Array<string | undefined>): string[] => values.filter((value): value is string => Boolean(value))
   const environmentDirs = [
     env.NVM_BIN,
+    env.BUN_INSTALL_BIN,
     fromRoot(env.NPM_CONFIG_PREFIX, 'bin'),
     fromRoot(env.BUN_INSTALL, 'bin'),
     fromRoot(env.VOLTA_HOME, 'bin'),
