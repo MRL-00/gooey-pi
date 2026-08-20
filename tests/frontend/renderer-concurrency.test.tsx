@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from 'react'
+import { act, type ReactNode, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AGENT_EVENT_FLUSH_CHUNK, AGENT_EVENT_QUEUE_LIMIT } from '../../src/app/agent-events'
@@ -334,17 +334,26 @@ describe('agent event frame queue', () => {
   const messageText = (state: ReturnType<typeof useWorkspaceRuntime>) => (state.messages[0]?.parts[0] as { text?: string } | undefined)?.text ?? ''
 
   it('cancels the pending animation frame before a synchronous flush', async () => {
+    const pendingFrame = 417
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(() => pendingFrame)
     const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame')
-    const read = vi.fn().mockResolvedValue([message('loaded:')])
-    const workspace = mountWorkspace(read)
-    await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
-    const state = workspace.state()
-    await act(async () => { state.attachRuntime(runtime, 0) })
-    await act(async () => { state.queueAgentEvent(delta('live')) })
-    const cancelledBefore = cancelSpy.mock.calls.length
-    await act(async () => { state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'agent_end' }); await Promise.resolve() })
-    expect(cancelSpy.mock.calls.length).toBeGreaterThan(cancelledBefore)
-    expect(messageText(workspace.state())).toBe('loaded:')
+    try {
+      const read = vi.fn().mockResolvedValue([message('loaded:')])
+      const workspace = mountWorkspace(read)
+      await act(async () => { workspace.render(); await Promise.resolve(); await Promise.resolve() })
+      const state = workspace.state()
+      await act(async () => { state.attachRuntime(runtime, 0) })
+      await act(async () => { state.queueAgentEvent(delta('live')) })
+      expect(rafSpy).toHaveBeenCalledTimes(1)
+
+      await act(async () => { state.reconcileTranscriptForEvent(runtime.runtimeId, { type: 'agent_end' }); await Promise.resolve() })
+
+      expect(cancelSpy).toHaveBeenCalledWith(pendingFrame)
+      expect(messageText(workspace.state())).toBe('loaded:')
+    } finally {
+      cancelSpy.mockRestore()
+      rafSpy.mockRestore()
+    }
   })
 
   it('falls back to an authoritative read on the next visibilitychange after the queue bound is exceeded', async () => {
@@ -443,6 +452,108 @@ describe('agent event git refresh timer', () => {
 })
 
 describe('bootstrap critical path', () => {
+  it('keeps agent_end completion when a delayed idle catalog refresh resolves', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const delayedCatalog = deferred<SessionRecord[]>()
+      const listSessions = vi.fn()
+        .mockResolvedValueOnce([session])
+        .mockImplementationOnce(() => delayedCatalog.promise)
+      let catalogChanged!: (change: { filePath?: string; harness?: 'prime' }) => void
+      let agentEvent!: (payload: { runtimeId: string; event: Record<string, unknown> }) => void
+      const bridge = {
+        projects: { list: async () => [project] },
+        sessions: {
+          list: listSessions,
+          onChanged: (callback: typeof catalogChanged) => { catalogChanged = callback; return () => undefined },
+        },
+        agent: {
+          list: async () => [runtime],
+          onEvent: (callback: typeof agentEvent) => { agentEvent = callback; return () => undefined },
+        },
+        app: { getMeta: async () => ({ version: '1', platform: 'darwin', arch: 'arm64', primeAvailable: true }) },
+        schedules: { list: async () => [] },
+      } as unknown as PrimeWorkApi
+      const runtimeIdRef = { current: runtime.runtimeId as string | null }
+      const runtimeSessionsRef = { current: new Map([[runtime.runtimeId, session.filePath]]) }
+      const runtimeOwnerRef = { current: null }
+      const workspaceRef = { current: { generation: 0, project, session, cwd: project.path, sessionFile: session.filePath } }
+      const setProjects = vi.fn()
+      const setSchedules = vi.fn()
+      const setScheduleError = vi.fn()
+      const activateWorkspace = () => 0
+      const attachRuntime = vi.fn()
+      const reportError = vi.fn()
+      const queueAgentEvent = vi.fn()
+      const reconcileTranscriptForEvent = vi.fn()
+      const showExtensionUi = vi.fn()
+      const clearExtensionUi = vi.fn()
+      const refreshGit = async () => undefined
+      let renderedSessions: SessionRecord[] = []
+
+      function RaceProbe() {
+        const [sessions, setSessions] = useState([session])
+        const [, setRuntime] = useState<RuntimeInfo | null>(runtime)
+        renderedSessions = sessions
+        useBootstrap({
+          bridge,
+          setProjects,
+          setSessions,
+          setSchedules,
+          setScheduleError,
+          runtimeSessionsRef,
+          workspaceRef,
+          activateWorkspace,
+          attachRuntime,
+          reportError,
+        })
+        useAgentEvents({
+          bridge,
+          runtimeIdRef,
+          runtimeSessionsRef,
+          runtimeOwnerRef,
+          workspaceRef,
+          setSessions,
+          setRuntime,
+          queueAgentEvent,
+          reconcileTranscriptForEvent,
+          showExtensionUi,
+          clearExtensionUi,
+          refreshGit,
+          refreshGitOnTerminalEvent: false,
+          activeSessionVisible: true,
+        })
+        return <Probe />
+      }
+
+      await act(async () => {
+        root.render(<RaceProbe />)
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(listSessions).toHaveBeenCalledTimes(1)
+
+      act(() => agentEvent({ runtimeId: runtime.runtimeId, event: { type: 'agent_end' } }))
+      expect(renderedSessions[0]).toMatchObject({ status: 'complete', unread: false, eventRevision: 1, statusEventRevision: 1 })
+
+      act(() => {
+        catalogChanged({ filePath: session.filePath, harness: 'prime' })
+        vi.advanceTimersByTime(80)
+      })
+      expect(listSessions).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        delayedCatalog.resolve([{ ...session, status: 'idle' }])
+        await delayedCatalog.promise
+        await Promise.resolve()
+      })
+
+      expect(renderedSessions[0]).toMatchObject({ status: 'complete', unread: false, eventRevision: 1, statusEventRevision: 1, syncRevision: 1 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('selects projects and sessions before runtime discovery resolves', async () => {
     const runtimes = deferred<RuntimeInfo[]>()
     const bridge = {
@@ -624,7 +735,7 @@ describe('extension UI runtime ownership', () => {
     expect(state.extensionUi).toBeNull()
   })
 
-  it('auto-continues an unanswered ask_user questionnaire after thirty seconds', async () => {
+  it('auto-continues an unanswered ask_user questionnaire after two minutes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       const command = vi.fn().mockResolvedValue({})
@@ -647,9 +758,9 @@ describe('extension UI runtime ownership', () => {
           options: ['__prime_ask_user__group-1:0:1', 'A', 'B'],
         })
       })
-      expect(state.extensionUi?.request.method === 'questionnaire' ? state.extensionUi.request.timeout : undefined).toBe(30_000)
+      expect(state.extensionUi?.request.method === 'questionnaire' ? state.extensionUi.request.timeout : undefined).toBe(120_000)
 
-      await act(async () => { vi.advanceTimersByTime(29_999) })
+      await act(async () => { vi.advanceTimersByTime(119_999) })
       expect(state.extensionUi).not.toBeNull()
       await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve() })
 

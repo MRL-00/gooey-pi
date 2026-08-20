@@ -10,6 +10,7 @@ import type {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
+  locale: 'system',
   interfaceFontScale: 110,
   activeHarness: 'omp',
   ompApprovalMode: 'inherit',
@@ -19,6 +20,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarOpen: true,
   inspectorOpen: true,
   showFileChangesPopup: true,
+  keepRunningInBackground: false,
+  launchAtLogin: false,
   terminalOpen: false,
   defaultInspectorTab: 'summary',
   browserHome: 'http://localhost:3000',

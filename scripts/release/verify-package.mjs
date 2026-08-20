@@ -6,7 +6,16 @@ import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { listPackage } from '@electron/asar'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
-import { artifactArchitectures, assertAsarLayout, assertExactArchitectures, assertUnpackedNativeLayout, parseArchitectures, parseTeamIdentifier, requireReleaseArtifacts } from './lib.mjs'
+import {
+  artifactArchitectures,
+  assertAsarLayout,
+  assertExactArchitectures,
+  assertPackagedExtensions,
+  assertUnpackedNativeLayout,
+  parseArchitectures,
+  parseTeamIdentifier,
+  requireReleaseArtifacts,
+} from './lib.mjs'
 import { assertPackageSizeBudgets, collectPackageSizeMetrics, describeSizeMetrics } from './size-budgets.mjs'
 
 function run(command, args) {
@@ -79,6 +88,7 @@ async function verifyApp({ app, artifact, mode, expectedTeam }) {
   const executable = join(app, 'Contents', 'MacOS', productName)
   const asar = join(resources, 'app.asar')
   const looseApp = join(resources, 'app')
+  assertPackagedExtensions(resources)
   if (!existsSync(asar)) throw new Error(`${basename(artifact)} application must contain Resources/app.asar`)
   if (existsSync(looseApp)) throw new Error(`${basename(artifact)} contains forbidden loose Resources/app`)
   assertAsarLayout(listPackage(asar, { isPack: false }))

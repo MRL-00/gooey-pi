@@ -3,10 +3,11 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { requestFailureMessage } from '@/app/workspace'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
-import { parseSessionActionSnapshot } from '@/lib/session-actions'
+import { parseMcpAuthenticationCommand } from '@/lib/mcp-policy'
+import { parseSessionActionSnapshot, streamingBehaviorForIntent } from '@/lib/session-actions'
 import type { DEFAULT_SETTINGS } from '@/lib/data'
 import { type createSingleFlightAdmission, findProjectForSession, findRuntimeForWorkspace, newSessionProject, projectContainsPath, workspaceCwd } from '@/lib/workspace'
-import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
+import type { CapabilityMutationInput, ExtensionInstallInput, GitStatus, HarnessId, McpConnectionInput, McpStateInput, PrimeWorkApi, ProjectRecord, PromptDeliveryIntent, PromptImage, ScheduleInput, SchedulePatch, SessionRecord, TranscriptMessage, WorkspaceView } from '@/types/api'
 import type { useAppSettings } from '@/hooks/useAppSettings'
 import type { usePanelLayout } from '@/hooks/usePanelLayout'
 import type { usePluginSkills } from '@/hooks/usePluginSkills'
@@ -43,7 +44,7 @@ export interface WorkspaceActionsDeps {
   reportError(error: unknown): void
 }
 
-export type PrimeMcpCommand = { type: 'open' } | { type: 'login'; server: string }
+export type McpCommand = { type: 'open' } | { type: 'authenticate'; server?: string }
 
 interface StartedSessionIndexInput {
   bridge: PrimeWorkApi
@@ -98,12 +99,13 @@ export async function titleStartedSession({ bridge, harness, runtimeId, sessionF
   await indexStartedSession({ bridge, harness, sessionFile, setSessions, fallbackTitle: title, isCurrent }).catch(() => undefined)
 }
 
-export function parsePrimeMcpCommand(prompt: string): PrimeMcpCommand | undefined {
+export function parseMcpCommand(prompt: string, harness: HarnessId): McpCommand | undefined {
   const value = prompt.trim()
-  if (value === '/mcp') return { type: 'open' }
-  const match = /^\/mcp\s+login\s+([A-Za-z0-9][A-Za-z0-9._ -]{0,63})\s*$/.exec(value)
-  if (!match || ['__proto__', 'prototype', 'constructor'].includes(match[1])) return undefined
-  return { type: 'login', server: match[1] }
+  if (harness === 'prime' && value === '/mcp') return { type: 'open' }
+  const authentication = parseMcpAuthenticationCommand(value, harness)
+  return authentication
+    ? authentication.server ? { type: 'authenticate', server: authentication.server } : { type: 'authenticate' }
+    : undefined
 }
 
 /**
@@ -249,22 +251,23 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     } catch (error) { reportError(error) }
   }
 
-  const sendPrompt = async (prompt: string, images: PromptImage[] = [], intent: PromptDeliveryIntent = 'queue') => {
+  const sendPrompt = async (
+    prompt: string,
+    images: PromptImage[] = [],
+    intent: PromptDeliveryIntent = 'queue',
+    queuedFlushPromptId?: string,
+  ) => {
     const { bridge, sessions, workspace, provider, settingsState, submissionAdmissionRef, demoTimerRef, setSessions, setSubmitting, setView, setToast, reportError } = getDeps()
-    const mcpCommand = images.length === 0 && settingsState.settings.activeHarness === 'prime' ? parsePrimeMcpCommand(prompt) : undefined
-    if (mcpCommand?.type === 'open') {
+    const commandHarness = workspace.workspaceRef?.current?.project?.harness ?? settingsState.settings.activeHarness
+    const mcpCommand = parseMcpCommand(prompt, commandHarness)
+    if (mcpCommand?.type === 'open' && images.length === 0) {
       setView('plugins')
       setToast('Manage MCP integrations in Capabilities.')
       return
     }
-    if (mcpCommand?.type === 'login') {
-      try {
-        await provider.startMcpOAuth(mcpCommand.server)
-        setToast(`Opening ${mcpCommand.server} sign-in…`)
-      } catch (error) {
-        reportError(error)
-        throw error
-      }
+    if (mcpCommand?.type === 'authenticate') {
+      const target = mcpCommand.server ? ` to sign in to ${mcpCommand.server}` : ' to authenticate network MCP servers'
+      setToast(`Network MCP authentication is managed outside GooeyPi. Use ${HARNESS_AGENT_NAMES[commandHarness]} directly${target}.`)
       return
     }
     const currentWorkspace = workspace.workspaceRef.current
@@ -276,9 +279,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       && currentOwner?.runtimeId === currentRuntime.runtimeId
       && currentOwner.generation === currentWorkspace.generation,
     )
+    const completeQueuedFlush = () => {
+      if (queuedFlushPromptId) workspace.removeQueuedPrompt(queuedFlushPromptId)
+    }
     if (ownsStreamingRuntime && currentRuntime && bridge) {
       if (intent === 'queue' && images.length === 0) {
-        workspace.queuePrompt(prompt, intent)
+        if (!queuedFlushPromptId) workspace.queuePrompt(prompt, intent)
         return
       }
       if (intent === 'steer') {
@@ -315,6 +321,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
       const generation = admitted.generation
       let startedPrompt = false
       let queuedPromptId: string | undefined
+      const sentAt = Date.now()
+      const sentAtIso = new Date(sentAt).toISOString()
+      const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
+      let userMessageAppended = false
       const followUpExternalSession = async (sessionFile: string): Promise<boolean> => {
         if (!bridge) return false
         // The daemon owns the message once accepted; queuing it locally as
@@ -333,10 +343,6 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           return
         }
         if (!workspace.prepareForPrompt(generation)) return
-        const sentAt = Date.now()
-        const sentAtIso = new Date(sentAt).toISOString()
-        const userMessage: TranscriptMessage = { id: `user-${sentAt}`, role: 'user', timestamp: sentAt, parts: [{ type: 'text', text: prompt }, ...images] }
-        let userMessageAppended = false
         const appendUserMessage = () => {
           if (userMessageAppended) return
           // The workspace may have switched while a command was in flight;
@@ -366,7 +372,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
         let activeRuntime = belongsHere ? tracked : findRuntimeForWorkspace(liveRuntimes, selected.cwd, selected.sessionFile)
         const selectedSession = selected.sessionFile ? sessions.find((session) => session.filePath === selected.sessionFile) : undefined
         if (intent === 'queue' && images.length === 0 && (activeRuntime?.isStreaming || selectedSession?.status === 'running')) {
-          queuedPromptId = workspace.queuePrompt(prompt, intent)
+          if (!queuedFlushPromptId) queuedPromptId = workspace.queuePrompt(prompt, intent)
           return
         }
         let startedRuntime = false
@@ -379,6 +385,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           if (images.length === 0 && selected.sessionFile && selectedSession?.status === 'running'
             && await followUpExternalSession(selected.sessionFile)) {
             if (intent === 'steer') appendUserMessage()
+            completeQueuedFlush()
             return
           }
           try {
@@ -386,6 +393,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           } catch (startError) {
             if (images.length === 0 && selected.sessionFile && await followUpExternalSession(selected.sessionFile)) {
               if (intent === 'steer') appendUserMessage()
+              completeQueuedFlush()
               return
             }
             throw startError
@@ -420,12 +428,19 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
             const actions = parseSessionActionSnapshot(response.sessionActions)
             if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
           }
+          completeQueuedFlush()
         } else {
           startedPrompt = true
           appendUserMessage()
           workspace.setRuntime({ ...activeRuntime, isStreaming: true })
           workspace.setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: 'assistant', timestamp: Date.now(), streaming: true, parts: [] }])
-          await bridge.agent.command(activeRuntime.runtimeId, { type: 'prompt', message: prompt, ...(images.length ? { images } : {}) })
+          await bridge.agent.command(activeRuntime.runtimeId, {
+            type: 'prompt',
+            message: prompt,
+            streamingBehavior: streamingBehaviorForIntent(intent),
+            ...(images.length ? { images } : {}),
+          })
+          completeQueuedFlush()
           if (startedRuntime && startedSessionNeedsTitle) {
             void titleStartedSession({
               bridge,
@@ -439,6 +454,12 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           }
         }
       } catch (error) {
+        if (queuedFlushPromptId) {
+          workspace.markQueuedPromptFlushFailed(queuedFlushPromptId)
+          if (userMessageAppended) {
+            workspace.setMessages((items) => items.filter((item) => item.id !== userMessage.id))
+          }
+        }
         if (queuedPromptId) workspace.removeQueuedPrompt(queuedPromptId)
         if (workspace.workspaceRef.current.generation !== generation) return
         const failure = requestFailureMessage(error)
@@ -460,11 +481,26 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   }
   const stopRuntime = async () => {
     const { bridge, workspace, reportError } = getDeps()
-    if (!workspace.runtime) return
+    const stoppedRuntime = workspace.runtime
+    if (!stoppedRuntime) return
     if (!bridge) { workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item)); workspace.setRuntime(null); return }
+    const stoppedRuntimeId = stoppedRuntime.runtimeId
+    const stoppedGeneration = workspace.workspaceRef.current.generation
+    const stoppedOwner = workspace.runtimeOwnerRef.current
+    const stoppedOwnerRuntimeId = stoppedOwner?.runtimeId
+    const stoppedOwnerGeneration = stoppedOwner?.generation
     try {
-      await bridge.agent.command(workspace.runtime.runtimeId, { type: 'abort' })
-      workspace.setRuntime((current) => current ? { ...current, isStreaming: false } : current)
+      await bridge.agent.command(stoppedRuntimeId, { type: 'abort' })
+      const currentOwner = workspace.runtimeOwnerRef.current
+      if (
+        workspace.workspaceRef.current.generation !== stoppedGeneration
+        || workspace.runtimeIdRef.current !== stoppedRuntimeId
+        || stoppedOwnerRuntimeId !== stoppedRuntimeId
+        || stoppedOwnerGeneration !== stoppedGeneration
+        || currentOwner?.runtimeId !== stoppedOwnerRuntimeId
+        || currentOwner?.generation !== stoppedOwnerGeneration
+      ) return
+      workspace.setRuntime((current) => current?.runtimeId === stoppedRuntimeId ? { ...current, isStreaming: false } : current)
       workspace.setMessages((items) => items.map((item) => item.streaming ? { ...item, streaming: false } : item))
     } catch (error) { reportError(error) }
   }

@@ -11,19 +11,38 @@ const electron = vi.hoisted(() => ({
   BrowserWindow: class {},
   dialog: { showMessageBox: vi.fn(async () => ({ response: 0 })) },
   Menu: { buildFromTemplate: vi.fn((_template: Array<{ label: string; click(): void }>) => ({ popup: vi.fn() })) },
+  nativeImage: { createFromPath: vi.fn() },
   protocol: { registerSchemesAsPrivileged: vi.fn() },
   session: {},
+  Tray: class {},
 }))
 
 vi.mock('electron', () => electron)
 
-import { activeShutdownWork, confirmAppClose, hardenRenderer, loadInitialRenderer, mainWindowChromeOptions, resolveRendererAssetPath, settleShutdown, shutdownPrompt } from '../../electron/main/index'
+import { activeShutdownWork, confirmAppClose, hardenRenderer, isMacWindowCloseShortcut, loadInitialRenderer, mainWindowChromeOptions, resolveRendererAssetPath, routeAllWindowsClosed, settleShutdown, shutdownPrompt, startupFailureDialog } from '../../electron/main/index'
+import { StateMigrationError, UnsupportedStateVersionError } from '../../electron/main/store'
 import type { RuntimeInfo } from '../../src/types/api'
 import type { BrowserWindow } from 'electron'
 
 type Handler = (...args: never[]) => void
 
 describe('application window lifecycle', () => {
+  it('gives migration failures a dedicated actionable startup dialog', () => {
+    const migration = new StateMigrationError(
+      'Legacy authority retirement failed.',
+      'C:\\Users\\alice\\GooeyPi\\prime-work-state-v4.json',
+      'C:\\Users\\alice\\GooeyPi\\prime-work-state.json',
+      'C:\\Users\\alice\\GooeyPi\\prime-work-state.json.migrated-v4-backup',
+    )
+
+    expect(startupFailureDialog(migration)).toMatchObject({
+      title: 'GooeyPi state migration failed',
+      detail: expect.stringMatching(/startup stopped.*retry.*prime-work-state-v4\.json.*prime-work-state\.json.*migrated-v4-backup.*do not delete/i),
+    })
+    expect(startupFailureDialog(new UnsupportedStateVersionError(99, '/tmp/state.json'))?.title).toBe('GooeyPi update required')
+    expect(startupFailureDialog(new Error('ordinary startup failure'))).toBeNull()
+  })
+
   it('uses one overlay title bar on Windows and Linux while preserving native macOS chrome', () => {
     expect(mainWindowChromeOptions('linux')).toEqual({
       titleBarStyle: 'hidden',
@@ -44,6 +63,17 @@ describe('application window lifecycle', () => {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 18, y: 18 },
     })
+  })
+
+  it('recognizes only an unmodified macOS Command-Q keydown as a window close', () => {
+    const input = { type: 'keyDown', key: 'q', meta: true, shift: false, control: false, alt: false }
+
+    expect(isMacWindowCloseShortcut(input, 'darwin')).toBe(true)
+    expect(isMacWindowCloseShortcut({ ...input, type: 'keyUp' }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, meta: false }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, shift: true }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut({ ...input, key: 'w' }, 'darwin')).toBe(false)
+    expect(isMacWindowCloseShortcut(input, 'win32')).toBe(false)
   })
 
   it('resolves packaged renderer assets with Windows path separators', () => {
@@ -118,6 +148,16 @@ describe('application window lifecycle', () => {
     expect(registration).toBeDefined()
     registration?.[1]()
     expect(electron.app.quit).toHaveBeenCalledOnce()
+  })
+
+  it('does not recreate background mode after shutdown starts', () => {
+    const background = { handleAllWindowsClosed: vi.fn(() => true) }
+    const quit = vi.fn()
+
+    routeAllWindowsClosed(true, background, quit)
+
+    expect(background.handleAllWindowsClosed).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
   })
 })
 

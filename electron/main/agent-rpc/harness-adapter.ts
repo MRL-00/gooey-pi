@@ -1,4 +1,5 @@
 import type { HarnessId, PrimeContextUsage } from '../../../src/types/api'
+import { extensionInjections } from '../extension-manifest'
 import { HARNESSES } from '../harness'
 import { isRecord } from '../validation'
 import type { RpcObject } from './types'
@@ -64,6 +65,13 @@ export function parseContextUsage(raw: unknown): PrimeContextUsage | null {
 
 const unsafeArgValue = (value: string): boolean => value.startsWith('-') || /[\r\n]/.test(value)
 
+const stripStreamingBehavior = (command: RpcObject): RpcObject => {
+  if (command.type !== 'prompt' || command.streamingBehavior === undefined) return command
+  // Pi and OMP drop streamingBehavior pending compatibility verification.
+  const { streamingBehavior: _, ...rest } = command
+  return rest
+}
+
 export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
   id: 'prime',
   agentName: HARNESSES.prime.agentName,
@@ -80,11 +88,8 @@ export const PRIME_RPC_ADAPTER: HarnessRpcAdapter = {
     for (const skillPath of [input.environment.PRIME_WORK_SCHEDULE_SKILL_PATH, input.environment.PRIME_WORK_BROWSER_SKILL_PATH, input.environment.GOOEYPI_COMPUTER_USE_SKILL_PATH]) {
       if (skillPath && !unsafeArgValue(skillPath)) args.push('--skill', skillPath)
     }
-    for (const extensionPath of [
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('prime')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args
@@ -127,12 +132,8 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--append-system-prompt', computerUseSkillPath)
     // OMP has no --skill flag: app capabilities are injected as explicit,
     // self-contained extensions while normal OMP skills remain discovery-based.
-    for (const extensionPath of [
-      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('omp')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args
@@ -142,7 +143,7 @@ export const OMP_RPC_ADAPTER: HarnessRpcAdapter = {
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the OMP harness`)
     if (type === 'fork') return { ...command, type: 'branch' }
     if (type === 'get_fork_messages') return { ...command, type: 'get_branch_messages' }
-    return command
+    return stripStreamingBehavior(command)
   },
   normalizeEvent: (event) => {
     if (event.type === 'auto_compaction_start') return { ...event, type: 'compaction_start' }
@@ -189,13 +190,8 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     if (computerUseSkillPath && !unsafeArgValue(computerUseSkillPath)) args.push('--skill', computerUseSkillPath)
     // App capabilities are injected as explicit, self-contained extensions
     // (the same decision as OMP); pi's --skill flag stays unused.
-    for (const extensionPath of [
-      input.environment.GOOEYPI_PI_FAST_MODE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_SCHEDULE_EXTENSION_PATH,
-      input.environment.PRIME_WORK_BROWSER_EXTENSION_PATH,
-      input.environment.PRIME_WORK_ASK_USER_EXTENSION_PATH,
-      input.environment.GOOEYPI_COLLABORATION_EXTENSION_PATH,
-    ]) {
+    for (const injection of extensionInjections('pi')) {
+      const extensionPath = input.environment[injection.environmentVariable]
       if (extensionPath && !unsafeArgValue(extensionPath)) args.push('--extension', extensionPath)
     }
     return args
@@ -206,7 +202,7 @@ export const PI_RPC_ADAPTER: HarnessRpcAdapter = {
     // untranslated) but lacks the same Prime-only daemon/heartbeat family OMP
     // rejects, clone included.
     if (OMP_UNSUPPORTED_COMMANDS.has(type)) throw new Error(`RPC command ${type} is not supported by the Pi harness`)
-    return command
+    return stripStreamingBehavior(command)
   },
   normalizeEvent: (event) => event,
   // Pi has no native tier command. Its prompt RPC invokes the bundled private

@@ -564,6 +564,26 @@ describe('harness settings surfaces', () => {
     expect([...selects[0].options].map((option) => option.textContent)).toEqual(['OMP Work', 'Prime Work', 'Pi Work'])
   })
 
+  it('renders a harness discovery problem in its runtime card', async () => {
+    const onUpdate = vi.fn()
+    const onRefreshHarnesses = vi.fn(async () => undefined)
+    const problemMeta: AppMeta = {
+      ...meta,
+      harnesses: {
+        ...meta.harnesses,
+        pi: { path: null, version: null, problem: { path: '/Users/you/.local/bin/pi', reason: 'exited with code 1: Node.js is too old' } },
+      },
+    }
+
+    await act(async () => {
+      root.render(<AgentSettings settings={{ ...DEFAULT_SETTINGS, activeHarness: 'prime' }} meta={problemMeta} onUpdate={onUpdate} onRefreshHarnesses={onRefreshHarnesses} />)
+    })
+
+    const piCard = [...container.querySelectorAll('.runtime-card')].find((card) => card.textContent?.includes('Pi not detected'))
+    expect(piCard?.querySelector('small')?.getAttribute('title')).toBe('/Users/you/.local/bin/pi: exited with code 1: Node.js is too old')
+    expect(container.textContent).toContain('/Users/you/.local/bin/pi: exited with code 1: Node.js is too old')
+  })
+
   it('renders OMP provider toggles while keeping credentials CLI-owned', async () => {
     const catalog: PrimeModelCatalog = {
       primeVersion: '17.2.11', refreshedAt: '2026-08-06T00:00:00.000Z',

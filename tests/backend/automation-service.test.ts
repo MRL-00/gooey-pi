@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { assertNoMcpAuthenticationCommand, NETWORK_MCP_AUTH_UNAVAILABLE } from '../../src/lib/mcp-policy'
 import type { ScheduleExecution, ScheduleTarget } from '../../src/types/api'
 import { AutomationService } from '../../electron/main/schedules/service'
 import { JsonStateStore } from '../../electron/main/store'
@@ -54,6 +55,84 @@ describe('AutomationService', () => {
     expect(service.list()).toEqual([])
   })
 
+  it('rejects forbidden prompts on create, update, resume, and run now before validation or persistence', async () => {
+    const stateStore = store()
+    const legacy = new AutomationService(stateStore, {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run: async () => ({}),
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    const normal = await legacy.create({ prompt: 'Allowed', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const forbidden = await legacy.create({ prompt: '/mcp login notion', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    await legacy.pause(forbidden.id)
+    const validateTarget = vi.fn(async () => undefined)
+    const validateExecution = vi.fn(async () => undefined)
+    const run = vi.fn(async () => ({}))
+    const service = new AutomationService(stateStore, {
+      validatePrompt: assertNoMcpAuthenticationCommand,
+      validateTarget,
+      validateExecution,
+      run,
+      now: () => new Date('2030-01-01T01:00:00Z'),
+    })
+
+    await expect(service.create({ prompt: '/mcp login create', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })).rejects.toThrow(NETWORK_MCP_AUTH_UNAVAILABLE)
+    await expect(service.update(normal.id, { revision: normal.revision, prompt: '/mcp login update' })).rejects.toThrow(NETWORK_MCP_AUTH_UNAVAILABLE)
+    await expect(service.resume(forbidden.id)).rejects.toThrow(NETWORK_MCP_AUTH_UNAVAILABLE)
+    await expect(service.runNow(forbidden.id)).rejects.toThrow(NETWORK_MCP_AUTH_UNAVAILABLE)
+
+    expect(validateTarget).not.toHaveBeenCalled()
+    expect(validateExecution).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(service.list()).toHaveLength(2)
+    expect(service.get(normal.id)).toMatchObject({ revision: 1, prompt: 'Allowed', runs: [] })
+    expect(service.get(forbidden.id)).toMatchObject({ revision: 2, status: 'paused', nextRunAt: undefined, runs: [] })
+  })
+
+  it('blocks legacy active prompts once on startup while leaving paused cleanup records unchanged', async () => {
+    const stateStore = store()
+    const legacy = new AutomationService(stateStore, {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run: async () => ({}),
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    const active = await legacy.create({ prompt: '/mcp login active', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const paused = await legacy.create({ prompt: '/mcp login paused', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const pausedRecord = await legacy.pause(paused.id)
+    const validateTarget = vi.fn(async () => undefined)
+    const validateExecution = vi.fn(async () => undefined)
+    const run = vi.fn(async () => ({}))
+    const service = new AutomationService(stateStore, {
+      validatePrompt: assertNoMcpAuthenticationCommand,
+      validateTarget,
+      validateExecution,
+      run,
+      now: () => new Date('2030-01-01T01:00:00Z'),
+    })
+
+    await service.start()
+    expect(service.get(active.id)).toMatchObject({
+      revision: active.revision + 1,
+      status: 'blocked',
+      blockedReason: NETWORK_MCP_AUTH_UNAVAILABLE,
+      nextRunAt: undefined,
+      updatedAt: '2030-01-01T01:00:00.000Z',
+      runs: [],
+    })
+    expect(service.get(paused.id)).toEqual(pausedRecord)
+    await service.stop()
+    await service.start()
+    expect(service.get(active.id).revision).toBe(active.revision + 1)
+    await expect(service.resume(paused.id)).rejects.toThrow(NETWORK_MCP_AUTH_UNAVAILABLE)
+    expect(service.get(paused.id)).toEqual(pausedRecord)
+    expect(validateTarget).not.toHaveBeenCalled()
+    expect(validateExecution).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('keeps OMP and pi schedules isolated and routes validation and runs by harness', async () => {
     const validateTarget = vi.fn(async () => undefined)
     const validateExecution = vi.fn(async () => undefined)
@@ -99,6 +178,117 @@ describe('AutomationService', () => {
     }))
     expect(run).toHaveBeenCalledOnce()
     await service.stop()
+  })
+
+  it('does not dispatch a queued run after its task is deleted', async () => {
+    const started: string[] = []
+    const releases: Array<() => void> = []
+    const run = vi.fn((task: { id: string }) => {
+      started.push(task.id)
+      if (started.length > 2) return Promise.resolve({})
+      return new Promise<Record<string, never>>((resolveRun) => releases.push(() => resolveRun({})))
+    })
+    const service = new AutomationService(store(), {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run,
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    await service.start()
+    const first = await service.create({ prompt: 'First blocker', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const second = await service.create({ prompt: 'Second blocker', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const deleted = await service.create({ prompt: 'Delete before dispatch', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const next = await service.create({ prompt: 'Run after deletion', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+
+    try {
+      await service.runNow(first.id)
+      await service.runNow(second.id)
+      await eventually(() => expect(started).toEqual([first.id, second.id]))
+      await service.runNow(deleted.id)
+      await service.runNow(deleted.id)
+      expect(await service.delete(deleted.id)).toBe(true)
+      await service.runNow(next.id)
+
+      releases[0]()
+      await eventually(() => expect(started).toHaveLength(3))
+      expect(started[2]).toBe(next.id)
+      expect(run).not.toHaveBeenCalledWith(expect.objectContaining({ id: deleted.id }))
+    } finally {
+      for (const release of releases) release()
+      await service.stop()
+    }
+  })
+
+  it('cancels a stale queued generation before dispatch and runs the updated generation', async () => {
+    const started: Array<{ id: string; prompt: string; revision: number }> = []
+    const releases: Array<() => void> = []
+    const run = vi.fn((task: { id: string; prompt: string; revision: number }) => {
+      started.push({ id: task.id, prompt: task.prompt, revision: task.revision })
+      if (started.length > 2) return Promise.resolve({})
+      return new Promise<Record<string, never>>((resolveRun) => releases.push(() => resolveRun({})))
+    })
+    const service = new AutomationService(store(), {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run,
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    await service.start()
+    const first = await service.create({ prompt: 'First blocker', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const second = await service.create({ prompt: 'Second blocker', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    const v1 = await service.create({ prompt: 'Generation v1', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+
+    try {
+      await service.runNow(first.id)
+      await service.runNow(second.id)
+      await eventually(() => expect(started.map(({ id }) => id)).toEqual([first.id, second.id]))
+      const staleRun = await service.runNow(v1.id)
+      const v2 = await service.update(v1.id, { revision: v1.revision, prompt: 'Generation v2' })
+      const currentRun = await service.runNow(v2.id)
+
+      releases[0]()
+      await eventually(() => expect(service.get(v2.id).runs.find(({ id }) => id === currentRun.id)?.status).toBe('succeeded'))
+      expect(started).toContainEqual({ id: v2.id, prompt: 'Generation v2', revision: 2 })
+      const runs = service.get(v2.id).runs
+      expect(runs.find(({ id }) => id === staleRun.id)).toMatchObject({
+        taskRevision: 1,
+        status: 'cancelled',
+        finishedAt: '2030-01-01T00:00:00.000Z',
+        error: 'Scheduled task changed before this queued run could start.',
+      })
+      expect(runs.find(({ id }) => id === currentRun.id)).toMatchObject({ taskRevision: 2, status: 'succeeded' })
+      expect(started).not.toContainEqual(expect.objectContaining({ id: v1.id, revision: 1 }))
+    } finally {
+      for (const release of releases) release()
+      await service.stop()
+    }
+  })
+
+  it('allows an already-running task to finish after its schedule is deleted', async () => {
+    let resolveRun: () => void = () => undefined
+    let settled = false
+    const run = vi.fn(() => new Promise<Record<string, never>>((resolveDispatch) => {
+      resolveRun = () => resolveDispatch({})
+    }).finally(() => { settled = true }))
+    const service = new AutomationService(store(), {
+      validateTarget: async () => undefined,
+      validateExecution: async () => undefined,
+      run,
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    })
+    await service.start()
+    const task = await service.create({ prompt: 'Already running', target, timing: onceAt('2030-01-02T00:00:00Z'), execution })
+    await service.runNow(task.id)
+    await eventually(() => expect(run).toHaveBeenCalledOnce())
+
+    expect(await service.delete(task.id)).toBe(true)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveRun()
+    await service.stop()
+    expect(settled).toBe(true)
+    expect(run).toHaveBeenCalledOnce()
   })
 
   it('records missed occurrences as skipped without dispatching them', async () => {
@@ -153,7 +343,7 @@ describe('AutomationService', () => {
     await service.stop()
   })
 
-  it('survives a task deleted between its due claim and run bookkeeping without an unhandled rejection', async () => {
+  it('contains dispatch bookkeeping failures without an unhandled rejection', async () => {
     const stateStore = store()
     const rejections: unknown[] = []
     const onRejection = (reason: unknown) => { rejections.push(reason) }
@@ -163,8 +353,7 @@ describe('AutomationService', () => {
       const service = new AutomationService(stateStore, {
         validateTarget: async () => undefined,
         validateExecution: async () => undefined,
-        // Deleting the task while its run is starting makes updateRun a no-op
-        // and the failure path exercise the guarded dispatch chain.
+        // Exercise the guarded failure bookkeeping chain.
         run: async () => { throw new Error('runtime unavailable') },
         now: () => new Date('2030-01-01T00:00:00Z'),
       })

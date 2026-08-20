@@ -222,7 +222,7 @@ export function VoiceSettings({ settings, onUpdate, voice, platform = 'darwin' }
                 <button type="button" className="button button--primary" disabled={!voice || !selfHostedUrl.trim() || selfHostedTestState === 'testing'} onClick={() => void testSelfHosted()}>{selfHostedTestState === 'testing' ? <LoaderCircle className="is-spinning" size={13} /> : <Server size={13} />} {selfHostedTestState === 'testing' ? 'Testing…' : 'Connect & test'}</button>
               </div>
               {selfHostedMessage ? <p className={`voice-self-hosted-result is-${selfHostedTestState}`} role={selfHostedTestState === 'error' ? 'alert' : 'status'}>{selfHostedTestState === 'connected' ? <Check size={13} /> : <ShieldAlert size={13} />}{selfHostedMessage}</p> : null}
-              <p className="voice-self-hosted-note">Plain HTTP is accepted only for a server on this computer. Use HTTPS or an SSH tunnel when the transcription server runs elsewhere.</p>
+              <p className="voice-self-hosted-note">Plain HTTP is allowed on this computer and private-network addresses. Use HTTPS for public hosts.</p>
             </div>
           ) : null}
           {settings.voiceTranscriptionProvider === 'local-whisper' ? (

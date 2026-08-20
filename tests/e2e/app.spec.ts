@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { CURRENT_DESKTOP_STATE_FILENAME, LEGACY_DESKTOP_STATE_FILENAME } from '../../electron/main/store'
 
 let app: ElectronApplication | undefined
 let page: Page
@@ -59,6 +60,15 @@ async function stubCloseDialog(target: ElectronApplication): Promise<void> {
 
 function closePrompts(target: ElectronApplication): Promise<CapturedClosePrompt[]> {
   return target.evaluate(() => (globalThis as { __closePrompts?: unknown[] }).__closePrompts ?? []) as Promise<CapturedClosePrompt[]>
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function createHermeticFixture(activeSession = false): { userData: string; home: string; project: string; executable: string; ompExecutable: string; piExecutable: string; cuaExecutable: string; sessionFile: string } {
@@ -152,7 +162,7 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
       birthtimeNs: info.birthtimeNs > 0n ? info.birthtimeNs.toString() : undefined,
     }
   }
-  writeFileSync(join(userData, 'prime-work-state.json'), JSON.stringify({
+  writeFileSync(join(userData, LEGACY_DESKTOP_STATE_FILENAME), JSON.stringify({
     version: 1,
     projects: [{
       id: 'multi-folder-project', name: 'Multi-folder fixture', path: canonicalProject,
@@ -160,7 +170,7 @@ function createHermeticFixture(activeSession = false): { userData: string; home:
       pinned: false, createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z',
       folderIdentities: { [canonicalProject]: identity(canonicalProject), [canonicalSecondary]: identity(canonicalSecondary) },
     }],
-    settings: { activeHarness: 'prime', browserHome: 'about:blank', telemetry: true },
+    settings: { activeHarness: 'prime', browserHome: 'about:blank', telemetry: true, locale: 'en' },
     archivedSessions: [],
     dismissedProjectPaths: [],
   }))
@@ -231,10 +241,15 @@ if (args[0] === 'status') {
   process.stdout.write(JSON.stringify([{ isDefault: true, status: 'current', socketPath: ${JSON.stringify(join(fixtureRoot, 'daemon.sock'))} }]) + '\\n')
   process.exit(0)
 }
+fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prime-runtime.pid'))}, String(process.pid))
 fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prime-runtime-args.json'))}, JSON.stringify(args))
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
 let pendingPrompt
 let streaming = false
+let barrierWatcher
+const barrierRelease = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-release'))}
+const barrierStarted = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-started'))}
+const barrierAccepted = ${JSON.stringify(join(fixtureRoot, 'prompt-admission-barrier-accepted'))}
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const command = JSON.parse(line)
   if (command.type === 'get_state') {
@@ -248,6 +263,41 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     setTimeout(() => send({ type: 'response', id: command.id, command: command.type, success: true, data: {} }), 500)
   } else if (command.type === 'prompt' || command.type === 'follow_up') {
     pendingPrompt = command
+    if (typeof command.message === 'string' && command.message.includes('barrier turn')) {
+      fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
+      fs.writeFileSync(barrierStarted, 'ready')
+      streaming = true
+      send({ type: 'agent_start' })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      barrierWatcher = fs.watch(${JSON.stringify(fixtureRoot)}, (_event, filename) => {
+        if (filename?.toString() !== 'prompt-admission-barrier-release' || !fs.existsSync(barrierRelease)) return
+        barrierWatcher?.close()
+        barrierWatcher = undefined
+        send({ type: 'agent_end' })
+      })
+      return
+    }
+    if (typeof command.message === 'string' && command.message.includes('barrier follow-up')) {
+      if (command.streamingBehavior === undefined) {
+        send({ id: command.id, type: 'response', command: command.type, success: false,
+          error: 'Cannot send prompt while agent is streaming without streamingBehavior' })
+        return
+      }
+      fs.writeFileSync(barrierAccepted, JSON.stringify(command))
+      const completedAt = new Date().toISOString()
+      fs.appendFileSync(sessionFile, [
+        JSON.stringify({ type: 'message', id: 'fixture-barrier-user', parentId: 'fixture-goal-summary',
+          timestamp: completedAt, message: { role: 'user', content: command.message } }),
+        JSON.stringify({ type: 'message', id: 'fixture-barrier-assistant', parentId: 'fixture-barrier-user',
+          timestamp: completedAt, message: { role: 'assistant', content: 'The barrier follow-up was accepted.' } }),
+      ].join('\\n') + '\\n')
+      streaming = false
+      send({ type: 'agent_start' })
+      send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
+      send({ type: 'agent_end' })
+      pendingPrompt = undefined
+      return
+    }
     if (typeof command.message === 'string' && command.message.includes('stay busy')) {
       fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'prompt-args.json'))}, JSON.stringify(command))
       streaming = true
@@ -287,6 +337,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     ].join('\\n') + '\\n')
     send({ type: 'agent_end' })
     send({ type: 'response', id: prompt.id, command: prompt.type, success: true, data: {} })
+    setTimeout(() => {
+      const refreshedAt = new Date().toISOString()
+      fs.appendFileSync(sessionFile, JSON.stringify({
+        type: 'session_info',
+        id: 'fixture-post-completion-catalog-refresh',
+        parentId: 'fixture-live-final-multi',
+        timestamp: refreshedAt,
+        name: 'Post-completion catalog refresh',
+      }) + '\\n')
+    }, 250)
   } else if (command.id) {
     send({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
   }
@@ -473,7 +533,7 @@ test.describe('Prime Work desktop smoke', () => {
       || testInfo.title === 'reflects an external JSONL append without reselecting the live session'
     const liveInstall = testInfo.title === 'adds and connects to a harness installed while the app is open'
     const noHarnesses = testInfo.title === 'opens Harness settings from the no-harness recovery prompt'
-    const authenticatedMcp = testInfo.title === 'shows authenticated built-in Prime MCPs in Capabilities'
+    const authenticatedMcp = testInfo.title === 'shows built-in Prime MCPs without inspecting or changing authorization'
     let startupError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const fixture = createHermeticFixture(activeSession)
@@ -485,10 +545,12 @@ test.describe('Prime Work desktop smoke', () => {
         for (const executable of [fixture.executable, fixture.ompExecutable, fixture.piExecutable]) renameSync(executable, `${executable}.pending`)
       }
       try {
+        const environment = hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable, fixture.cuaExecutable, liveInstall || noHarnesses)
+        if (testInfo.title === 'Command-Q backgrounds the window and menu-bar Open restores it') environment.PRIME_WORK_E2E_HIDE_WINDOWS = '0'
         app = await electron.launch({
           args: ['.', `--user-data-dir=${fixture.userData}`],
           cwd: process.cwd(),
-          env: hermeticEnvironment(fixture.home, fixture.executable, fixture.ompExecutable, fixture.piExecutable, fixture.cuaExecutable, liveInstall || noHarnesses) as Record<string, string>,
+          env: environment as Record<string, string>,
           timeout: 20_000,
         })
         app.context().on('page', attachDiagnostics)
@@ -550,6 +612,32 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(composer).toHaveValue('')
   })
 
+  test('admits a queued prompt across the Prime terminal-event barrier', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('barrier turn')
+    await composer.press('Enter')
+    await expect.poll(() => existsSync(join(fixtureRoot, 'prompt-admission-barrier-started'))).toBe(true)
+    await expect(page.getByRole('button', { name: 'Stop Prime' })).toBeVisible()
+
+    await composer.fill('barrier follow-up')
+    await composer.press('Enter')
+    const queuedTray = page.getByRole('region', { name: 'Queued messages' })
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(1)
+
+    writeFileSync(join(fixtureRoot, 'prompt-admission-barrier-release'), 'release')
+    const acceptedPath = join(fixtureRoot, 'prompt-admission-barrier-accepted')
+    await expect.poll(() => existsSync(acceptedPath)).toBe(true)
+    expect(JSON.parse(readFileSync(acceptedPath, 'utf8'))).toMatchObject({
+      type: 'prompt',
+      message: 'barrier follow-up',
+      streamingBehavior: 'followUp',
+    })
+    await expect(queuedTray.locator('.composer-queue__item')).toHaveCount(0)
+    await expect(page.locator('.message--user').filter({ hasText: 'barrier follow-up' })).toHaveCount(1)
+    await expect(page.locator('.message--activity').filter({ hasText: 'Cannot send prompt' })).toHaveCount(0)
+  })
+
   test('centers the compact context-usage dial', async () => {
     await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
     const dial = page.locator('.context-usage-dial')
@@ -574,6 +662,21 @@ test.describe('Prime Work desktop smoke', () => {
     expect(offset.size).toBeCloseTo(26.4, 1)
     expect(Math.abs(offset.x)).toBeLessThanOrEqual(0.5)
     expect(Math.abs(offset.y)).toBeLessThanOrEqual(0.5)
+  })
+
+  test('picks, previews, and removes an image in the composer', async () => {
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const imagePath = join(fixtureRoot, 'picker.png')
+    writeFileSync(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'))
+
+    await page.getByRole('button', { name: 'Add context' }).click()
+    const fileChooser = page.waitForEvent('filechooser')
+    await page.getByRole('option', { name: /Add files/ }).click()
+    await (await fileChooser).setFiles(imagePath)
+    await expect(page.locator('.composer-attachment').filter({ hasText: 'picker.png' })).toBeVisible()
+    await expect(page.locator('.composer p[role="status"]')).toHaveText('1 file attached.')
+    await page.getByRole('button', { name: 'Remove picker.png' }).click()
+    await expect(page.locator('.composer-attachment').filter({ hasText: 'picker.png' })).toHaveCount(0)
   })
 
   test('collapses composer selectors and keeps the checkout menu inside a narrow conversation pane', async () => {
@@ -665,6 +768,18 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(sidebar).toBeVisible()
   })
 
+  test('opens General settings when the main process requests Settings', async () => {
+    await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Theme' })).toBeVisible()
+
+    await app!.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send('app:open-settings')
+    })
+
+    await expect(page.getByRole('heading', { name: 'Startup & background' })).toBeVisible()
+  })
+
   test('uses the persisted selected pet for realtime voice after a full restart', async () => {
     const desktopPet = page.getByRole('button', { name: /Orb, draggable GooeyPi pet/ })
     await expect(desktopPet).toBeVisible()
@@ -696,7 +811,7 @@ test.describe('Prime Work desktop smoke', () => {
     await showPet.press('Space')
     await expect(showPet).not.toBeChecked()
     await expect(page.locator('.desktop-pet')).toHaveCount(0)
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings).toMatchObject({ petEnabled: false, petId: 'gooey-pi' })
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings).toMatchObject({ petEnabled: false, petId: 'gooey-pi' })
 
     await closeHermeticApp(app)
     app = undefined
@@ -782,7 +897,7 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(anthropic).toBeChecked()
     await page.getByTitle('Hide provider in OMP').filter({ has: anthropic }).click()
     await expect(anthropic).not.toBeChecked()
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual(['anthropic'])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledProviders).toEqual(['anthropic'])
     const voiceModelsAfter = await page.evaluate(async () => JSON.parse((await window.prime.voice.executeTool({ name: 'list_models', arguments: {} }, 'omp')).output) as { models: Array<{ name: string }> })
     expect(voiceModelsAfter.models.map((model) => model.name)).toEqual(['GPT Fixture'])
 
@@ -814,8 +929,8 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(row.locator('.provider-model-row__toggle')).toBeVisible()
     await row.locator('.provider-model-row__toggle').click()
     await expect(toggle).not.toBeChecked()
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledModels).toEqual(['openai-codex/gpt-fixture'])
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual(['openai-codex'])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledModels).toEqual(['openai-codex/gpt-fixture'])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledProviders).toEqual(['openai-codex'])
     const groups = page.locator('.provider-model-group')
     await expect(groups.nth(0)).toContainText('Claude Fixture')
     await expect(groups.nth(1)).toContainText('GPT Fixture')
@@ -833,8 +948,8 @@ test.describe('Prime Work desktop smoke', () => {
     const hiddenToggle = page.getByRole('checkbox', { name: 'Show GPT Fixture model' })
     await page.locator('.provider-model-row').filter({ has: hiddenToggle }).locator('.provider-model-row__toggle').click()
     await expect(hiddenToggle).toBeChecked()
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledModels).toEqual([])
-    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.ompDisabledProviders).toEqual([])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledModels).toEqual([])
+    await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.ompDisabledProviders).toEqual([])
     await page.getByRole('tab', { name: /Providers/ }).click()
     await expect(page.getByRole('checkbox', { name: 'Show openai-codex provider' })).toBeChecked()
   })
@@ -1170,6 +1285,64 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('combobox', { name: 'Message Prime' })).toHaveValue('')
   })
 
+  test('keeps wrapped editing native and aligned through classic scrollbar overflow', async () => {
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await page.addStyleTag({ content: `
+      .composer-input > textarea { overflow-y: scroll !important; }
+      .composer-input > textarea::-webkit-scrollbar { width: 28px; }
+    ` })
+
+    await composer.fill('@Ownership')
+    const reference = page.getByRole('option', { name: /@Ownership peer fixture/ })
+    await expect(reference).toBeVisible()
+    await expect(composer).toHaveAttribute('aria-autocomplete', 'list')
+    await reference.click()
+
+    const longToken = 'unbroken-token-'.repeat(18)
+    const draft = `@Ownership peer fixture\nFirst wrapped line ${'with words '.repeat(22)}\nEDITME ${longToken}\n${'final line '.repeat(30)}`
+    await composer.fill(draft)
+    const editStart = draft.indexOf('EDITME')
+    await composer.evaluate((element, start) => {
+      const textarea = element as HTMLTextAreaElement
+      textarea.focus()
+      textarea.setSelectionRange(start, start + 'EDITME'.length)
+    }, editStart)
+    await composer.pressSequentially('replacement')
+    await expect(composer).toHaveValue(draft.replace('EDITME', 'replacement'))
+
+    const layout = await composer.evaluate((element) => {
+      const textarea = element as HTMLTextAreaElement
+      textarea.scrollTop = textarea.scrollHeight
+      textarea.dispatchEvent(new Event('scroll'))
+      const style = getComputedStyle(textarea)
+      return {
+        hasVerticalOverflow: textarea.scrollHeight > textarea.clientHeight,
+        scrollbarWidth: textarea.offsetWidth - textarea.clientWidth,
+        scrollTop: textarea.scrollTop,
+        color: style.color,
+        textFillColor: style.webkitTextFillColor,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+        mirrorCount: textarea.parentElement?.querySelectorAll('.composer-input__highlight').length ?? -1,
+      }
+    })
+    expect(layout.hasVerticalOverflow).toBe(true)
+    expect(layout.scrollbarWidth).toBeGreaterThanOrEqual(24)
+    expect(layout.scrollTop).toBeGreaterThan(0)
+    expect(layout.selectionStart).toBe(layout.selectionEnd)
+    expect(layout.color).not.toBe('rgba(0, 0, 0, 0)')
+    expect(layout.textFillColor).not.toBe('rgba(0, 0, 0, 0)')
+    expect(layout.mirrorCount).toBe(0)
+
+    await page.emulateMedia({ forcedColors: 'active' })
+    const forcedColorText = await composer.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return { color: style.color, textFillColor: style.webkitTextFillColor }
+    })
+    expect(forcedColorText.color).not.toBe('rgba(0, 0, 0, 0)')
+    expect(forcedColorText.textFillColor).not.toBe('rgba(0, 0, 0, 0)')
+  })
+
   test('copies a session id and routes an @session mention without exposing its UUID block', async () => {
     await page.evaluate(() => {
       const target = window as Window & { __copiedSessionId?: string }
@@ -1194,27 +1367,7 @@ test.describe('Prime Work desktop smoke', () => {
       return { start: textarea.selectionStart, end: textarea.selectionEnd, length: textarea.value.length }
     })
     expect(caret).toEqual({ start: caret.length, end: caret.length, length: caret.length })
-    const mentionStyles = await page.evaluate(() => {
-      const textarea = document.querySelector('.composer-input textarea')
-      const mark = document.querySelector('.composer-input__highlight mark')
-      if (!textarea || !mark) return null
-      const input = getComputedStyle(textarea)
-      const highlight = getComputedStyle(mark)
-      return {
-        inputFont: input.font,
-        highlightFont: highlight.font,
-        inputLetterSpacing: input.letterSpacing,
-        highlightLetterSpacing: highlight.letterSpacing,
-        background: highlight.backgroundColor,
-        border: highlight.borderTopWidth,
-      }
-    })
-    expect(mentionStyles).toMatchObject({
-      inputFont: mentionStyles?.highlightFont,
-      inputLetterSpacing: mentionStyles?.highlightLetterSpacing,
-      background: 'rgba(0, 0, 0, 0)',
-      border: '0px',
-    })
+    await expect(composer).toHaveAttribute('aria-expanded', 'false')
     await composer.pressSequentially('about ownership')
     await expect(composer).toHaveValue('Coordinate with @Ownership peer fixture about ownership')
     await composer.press('Enter')
@@ -1335,21 +1488,19 @@ test.describe('Prime Work desktop smoke', () => {
         await expect(computerUseToggle).toHaveAttribute('aria-pressed', 'false')
         await computerUseToggle.click()
         await expect(page.getByRole('button', { name: 'Disable Computer Use | TryCUA' })).toHaveAttribute('aria-pressed', 'true')
-        await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', 'prime-work-state.json'), 'utf8')).settings.computerUseEnabled).toBe(true)
-        await expect(page.getByText(/Prime MCP integrations require a matching Python skill package/)).toHaveCount(0)
+        await expect.poll(() => JSON.parse(readFileSync(join(fixtureRoot, 'user-data', CURRENT_DESKTOP_STATE_FILENAME), 'utf8')).settings.computerUseEnabled).toBe(true)
         await page.getByRole('button', { name: 'Add', exact: true }).click()
         const addDialog = page.getByRole('dialog', { name: 'Add a Prime capability' })
         await expect(addDialog.getByText('Add MCP', { exact: true })).toBeVisible()
         await expect(addDialog.getByText('Add Package', { exact: true })).toBeVisible()
         await expect(addDialog.getByText('Add Extension', { exact: true })).toBeVisible()
         await expect(addDialog.getByText(/Not every third-party package, plugin, or extension will work in GooeyPi/)).toBeVisible()
-        await addDialog.getByRole('button', { name: /Add MCP/ }).click()
-        const mcpDialog = page.getByRole('dialog', { name: 'Add MCP server' })
-        await expect(mcpDialog.getByText(/Not every third-party/)).toHaveCount(0)
-        await expect(mcpDialog.getByText(/Prime MCP integrations require a matching Python skill package/)).toBeVisible()
-        await expect(mcpDialog.getByText('Integration package source', { exact: true })).toBeVisible()
-        await expect(mcpDialog.getByText('Local command', { exact: true })).toHaveCount(0)
-        await mcpDialog.getByRole('button', { name: 'Close' }).click()
+        const addMcp = addDialog.getByRole('button', { name: /Add MCP/ })
+        await expect(addMcp).toBeDisabled()
+        await expect(addMcp).toContainText('Prime MCP setup is managed outside GooeyPi')
+        await expect(addDialog.getByText('Server URL', { exact: true })).toHaveCount(0)
+        await expect(addDialog.getByText('Authentication', { exact: true })).toHaveCount(0)
+        await addDialog.getByRole('button', { name: 'Close' }).click()
       }
     }
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
@@ -1397,13 +1548,13 @@ test.describe('Prime Work desktop smoke', () => {
     await chooser.getByRole('button', { name: /Add MCP/ }).click()
     const addDialog = page.getByRole('dialog', { name: 'Add MCP server' })
     await addDialog.getByLabel('Server name').fill('docs')
-    await addDialog.getByLabel('Server URL').fill('https://docs.example/mcp')
-    await addDialog.getByLabel('Authentication').selectOption('oauth')
-    await addDialog.getByRole('button', { name: 'Save and log in' }).click()
-    const promptPath = join(fixtureRoot, 'pi-prompt-args.json')
-    await expect.poll(() => existsSync(promptPath) ? JSON.parse(readFileSync(promptPath, 'utf8')).message : null).toBe('/mcp-auth docs')
+    await addDialog.getByLabel('Executable').fill('mcp-docs')
+    await addDialog.getByLabel(/Arguments/).fill('--local')
+    await addDialog.getByRole('button', { name: 'Save local server' }).click()
+    const mcpPath = join(fixtureRoot, 'home', '.pi', 'agent', 'mcp.json')
+    await expect.poll(() => existsSync(mcpPath) ? JSON.parse(readFileSync(mcpPath, 'utf8')).mcpServers.docs : null).toEqual({ command: 'mcp-docs', args: ['--local'], enabled: true })
 
-    await page.getByRole('button', { name: 'Capabilities' }).click()
+    await addDialog.getByRole('button', { name: 'Close' }).click()
 
     await page.getByRole('button', { name: 'Disable Pi MCP Adapter' }).click()
     const confirmation = page.getByRole('dialog', { name: 'Disable Pi MCP Adapter?' })
@@ -1530,7 +1681,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: /^New session/ }).first().click()
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
     await composer.fill('/mcp')
-    await expect(page.locator('.composer-menu').getByRole('option', { name: /\/mcp Manage and sign in/ })).toBeVisible()
+    await expect(page.locator('.composer-menu').getByRole('option', { name: /\/mcp View MCP integrations/ })).toBeVisible()
     await page.getByRole('button', { name: 'Send message' }).click()
 
     await expect(page.getByRole('heading', { name: /Extend/ })).toBeVisible()
@@ -1538,33 +1689,21 @@ test.describe('Prime Work desktop smoke', () => {
     expect(existsSync(join(fixtureRoot, 'prompt-args.json'))).toBe(false)
   })
 
-  test('shows authenticated built-in Prime MCPs in Capabilities', async () => {
+  test('shows built-in Prime MCPs without inspecting or changing authorization', async () => {
     await page.getByRole('button', { name: 'Capabilities', exact: true }).click()
     const notion = page.locator('article').filter({ has: page.getByRole('heading', { name: 'Notion', exact: true }) })
-    await expect(notion).toContainText('Authenticated official MCP integration')
-    const disconnect = notion.getByRole('button', { name: 'Disable Notion' })
-    await expect(disconnect).toBeVisible()
+    await expect(notion).toContainText('Configuration and authorization are managed directly in Prime Agent')
+    await expect(notion.getByLabel('Externally managed Notion')).toBeVisible()
+    await expect(notion.getByRole('button', { name: 'Disable Notion' })).toHaveCount(0)
+    await expect(notion.getByRole('button', { name: 'Forget authorization for Notion' })).toHaveCount(0)
     const notionBox = await notion.boundingBox()
-    const disconnectBox = await disconnect.boundingBox()
-    if (!notionBox || !disconnectBox) throw new Error('Notion capability controls did not render')
-    expect(Math.abs(notionBox.x + notionBox.width - disconnectBox.x - disconnectBox.width)).toBeLessThanOrEqual(6)
-    await disconnect.hover()
-    await expect(disconnect.locator('.plugin-toggle__check')).toHaveCSS('opacity', '0')
-    await expect(disconnect.locator('.plugin-toggle__disable')).toHaveCSS('opacity', '1')
+    const controlBox = await notion.getByLabel('Externally managed Notion').boundingBox()
+    if (!notionBox || !controlBox) throw new Error('Notion capability controls did not render')
+    expect(Math.abs(notionBox.x + notionBox.width - controlBox.x - controlBox.width)).toBeLessThanOrEqual(6)
     await expect(notion.getByRole('button', { name: 'Remove Notion' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Remove Ask user' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Remove Browser' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Remove Computer Use | TryCUA' })).toHaveCount(0)
-    await disconnect.click()
-    const confirmation = page.getByRole('dialog', { name: 'Disable Notion?' })
-    await expect(confirmation).toContainText('saved authorization are kept')
-    await confirmation.getByRole('button', { name: 'Yes, disable' }).click()
-    const reconnect = notion.getByRole('button', { name: 'Enable Notion' })
-    await expect(reconnect).toBeVisible()
-    await reconnect.hover()
-    await expect(reconnect.locator('.plugin-toggle__plus')).not.toHaveCSS('transform', 'none')
-    await expect(reconnect.locator('.plugin-toggle__disable')).toHaveCount(0)
-    await expect(notion).toContainText('Authenticated official MCP integration')
     expect(JSON.parse(readFileSync(join(fixtureRoot, 'home', '.prime', 'agent', 'auth.json'), 'utf8'))['mcp:notion'].access).toBe('fixture-token')
   })
 
@@ -1576,6 +1715,10 @@ test.describe('Prime Work desktop smoke', () => {
 
     const dialog = page.getByRole('dialog', { name: 'Answer 2 questions' })
     await expect(dialog).toBeVisible()
+    await expect(page.locator('.work-disclosure__rail')).toBeVisible()
+    const workStatus = page.locator('.work-disclosure__status')
+    await expect(workStatus).toHaveAttribute('role', 'status')
+    await expect(workStatus).toContainText('Working')
     await expect(page.locator('.activity-line--reasoning')).toContainText('Reviewing the available release channels')
     await expect(page.locator('.thinking-dots > span')).toHaveCount(3)
     await expect(page.locator('.work-disclosure__button')).toHaveCount(0)
@@ -1586,6 +1729,13 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(dialog).toContainText('Question 2 of 2')
 
     await dialog.getByRole('option', { name: 'Safety' }).click()
+    await expect(dialog).toContainText('Submit answers')
+    const submitStep = dialog.locator('.extension-questionnaire__progress button').last()
+    await expect(submitStep).toHaveAttribute('aria-current', 'step')
+    await expect(submitStep).toBeFocused()
+    await page.keyboard.press('Control+ArrowLeft')
+    await expect(dialog).toContainText('Question 2 of 2')
+    await expect(dialog.getByRole('option', { name: 'Safety' })).toHaveAttribute('aria-selected', 'true')
     await page.keyboard.press('Control+ArrowLeft')
     await expect(dialog).toContainText('Question 1 of 2')
     await expect(dialog.getByRole('textbox', { name: 'Additional context' })).toHaveValue('For the pilot')
@@ -1612,7 +1762,9 @@ test.describe('Prime Work desktop smoke', () => {
     await worked.click()
     await expect(page.locator('.activity-line--question')).toContainText('What should I optimize for?')
 
-    const completedRow = page.locator('.session-row-wrap--complete').first()
+    const completedRow = page.locator('.session-row-wrap').filter({ hasText: 'Post-completion catalog refresh' })
+    await expect(completedRow).toHaveCount(1)
+    await expect(completedRow).toHaveClass(/session-row-wrap--complete/)
     await expect(completedRow).toHaveClass(/is-selected/)
     await expect(completedRow).not.toHaveClass(/has-attention/)
     await expect(page.getByRole('status', { name: 'A session turn ended or needs attention' })).toHaveCount(0)
@@ -2051,6 +2203,70 @@ test.describe('Prime Work desktop smoke', () => {
     app = undefined
   })
 
+  test('Command-Q backgrounds the window and menu-bar Open restores it', async () => {
+    test.skip(process.platform !== 'darwin', 'macOS menu-bar lifecycle')
+    await app!.evaluate(({ Menu }) => {
+      const scope = globalThis as { __trayOpen?: () => void }
+      const originalBuildFromTemplate = Menu.buildFromTemplate.bind(Menu)
+      Menu.buildFromTemplate = ((template) => {
+        const items = template as Array<{ label?: string; type?: string; click?: () => void }>
+        if (items.map((item) => item.label ?? item.type).join('|') === 'Open GooeyPi|separator|Settings...|Quit') {
+          scope.__trayOpen = items.find((item) => item.label === 'Open GooeyPi')?.click
+        }
+        return originalBuildFromTemplate(template)
+      }) as typeof Menu.buildFromTemplate
+    })
+    await page.evaluate(() => window.prime.settings.update({ keepRunningInBackground: true }))
+    await expect.poll(() => app!.evaluate(() => typeof (globalThis as { __trayOpen?: unknown }).__trayOpen)).toBe('function')
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(true)
+
+    await app!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (!window) throw new Error('Main window is missing')
+      window.focus()
+      window.webContents.focus()
+      window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Q', modifiers: ['meta'] })
+      window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Q', modifiers: ['meta'] })
+    })
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      return { count: BrowserWindow.getAllWindows().length, visible: window?.isVisible(), destroyed: window?.isDestroyed() }
+    })).toEqual({ count: 1, visible: false, destroyed: false })
+    expect(app!.process().exitCode).toBeNull()
+
+    await app!.evaluate(() => {
+      const open = (globalThis as { __trayOpen?: () => void }).__trayOpen
+      if (!open) throw new Error('Menu-bar Open was not captured')
+      open()
+    })
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(true)
+    await expect(page.locator('.app-shell')).toBeVisible()
+  })
+
+  test('does not recreate the menu-bar item while Quit is shutting down', async () => {
+    test.skip(process.platform !== 'darwin', 'macOS menu-bar lifecycle')
+    const trayBuildsPath = join(fixtureRoot, 'tray-menu-builds.log')
+    await app!.evaluate(({ Menu }, markerPath) => {
+      const originalBuildFromTemplate = Menu.buildFromTemplate.bind(Menu)
+      Menu.buildFromTemplate = ((template) => {
+        const items = template as Array<{ label?: string; type?: string }>
+        if (items.map((item) => item.label ?? item.type).join('|') === 'Open GooeyPi|separator|Settings...|Quit') {
+          process.getBuiltinModule('node:fs').appendFileSync(markerPath, 'tray\n')
+        }
+        return originalBuildFromTemplate(template)
+      }) as typeof Menu.buildFromTemplate
+    }, trayBuildsPath)
+    await page.evaluate(() => window.prime.settings.update({ keepRunningInBackground: true }))
+    await expect.poll(() => existsSync(trayBuildsPath) ? readFileSync(trayBuildsPath, 'utf8').trim().split('\n').length : 0).toBe(1)
+
+    const closed = app!.waitForEvent('close', { timeout: 45_000 })
+    await app!.evaluate(({ app: electronApp }) => { electronApp.quit() })
+    await closed
+
+    expect(readFileSync(trayBuildsPath, 'utf8').trim().split('\n')).toHaveLength(1)
+    app = undefined
+  })
+
   test('asks before closing and quits after confirmation while an agent runs', async () => {
     await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
     const composer = page.getByRole('combobox', { name: 'Message Prime' })
@@ -2079,6 +2295,74 @@ test.describe('Prime Work desktop smoke', () => {
       electronApp.quit()
     })
     await closed
+    app = undefined
+  })
+
+  test('backgrounds active work and routes tray Quit through confirmation and cleanup', async () => {
+    test.skip(process.platform !== 'darwin', 'macOS menu-bar lifecycle')
+
+    // Capture the real Quit closure when enabling the setting creates the tray.
+    await app!.evaluate(({ Menu }) => {
+      const scope = globalThis as { __trayQuit?: () => void }
+      const originalBuildFromTemplate = Menu.buildFromTemplate.bind(Menu)
+      Menu.buildFromTemplate = ((template) => {
+        const items = template as Array<{ label?: string; type?: string; click?: () => void }>
+        if (items.map((item) => item.label ?? item.type).join('|') === 'Open GooeyPi|separator|Settings...|Quit') {
+          scope.__trayQuit = items.find((item) => item.label === 'Quit')?.click
+        }
+        return originalBuildFromTemplate(template)
+      }) as typeof Menu.buildFromTemplate
+    })
+    await page.evaluate(() => window.prime.settings.update({ keepRunningInBackground: true }))
+    await expect.poll(() => app!.evaluate(() => typeof (globalThis as { __trayQuit?: unknown }).__trayQuit)).toBe('function')
+
+    await page.locator('.session-row-wrap').filter({ hasText: 'Hermetic desktop fixture' }).locator('.session-row').click()
+    const composer = page.getByRole('combobox', { name: 'Message Prime' })
+    await composer.fill('stay busy while I background the window')
+    await composer.press('Enter')
+    await expect(page.getByRole('button', { name: 'Stop Prime' })).toBeVisible()
+    const runtimePidPath = join(fixtureRoot, 'prime-runtime.pid')
+    await expect.poll(() => existsSync(runtimePidPath)).toBe(true)
+    const runtimePid = Number(readFileSync(runtimePidPath, 'utf8'))
+    expect(runtimePid).toBeGreaterThan(0)
+    expect(processIsAlive(runtimePid)).toBe(true)
+    await stubCloseDialog(app!)
+
+    await app!.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.show() })
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(true)
+    await app!.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.close() })
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      return { count: BrowserWindow.getAllWindows().length, visible: window?.isVisible(), destroyed: window?.isDestroyed() }
+    })).toEqual({ count: 1, visible: false, destroyed: false })
+    expect(await closePrompts(app!)).toEqual([])
+    expect(app!.process().exitCode).toBeNull()
+    expect(processIsAlive(runtimePid)).toBe(true)
+
+    const runningPrompt = {
+      message: 'Close GooeyPi while an agent is running?',
+      detail: 'An agent run is still in progress and will be stopped.',
+      buttons: ['Cancel', 'Close GooeyPi'],
+    }
+    await app!.evaluate(() => {
+      const quit = (globalThis as { __trayQuit?: () => void }).__trayQuit
+      if (!quit) throw new Error('Tray Quit was not captured')
+      quit()
+    })
+    await expect.poll(() => closePrompts(app!)).toEqual([runningPrompt])
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(false)
+    expect(app!.process().exitCode).toBeNull()
+    expect(processIsAlive(runtimePid)).toBe(true)
+
+    const closed = app!.waitForEvent('close', { timeout: 45_000 })
+    await app!.evaluate(() => {
+      const scope = globalThis as { __closeResponse?: number; __trayQuit?: () => void }
+      scope.__closeResponse = 1
+      if (!scope.__trayQuit) throw new Error('Tray Quit was not captured')
+      scope.__trayQuit()
+    })
+    await closed
+    await expect.poll(() => processIsAlive(runtimePid)).toBe(false)
     app = undefined
   })
 })

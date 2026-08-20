@@ -2,11 +2,14 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys, resolveMcpOAuthDiscovery } from '../../electron/main/providers'
+import { AuthStorage } from 'prime-agent'
+import { MAX_CATALOG_PROVIDERS, PrimeProviderService, resolveAvailableModelKeys } from '../../electron/main/providers'
+import type { PrimeModelCatalog } from '../../src/types/api'
 
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -31,40 +34,55 @@ function serviceWithModels(config: unknown): PrimeProviderService {
   return new PrimeProviderService({ authPath: join(dir, 'auth.json'), modelsPath })
 }
 
+function primeModel(provider: string, id: string): Record<string, unknown> {
+  return {
+    provider,
+    id,
+    name: `${provider} ${id}`,
+    api: 'openai-completions',
+    baseUrl: 'http://127.0.0.1:8118/v1',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 1,
+    maxTokens: 1,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  }
+}
+
+function serviceWithRegistryModels(models: unknown[], options: { executableModels?: unknown[] } = {}): PrimeProviderService {
+  const providerService = service()
+  const internals = providerService as unknown as {
+    authStorage: { getOAuthProviders(): Array<{ id: string; name: string }> }
+    registry: {
+      refreshModelCatalog(): Promise<{ models: unknown[] }>
+      getExecutableModels(): Promise<unknown[]>
+      getProviderAuthStatus(id: string): { configured: boolean; source: string; label: string }
+      getProviderDisplayName(id: string): string
+      getError(): string | undefined
+    }
+  }
+  internals.authStorage.getOAuthProviders = () => []
+  internals.registry.refreshModelCatalog = async () => ({ models })
+  internals.registry.getExecutableModels = async () => options.executableModels ?? models
+  internals.registry.getProviderAuthStatus = () => ({ configured: true, source: 'stored', label: 'Test credentials' })
+  internals.registry.getProviderDisplayName = (id) => id
+  internals.registry.getError = () => undefined
+  return providerService
+}
+
+function expectRelationalIntegrity(catalog: PrimeModelCatalog): void {
+  const providerIds = catalog.providers.map((provider) => provider.id)
+  expect(new Set(providerIds).size).toBe(providerIds.length)
+  const providerIdSet = new Set(providerIds)
+  for (const model of catalog.models) expect(providerIdSet.has(model.provider)).toBe(true)
+  for (const provider of catalog.providers) {
+    const models = catalog.models.filter((model) => model.provider === provider.id)
+    expect(provider.modelCount).toBe(models.length)
+    expect(provider.availableModelCount).toBe(models.filter((model) => model.available).length)
+  }
+}
+
 describe('Prime provider adapter', () => {
-  it('follows MCP protected-resource metadata to its OAuth server and scopes', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('', {
-        status: 401,
-        headers: { 'www-authenticate': 'Bearer error="invalid_request", resource_metadata="https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp?read_only=true"' },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        authorization_servers: ['https://api.supabase.com'],
-        scopes_supported: ['organizations:read', 'projects:read', 'database:read'],
-      }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(resolveMcpOAuthDiscovery('https://mcp.supabase.com/mcp?read_only=true')).resolves.toEqual({
-      url: 'https://api.supabase.com/',
-      scopes: 'organizations:read projects:read database:read',
-    })
-    expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://mcp.supabase.com/mcp?read_only=true', expect.objectContaining({ method: 'GET' }))
-    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp?read_only=true', expect.objectContaining({ method: 'GET' }))
-  })
-
-  it('ignores MCP protected-resource metadata advertised on another origin', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('', {
-      status: 401,
-      headers: { 'www-authenticate': 'Bearer resource_metadata="http://127.0.0.1:9000/.well-known/oauth-protected-resource"' },
-    }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(resolveMcpOAuthDiscovery('https://mcp.example.com/mcp')).resolves.toEqual({
-      url: 'https://mcp.example.com/mcp',
-    })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
   it('keeps configured ChatGPT subscription models selectable when discovery returns no models', () => {
     const result = resolveAvailableModelKeys(
       [{ provider: 'openai-codex', id: 'gpt-5.6-sol' }, { provider: 'anthropic', id: 'claude-sonnet-5' }],
@@ -107,7 +125,8 @@ describe('Prime provider adapter', () => {
   })
 
   it('returns the Prime catalog with model-specific capability metadata', async () => {
-    const catalog = await service().catalog(true)
+    const providerService = service()
+    const catalog = await providerService.catalog(true)
     const gpt54 = catalog.models.find((model) => model.provider === 'openai-codex' && model.id === 'gpt-5.4')
     const gpt56 = catalog.models.find((model) => model.provider === 'openai-codex' && model.id === 'gpt-5.6-sol')
 
@@ -117,6 +136,13 @@ describe('Prime provider adapter', () => {
     expect(gpt54?.availableThinkingLevels).not.toContain('max')
     expect(gpt56?.availableThinkingLevels).toContain('max')
     expect(gpt56?.availableThinkingLevels).not.toContain('minimal')
+    expectRelationalIntegrity(catalog)
+    const providerNames = catalog.providers.map((provider) => provider.name)
+    expect(providerNames).toEqual([...providerNames].sort((left, right) => left.localeCompare(right, 'en-US')))
+    expect(new Set(catalog.models.map((model) => model.key)).size).toBe(catalog.models.length)
+    const cached = await providerService.catalog()
+    expect(cached.models).toEqual(catalog.models)
+    expect(cached.providers).toEqual(catalog.providers)
   })
 
   it('single-flights concurrent catalog refreshes and clears the in-flight promise', async () => {
@@ -178,27 +204,112 @@ describe('Prime provider adapter', () => {
     expect(deepseek?.availableThinkingLevels).toEqual(['off', 'high', 'xhigh'])
   })
 
-  it('sorts providers before capping the catalog and warns about the overflow', async () => {
-    const customProviders: Record<string, unknown> = {}
+  it('keeps an exact-boundary catalog unchanged and relationally consistent', async () => {
+    const models: unknown[] = []
+    for (let index = 0; index < MAX_CATALOG_PROVIDERS; index += 1) {
+      models.push(primeModel(`provider-${String(index).padStart(3, '0')}`, 'model'))
+    }
+    for (let index = MAX_CATALOG_PROVIDERS; index < 5_000; index += 1) {
+      models.push(primeModel('provider-000', `model-${index}`))
+    }
+
+    const catalog = await serviceWithRegistryModels(models).catalog(true)
+
+    expect(catalog.models).toHaveLength(5_000)
+    expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(catalog.warning).toBeUndefined()
+    expectRelationalIntegrity(catalog)
+  })
+
+  it('caps provider-only overflow without returning orphan models', async () => {
+    const models = Array.from({ length: MAX_CATALOG_PROVIDERS + 1 }, (_, index) => (
+      primeModel(`provider-${String(index).padStart(3, '0')}`, 'model')
+    ))
+    const providerService = serviceWithRegistryModels(models)
+    const catalog = await providerService.catalog(true)
+
+    expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(catalog.models).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(catalog.warning).toMatch(/257 valid providers.*retained 256.*1 omitted/)
+    expect(catalog.warning).toMatch(/257 valid unique models.*retained 256.*1 omitted/)
+    expect(catalog.warning).toContain('1 omitted by catalog limits: 1 with omitted providers and 0 beyond the model limit')
+    expectRelationalIntegrity(catalog)
+    await expect(providerService.requireAvailableModel('provider-256/model')).rejects.toThrow(/not found/)
+    expect(await providerService.capabilities('provider-256', 'model')).toBeUndefined()
+  })
+
+  it('caps model-only overflow while keeping visibility and launch validation aligned', async () => {
+    const models = Array.from({ length: 5_001 }, (_, index) => primeModel('provider-000', `model-${index}`))
+    const providerService = serviceWithRegistryModels(models)
+    const catalog = await providerService.catalog(true, new Set(), new Set(['provider-000/model-0']))
+
+    expect(catalog.providers).toHaveLength(1)
+    expect(catalog.models).toHaveLength(5_000)
+    expect(catalog.models[0]?.enabled).toBe(false)
+    expect(catalog.warning).toMatch(/5,001 valid unique models.*retained 5,000.*1 omitted/)
+    expect(catalog.warning).toContain('1 omitted by catalog limits: 0 with omitted providers and 1 beyond the model limit')
+    expectRelationalIntegrity(catalog)
+    await expect(providerService.requireAvailableModel('provider-000/model-5000')).rejects.toThrow(/not found/)
+    await expect(providerService.requireAvailableModel('provider-000/model-0', new Set(), new Set(['provider-000/model-0']))).rejects.toThrow(/disabled/)
+  })
+
+  it('applies simultaneous model and provider caps as one relational operation', async () => {
+    const models: unknown[] = []
     for (let index = 0; index < 300; index += 1) {
-      customProviders[`zz-overflow-${String(index).padStart(3, '0')}`] = {
-        baseUrl: 'http://127.0.0.1:8118/v1', api: 'openai-completions', apiKey: 'prime-local',
-        models: [{ id: `model-${index}` }],
-      }
+      models.push(primeModel(`overflow-${String(index).padStart(3, '0')}`, 'model'))
     }
-    customProviders['aa-first-provider'] = {
-      baseUrl: 'http://127.0.0.1:8118/v1', api: 'openai-completions', apiKey: 'prime-local',
-      models: [{ id: 'model-first' }],
+    for (let index = 0; index < 5_010; index += 1) {
+      models.push(primeModel('anthropic', `model-${index}`))
     }
+    const providerService = serviceWithRegistryModels(models)
+    const catalog = await providerService.catalog(true)
 
-    const catalog = await serviceWithModels({ providers: customProviders }).catalog(true)
-
+    expect(catalog.models).toHaveLength(5_000)
     expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
     const names = catalog.providers.map((provider) => provider.name)
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
-    expect(catalog.providers.some((provider) => provider.id === 'aa-first-provider')).toBe(true)
-    expect(catalog.warning).toMatch(/providers/)
-  }, 30_000)
+    expect(catalog.warning).toMatch(/301 valid providers.*retained 256.*45 omitted/)
+    expect(catalog.warning).toMatch(/5,310 valid unique models.*retained 5,000.*310 omitted/)
+    expect(catalog.warning).toContain('310 omitted by catalog limits: 45 with omitted providers and 265 beyond the model limit')
+    expectRelationalIntegrity(catalog)
+    expect(catalog.models.some((model) => model.provider === 'overflow-299')).toBe(false)
+    await expect(providerService.requireAvailableModel('overflow-299/model')).rejects.toThrow(/not found/)
+  })
+
+  it('reports only providers represented after source order exhausts the model limit', async () => {
+    const models: unknown[] = []
+    for (let index = 0; index < 5_001; index += 1) models.push(primeModel('provider-255', `model-${index}`))
+    for (let index = 0; index < 255; index += 1) models.push(primeModel(`provider-${String(index).padStart(3, '0')}`, 'model'))
+
+    const catalog = await serviceWithRegistryModels(models).catalog(true)
+
+    expect(catalog.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(catalog.models).toHaveLength(5_000)
+    expect(new Set(catalog.models.map((model) => model.provider))).toEqual(new Set(['provider-255']))
+    expect(catalog.providers.find((provider) => provider.id === 'provider-255')).toMatchObject({ modelCount: 5_000, availableModelCount: 5_000 })
+    expect(catalog.providers.find((provider) => provider.id === 'provider-000')).toMatchObject({ modelCount: 0, availableModelCount: 0 })
+    expect(catalog.warning).toContain('retained 5,000 across 1 provider (256 omitted by catalog limits')
+    expectRelationalIntegrity(catalog)
+  })
+
+  it('warns about Codex fallback only when a Codex model survives the limits', async () => {
+    const retained = await serviceWithRegistryModels(
+      [primeModel('openai-codex', 'gpt-retained')],
+      { executableModels: [] },
+    ).catalog(true)
+    expect(retained.models.map((model) => model.key)).toEqual(['openai-codex/gpt-retained'])
+    expect(retained.warning).toContain('configured Codex catalogue')
+
+    const overflowModels = Array.from({ length: 5_000 }, (_, index) => primeModel('aa-source', `model-${index}`))
+    overflowModels.push(primeModel('openai-codex', 'gpt-omitted'))
+    const overflow = await serviceWithRegistryModels(overflowModels, {
+      executableModels: overflowModels.filter((model) => (model as { provider: string }).provider !== 'openai-codex'),
+    }).catalog(true)
+
+    expect(overflow.providers.find((provider) => provider.id === 'openai-codex')).toMatchObject({ modelCount: 0, availableModelCount: 0 })
+    expect(overflow.models.some((model) => model.provider === 'openai-codex')).toBe(false)
+    expect(overflow.warning).not.toContain('configured Codex catalogue')
+  })
 
   it('stores API keys through Prime auth storage without exposing them in the catalog', async () => {
     const { providerService, authPath } = serviceWithAuthPath()
@@ -248,80 +359,77 @@ describe('Prime provider adapter', () => {
     await expect(service().startOAuth('openai')).rejects.toThrow('requires api_key authentication')
   })
 
-  it('starts built-in MCP OAuth through Prime Agent credential storage', async () => {
+  it('rejects MCP provider ids at the generic OAuth boundary', async () => {
     const providerService = service()
     const internals = providerService as unknown as {
-      authStorage: { login(providerId: string, options: unknown): Promise<void> }
+      authStorage: { login(providerId: string, options: unknown): Promise<void>; set(providerId: string, credential: unknown): void; logout(providerId: string): void }
     }
     const login = vi.fn(async () => undefined)
+    const set = vi.fn()
+    const logout = vi.fn()
     internals.authStorage.login = login
+    internals.authStorage.set = set
+    internals.authStorage.logout = logout
 
-    const flow = await providerService.startMcpOAuth('notion')
-    expect(flow.flowId).toBeTruthy()
-    expect(login).toHaveBeenCalledWith('mcp:notion', expect.any(Object))
+    await expect(providerService.startOAuth('mcp:notion')).rejects.toThrow('Network MCP authentication is managed outside GooeyPi')
+    await expect(providerService.saveApiKey('mcp:notion', 'secret')).rejects.toThrow('Network MCP authentication is managed outside GooeyPi')
+    await expect(providerService.logout('mcp:notion')).rejects.toThrow('Network MCP authentication is managed outside GooeyPi')
+    expect(login).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(logout).not.toHaveBeenCalled()
   })
 
-  it('surfaces built-in MCP connection state without exposing credentials', () => {
+  it('surfaces built-in MCP entries without inspecting Prime credential storage', () => {
     const providerService = service()
     const internals = providerService as unknown as {
-      authStorage: { set(providerId: string, credential: unknown): void }
+      authStorage: { get(providerId: string): unknown }
     }
-    expect(providerService.mcpCapabilities()).toContainEqual(expect.objectContaining({ name: 'Notion', kind: 'mcp', location: 'bundled', enabled: false }))
-    internals.authStorage.set('mcp:notion', { type: 'oauth', access: 'secret-token', refresh: 'refresh-token', expires: Date.now() + 60_000 })
-    const capabilities = providerService.mcpCapabilities()
-    expect(capabilities).toContainEqual(expect.objectContaining({ id: 'prime-mcp-notion', name: 'Notion', enabled: true }))
-    expect(JSON.stringify(capabilities)).not.toContain('secret-token')
+    const get = vi.fn(() => { throw new Error('credential storage must not be inspected') })
+    internals.authStorage.get = get
+    expect(providerService.mcpCapabilities()).toContainEqual(expect.objectContaining({
+      name: 'Notion', kind: 'mcp', location: 'bundled', enabled: false,
+      availability: { available: false, detail: expect.stringContaining('managed outside GooeyPi') },
+    }))
+    expect(get).not.toHaveBeenCalled()
   })
 
-  it('logs out only the selected built-in MCP integration', async () => {
+  it('keeps model-registry construction and catalog refresh blind to existing MCP credentials', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prime-work-provider-mcp-blind-'))
+    dirs.push(dir)
+    const authPath = join(dir, 'auth.json')
+    const credential = { type: 'oauth', access: 'mcp-secret', refresh: 'mcp-refresh', expires: Date.now() + 3_600_000 }
+    writeFileSync(authPath, JSON.stringify({ 'mcp:notion': credential }))
+    const get = vi.spyOn(AuthStorage.prototype, 'get')
+    const getAuthStatus = vi.spyOn(AuthStorage.prototype, 'getAuthStatus')
+    const hasAuth = vi.spyOn(AuthStorage.prototype, 'hasAuth')
+    const getApiKey = vi.spyOn(AuthStorage.prototype, 'getApiKey')
+    const getApiKeyWithSourceToken = vi.spyOn(AuthStorage.prototype, 'getApiKeyWithSourceToken')
+    const getProviderHeaders = vi.spyOn(AuthStorage.prototype, 'getProviderHeaders')
+    const markAuthStale = vi.spyOn(AuthStorage.prototype, 'markAuthStale')
+    const getCurrentAuthSourceToken = vi.spyOn(AuthStorage.prototype, 'getCurrentAuthSourceToken')
+    const markAuthSourceStale = vi.spyOn(AuthStorage.prototype, 'markAuthSourceStale')
+    const set = vi.spyOn(AuthStorage.prototype, 'set')
+    const remove = vi.spyOn(AuthStorage.prototype, 'remove')
+    const logout = vi.spyOn(AuthStorage.prototype, 'logout')
+
+    const providerService = new PrimeProviderService({ authPath, modelsPath: join(dir, 'models.json') })
+    const catalog = await providerService.catalog(true)
+
+    const providerAccesses = [get, getAuthStatus, hasAuth, getApiKey, getApiKeyWithSourceToken, getProviderHeaders, markAuthStale, getCurrentAuthSourceToken]
+      .flatMap((spy) => spy.mock.calls.map(([provider]) => provider))
+    expect(providerAccesses.some((provider) => typeof provider === 'string' && provider.toLowerCase().startsWith('mcp:'))).toBe(false)
+    expect(markAuthSourceStale.mock.calls.some(([token]) => token.provider.toLowerCase().startsWith('mcp:'))).toBe(false)
+    expect([set, remove, logout].flatMap((spy) => spy.mock.calls.map(([provider]) => provider))
+      .some((provider) => typeof provider === 'string' && provider.toLowerCase().startsWith('mcp:'))).toBe(false)
+    expect(catalog.providers.some((provider) => provider.id.startsWith('mcp:'))).toBe(false)
+    expect(readFileSync(authPath, 'utf8')).toBe(JSON.stringify({ 'mcp:notion': credential }))
+  })
+
+  it('does not expose MCP-specific credential mutation methods', () => {
     const providerService = service()
-    const internals = providerService as unknown as {
-      authStorage: { set(providerId: string, credential: unknown): void; get(providerId: string): unknown }
-    }
-    internals.authStorage.set('mcp:notion', { type: 'oauth', access: 'notion-secret' })
-    internals.authStorage.set('openai-codex', { type: 'oauth', access: 'provider-secret' })
-
-    await providerService.logoutMcp('notion')
-
-    expect(internals.authStorage.get('mcp:notion')).toBeUndefined()
-    expect(internals.authStorage.get('openai-codex')).toBeDefined()
+    expect(providerService).not.toHaveProperty('startMcpOAuth')
+    expect(providerService).not.toHaveProperty('logoutMcp')
+    expect(providerService).not.toHaveProperty('removeMcpCredential')
   })
 
-  it('registers a configured custom Prime MCP OAuth server before login', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-provider-'))
-    dirs.push(dir)
-    writeFileSync(join(dir, 'settings.json'), JSON.stringify({
-      mcpServers: { acme: { type: 'http', url: 'https://acme.example/mcp', oauth: true } },
-    }))
-    const providerService = new PrimeProviderService({
-      agentDir: dir,
-      authPath: join(dir, 'auth.json'),
-      modelsPath: join(dir, 'models.json'),
-    })
-    const internals = providerService as unknown as {
-      startOAuthFlow(providerId: string): { flowId: string }
-    }
-    const startOAuthFlow = vi.fn(() => ({ flowId: 'custom-mcp-flow' }))
-    internals.startOAuthFlow = startOAuthFlow
-
-    await expect(providerService.startMcpOAuth('acme')).resolves.toEqual({ flowId: 'custom-mcp-flow' })
-    expect(startOAuthFlow).toHaveBeenCalledWith('mcp:acme')
-  })
-
-  it('rejects unknown and non-OAuth MCP login targets', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'prime-work-mcp-provider-'))
-    dirs.push(dir)
-    writeFileSync(join(dir, 'settings.json'), JSON.stringify({
-      mcpServers: { local: { type: 'http', url: 'https://local.example/mcp', enabled: true } },
-    }))
-    const providerService = new PrimeProviderService({
-      agentDir: dir,
-      authPath: join(dir, 'auth.json'),
-      modelsPath: join(dir, 'models.json'),
-    })
-
-    await expect(providerService.startMcpOAuth('missing')).rejects.toThrow('Unknown MCP integration')
-    await expect(providerService.startMcpOAuth('local')).rejects.toThrow('not configured for OAuth')
-    await expect(providerService.startMcpOAuth('../notion')).rejects.toThrow('unsupported characters')
-  })
 })

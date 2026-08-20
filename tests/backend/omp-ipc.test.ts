@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const electronMocks = vi.hoisted(() => ({
   app: {},
@@ -14,11 +17,36 @@ const electronMocks = vi.hoisted(() => ({
 vi.mock('electron', () => electronMocks)
 
 import { registerIpc, type IpcRegistration } from '../../electron/main/ipc'
+import { OmpModelCatalogService, MAX_CATALOG_PROVIDERS } from '../../electron/main/providers-omp'
 
 const EXPECTED_URL = 'prime-work://app/'
 const PRIME_SESSION = '/home/user/.prime/agent/sessions/session.jsonl'
 const OMP_SESSION = '/home/user/.omp/agent/sessions/bucket/session.jsonl'
 const PI_SESSION = '/home/user/.pi/agent/sessions/--home-user-project--/session.jsonl'
+const fixtureDirs: string[] = []
+
+function fakeOverflowCatalog(): OmpModelCatalogService {
+  const directory = mkdtempSync(join(tmpdir(), 'gooeypi-omp-ipc-catalog-'))
+  fixtureDirs.push(directory)
+  const executable = join(directory, 'omp.cjs')
+  const models = Array.from({ length: MAX_CATALOG_PROVIDERS + 1 }, (_, index) => ({
+    provider: `provider-${String(index).padStart(3, '0')}`,
+    id: 'model',
+    name: `Provider ${index} model`,
+    reasoning: false,
+    thinking: null,
+    input: ['text'],
+    contextWindow: 1,
+    maxTokens: 1,
+  }))
+  writeFileSync(executable, `#!/usr/bin/env node
+if (process.argv[2] === '--version') { process.stdout.write('omp/1.2.3\\n'); process.exit(0) }
+if (process.argv[2] === 'models' && process.argv[3] === '--json') { process.stdout.write(${JSON.stringify(JSON.stringify({ models }))}); process.exit(0) }
+process.exit(2)
+`)
+  chmodSync(executable, 0o755)
+  return new OmpModelCatalogService(executable)
+}
 
 function serviceStub(): Record<string, unknown> {
   return new Proxy({}, { get: () => vi.fn(async () => undefined) })
@@ -82,7 +110,7 @@ function buildServices() {
     terminals: { ...serviceStub(), killForSession: vi.fn(async () => undefined) },
     git: serviceStub(),
     plugins: { ...serviceStub(), list: vi.fn(async () => 'prime-plugins'), install: vi.fn(async () => undefined), installExtension: vi.fn(async () => undefined), setMcpSupport: vi.fn(async () => undefined), connectMcp: vi.fn(async () => undefined), setMcpEnabled: vi.fn(async () => undefined), refresh: vi.fn(async () => 'prime-plugins') },
-    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined), startMcpOAuth: vi.fn(async () => ({ flowId: 'mcp-flow' })), logoutMcp: vi.fn(async () => undefined) },
+    providers: { ...serviceStub(), catalog: vi.fn(async (_force, disabled, disabledModels) => catalog('prime', disabled, disabledModels)), saveApiKey: vi.fn(async () => undefined) },
     settings: {
       ...serviceStub(),
       get: vi.fn(() => settingsState),
@@ -167,7 +195,10 @@ describe('harness-aware IPC routing', () => {
     }
   })
 
-  afterEach(() => { harness.registration.dispose() })
+  afterEach(() => {
+    harness.registration.dispose()
+    for (const directory of fixtureDirs.splice(0)) rmSync(directory, { recursive: true, force: true })
+  })
 
   it('exposes harness refresh through the fixed authorized app channel', async () => {
     await expect(harness.invoke('app:refresh-harnesses')).resolves.toMatchObject({ meta: { version: '0.0.0-refreshed' } })
@@ -299,11 +330,9 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.omp.catalog.catalog).toHaveBeenCalledWith(true, new Set(['anthropic']), new Set())
   })
 
-  it('routes Prime MCP OAuth through the desktop auth service', async () => {
-    await expect(harness.invoke('providers:start-mcp-oauth', 'notion', 'prime')).resolves.toEqual({ flowId: 'mcp-flow' })
-    expect(harness.services.providers.startMcpOAuth).toHaveBeenCalledWith('notion')
-    await expect(harness.invoke('providers:logout-mcp', 'notion', 'prime')).resolves.toBeUndefined()
-    expect(harness.services.providers.logoutMcp).toHaveBeenCalledWith('notion')
+  it('does not register MCP-specific authentication or credential cleanup channels', () => {
+    expect(electronMocks.ipcMain.handle).not.toHaveBeenCalledWith('providers:start-mcp-oauth', expect.any(Function))
+    expect(electronMocks.ipcMain.handle).not.toHaveBeenCalledWith('providers:logout-mcp', expect.any(Function))
   })
 
   it('stores OMP provider visibility in desktop settings without mutating OMP', async () => {
@@ -361,13 +390,32 @@ describe('harness-aware IPC routing', () => {
     expect(harness.services.settings.update).toHaveBeenLastCalledWith({ ompDisabledProviders: ['anthropic'], ompDisabledModels: [] })
   })
 
+  it('applies provider and model toggles only to models retained by a real overflow catalog', async () => {
+    const overflowCatalog = fakeOverflowCatalog()
+    const catalogService = harness.services.omp.catalog as unknown as { catalog: OmpModelCatalogService['catalog'] }
+    catalogService.catalog = overflowCatalog.catalog.bind(overflowCatalog)
+
+    const initial = await harness.invoke('providers:catalog', true, 'omp') as Awaited<ReturnType<OmpModelCatalogService['catalog']>>
+    expect(initial.providers).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(initial.models).toHaveLength(MAX_CATALOG_PROVIDERS)
+    expect(initial.models.some((model) => model.key === 'provider-256/model')).toBe(false)
+
+    const disabled = await harness.invoke('providers:set-enabled', 'provider-000', false, 'omp') as Awaited<ReturnType<OmpModelCatalogService['catalog']>>
+    expect(disabled.providers.find((provider) => provider.id === 'provider-000')?.enabled).toBe(false)
+    expect(disabled.models.find((model) => model.key === 'provider-000/model')?.enabled).toBe(false)
+
+    const reenabled = await harness.invoke('providers:set-model-enabled', 'provider-000/model', true, 'omp') as Awaited<ReturnType<OmpModelCatalogService['catalog']>>
+    expect(reenabled.providers.find((provider) => provider.id === 'provider-000')?.enabled).toBe(true)
+    expect(reenabled.models.find((model) => model.key === 'provider-000/model')?.enabled).toBe(true)
+    await expect(async () => harness.invoke('providers:set-enabled', 'provider-256', false, 'omp')).rejects.toThrow('Provider was not found')
+    await expect(async () => harness.invoke('providers:set-model-enabled', 'provider-256/model', false, 'omp')).rejects.toThrow('Model was not found')
+  })
+
   it('rejects provider credential mutations aimed at the omp harness', async () => {
     for (const [channel, args] of [
       ['providers:save-api-key', ['openai', 'key']],
       ['providers:logout', ['openai']],
       ['providers:start-oauth', ['openai']],
-      ['providers:start-mcp-oauth', ['notion']],
-      ['providers:logout-mcp', ['notion']],
     ] as const) {
       await expect(async () => harness.invoke(channel, ...args, 'omp'), channel).rejects.toThrow('managed by the omp CLI')
     }

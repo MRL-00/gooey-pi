@@ -144,10 +144,13 @@ describe('settings field ownership', () => {
   it('assigns every AppSettings field to a focused section', () => {
     expect(SETTINGS_FIELD_SECTIONS).toEqual({
       theme: 'appearance',
+      locale: 'appearance',
       interfaceFontScale: 'appearance',
       sidebarOpen: 'general',
       inspectorOpen: 'general',
       showFileChangesPopup: 'general',
+      keepRunningInBackground: 'general',
+      launchAtLogin: 'general',
       terminalOpen: 'terminal',
       defaultInspectorTab: 'general',
       browserHome: 'browser',

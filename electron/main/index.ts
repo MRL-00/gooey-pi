@@ -1,12 +1,14 @@
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, safeStorage, session, shell, webContents } from 'electron'
-import type { BrowserWindowConstructorOptions, WebContents } from 'electron'
+import type { BrowserWindowConstructorOptions, Input, WebContents } from 'electron'
 import { extname, isAbsolute, join, relative, resolve, win32 as win32Path } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
+import { assertNoMcpAuthenticationCommand } from '../../src/lib/mcp-policy'
 import { BROWSER_PARTITION, type ApplicationMenuName, type AppMeta, type AppUpdateState, type HarnessId, type PrimeEventEnvelope, type ProviderAuthEvent, type RuntimeInfo, type ThemeMode } from '../../src/types/api'
 import { AgentRpcManager, OMP_RPC_ADAPTER, PI_RPC_ADAPTER } from './agent-rpc'
 import { installApplicationMenu } from './application-menu'
+import { MacBackgroundController, shouldStartInBackground } from './background'
 import { BrowserDownloadGuard } from './browser-downloads'
 import { installCrashGuards } from './crash-guard'
 import { CuaDriverService } from './cua-driver'
@@ -18,6 +20,7 @@ import { PluginService, beginPluginDiscoveryShutdown } from './plugins'
 import { PrimeProviderService } from './providers'
 import { OmpModelCatalogService } from './providers-omp'
 import { PiModelCatalogService } from './providers-pi'
+import { PACKAGED_RENDERER_URL, PACKAGED_SMOKE_READY_EVENT, packagedSmokeMarker, packagedSmokeMarkerPath, serializePackagedSmokeMarker } from './packaged-smoke'
 import { PetService } from './pets'
 import { ProjectService } from './projects'
 import { SettingsService } from './settings-schedules'
@@ -29,10 +32,11 @@ import { AgentBrowserBridge } from './browser/agent-bridge'
 import { AgentBrowserService } from './browser/agent-service'
 import { AgentCollaborationBridge } from './collaboration/agent-bridge'
 import { configureGooeyPiAgentMessageSigning, loadOrCreateGooeyPiAgentMessageKey } from './collaboration/message-envelope'
+import { extensionInjection, resolveExtensionPath, type ExtensionCapability } from './extension-manifest'
 import { SessionService } from './sessions'
 import { ompSessionServiceOptions } from './sessions/omp'
 import { piSessionServiceOptions } from './sessions/pi'
-import { JsonStateStore } from './store'
+import { type JsonStateStore, openDesktopStateStore, StateCompatibilityError, StateMigrationError } from './store'
 import { TerminalService } from './terminal'
 import { VoiceService, voiceSecretStorageStatus } from './voice'
 import { isAllowedRendererAudioPermission } from './voice-permissions'
@@ -55,11 +59,14 @@ let agentScheduleBridges: AgentScheduleBridge[] = []
 let agentBrowser: AgentBrowserService | null = null
 let agentBrowserBridge: AgentBrowserBridge | null = null
 let agentCollaborationBridge: AgentCollaborationBridge | null = null
+let backgroundMode: MacBackgroundController | null = null
 let shutdownStarted = false
 let shutdownApproved = false
 let confirmingShutdown = false
 let trustedRendererUrl = ''
+let packagedSmokeMarkerFile: string | null = null
 let windowCreation: Promise<BrowserWindow | null> | null = null
+let startInBackground = false
 const keepTestWindowsHidden = process.env.PRIME_WORK_E2E_HIDE_WINDOWS === '1'
 
 installCrashGuards({
@@ -121,7 +128,7 @@ export function resolveRendererAssetPath(rendererRoot: string, decodedPath: stri
 
 function resolveRendererUrl(): string {
   const developmentUrl = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
-  if (!developmentUrl) return app.isPackaged ? 'prime-work://app/index.html' : pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  if (!developmentUrl) return app.isPackaged ? PACKAGED_RENDERER_URL : pathToFileURL(join(__dirname, '../renderer/index.html')).href
   const parsed = new URL(developmentUrl)
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) {
     throw new Error('ELECTRON_RENDERER_URL must use an uncredentialed loopback HTTP(S) origin')
@@ -321,6 +328,19 @@ export function mainWindowChromeOptions(platform: NodeJS.Platform = process.plat
   return { titleBarStyle: 'default' }
 }
 
+export function isMacWindowCloseShortcut(
+  input: Pick<Input, 'type' | 'key' | 'shift' | 'control' | 'alt' | 'meta'>,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === 'darwin'
+    && input.type === 'keyDown'
+    && input.key.toLowerCase() === 'q'
+    && input.meta
+    && !input.shift
+    && !input.control
+    && !input.alt
+}
+
 export function popupApplicationMenu(sender: WebContents, menuName: ApplicationMenuName, x: number, y: number): boolean {
   const window = BrowserWindow.fromWebContents(sender)
   const applicationMenu = Menu.getApplicationMenu()
@@ -365,6 +385,11 @@ async function createWindow(): Promise<BrowserWindow | null> {
   const renderer = window.webContents
   const rendererId = renderer.id
   hardenRenderer(window)
+  renderer.on('before-input-event', (event, input) => {
+    if (!isMacWindowCloseShortcut(input)) return
+    event.preventDefault()
+    if (!window.isDestroyed()) window.close()
+  })
   renderer.on('did-finish-load', () => {
     if (renderer.isDestroyed()) return
     // A reload resets the zoom factor, so the persisted scale is re-applied
@@ -380,10 +405,14 @@ async function createWindow(): Promise<BrowserWindow | null> {
   let readyToShow = false
   window.once('ready-to-show', () => {
     readyToShow = true
-    if (!keepTestWindowsHidden && rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
+    if (!keepTestWindowsHidden && !backgroundMode?.isBackgrounded() && rendererLoaded && !shutdownStarted && !window.isDestroyed() && mainWindow === window) window.show()
   })
   window.on('close', (event) => {
     if (shutdownStarted || shutdownApproved) return
+    if (backgroundMode?.handleWindowClose(window)) {
+      event.preventDefault()
+      return
+    }
     const prompt = pendingShutdownPrompt()
     if (!prompt) return
     event.preventDefault()
@@ -407,7 +436,7 @@ async function createWindow(): Promise<BrowserWindow | null> {
     return null
   }
   rendererLoaded = true
-  if (!keepTestWindowsHidden && readyToShow) window.show()
+  if (!keepTestWindowsHidden && !backgroundMode?.isBackgrounded() && readyToShow) window.show()
   return window
 }
 
@@ -422,9 +451,24 @@ function ensureWindow(): Promise<BrowserWindow | null> {
   return creation
 }
 
-function boundedErrorMessage(error: unknown): string {
+function boundedErrorMessage(error: unknown, maxLength = 512): string {
   const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/[\r\n\t]+/g, ' ').slice(0, 512) || 'Unknown error'
+  return message.replace(/[\r\n\t]+/g, ' ').slice(0, maxLength) || 'Unknown error'
+}
+
+export interface StartupFailureDialog {
+  title: string
+  detail: string
+}
+
+export function startupFailureDialog(error: unknown): StartupFailureDialog | null {
+  if (error instanceof StateMigrationError) {
+    return { title: 'GooeyPi state migration failed', detail: boundedErrorMessage(error, 2_048) }
+  }
+  if (error instanceof StateCompatibilityError) {
+    return { title: 'GooeyPi update required', detail: boundedErrorMessage(error, 2_048) }
+  }
+  return null
 }
 
 /** Filesystem locations of the three shared capability extensions injected into extension-based harnesses. */
@@ -437,22 +481,23 @@ export interface CapabilityExtensionPaths {
 /**
  * Runtime environment for the extension-injected harnesses (OMP and pi, which
  * share pi's ancestral extension API): the capability-broker variables from
- * the schedule and browser bridges minus the Prime-only --skill paths, plus
- * the three PRIME_WORK_*_EXTENSION_PATH variables the harness adapters turn
+ * the schedule bridge and lazily enabled browser bridge minus the Prime-only
+ * --skill paths, plus the three PRIME_WORK_*_EXTENSION_PATH variables the harness adapters turn
  * into --extension argv. Both harnesses must receive the identical surface.
  */
 export function extensionRuntimeEnvironment(
   scheduleBridgeEnvironment: NodeJS.ProcessEnv,
-  browserBridgeEnvironment: NodeJS.ProcessEnv,
+  browserBridgeEnvironment: () => NodeJS.ProcessEnv,
   extensionPaths: CapabilityExtensionPaths,
   askUserEnabled = true,
   browserEnabled = true,
 ): NodeJS.ProcessEnv {
   const { PRIME_WORK_SCHEDULE_SKILL_PATH: _scheduleSkill, ...scheduleEnvironment } = scheduleBridgeEnvironment
-  const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...browserEnvironment } = browserBridgeEnvironment
+  const browserEnvironment = browserEnabled ? browserBridgeEnvironment() : {}
+  const { PRIME_WORK_BROWSER_SKILL_PATH: _browserSkill, ...runtimeBrowserEnvironment } = browserEnvironment
   return {
     ...scheduleEnvironment,
-    ...(browserEnabled ? browserEnvironment : {}),
+    ...runtimeBrowserEnvironment,
     PRIME_WORK_SCHEDULE_EXTENSION_PATH: extensionPaths.schedule,
     PRIME_WORK_BROWSER_EXTENSION_PATH: browserEnabled ? extensionPaths.browser : undefined,
     PRIME_WORK_ASK_USER_EXTENSION_PATH: askUserEnabled ? extensionPaths.askUser : undefined,
@@ -486,23 +531,49 @@ export async function settleShutdown(
   }
 }
 
-function requestWindow(reason: 'activation' | 'second instance'): void {
+function requestWindow(reason: 'activation' | 'second instance' | 'menu bar' | 'settings', afterOpen?: (window: BrowserWindow) => void): void {
   void ensureWindow().then((window) => {
     if (!window || shutdownStarted || window.isDestroyed()) return
-    if (keepTestWindowsHidden) return
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    if (!keepTestWindowsHidden) {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }
+    afterOpen?.(window)
   }).catch((error: unknown) => {
     if (!shutdownStarted) console.error(`GooeyPi failed to open a window after ${reason}: ${boundedErrorMessage(error)}`)
   })
 }
 
+function revealApplication(reason: 'activation' | 'second instance'): void {
+  if (backgroundMode) backgroundMode.open()
+  else requestWindow(reason)
+}
+
+export function routeAllWindowsClosed(
+  shutdownInProgress: boolean,
+  background: Pick<MacBackgroundController, 'handleAllWindowsClosed'> | null,
+  quit: () => void,
+): void {
+  if (shutdownInProgress) return
+  if (!background?.handleAllWindowsClosed()) quit()
+}
+
 async function bootstrap(): Promise<void> {
   const userDataPath = app.getPath('userData')
   configureGooeyPiAgentMessageSigning(loadOrCreateGooeyPiAgentMessageKey(join(userDataPath, 'agent-message-signing.key')))
-  const stateStore = new JsonStateStore(join(userDataPath, 'prime-work-state.json'))
+  const stateStore = await openDesktopStateStore(userDataPath)
   store = stateStore
+  backgroundMode = new MacBackgroundController({
+    iconPath: appIconPath(),
+    getSettings: () => stateStore.getSettings(),
+    onOpen: () => requestWindow('menu bar'),
+    onSettings: () => requestWindow('settings', (window) => {
+      if (!window.webContents.isDestroyed()) window.webContents.send('app:open-settings')
+    }),
+    onQuit: () => app.quit(),
+    startInBackground,
+  })
   const discovery = new HarnessDiscoveryService(() => stateStore.getSettings().runtimePaths)
   const initialHarnesses = await discovery.refresh()
   await reconcileActiveHarness(stateStore, initialHarnesses)
@@ -530,6 +601,14 @@ async function bootstrap(): Promise<void> {
       throw error
     }
   }
+  const authorizeEitherReadOnlyCwd = async (cwd: string): Promise<string> => {
+    try { return await projects.authorizeReadOnlyCwd(cwd) } catch (error) {
+      for (const fallback of [ompProjects, piProjects]) {
+        try { return await fallback.authorizeReadOnlyCwd(cwd) } catch { /* try the next harness; the Prime error is rethrown */ }
+      }
+      throw error
+    }
+  }
   const requireEitherSessionPath = async (path: string): Promise<string> => {
     try { return await sessions.requireSessionPath(path) } catch (error) {
       for (const fallback of [ompSessions, piSessions]) {
@@ -538,12 +617,11 @@ async function bootstrap(): Promise<void> {
       throw error
     }
   }
-  const git = new GitService(authorizeEitherCwd)
+  const git = new GitService(authorizeEitherCwd, authorizeEitherReadOnlyCwd)
   // This matches the renderer's startup query so both consumers share SessionService's coalesced catalog scan.
   const listCatalogSessions = (): ReturnType<SessionService['list']> => sessions.list(undefined, true)
 
   const providers = new PrimeProviderService({
-    agentDir: join(homedir(), '.prime', 'agent'),
     openExternal: async (url) => { await shell.openExternal(url, { activate: true }) },
   })
   providerService = providers
@@ -641,7 +719,12 @@ async function bootstrap(): Promise<void> {
     },
   })
   downloads = new BrowserDownloadGuard(isAllowedBrowserUrl, app.getPath('downloads'))
-  const settings = new SettingsService(stateStore, (shell) => terminals!.validateShell(shell), () => downloads?.cancelAll(true))
+  const settings = new SettingsService(
+    stateStore,
+    (shell) => terminals!.validateShell(shell),
+    () => downloads?.cancelAll(true),
+    (previous, next) => backgroundMode?.applySettings(previous, next),
+  )
   const cuaDriver = new CuaDriverService()
   await cuaDriver.status()
   const voice = new VoiceService({
@@ -676,21 +759,19 @@ async function bootstrap(): Promise<void> {
   const computerUseSkillPath = app.isPackaged
     ? join(process.resourcesPath, 'skills', 'gooeypi-computer-use', 'SKILL.md')
     : join(app.getAppPath(), 'assets', 'skills', 'gooeypi-computer-use', 'SKILL.md')
-  const ompBrowserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-browser.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-browser.ts')
-  const ompScheduleExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-schedules.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-schedules.ts')
-  const ompAskUserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-ask-user.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-ask-user.ts')
-  const collaborationExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'omp-work-collaboration.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'omp-work-collaboration.ts')
-  const piFastModeExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'pi-work-fast-mode.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'pi-work-fast-mode.ts')
+  const extensionPathContext = {
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+  }
+  const extensionPathFor = (harness: HarnessId, capability: ExtensionCapability): string =>
+    resolveExtensionPath(extensionInjection(harness, capability).filename, extensionPathContext)
+  const primeBrowserExtensionPath = extensionPathFor('prime', 'browser')
+  const ompBrowserExtensionPath = extensionPathFor('omp', 'browser')
+  const ompScheduleExtensionPath = extensionPathFor('omp', 'schedule')
+  const ompAskUserExtensionPath = extensionPathFor('omp', 'askUser')
+  const collaborationExtensionPath = extensionPathFor('omp', 'collaboration')
+  const piFastModeExtensionPath = extensionPathFor('pi', 'piFastMode')
   const computerUseSkill = async () => {
     const status = await cuaDriver.status()
     return {
@@ -702,8 +783,6 @@ async function bootstrap(): Promise<void> {
     }
   }
   const plugins = new PluginService(primeExecutable, (path) => projects.authorizeProjectRoot(path), {
-    removeMcpCredential: (server) => providers.removeMcpCredential(server),
-    protectedMcpServers: providers.protectedMcpServers(),
     builtInSkills: async () => [{
       id: 'prime-work-schedules', name: 'Scheduled tasks',
       description: 'Create and manage durable project and thread schedules from an agent.',
@@ -781,6 +860,7 @@ async function bootstrap(): Promise<void> {
   const schedules = new AutomationService(stateStore, {
     validateTarget: (target, harness) => scheduledRuns[harness].validateTarget(target),
     validateExecution: (execution, harness) => scheduledRuns[harness].validateExecution(execution),
+    validatePrompt: assertNoMcpAuthenticationCommand,
     run: (task) => scheduledRuns[task.harness].run(task),
   })
   automation = schedules
@@ -845,10 +925,7 @@ async function bootstrap(): Promise<void> {
     },
   })
   agentBrowser = browserService
-  const browserExtensionPath = app.isPackaged
-    ? join(process.resourcesPath, 'extensions', 'prime-work-browser.ts')
-    : join(app.getAppPath(), 'assets', 'extensions', 'prime-work-browser.ts')
-  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: browserExtensionPath, skillPath: browserSkillPath })
+  const browserBridge = new AgentBrowserBridge({ service: browserService, terminals, extensionPath: primeBrowserExtensionPath, skillPath: browserSkillPath })
   const collaborationBridge = new AgentCollaborationBridge({
     extensionPath: collaborationExtensionPath,
     sessions: { prime: sessions, omp: ompSessions, pi: piSessions },
@@ -860,6 +937,18 @@ async function bootstrap(): Promise<void> {
   await Promise.all([browserBridge.start(), collaborationBridge.start()])
   agentBrowserBridge = browserBridge
   agentCollaborationBridge = collaborationBridge
+  const revokeRuntimeCapabilities = (environment: NodeJS.ProcessEnv, runtimeScheduleBridge: AgentScheduleBridge): void => {
+    const claims: Array<[string, { revoke(token: string | undefined): boolean }, string | undefined]> = [
+      ['schedule', runtimeScheduleBridge, environment.PRIME_WORK_SCHEDULE_TOKEN],
+      ['browser', browserBridge, environment.PRIME_WORK_BROWSER_TOKEN],
+      ['collaboration', collaborationBridge, environment.GOOEYPI_COLLABORATION_TOKEN],
+    ]
+    for (const [name, bridge, token] of claims) {
+      try { bridge.revoke(token) } catch (error) {
+        console.error(`GooeyPi failed to revoke ${name} runtime capability: ${boundedErrorMessage(error)}`)
+      }
+    }
+  }
   agents.setRuntimeEnvironmentProvider((scope) => ({
     ...scheduleBridge.environmentFor(scope),
     ...(stateStore.getSettings().browserEnabled ? browserBridge.environmentFor(scope) : {}),
@@ -873,6 +962,7 @@ async function bootstrap(): Promise<void> {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
+  agents.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, scheduleBridge))
   // OMP runtimes get the same capability-scoped brokers through OMP-flavored
   // extensions. OMP has no --skill flag, so their tool descriptions carry the
   // app-specific usage guidance while OMP's own skills stay discovery-based.
@@ -882,7 +972,7 @@ async function bootstrap(): Promise<void> {
     askUser: ompAskUserExtensionPath,
   }
   ompManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...extensionRuntimeEnvironment(ompScheduleBridge.environmentFor(scope), () => browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'omp' }),
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
     GOOEYPI_COMPUTER_USE_SKILL_PATH: stateStore.getSettings().computerUseEnabled && cuaDriver.executable() ? computerUseSkillPath : undefined,
@@ -891,10 +981,11 @@ async function bootstrap(): Promise<void> {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
+  ompManager.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, ompScheduleBridge))
   // Pi runtimes receive the identical capability surface: pi's extension API
   // is the ancestor of OMP's, so the omp-work-* files are shared by design.
   piManager.setRuntimeEnvironmentProvider((scope) => ({
-    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
+    ...extensionRuntimeEnvironment(piScheduleBridge.environmentFor(scope), () => browserBridge.environmentFor(scope), capabilityExtensionPaths, stateStore.getSettings().askUserEnabled && scope.interactive, stateStore.getSettings().browserEnabled),
     ...collaborationBridge.environmentFor({ ...scope, harness: 'pi' }),
     GOOEYPI_PI_FAST_MODE_EXTENSION_PATH: piFastModeExtensionPath,
     GOOEYPI_CUA_DRIVER_PATH: stateStore.getSettings().computerUseEnabled ? cuaDriver.executable() ?? undefined : undefined,
@@ -904,6 +995,7 @@ async function bootstrap(): Promise<void> {
     browserBridge.bindSession(environment.PRIME_WORK_BROWSER_TOKEN, info.sessionFile)
     collaborationBridge.bindSession(environment.GOOEYPI_COLLABORATION_TOKEN, info.sessionFile, info.runtimeId)
   })
+  piManager.setRuntimeEndListener((environment) => revokeRuntimeCapabilities(environment, piScheduleBridge))
   if (shutdownStarted) return
   const meta: AppMeta = {
     version: app.getVersion(),
@@ -959,6 +1051,11 @@ async function bootstrap(): Promise<void> {
   installApplicationMenu({
     appName: 'GooeyPi',
     updatesEnabled: updates.isEnabled(),
+    closeWindow: () => {
+      const window = mainWindow
+      if (!window || window.isDestroyed()) app.quit()
+      else window.close()
+    },
     checkForUpdates: createManualUpdateCheck(() => updates.check(), async (notification) => {
       await dialog.showMessageBox({
         type: notification.type,
@@ -968,15 +1065,51 @@ async function bootstrap(): Promise<void> {
       })
     }),
   })
-  await ensureWindow()
+  backgroundMode.start()
+  const window = await ensureWindow()
+  if (packagedSmokeMarkerFile) {
+    await runPackagedSmoke(window, packagedSmokeMarkerFile)
+    return
+  }
   updates.start()
+}
+
+/**
+ * Reports packaged readiness once the trusted renderer has completed an
+ * authorized IPC round trip, then quits. The launcher owns the deadline, so
+ * nothing here polls or waits on a timer.
+ */
+async function runPackagedSmoke(window: BrowserWindow | null, markerPath: string): Promise<void> {
+  if (!window || window.isDestroyed()) throw new Error('Packaged smoke mode could not open the renderer window')
+  if (!ipc) throw new Error('Packaged smoke mode has no registered IPC surface to observe')
+  await ipc.whenRendererReady
+  const marker = serializePackagedSmokeMarker(packagedSmokeMarker(trustedRendererUrl, app.getVersion()))
+  await writeFile(markerPath, marker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  console.log(`${PACKAGED_SMOKE_READY_EVENT} ${trustedRendererUrl}`)
+  shutdownApproved = true
+  app.quit()
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
 else void app.whenReady().then(async () => {
+  // Parsed from the first instance's own argv only: a second-instance command
+  // line must never be able to make a running application write a marker and quit.
+  const requestedSmokeMarker = packagedSmokeMarkerPath(process.argv)
+  if (requestedSmokeMarker) {
+    if (!app.isPackaged) throw new Error('Packaged smoke mode is only available in packaged builds')
+    packagedSmokeMarkerFile = requestedSmokeMarker
+  }
   registerRendererProtocol()
-  if (process.platform === 'darwin') app.dock?.setIcon(appIconPath())
+  let wasOpenedAtLogin = false
+  if (process.platform === 'darwin' && app.isPackaged) {
+    try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin } catch { /* The explicit flag remains available if the OS lookup fails. */ }
+  }
+  startInBackground = shouldStartInBackground(process.argv, wasOpenedAtLogin)
+  if (process.platform === 'darwin') {
+    app.setActivationPolicy(startInBackground ? 'accessory' : 'regular')
+    if (!startInBackground) app.dock?.setIcon(appIconPath())
+  }
   const browserSession = session.defaultSession
   browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes = permission === 'media' && 'mediaTypes' in details ? details.mediaTypes : undefined
@@ -999,18 +1132,20 @@ else void app.whenReady().then(async () => {
   }
   await bootstrap()
   app.on('second-instance', () => {
-    if (!shutdownStarted) requestWindow('second instance')
+    if (!shutdownStarted) revealApplication('second instance')
   })
   app.on('activate', () => {
-    if (!shutdownStarted && BrowserWindow.getAllWindows().length === 0) requestWindow('activation')
+    if (!shutdownStarted && (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible())) revealApplication('activation')
   })
 }).catch((error: unknown) => {
+  const failureDialog = startupFailureDialog(error)
+  if (failureDialog) dialog.showErrorBox(failureDialog.title, failureDialog.detail)
   if (!shutdownStarted) console.error(`GooeyPi failed to start: ${boundedErrorMessage(error)}`)
   app.quit()
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  routeAllWindowsClosed(shutdownStarted, backgroundMode, () => app.quit())
 })
 
 app.on('before-quit', (event) => {
@@ -1019,7 +1154,7 @@ app.on('before-quit', (event) => {
     const prompt = pendingShutdownPrompt()
     if (prompt) {
       event.preventDefault()
-      if (!confirmingShutdown) requestShutdown(mainWindow, prompt)
+      if (!confirmingShutdown) requestShutdown(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() ? mainWindow : null, prompt)
       return
     }
   }
@@ -1029,6 +1164,7 @@ app.on('before-quit', (event) => {
   const registration = ipc
   ipc = null
   registration?.dispose()
+  backgroundMode?.dispose()
   updateService?.dispose()
   agents?.beginShutdown()
   ompAgents?.beginShutdown()

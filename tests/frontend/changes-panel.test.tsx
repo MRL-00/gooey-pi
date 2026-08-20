@@ -78,4 +78,61 @@ describe('ChangesPanel status states', () => {
     expect(restore).toHaveBeenCalledWith('/project', ['file.txt'])
     expect(onRefreshGit).toHaveBeenCalledTimes(1)
   })
+
+  it('disables mutating controls and offers an explicit grant for read-only projects', async () => {
+    const onGrantProject = vi.fn(async () => undefined)
+    const git = {
+      isRepo: true,
+      branch: 'main',
+      files: [
+        { path: 'file.txt', status: 'M', staged: false, additions: 1, deletions: 0 },
+        { path: 'staged.txt', status: 'M', staged: true, additions: 1, deletions: 0 },
+      ],
+    }
+
+    await act(async () => {
+      root.render(<ChangesPanel git={git} readOnly onGrantProject={onGrantProject} onRefreshGit={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('read-only because it was discovered from session history')
+    const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent?.trim() === label)!
+    expect(button('Stage').disabled).toBe(true)
+    expect(button('Stage all').disabled).toBe(true)
+    expect(button('Undo changes').disabled).toBe(true)
+    expect(button('Commit').disabled).toBe(true)
+    await act(async () => { button('Add project').click(); await Promise.resolve() })
+    expect(onGrantProject).toHaveBeenCalledTimes(1)
+
+    act(() => { button('Staged').click() })
+    expect(button('Unstage').disabled).toBe(true)
+    expect(button('Unstage all').disabled).toBe(true)
+  })
+
+  it('keeps mutating controls enabled for persisted projects', async () => {
+    const git = {
+      isRepo: true,
+      branch: 'main',
+      files: [
+        { path: 'file.txt', status: 'M', staged: false, additions: 1, deletions: 0 },
+        { path: 'staged.txt', status: 'M', staged: true, additions: 1, deletions: 0 },
+      ],
+    }
+
+    await act(async () => {
+      root.render(<ChangesPanel git={git} onRefreshGit={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent?.trim() === label)!
+    expect(button('Stage').disabled).toBe(false)
+    expect(button('Stage all').disabled).toBe(false)
+    expect(button('Undo changes').disabled).toBe(false)
+    expect(button('Commit').disabled).toBe(false)
+    act(() => { button('Staged').click() })
+    expect(button('Unstage').disabled).toBe(false)
+    expect(button('Unstage all').disabled).toBe(false)
+  })
 })

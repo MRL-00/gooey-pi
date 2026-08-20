@@ -51,7 +51,7 @@
 .session-row-wrap:hover, .session-row-wrap:focus-within { background: var(--surface-hover); }
 .session-row-wrap.has-attention:not(.is-selected) { background: color-mix(in srgb, var(--prime-soft) 88%, var(--sidebar)); }
 .session-row-wrap.has-attention:not(.is-selected):hover, .session-row-wrap.has-attention:not(.is-selected):focus-within { background: color-mix(in srgb, var(--prime-soft) 72%, var(--surface-hover)); }
-.session-row-wrap.is-selected { color: var(--text); background: var(--surface-selected); }
+.session-row-wrap.is-selected { color: var(--text); background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--prime); }
 
 .session-row-wrap > .session-row { padding-right: 55px; }
 .session-row__archive, .session-row__more { position: absolute; top: 4px; }

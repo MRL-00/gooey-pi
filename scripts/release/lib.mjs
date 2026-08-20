@@ -1,11 +1,21 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readdirSync } from 'node:fs'
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { dirname, join, posix, win32 } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { SHIPPED_EXTENSION_FILENAMES } from '../../electron/main/extension-manifest.ts'
 
 const localRequire = createRequire(import.meta.url)
+const packageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url))
+const nvmrcPath = fileURLToPath(new URL('../../.nvmrc', import.meta.url))
 
-export const MINIMUM_NODE = [22, 12, 0]
+export function validateAbsoluteSingleLinePath(value, label, platform = process.platform) {
+  const pathApi = platform === 'win32' ? win32 : posix
+  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value || /[\0\r\n]/.test(value) || !pathApi.isAbsolute(value)) {
+    throw new Error(`${label} must be an absolute single-line path`)
+  }
+  return value
+}
 
 /**
  * Resolves a release-script command to a spawn invocation that works on every platform.
@@ -14,23 +24,37 @@ export const MINIMUM_NODE = [22, 12, 0]
  */
 export function resolveCommandInvocation(command, args, platform = process.platform, env = process.env) {
   if (command === 'node') return { file: process.execPath, args: [...args], shell: false }
+  if (command === 'install-electron') {
+    return { file: process.execPath, args: [localRequire.resolve('electron/install.js'), ...args], shell: false }
+  }
   if (command === 'electron-builder') {
     return { file: process.execPath, args: [localRequire.resolve('electron-builder/cli.js'), ...args], shell: false }
   }
   if (command === 'npm') {
     const npmCli = env.npm_execpath
-    if (npmCli && /\.[cm]?js$/.test(npmCli)) return { file: process.execPath, args: [npmCli, ...args], shell: false }
-    // Outside an npm lifecycle there is no npm_execpath; on Windows npm.cmd requires a shell.
-    return platform === 'win32' ? { file: 'npm.cmd', args: [...args], shell: true } : { file: 'npm', args: [...args], shell: false }
+    if (npmCli) {
+      const validatedNpmCli = validateAbsoluteSingleLinePath(npmCli, 'npm_execpath', platform)
+      if (!/\.[cm]?js$/i.test(validatedNpmCli)) {
+        throw new Error('npm_execpath must identify an absolute JavaScript npm CLI path')
+      }
+      return { file: process.execPath, args: [validatedNpmCli, ...args], shell: false }
+    }
+    if (platform === 'win32') {
+      const adjacentCli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      if (existsSync(adjacentCli)) return { file: process.execPath, args: [adjacentCli, ...args], shell: false }
+      throw new Error('Cannot locate a JavaScript npm CLI safely on Windows; run this command through npm or use a Node distribution that includes npm')
+    }
+    return { file: 'npm', args: [...args], shell: false }
   }
   return { file: command, args: [...args], shell: false }
 }
 
 export function runCommand(command, args, options = {}) {
-  const invocation = resolveCommandInvocation(command, args)
+  const env = options.env ?? process.env
+  const invocation = resolveCommandInvocation(command, args, options.platform ?? process.platform, env)
   const result = spawnSync(invocation.file, invocation.args, {
     stdio: 'inherit',
-    env: options.env ?? process.env,
+    env,
     shell: invocation.shell,
   })
   if (result.error) throw result.error
@@ -57,20 +81,108 @@ export function withoutReleaseCredentials(env = process.env, allowed = []) {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !RELEASE_CREDENTIAL_NAMES.includes(name) || allowedNames.has(name)))
 }
 
-export function parseVersion(version) {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version)
-  if (!match) throw new Error(`Cannot parse Node.js version: ${version}`)
-  return match.slice(1).map(Number)
+function parseStableVersion(version, label, allowLeadingV = false) {
+  if (typeof version !== 'string') throw new Error(`Cannot parse ${label} version: ${String(version)}`)
+  const value = version.trim()
+  const match = /^(v?)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
+  if (!match || (!allowLeadingV && match[1])) throw new Error(`Cannot parse ${label} version: ${version}`)
+  if (match[5]) throw new Error(`A stable ${label} release is required (found ${version})`)
+  return { numbers: match.slice(2, 5).map(Number), version: match.slice(2, 5).join('.') }
 }
 
-export function assertSupportedNode(version = process.version) {
-  const parsed = parseVersion(version)
-  for (let index = 0; index < MINIMUM_NODE.length; index += 1) {
-    if (parsed[index] > MINIMUM_NODE[index]) return
-    if (parsed[index] < MINIMUM_NODE[index]) {
-      throw new Error(`Node.js >=${MINIMUM_NODE.join('.')} is required (found ${version})`)
-    }
+function parseEngineFloor(value, field) {
+  if (typeof value !== 'string' || !/^>=(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
+    throw new Error(`package.json ${field} must use an exact stable minimum in the form >=x.y.z`)
   }
+  return value.slice(2)
+}
+
+export function parseToolchainMetadata(packageJsonSource, nvmrcSource) {
+  let packageJson
+  try {
+    packageJson = JSON.parse(packageJsonSource)
+  } catch (error) {
+    throw new Error(`Cannot parse package.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const node = parseEngineFloor(packageJson?.engines?.node, 'engines.node')
+  const npm = parseEngineFloor(packageJson?.engines?.npm, 'engines.npm')
+  const nvmNode = parseStableVersion(nvmrcSource.trim(), '.nvmrc').version
+  if (nvmNode !== node) throw new Error(`.nvmrc (${nvmNode}) must match the package.json engines.node floor (${node})`)
+
+  const packageManager = packageJson?.packageManager
+  const packageManagerMatch = typeof packageManager === 'string' ? /^npm@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(packageManager) : null
+  if (!packageManagerMatch) throw new Error('package.json packageManager must pin npm as npm@x.y.z')
+  if (packageManagerMatch[1] !== npm) {
+    throw new Error(`package.json packageManager (${packageManagerMatch[1]}) must match the engines.npm floor (${npm})`)
+  }
+  return { node, npm }
+}
+
+export function readRepositoryToolchain() {
+  return parseToolchainMetadata(readFileSync(packageJsonPath, 'utf8'), readFileSync(nvmrcPath, 'utf8'))
+}
+
+function assertMinimumVersion(label, version, minimum, allowLeadingV = false) {
+  const parsed = parseStableVersion(version, label, allowLeadingV).numbers
+  const floor = parseStableVersion(minimum, `${label} minimum`).numbers
+  for (let index = 0; index < floor.length; index += 1) {
+    if (parsed[index] > floor[index]) return
+    if (parsed[index] < floor[index]) throw new Error(`${label} >=${minimum} is required (found ${version})`)
+  }
+}
+
+function removeFinalLineEnding(output) {
+  if (output.endsWith('\r\n')) return output.slice(0, -2)
+  if (output.endsWith('\n') || output.endsWith('\r')) return output.slice(0, -1)
+  return output
+}
+
+export function readNpmOutput(args, options = {}) {
+  const platform = options.platform ?? process.platform
+  const env = options.env ?? process.env
+  const invocation = options.npmCliPath
+    ? {
+        file: process.execPath,
+        args: [validateAbsoluteSingleLinePath(options.npmCliPath, 'npm CLI path', platform), ...args],
+        shell: false,
+      }
+    : resolveCommandInvocation('npm', args, platform, env)
+  const result = spawnSync(invocation.file, invocation.args, {
+    encoding: 'utf8',
+    env,
+    shell: invocation.shell,
+    windowsHide: true,
+  })
+  const command = `npm ${args.join(' ')}`
+  if (result.error) throw new Error(`Cannot run ${command}: ${result.error.message}`)
+  if (result.status !== 0) {
+    const detail = result.stderr?.trim()
+    throw new Error(`${command} failed with exit code ${result.status ?? `signal ${result.signal}`}${detail ? `: ${detail}` : ''}`)
+  }
+  const output = removeFinalLineEnding(result.stdout ?? '')
+  if (!output) throw new Error(`${command} returned no output`)
+  return output
+}
+
+export function readNpmVersion(options = {}) {
+  return readNpmOutput(['--version'], options)
+}
+
+export function assertSupportedNode(version = process.version, toolchain = readRepositoryToolchain()) {
+  assertMinimumVersion('Node.js', version, toolchain.node, true)
+}
+
+export function assertSupportedNpm(version = readNpmVersion(), toolchain = readRepositoryToolchain()) {
+  assertMinimumVersion('npm', version, toolchain.npm)
+}
+
+export function assertSupportedToolchain(options = {}) {
+  const toolchain = options.toolchain ?? readRepositoryToolchain()
+  const nodeVersion = options.nodeVersion ?? process.version
+  const npmVersion = options.npmVersion ?? readNpmVersion(options)
+  assertSupportedNode(nodeVersion, toolchain)
+  assertSupportedNpm(npmVersion, toolchain)
+  return { node: nodeVersion, npm: npmVersion, minimum: toolchain }
 }
 
 function requireNonEmpty(env, names, label) {
@@ -161,6 +273,28 @@ export function assertAsarLayout(entries) {
   const forbiddenPrefixes = ['node_modules/@xterm/', 'node_modules/lucide-react/', 'node_modules/react/', 'node_modules/react-dom/', 'node_modules/react-markdown/', 'node_modules/remark-gfm/']
   const forbidden = [...normalized].find((entry) => forbiddenPrefixes.some((prefix) => entry.startsWith(prefix)))
   if (forbidden) throw new Error(`Renderer-only dependency was duplicated into the ASAR: ${forbidden}`)
+}
+
+export function assertPackagedExtensions(resourcesDirectory) {
+  const extensionsDirectory = join(resourcesDirectory, 'extensions')
+  if (!existsSync(extensionsDirectory) || !lstatSync(extensionsDirectory).isDirectory()) {
+    throw new Error(`Packaged application must contain a resources/extensions directory: ${extensionsDirectory}`)
+  }
+  const entries = readdirSync(extensionsDirectory, { withFileTypes: true })
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  const nonFiles = entries
+    .filter((entry) => !entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  const expected = [...SHIPPED_EXTENSION_FILENAMES].sort()
+  const missing = expected.filter((name) => !files.includes(name))
+  const extra = files.filter((name) => !expected.includes(name))
+  if (missing.length || extra.length || nonFiles.length) {
+    throw new Error(`Unexpected packaged extension layout (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'}; non-file: ${nonFiles.join(', ') || 'none'})`)
+  }
 }
 
 const NODE_PTY_UNPACKED_FILES = ['node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper']

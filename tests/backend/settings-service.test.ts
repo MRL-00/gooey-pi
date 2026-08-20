@@ -9,10 +9,10 @@ import { SettingsService } from '../../electron/main/settings-schedules'
 import { JsonStateStore } from '../../electron/main/store'
 
 const dirs: string[] = []
-function makeService(validateShell: (shell: unknown) => string = () => '/bin/zsh') {
+function makeService(validateShell: (shell: unknown) => string = () => '/bin/zsh', onDidUpdate?: ConstructorParameters<typeof SettingsService>[3]) {
   const dir = mkdtempSync(join(tmpdir(), 'prime-work-settings-'))
   dirs.push(dir)
-  return new SettingsService(new JsonStateStore(join(dir, 'state.json')), validateShell)
+  return new SettingsService(new JsonStateStore(join(dir, 'state.json')), validateShell, undefined, onDidUpdate)
 }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
@@ -21,10 +21,13 @@ describe('SettingsService.update', () => {
     const service = makeService()
     const next = await service.update({
       theme: 'dark',
+      locale: 'zh-CN',
       interfaceFontScale: 105,
       sidebarOpen: false,
       inspectorOpen: true,
       showFileChangesPopup: false,
+      keepRunningInBackground: true,
+      launchAtLogin: true,
       terminalOpen: true,
       defaultInspectorTab: 'changes',
       browserHome: 'https://example.test/',
@@ -62,7 +65,7 @@ describe('SettingsService.update', () => {
       voiceRealtimeVoice: 'cedar',
     })
     expect(next).toMatchObject({
-      theme: 'dark', interfaceFontScale: 105, sidebarOpen: false, inspectorOpen: true, showFileChangesPopup: false, terminalOpen: true,
+      theme: 'dark', locale: 'zh-CN', interfaceFontScale: 105, sidebarOpen: false, inspectorOpen: true, showFileChangesPopup: false, keepRunningInBackground: true, launchAtLogin: true, terminalOpen: true,
       defaultInspectorTab: 'changes', browserHome: 'https://example.test/',
       browserAskForDownloads: false, terminalShell: '/bin/zsh', reduceMotion: true,
       showReasoningSummaries: false, showToolCalls: false, messageEnterAction: 'steer',
@@ -90,6 +93,7 @@ describe('SettingsService.update', () => {
     await expect(service.update({ nope: true })).rejects.toThrow(/not supported/)
     await expect(service.update('dark')).rejects.toThrow(/must be an object/)
     await expect(service.update({ theme: 'solarized' })).rejects.toThrow(/Invalid theme/)
+    await expect(service.update({ locale: 'fr' })).rejects.toThrow(/Invalid locale/)
     await expect(service.update({ interfaceFontScale: 111 })).rejects.toThrow(/Invalid interface font scale/)
     await expect(service.update({ defaultInspectorTab: 'tools' })).rejects.toThrow(/Invalid inspector tab/)
     await expect(service.update({ messageEnterAction: 'send' })).rejects.toThrow(/Invalid message Enter action/)
@@ -98,6 +102,8 @@ describe('SettingsService.update', () => {
     await expect(service.update({ enabledHarnesses: [] })).rejects.toThrow(/At least one harness/)
     await expect(service.update({ enabledHarnesses: ['prime', 'codex'] })).rejects.toThrow(/is invalid/)
     await expect(service.update({ sidebarOpen: 'yes' })).rejects.toThrow(/must be a boolean/)
+    await expect(service.update({ keepRunningInBackground: 'yes' })).rejects.toThrow(/must be a boolean/)
+    await expect(service.update({ launchAtLogin: 1 })).rejects.toThrow(/must be a boolean/)
     await expect(service.update({ askUserEnabled: 'yes' })).rejects.toThrow(/must be a boolean/)
     await expect(service.update({ browserHome: 'javascript:alert(1)' })).rejects.toThrow(/scheme/)
     await expect(service.update({ disabledProviders: ['../evil'] })).rejects.toThrow(/provider ID/)
@@ -117,7 +123,7 @@ describe('SettingsService.update', () => {
     await expect(service.update({ voiceTranscriptionProvider: 'carrier-pigeon' })).rejects.toThrow(/Invalid voice transcription provider/)
     await expect(service.update({ voiceRealtimeModel: '../bad model' })).rejects.toThrow(/not valid/)
     await expect(service.update({ voiceSelfHostedUrl: 'ftp://speech.example.test' })).rejects.toThrow(/scheme/)
-    await expect(service.update({ voiceSelfHostedUrl: 'http://192.168.1.20:9000' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
+    await expect(service.update({ voiceSelfHostedUrl: 'http://8.8.8.8:9000' })).rejects.toThrow(/use HTTPS for public hosts/)
     await expect(service.update({ voiceSelfHostedUrl: 'https://user:secret@speech.example.test' })).rejects.toThrow(/credentials/)
     await expect(service.update({ voiceSelfHostedUrl: 'https://speech.example.test/#secret' })).rejects.toThrow(/query or fragment/)
     await expect(service.update({ voiceSelfHostedModel: '../bad model' })).rejects.toThrow(/not valid/)
@@ -162,5 +168,14 @@ describe('SettingsService.update', () => {
     expect(next.terminalShell).toBe('/bin/bash')
     validateShell.mockImplementation(() => { throw new TypeError('shell is not allowed') })
     await expect(service.update({ terminalShell: '/tmp/evil' })).rejects.toThrow(/not allowed/)
+  })
+
+  it('reports the persisted previous and next settings to lifecycle integrations', async () => {
+    const onDidUpdate = vi.fn()
+    const service = makeService(undefined, onDidUpdate)
+    const before = service.get()
+    const next = await service.update({ keepRunningInBackground: true })
+    expect(onDidUpdate).toHaveBeenCalledWith(before, next)
+    expect(next.keepRunningInBackground).toBe(true)
   })
 })

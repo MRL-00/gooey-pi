@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, posix, relative, resolve, win32 } from 'node:path'
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import type { BigIntStats, Dirent } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
@@ -7,16 +7,34 @@ import { homedir } from 'node:os'
 import type { GitWorktree, HarnessId, ProjectFileEntry, ProjectFileListing, ProjectRecord, SessionRecord } from '../../src/types/api'
 import { createGitWorktree, isNotARepositoryFailure, listGitWorktrees, validateGitBranch } from './git'
 import { HARNESSES } from './harness'
+import { mapLimit } from './lib/async'
 import type { FolderIdentity, JsonStateStore, PersistedProject } from './store'
 import { isPathWithin, requireExistingDirectory, requireExistingPath, requireId, requireString } from './validation'
+
+const MAX_CONCURRENT_BRANCH_LOOKUPS = 4
 
 function inferredId(path: string): string {
   return `inferred-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`
 }
 
-/** Filesystem roots too broad to grant as a project: the root directory and the home directory. */
-function isBroadRoot(path: string): boolean {
-  return path === resolve('/') || path === resolve(homedir())
+/** Filesystem roots too broad to grant as a project: volume/share roots and the user's home. */
+export function isBroadProjectRoot(
+  pathValue: string,
+  options: { platform?: NodeJS.Platform; homePath?: string } = {},
+): boolean {
+  const platform = options.platform ?? process.platform
+  const pathApi = platform === 'win32' ? win32 : posix
+  const comparable = (path: string): string => {
+    const normalized = pathApi.resolve(path)
+    return platform === 'win32' ? normalized.toLowerCase() : normalized
+  }
+  const path = comparable(pathValue)
+  const root = comparable(pathApi.parse(path).root)
+  const home = comparable(options.homePath ?? homedir())
+  // Node's win32 parser treats an extended-length UNC namespace as the root;
+  // identify its server/share boundary explicitly as well.
+  const extendedUncShareRoot = platform === 'win32' && /^\\\\\?\\unc\\[^\\]+\\[^\\]+\\?$/i.test(path)
+  return path === root || path === home || extendedUncShareRoot
 }
 
 interface VerifiedFolderIdentity {
@@ -29,6 +47,48 @@ interface FolderIdentityRefresh {
   canonical: string
   expected: FolderIdentity
   current: FolderIdentity
+}
+
+interface PersistedAuthorizationContext {
+  project: PersistedProject
+  folders: Set<string>
+  primaryGranted: boolean
+}
+
+interface AuthorizationContext {
+  sessions: SessionRecord[]
+  canonicalSessionPaths: Map<string, string>
+  persisted: PersistedAuthorizationContext[]
+  discoveredSessionRoots: Array<{ canonical: string; identity: FolderIdentity }>
+}
+
+interface SessionProjectStats {
+  count: number
+  earliestCreatedAt: string
+  latestUpdatedAt: string
+}
+
+function aggregateSessionProjectStats(
+  sessions: readonly SessionRecord[],
+  canonicalSessionPaths: ReadonlyMap<string, string>,
+): Map<string, SessionProjectStats> {
+  const stats = new Map<string, SessionProjectStats>()
+  for (const session of sessions) {
+    const projectPath = canonicalSessionPaths.get(session.projectPath)!
+    const current = stats.get(projectPath)
+    if (!current) {
+      stats.set(projectPath, {
+        count: 1,
+        earliestCreatedAt: session.createdAt,
+        latestUpdatedAt: session.updatedAt,
+      })
+      continue
+    }
+    current.count += 1
+    if (session.createdAt < current.earliestCreatedAt) current.earliestCreatedAt = session.createdAt
+    if (session.updatedAt > current.latestUpdatedAt) current.latestUpdatedAt = session.updatedAt
+  }
+  return stats
 }
 
 export interface FolderIdentityFilesystem {
@@ -81,8 +141,13 @@ export class ProjectService {
   // Reassigned wholesale (build-new-map-then-swap) so authorization reads are
   // never served from a partially repopulated map.
   private authorizedRoots = new Map<string, FolderIdentity>()
+  private readOnlyRoots = new Map<string, FolderIdentity>()
+  private quarantinedBroadRoots = new Set<string>()
   private readonly removalRoots = new Set<string>()
+  private readonly pendingRemovalIds = new Set<string>()
   private authorizationRevision = 0
+  private authorizationRefresh: { revision: number; promise: Promise<AuthorizationContext> } | undefined
+  private canonicalHomeRoot: Promise<string> | undefined
   private sessionProvider: () => Promise<SessionRecord[]> = async () => []
   private branchProvider: (cwd: string) => Promise<string | undefined> = async () => undefined
   private stopProjectProcesses: (roots: string[]) => Promise<void> = async () => undefined
@@ -115,6 +180,11 @@ export class ProjectService {
     const canonicalIdentity = toIdentity(canonicalInfo)
     if (!folderIdentitiesEqual(configuredIdentity, canonicalIdentity)) throw new TypeError('Project folder identity changed while it was being verified')
     return { path, identity: canonicalIdentity }
+  }
+
+  private async isBroadRoot(path: string): Promise<boolean> {
+    this.canonicalHomeRoot ??= this.identityFilesystem.realpath(resolve(homedir())).catch(() => resolve(homedir()))
+    return isBroadProjectRoot(path, { homePath: await this.canonicalHomeRoot })
   }
 
   private async verifyFolderIdentity(pathValue: string, expected?: FolderIdentity, grantedAt?: string): Promise<VerifiedFolderIdentity | undefined> {
@@ -192,6 +262,7 @@ export class ProjectService {
       for (const folder of project.folders) {
         try {
           const current = await this.captureFolderIdentity(folder)
+          if (await this.isBroadRoot(current.path)) continue
           identities[current.path] = current.identity
         } catch { /* Stale and symlinked legacy grants remain unauthorized. */ }
       }
@@ -207,28 +278,59 @@ export class ProjectService {
     })
   }
 
-  async list(): Promise<ProjectRecord[]> {
-    await this.migrateLegacyFolderIdentities()
-    const authorizationRevision = this.authorizationRevision
-    const sessions = await this.sessionProvider()
+  private async discoverValidSessionRoots(
+    sessions: readonly SessionRecord[],
+    dismissed: ReadonlySet<string>,
+    represented: ReadonlySet<string>,
+    authorizationRevision: number,
+  ): Promise<Array<{ canonical: string; identity: FolderIdentity }>> {
+    const rawPaths = [...new Set(sessions.map((session) => session.projectPath).filter((path): path is string => Boolean(path)))]
+    const discovered: Array<{ canonical: string; identity: FolderIdentity }> = []
+    const seen = new Set<string>()
+
+    for (const projectPath of rawPaths) {
+      if (authorizationRevision !== this.authorizationRevision) break
+      try {
+        const canonical = await requireExistingDirectory(projectPath, 'session project path')
+        if (seen.has(canonical) || represented.has(canonical) || dismissed.has(canonical)) continue
+        if (await this.isBroadRoot(canonical)) continue
+        seen.add(canonical)
+        const { identity } = await this.captureFolderIdentity(canonical)
+        discovered.push({ canonical, identity })
+      } catch {
+        // Stale, unreadable, or non-directory session paths remain unauthorized
+      }
+    }
+
+    return discovered
+  }
+
+  private async resolveDismissedProjectPaths(paths: readonly string[]): Promise<Set<string>> {
+    return new Set(await Promise.all(paths.map(async (path) => {
+      try { return await requireExistingDirectory(path, 'dismissed project path') } catch { return resolve(path) }
+    })))
+  }
+
+  private async canonicalizeSessionPaths(sessions: readonly SessionRecord[]): Promise<Map<string, string>> {
+    const sessionPaths = [...new Set(sessions.map((session) => session.projectPath))]
     const canonicalSessionPaths = new Map<string, string>()
-    await Promise.all([...new Set(sessions.map((session) => session.projectPath))].map(async (path) => {
+    await Promise.all(sessionPaths.map(async (path) => {
       try { canonicalSessionPaths.set(path, await requireExistingDirectory(path, 'session project path')) }
       catch { canonicalSessionPaths.set(path, resolve(path)) }
     }))
-    const sessionProjectPaths = new Map(sessions.map((session) => [session, canonicalSessionPaths.get(session.projectPath)!]))
-    const snapshot = this.store.snapshot()
-    const persisted = this.ownProjects(snapshot.projects)
-    const dismissed = new Set(await Promise.all(snapshot.dismissedProjectPaths.map(async (path) => {
-      try { return await requireExistingDirectory(path, 'dismissed project path') } catch { return resolve(path) }
-    })))
-    const records: ProjectRecord[] = []
-    const represented = new Set<string>()
-    const nextAuthorized = new Map<string, FolderIdentity>()
-    const identityRefreshes: FolderIdentityRefresh[] = []
-    const branchTargets: Array<{ record: ProjectRecord; cwd: string }> = []
+    return canonicalSessionPaths
+  }
 
-    for (const project of persisted) {
+  private async buildAuthorizationContext(authorizationRevision: number): Promise<AuthorizationContext> {
+    await this.migrateLegacyFolderIdentities()
+    const nextAuthorized = new Map<string, FolderIdentity>()
+    const nextReadOnly = new Map<string, FolderIdentity>()
+    const nextQuarantinedBroadRoots = new Set<string>()
+    const identityRefreshes: FolderIdentityRefresh[] = []
+    const persisted: PersistedAuthorizationContext[] = []
+    const represented = new Set<string>()
+
+    for (const project of this.ownProjects(this.store.snapshot().projects)) {
       const folderSet = new Set<string>()
       let primaryGranted = false
       for (const folder of project.folders) {
@@ -236,6 +338,11 @@ export class ProjectService {
         folderSet.add(canonical)
         represented.add(configured)
         represented.add(canonical)
+        const authorizationPath = verified?.path ?? canonical
+        if (await this.isBroadRoot(authorizationPath)) {
+          nextQuarantinedBroadRoots.add(authorizationPath)
+          continue
+        }
         if (verified && expected) {
           if (configured === resolve(project.primaryFolder)) primaryGranted = true
           nextAuthorized.set(configured, verified.identity)
@@ -244,34 +351,69 @@ export class ProjectService {
           }
         }
       }
+      persisted.push({ project, folders: folderSet, primaryGranted })
+    }
+
+    const snapshot = this.store.snapshot()
+    const dismissed = await this.resolveDismissedProjectPaths(snapshot.dismissedProjectPaths)
+    const sessions = await this.sessionProvider()
+    const canonicalSessionPaths = await this.canonicalizeSessionPaths(sessions)
+    const discoveredSessionRoots = await this.discoverValidSessionRoots(sessions, dismissed, represented, authorizationRevision)
+    for (const { canonical, identity } of discoveredSessionRoots) nextReadOnly.set(canonical, identity)
+
+    if (authorizationRevision === this.authorizationRevision && identityRefreshes.length) {
+      const refreshed = await this.persistFolderIdentityRefreshes(identityRefreshes, authorizationRevision)
+      for (const refresh of identityRefreshes) if (!refreshed.has(refresh.configured)) nextAuthorized.delete(refresh.configured)
+    }
+    if (authorizationRevision === this.authorizationRevision) {
+      this.authorizedRoots = nextAuthorized
+      this.readOnlyRoots = nextReadOnly
+      this.quarantinedBroadRoots = nextQuarantinedBroadRoots
+    }
+    return { sessions, canonicalSessionPaths, persisted, discoveredSessionRoots }
+  }
+
+  private refreshAuthorization(force = false): Promise<AuthorizationContext> {
+    if (force) this.authorizationRevision += 1
+    const revision = this.authorizationRevision
+    if (!force && this.authorizationRefresh?.revision === revision) return this.authorizationRefresh.promise
+    const promise = this.buildAuthorizationContext(revision)
+    const tracked = promise.then(
+      (context) => {
+        if (this.authorizationRefresh?.promise === tracked) this.authorizationRefresh = undefined
+        return context
+      },
+      (error: unknown) => {
+        if (this.authorizationRefresh?.promise === tracked) this.authorizationRefresh = undefined
+        throw error
+      },
+    )
+    this.authorizationRefresh = { revision, promise: tracked }
+    return tracked
+  }
+
+  async list(): Promise<ProjectRecord[]> {
+    const { sessions, canonicalSessionPaths, persisted, discoveredSessionRoots } = await this.refreshAuthorization()
+    const sessionStats = aggregateSessionProjectStats(sessions, canonicalSessionPaths)
+    const records: ProjectRecord[] = []
+    const branchTargets: Array<{ record: ProjectRecord; cwd: string }> = []
+
+    for (const { project, folders, primaryGranted } of persisted) {
+      let sessionCount = 0
+      for (const folder of folders) sessionCount += sessionStats.get(folder)?.count ?? 0
       const record: ProjectRecord = {
         id: project.id, harness: project.harness, name: project.name, path: project.path, folders: project.folders, primaryFolder: project.primaryFolder,
         pinned: project.pinned, createdAt: project.createdAt, lastOpenedAt: project.lastOpenedAt,
-        sessionCount: sessions.filter((session) => folderSet.has(sessionProjectPaths.get(session)!)).length,
+        sessionCount,
         gitBranch: undefined,
       }
       records.push(record)
       if (primaryGranted) branchTargets.push({ record, cwd: project.primaryFolder })
     }
 
-    // Persist any legacy/remount identity upgrades before exposing them as
-    // grants. The previous complete map keeps serving while this is in flight.
-    if (authorizationRevision === this.authorizationRevision && identityRefreshes.length) {
-      const refreshed = await this.persistFolderIdentityRefreshes(identityRefreshes, authorizationRevision)
-      for (const refresh of identityRefreshes) if (!refreshed.has(refresh.configured)) nextAuthorized.delete(refresh.configured)
-    }
-    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
-
-    for (const projectPath of [...new Set(sessions.map((session) => session.projectPath).filter(Boolean))]) {
-      let canonical: string
-      try { canonical = await requireExistingDirectory(projectPath, 'session project path') } catch { continue }
-      if (represented.has(canonical) || dismissed.has(canonical)) continue
-      if (isBroadRoot(canonical)) continue
-      represented.add(canonical)
-      const projectSessions = sessions.filter((session) => sessionProjectPaths.get(session) === canonical)
-      const timestamps = projectSessions.map((session) => session.updatedAt).sort()
-      const created = projectSessions.map((session) => session.createdAt).sort()
-      records.push({
+    for (const { canonical } of discoveredSessionRoots) {
+      const stats = sessionStats.get(canonical)
+      const record: ProjectRecord = {
         id: inferredId(canonical),
         harness: this.harness,
         name: basename(canonical) || canonical,
@@ -279,16 +421,30 @@ export class ProjectService {
         folders: [canonical],
         primaryFolder: canonical,
         pinned: false,
-        createdAt: created[0] ?? new Date().toISOString(),
-        lastOpenedAt: timestamps.at(-1) ?? new Date().toISOString(),
-        sessionCount: projectSessions.length,
+        createdAt: stats?.earliestCreatedAt ?? new Date().toISOString(),
+        lastOpenedAt: stats?.latestUpdatedAt ?? new Date().toISOString(),
+        sessionCount: stats?.count ?? 0,
         gitBranch: undefined,
         inferred: true,
-      })
+        readOnly: true,
+      }
+      records.push(record)
     }
+
     // Branch enrichment runs after the swap: authorization must never wait on
     // git subprocesses.
-    for (const target of branchTargets) target.record.gitBranch = await this.branchProvider(target.cwd)
+    let branchLookupFailed = false
+    await mapLimit(branchTargets, MAX_CONCURRENT_BRANCH_LOOKUPS, async (target) => {
+      if (branchLookupFailed) return target
+      try { target.record.gitBranch = await this.branchProvider(target.cwd) }
+      catch (error) {
+        // mapLimit owns all worker promises, so concurrent failures remain
+        // handled. Stop admitting queued Git work once the first one fails.
+        branchLookupFailed = true
+        throw error
+      }
+      return target
+    })
     return records.sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.lastOpenedAt) - Date.parse(a.lastOpenedAt))
   }
 
@@ -307,6 +463,7 @@ export class ProjectService {
    * enriched record. `knownSessions` reuses an already-loaded session list.
    */
   private async grantProjectFolder(path: string, identity: FolderIdentity, knownSessions?: readonly SessionRecord[]): Promise<ProjectRecord> {
+    if (await this.isBroadRoot(path)) throw new TypeError('Broad filesystem roots cannot be added as projects')
     this.removalRoots.delete(path)
     const now = new Date().toISOString()
     const project = await this.store.update((state): PersistedProject => {
@@ -339,7 +496,6 @@ export class ProjectService {
   }
 
   private async persistWorktree(path: string, identity: FolderIdentity): Promise<ProjectRecord> {
-    if (isBroadRoot(path)) throw new TypeError('Broad filesystem roots cannot be added as worktrees')
     return this.grantProjectFolder(path, identity)
   }
 
@@ -368,7 +524,9 @@ export class ProjectService {
     const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return null
     const targetPath = resolve(requireString(result.filePath, 'worktree path', { min: 1, max: 4096 }))
-    if (isBroadRoot(targetPath)) throw new TypeError('Broad filesystem roots cannot be added as worktrees')
+    // Keep the guard before the Git side effect as well as at the central
+    // grant boundary reached by openWorktree.
+    if (await this.isBroadRoot(targetPath)) throw new TypeError('Broad filesystem roots cannot be added as worktrees')
     await createGitWorktree(cwd, targetPath, branch)
     return this.openWorktree(cwd, targetPath)
   }
@@ -385,7 +543,7 @@ export class ProjectService {
 
   async grantInferred(pathValue: unknown): Promise<ProjectRecord> {
     const { path, identity } = await this.captureFolderIdentity(String(pathValue))
-    if (isBroadRoot(path)) throw new TypeError('Broad filesystem roots cannot be inferred as projects')
+    if (await this.isBroadRoot(path)) throw new TypeError('Broad filesystem roots cannot be inferred as projects')
     this.removalRoots.delete(path)
     const sessions = await this.sessionProvider()
     let discovered = false
@@ -394,38 +552,71 @@ export class ProjectService {
         if (await requireExistingDirectory(session.projectPath, 'session project path') === path) { discovered = true; break }
       } catch { /* Ignore stale session project paths. */ }
     }
-    if (!discovered) throw new TypeError('Project path was not discovered from a Prime session')
+    if (!discovered) throw new TypeError(`Project path was not discovered from a ${HARNESSES[this.harness].productName} session`)
     return this.grantProjectFolder(path, identity, sessions)
   }
 
   async remove(idValue: unknown): Promise<boolean> {
     const authorizationRevision = ++this.authorizationRevision
     const id = requireId(idValue, 'project id')
-    const persisted = this.ownProjects(this.store.snapshot().projects).find((project) => project.id === id)
-    const persistedPaths: string[] = []
-    if (persisted) for (const folder of persisted.folders) {
-      const configured = resolve(folder)
-      persistedPaths.push(configured)
-      try {
-        const canonical = await requireExistingDirectory(configured, 'project folder')
-        if (canonical !== configured) persistedPaths.push(canonical)
-      } catch { /* Keep the lexical path dismissed even when it is stale. */ }
-    }
-    let inferredPath: string | undefined
-    if (!persisted) {
-      const sessions = await this.sessionProvider()
-      for (const pathValue of [...new Set(sessions.map((session) => session.projectPath).filter(Boolean))]) {
-        try {
-          const path = await requireExistingDirectory(pathValue, 'session project path')
-          if (inferredId(path) === id && !isBroadRoot(path)) { inferredPath = path; break }
-        } catch { /* Not a removable inferred project. */ }
-      }
-    }
-    const roots = persisted ? persistedPaths : inferredPath ? [inferredPath] : []
+    const roots: string[] = []
     try {
+      this.pendingRemovalIds.add(id)
+
+      const persisted = this.ownProjects(this.store.snapshot().projects).find((project) => project.id === id)
+      const persistedPaths: string[] = []
+      if (persisted) {
+        for (const folder of persisted.folders) {
+          const configured = resolve(folder)
+          persistedPaths.push(configured)
+          this.removalRoots.add(configured)
+          this.authorizedRoots.delete(configured)
+          this.readOnlyRoots.delete(configured)
+          try {
+            const canonical = await requireExistingDirectory(configured, 'project folder')
+            if (canonical !== configured) {
+              persistedPaths.push(canonical)
+              this.removalRoots.add(canonical)
+              this.authorizedRoots.delete(canonical)
+              this.readOnlyRoots.delete(canonical)
+            }
+          } catch { /* Keep the lexical path dismissed even when it is stale. */ }
+        }
+      }
+
+      let inferredPath: string | undefined
+      if (!persisted) {
+        // Synchronously match any known in-memory root for this inferred ID before awaiting
+        for (const root of [...this.readOnlyRoots.keys(), ...this.authorizedRoots.keys()]) {
+          if (inferredId(root) === id) {
+            inferredPath = root
+            this.removalRoots.add(root)
+            this.readOnlyRoots.delete(root)
+            this.authorizedRoots.delete(root)
+            break
+          }
+        }
+
+        if (!inferredPath) {
+          const sessions = await this.sessionProvider()
+          for (const pathValue of [...new Set(sessions.map((session) => session.projectPath).filter((p): p is string => Boolean(p)))]) {
+            try {
+              const path = await requireExistingDirectory(pathValue, 'session project path')
+              if (inferredId(path) === id && !(await this.isBroadRoot(path))) {
+                inferredPath = path
+                this.removalRoots.add(path)
+                this.readOnlyRoots.delete(path)
+                this.authorizedRoots.delete(path)
+                break
+              }
+            } catch { /* Not a removable inferred project. */ }
+          }
+        }
+      }
+
+      roots.push(...(persisted ? persistedPaths : inferredPath ? [inferredPath] : []))
       if (roots.length) {
         for (const root of roots) this.removalRoots.add(root)
-        for (const configured of persisted?.folders ?? []) this.authorizedRoots.delete(resolve(configured))
         await this.stopProjectProcesses([...new Set(roots)])
       }
       return await this.store.update((state) => {
@@ -439,36 +630,19 @@ export class ProjectService {
         return true
       })
     } finally {
-      // Removal blocks are transient: release them whether the store update
-      // settled or threw, then rebuild authorization from the store. After a
-      // successful removal the authoritative block is absence from
-      // authorizedRoots; after a failed one the project keeps working.
-      for (const root of roots) this.removalRoots.delete(root)
-      if (authorizationRevision === this.authorizationRevision) await this.rebuildAuthorizedRoots(authorizationRevision)
+      try {
+        if (authorizationRevision === this.authorizationRevision) await this.rebuildAuthorizedRoots(authorizationRevision)
+      } finally {
+        for (const root of roots) this.removalRoots.delete(root)
+        this.pendingRemovalIds.delete(id)
+      }
     }
   }
 
-  /** Rebuilds authorization into a fresh map and swaps it in one step. */
+  /** Rebuilds authorization into fresh maps and swaps them in one step. */
   private async rebuildAuthorizedRoots(authorizationRevision: number): Promise<void> {
-    const nextAuthorized = new Map<string, FolderIdentity>()
-    const identityRefreshes: FolderIdentityRefresh[] = []
-    for (const project of this.ownProjects(this.store.snapshot().projects)) {
-      for (const folder of project.folders) {
-        if (authorizationRevision !== this.authorizationRevision) return
-        const { configured, canonical, expected, verified } = await this.resolveFolderAuthorization(project, folder)
-        if (verified && expected) {
-          nextAuthorized.set(configured, verified.identity)
-          if (!folderIdentitiesEqual(expected, verified.identity)) {
-            identityRefreshes.push({ configured, canonical, expected, current: verified.identity })
-          }
-        }
-      }
-    }
-    if (authorizationRevision === this.authorizationRevision && identityRefreshes.length) {
-      const refreshed = await this.persistFolderIdentityRefreshes(identityRefreshes, authorizationRevision)
-      for (const refresh of identityRefreshes) if (!refreshed.has(refresh.configured)) nextAuthorized.delete(refresh.configured)
-    }
-    if (authorizationRevision === this.authorizationRevision) this.authorizedRoots = nextAuthorized
+    if (authorizationRevision !== this.authorizationRevision) return
+    await this.refreshAuthorization(true)
   }
 
   async touch(idValue: unknown): Promise<boolean> {
@@ -482,10 +656,21 @@ export class ProjectService {
   }
 
   async listFiles(rootValue: unknown): Promise<ProjectFileListing> {
-    const root = await this.authorizeCwd(rootValue as string)
+    const root = await this.authorizeReadOnlyCwd(rootValue as string)
     const entries: ProjectFileEntry[] = []
     let skipped = 0
-    const ignoredDirectories = new Set(['.git', 'node_modules', 'out', 'dist', 'build', 'release', 'coverage', '.next', '.venv'])
+    const ignoredDirectories = new Set([
+      '.git',
+      'node_modules',
+      'vendor',
+      'out',
+      'dist',
+      'build',
+      'release',
+      'coverage',
+      '.next',
+      '.venv',
+    ])
     const maxEntries = 5_000
 
     const visit = async (directory: string): Promise<void> => {
@@ -517,37 +702,80 @@ export class ProjectService {
     return { entries, skipped }
   }
 
-  private async authorizedRootFor(path: string): Promise<string> {
-    if (!this.authorizedRoots.size) await this.list()
-    const authorizationRevision = this.authorizationRevision
-    const roots: string[] = []
-    // Snapshot the map: a concurrent refresh may swap this.authorizedRoots
-    // mid-iteration, and stale-entry eviction must target the map iterated.
-    const authorized = this.authorizedRoots
-    for (const [configured, expected] of authorized) {
-      // An in-flight removal blocks exactly the roots being removed; a nested
-      // project registered inside them keeps its own grant.
-      if (this.removalRoots.has(configured)) continue
-      const verified = await this.verifyFolderIdentity(configured, expected)
-      if (!verified) { authorized.delete(configured); continue }
-      if (!folderIdentitiesEqual(expected, verified.identity)) {
-        const refreshed = await this.persistFolderIdentityRefreshes([{
-          configured,
-          canonical: verified.path,
-          expected,
-          current: verified.identity,
-        }], authorizationRevision)
-        if (!refreshed.has(configured)) { authorized.delete(configured); continue }
-        authorized.set(configured, verified.identity)
-      }
-      if (this.removalRoots.has(verified.path)) continue
-      roots.push(verified.path)
+  private async authorizedRootFor(path: string, options: { readOnly?: boolean } = {}): Promise<string> {
+    const isReadOnly = options.readOnly === true
+    const isPendingRemoval = this.pendingRemovalIds.has(inferredId(path)) || [...this.removalRoots].some((root) => isPathWithin(root, path))
+    let refreshedAuthorization = false
+    if (!isPendingRemoval && !this.authorizedRoots.size && (!isReadOnly || !this.readOnlyRoots.size)) {
+      await this.refreshAuthorization()
+      refreshedAuthorization = true
     }
-    if (authorizationRevision !== this.authorizationRevision) throw new TypeError('project authorization changed while the request was being checked')
-    const authorizedRoot = roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
+    const authorizationRevision = this.authorizationRevision
+    const snapshot = this.store.snapshot()
+    const dismissed = await this.resolveDismissedProjectPaths(snapshot.dismissedProjectPaths)
+    const ownPersistedFolders = new Set(this.ownProjects(snapshot.projects).flatMap((p) => p.folders.map((f) => resolve(f))))
+
+    const checkRoots = async (map: Map<string, FolderIdentity>, isReadOnlyMap: boolean): Promise<string | undefined> => {
+      const roots: string[] = []
+      for (const [configured, expected] of map) {
+        if (this.removalRoots.has(configured) || this.pendingRemovalIds.has(inferredId(configured))) continue
+        if (isReadOnlyMap && dismissed.has(configured) && !ownPersistedFolders.has(configured)) {
+          map.delete(configured)
+          continue
+        }
+        const verified = await this.verifyFolderIdentity(configured, expected)
+        if (!verified) { map.delete(configured); continue }
+        if (isReadOnlyMap && dismissed.has(verified.path) && !ownPersistedFolders.has(configured)) {
+          map.delete(configured)
+          continue
+        }
+        if (!folderIdentitiesEqual(expected, verified.identity)) {
+          if (!isReadOnlyMap) {
+            const refreshed = await this.persistFolderIdentityRefreshes([{
+              configured,
+              canonical: verified.path,
+              expected,
+              current: verified.identity,
+            }], authorizationRevision)
+            if (!refreshed.has(configured)) { map.delete(configured); continue }
+          }
+          // Read-only roots are re-captured by the next discovery pass; refreshing in place would only hide drift.
+          if (!isReadOnlyMap) map.set(configured, verified.identity)
+        }
+        if (this.removalRoots.has(verified.path) || this.pendingRemovalIds.has(inferredId(verified.path))) continue
+        roots.push(verified.path)
+      }
+      return roots.filter((root) => isPathWithin(root, path)).sort((a, b) => b.length - a.length)[0]
+    }
+
+    let authorizedRoot = await checkRoots(this.authorizedRoots, false)
+    if (!authorizedRoot && isReadOnly) {
+      authorizedRoot = await checkRoots(this.readOnlyRoots, true)
+    }
+
+    if (authorizationRevision !== this.authorizationRevision) {
+      throw new TypeError('project authorization changed while the request was being checked')
+    }
+
+    if (!authorizedRoot && isReadOnly && !isPendingRemoval && !refreshedAuthorization) {
+      await this.refreshAuthorization()
+      if (authorizationRevision !== this.authorizationRevision) {
+        throw new TypeError('project authorization changed while the request was being checked')
+      }
+      authorizedRoot = await checkRoots(this.authorizedRoots, false)
+      if (!authorizedRoot) {
+        authorizedRoot = await checkRoots(this.readOnlyRoots, true)
+      }
+    }
+
     if (!authorizedRoot) {
       const productName = HARNESSES[this.harness].productName
-      if ([...this.removalRoots].some((root) => isPathWithin(root, path))) throw new TypeError(`path is not inside an added ${productName} project because its project is being removed`)
+      if ([...this.removalRoots].some((root) => isPathWithin(root, path)) || this.pendingRemovalIds.has(inferredId(path))) {
+        throw new TypeError(`path is not inside an added ${productName} project because its project is being removed`)
+      }
+      if ([...this.quarantinedBroadRoots].some((root) => isPathWithin(root, path))) {
+        throw new TypeError(`path is covered by an unsafe broad ${productName} project grant; remove it and add a narrower project folder`)
+      }
       throw new TypeError(`path is not inside an added ${productName} project or its folder identity changed`)
     }
     return authorizedRoot
@@ -555,18 +783,24 @@ export class ProjectService {
 
   async authorizePath(value: string): Promise<string> {
     const path = await requireExistingPath(value)
-    await this.authorizedRootFor(path)
+    await this.authorizedRootFor(path, { readOnly: true })
     return path
   }
 
   async authorizeProjectRoot(value: string): Promise<string> {
     const path = await requireExistingDirectory(value, 'project path')
-    return await this.authorizedRootFor(path)
+    return await this.authorizedRootFor(path, { readOnly: false })
   }
 
   async authorizeCwd(value: string): Promise<string> {
     const cwd = await requireExistingDirectory(value, 'cwd')
-    await this.authorizedRootFor(cwd)
+    await this.authorizedRootFor(cwd, { readOnly: false })
+    return cwd
+  }
+
+  async authorizeReadOnlyCwd(value: string): Promise<string> {
+    const cwd = await requireExistingDirectory(value, 'cwd')
+    await this.authorizedRootFor(cwd, { readOnly: true })
     return cwd
   }
 }

@@ -67,7 +67,53 @@ const defaultTargetTranscript: TranscriptMessage[] = [
   { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'The endpoint is ready.' }] },
 ]
 
-async function fixture(live = true, targetTranscript: TranscriptMessage[] = defaultTargetTranscript) {
+interface ScheduledFakeTimer {
+  callback: () => void
+  requestedAt: number
+  delayMs: number
+  dueAt: number
+  unref: () => void
+}
+
+class FakeCollaborationWaitClock {
+  private readonly pending: ScheduledFakeTimer[] = []
+  private readonly waiters: Array<(timer: ScheduledFakeTimer) => void> = []
+
+  constructor(private currentTime = 10_000) {}
+
+  readonly now = (): number => this.currentTime
+
+  readonly setTimeout = (callback: () => void, delayMs: number): { unref(): void } => {
+    const timer: ScheduledFakeTimer = {
+      callback,
+      requestedAt: this.currentTime,
+      delayMs,
+      dueAt: this.currentTime + delayMs,
+      unref: vi.fn(),
+    }
+    const waiter = this.waiters.shift()
+    if (waiter) waiter(timer)
+    else this.pending.push(timer)
+    return { unref: timer.unref }
+  }
+
+  takeNextTimer(): Promise<ScheduledFakeTimer> {
+    const timer = this.pending.shift()
+    if (timer) return Promise.resolve(timer)
+    return new Promise((resolveTimer) => this.waiters.push(resolveTimer))
+  }
+
+  fireAt(timer: ScheduledFakeTimer, timestamp: number): void {
+    this.currentTime = timestamp
+    timer.callback()
+  }
+}
+
+async function fixture(
+  live = true,
+  targetTranscript: TranscriptMessage[] = defaultTargetTranscript,
+  waitClock?: FakeCollaborationWaitClock,
+) {
   const records = [source, target, foreign, child, archived]
   const primeSessions = service(records, {
     [target.filePath]: targetTranscript,
@@ -108,6 +154,7 @@ async function fixture(live = true, targetTranscript: TranscriptMessage[] = defa
     } as unknown as ConstructorParameters<typeof AgentCollaborationBridge>[0]['catalogs'],
     disabledProviders: { prime: () => new Set(['hidden']), omp: () => new Set(), pi: () => new Set() },
     disabledModels: { prime: () => new Set(['openai-codex/desktop-hidden']), omp: () => new Set(), pi: () => new Set() },
+    ...(waitClock ? { waitClock } : {}),
   })
   await bridge.start()
   bridges.push(bridge)
@@ -122,6 +169,30 @@ async function fixture(live = true, targetTranscript: TranscriptMessage[] = defa
 }
 
 describe('AgentCollaborationBridge', () => {
+  it('revokes a runtime claim and clears its cached and pending session bindings', async () => {
+    const { bridge, call, environment } = await fixture()
+    const token = environment.GOOEYPI_COLLABORATION_TOKEN!
+    const active = bridge.environmentFor({ cwd: '/project', sessionPath: source.filePath, harness: 'prime' })
+    await expect(call('list')).resolves.toMatchObject({ status: 200 })
+    bridge.bindSession(token, undefined, 'runtime-pending')
+
+    const state = bridge as unknown as {
+      sourcesByToken: Map<string, unknown>
+      pendingRuntimeTokens: Map<string, string>
+    }
+    expect(state.sourcesByToken.has(token)).toBe(true)
+    expect(state.pendingRuntimeTokens.get('runtime-pending')).toBe(token)
+
+    expect(bridge.revoke(token)).toBe(true)
+    expect(bridge.revoke(token)).toBe(false)
+    expect(state.sourcesByToken.has(token)).toBe(false)
+    expect(state.pendingRuntimeTokens.has('runtime-pending')).toBe(false)
+    bridge.bindSession(token, undefined, 'runtime-late')
+    expect(state.pendingRuntimeTokens.has('runtime-late')).toBe(false)
+    await expect(call('list')).resolves.toMatchObject({ status: 401 })
+    await expect(call('list', {}, active.GOOEYPI_COLLABORATION_TOKEN)).resolves.toMatchObject({ status: 200 })
+  })
+
   it('lists and reads only same-project peers through bounded snapshots', async () => {
     const { call, environment } = await fixture()
     expect(environment.GOOEYPI_COLLABORATION_EXTENSION_PATH).toBe('/app/extensions/omp-work-collaboration.ts')
@@ -263,13 +334,36 @@ describe('AgentCollaborationBridge', () => {
     expect(primeManager.start).toHaveBeenCalledWith({
       cwd: '/project', model: 'openai-codex/gpt-5.6-sol', thinking: 'max', fast: true,
     })
-    expect(primeManager.command).toHaveBeenNthCalledWith(1, 'runtime-created', { type: 'prompt', message: 'Review the model integration.' })
+    expect(primeManager.command).toHaveBeenNthCalledWith(1, 'runtime-created', {
+      type: 'prompt', message: 'Review the model integration.', streamingBehavior: 'followUp',
+    })
     expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'set_session_name', name: 'Model reviewer' })
     expect(primeManager.command).toHaveBeenCalledWith('runtime-created', { type: 'get_state' })
     const createdList = await call('list', {}, createdEnvironment.GOOEYPI_COLLABORATION_TOKEN)
     expect(createdList.status).toBe(200)
     expect(createdList.body.result).toEqual(expect.arrayContaining([expect.objectContaining({ id: target.id })]))
     expect(createdList.body.result).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: created.id })]))
+  })
+
+  it('rejects an MCP auth creation prompt before starting a peer runtime', async () => {
+    const { call, primeManager } = await fixture()
+
+    const response = await call('create', { prompt: '/mcp login notion' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toContain('Network MCP authentication is managed outside GooeyPi')
+    expect(primeManager.start).not.toHaveBeenCalled()
+  })
+
+  it('rejects an MCP auth delivery before waking or queuing a peer runtime', async () => {
+    const { call, primeManager } = await fixture(false)
+
+    const response = await call('send', { target_session_id: target.id, message: '/mcp login notion' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toContain('Network MCP authentication is managed outside GooeyPi')
+    expect(primeManager.start).not.toHaveBeenCalled()
+    expect(primeManager.command).not.toHaveBeenCalled()
   })
 
   it('starts normally and reports unavailable when fast mode is requested without model support', async () => {
@@ -314,6 +408,62 @@ describe('AgentCollaborationBridge', () => {
     const completed = await first
     expect(completed.body.result).toMatchObject({ timed_out: true })
     expect(primeSessions.read.mock.calls.length - readsBefore).toBeLessThanOrEqual(2)
+  })
+
+  it('re-arms an early timeout wake without polling the transcript early', async () => {
+    const clock = new FakeCollaborationWaitClock()
+    const { call, primeSessions } = await fixture(true, defaultTargetTranscript, clock)
+    const read = await call('read', { target_session_id: target.id })
+    const cursor = (read.body.result as Record<string, unknown>).cursor
+    const readsBefore = primeSessions.read.mock.calls.length
+    const waiting = call('wait', { target_session_id: target.id, after_cursor: cursor, timeout_ms: 150 })
+
+    const firstTimer = await clock.takeNextTimer()
+    expect(firstTimer).toMatchObject({ requestedAt: 10_000, delayMs: 150, dueAt: 10_150 })
+    expect(firstTimer.unref).toHaveBeenCalledOnce()
+    expect(primeSessions.read.mock.calls.length - readsBefore).toBe(1)
+
+    clock.fireAt(firstTimer, firstTimer.dueAt - 25)
+    const replacementTimer = await clock.takeNextTimer()
+    expect(replacementTimer).toMatchObject({ requestedAt: 10_125, delayMs: 25, dueAt: 10_150 })
+    expect(replacementTimer.unref).toHaveBeenCalledOnce()
+    expect(primeSessions.read.mock.calls.length - readsBefore).toBe(1)
+
+    clock.fireAt(replacementTimer, replacementTimer.dueAt)
+    const completed = await waiting
+    expect(completed.body.result).toMatchObject({ timed_out: true })
+    expect(clock.now()).toBe(10_150)
+    expect(primeSessions.read.mock.calls.length - readsBefore).toBe(2)
+  })
+
+  it('reports a transcript change found by the final deadline snapshot', async () => {
+    const changedTranscript: TranscriptMessage[] = [
+      ...defaultTargetTranscript,
+      { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'The deadline update is ready.' }] },
+    ]
+    const clock = new FakeCollaborationWaitClock()
+    const { call, primeSessions } = await fixture(true, defaultTargetTranscript, clock)
+    let reads = 0
+    primeSessions.read.mockImplementation(async () => {
+      reads += 1
+      return reads >= 3 ? changedTranscript : defaultTargetTranscript
+    })
+    const read = await call('read', { target_session_id: target.id })
+    const cursor = (read.body.result as Record<string, unknown>).cursor
+
+    const waiting = call('wait', { target_session_id: target.id, after_cursor: cursor, timeout_ms: 50 })
+    const deadlineTimer = await clock.takeNextTimer()
+    expect(deadlineTimer).toMatchObject({ requestedAt: 10_000, delayMs: 50, dueAt: 10_050 })
+    expect(deadlineTimer.unref).toHaveBeenCalledOnce()
+    clock.fireAt(deadlineTimer, deadlineTimer.dueAt)
+    const completed = await waiting
+
+    expect(completed.body.result).toMatchObject({ timed_out: false })
+    expect((completed.body.result as Record<string, unknown>).messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'a2', text: 'The deadline update is ready.' }),
+    ]))
+    expect(clock.now()).toBe(10_050)
+    expect(reads).toBe(3)
   })
 
   it('wakes an offline target while rejecting missing source scope and invalid tokens', async () => {

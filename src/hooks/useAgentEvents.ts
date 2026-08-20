@@ -14,6 +14,7 @@ interface UseAgentEventsOptions {
   setSessions: React.Dispatch<React.SetStateAction<SessionRecord[]>>
   setRuntime: React.Dispatch<React.SetStateAction<RuntimeInfo | null>>
   reconcileQueuedPrompts?(snapshot: SessionActionSnapshot): void
+  clearQueuedPromptFlushFailures?(): void
   clearQueuedPrompts?(): void
   queueAgentEvent(event: Record<string, unknown>): void
   reconcileTranscriptForEvent(runtimeId: string, event: Record<string, unknown>): void
@@ -33,6 +34,7 @@ export function useAgentEvents({
   setSessions,
   setRuntime,
   reconcileQueuedPrompts = () => undefined,
+  clearQueuedPromptFlushFailures = () => undefined,
   clearQueuedPrompts = () => undefined,
   queueAgentEvent,
   reconcileTranscriptForEvent,
@@ -114,6 +116,7 @@ export function useAgentEvents({
         runtimeOwnerRef.current = null
         setRuntime((current) => current?.runtimeId === runtimeId ? null : current)
       } else if (type === 'agent_end' || type === 'extension_error' || type === 'error' || type === 'transport_error') {
+        clearQueuedPromptFlushFailures()
         setRuntime((current) => current?.runtimeId === runtimeId ? { ...current, isStreaming: false, isCompacting: false } : current)
         if (refreshGitOnTerminalEvent) scheduleGitRefresh()
       }
@@ -126,6 +129,7 @@ export function useAgentEvents({
     activeSessionVisible,
     bridge,
     clearExtensionUi,
+    clearQueuedPromptFlushFailures,
     clearQueuedPrompts,
     reconcileQueuedPrompts,
     workspaceRef,

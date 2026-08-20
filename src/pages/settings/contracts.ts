@@ -16,10 +16,13 @@ export interface SettingsMetaSectionProps extends SettingsSectionProps {
 
 export const SETTINGS_FIELD_SECTIONS = {
   theme: 'appearance',
+  locale: 'appearance',
   interfaceFontScale: 'appearance',
   sidebarOpen: 'general',
   inspectorOpen: 'general',
   showFileChangesPopup: 'general',
+  keepRunningInBackground: 'general',
+  launchAtLogin: 'general',
   terminalOpen: 'terminal',
   defaultInspectorTab: 'general',
   browserHome: 'browser',

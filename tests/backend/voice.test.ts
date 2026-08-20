@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultSettings } from '../../electron/main/store'
 import { VoiceService, voiceSecretStorageStatus, type VoiceServiceOptions } from '../../electron/main/voice'
-import type { RuntimeInfo } from '../../src/types/api'
+import type { HarnessId, RuntimeInfo } from '../../src/types/api'
 
 const directories: string[] = []
 
-function project(harness: 'prime' | 'omp' = 'prime', inferred = false) {
+function project(harness: HarnessId = 'prime', inferred = false) {
   return {
     id: `${harness}-project`, harness, name: `${harness} project`, path: `/tmp/${harness}`,
     folders: [`/tmp/${harness}`], primaryFolder: `/tmp/${harness}`, pinned: false,
@@ -61,11 +61,13 @@ function makeService(overrides: Partial<VoiceServiceOptions> = {}) {
     projects: {
       prime: { list: vi.fn(async () => [project('prime')]) },
       omp: { list: vi.fn(async () => [project('omp')]) },
+      pi: { list: vi.fn(async () => [project('pi')]) },
     } as unknown as VoiceServiceOptions['projects'],
-    agents: { prime: agent, omp: agent } as unknown as VoiceServiceOptions['agents'],
+    agents: { prime: agent, omp: agent, pi: agent } as unknown as VoiceServiceOptions['agents'],
     catalogs: {
       prime: { catalog: primeCatalog },
       omp: { catalog: ompCatalog },
+      pi: { catalog: vi.fn(catalog) },
     } as unknown as VoiceServiceOptions['catalogs'],
     runProcess: vi.fn(),
     environment: {},
@@ -211,7 +213,7 @@ describe('VoiceService', () => {
 
   it('rejects insecure remote self-hosted URLs and oversized provider responses', async () => {
     const { service } = makeService()
-    await expect(service.testSelfHosted({ url: 'http://192.168.1.20:9000', model: '' })).rejects.toThrow(/HTTPS or an SSH tunnel/)
+    await expect(service.testSelfHosted({ url: 'http://8.8.8.8:9000', model: '' })).rejects.toThrow(/use HTTPS for public hosts/)
 
     const settings = { ...defaultSettings(), voiceSelfHostedUrl: 'https://speech.example.test', voiceSelfHostedModel: '' }
     const fetchMock = vi.fn(async () => new Response('{}', { headers: { 'content-length': String(2 * 1024 * 1024 + 1) } }))
@@ -258,12 +260,28 @@ describe('VoiceService', () => {
     const { service, agent } = makeService()
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'prime-project', prompt: 'Implement the feature', title: 'Voice feature' } }, 'prime')
     expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
-    expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'prompt', message: 'Implement the feature' })
+    expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', {
+      type: 'prompt', message: 'Implement the feature', streamingBehavior: 'followUp',
+    })
     expect(agent.command).toHaveBeenCalledWith('runtime-1', { type: 'get_state' })
     expect(result.task).toEqual({
       projectId: 'prime-project', projectName: 'prime project', harness: 'prime',
       runtimeId: 'runtime-1', sessionId: 'session-1', sessionFile: '/tmp/session.jsonl',
     })
+  })
+
+  it.each([
+    ['prime', '/mcp login notion'],
+    ['omp', '/mcp reauth docs'],
+    ['pi', '/mcp-auth files'],
+  ] as const)('rejects a %s MCP auth voice task before runtime start', async (harness, prompt) => {
+    const { service, agent, options } = makeService()
+
+    await expect(service.executeTool({
+      name: 'start_task', arguments: { project_id: `${harness}-project`, prompt },
+    }, harness)).rejects.toThrow('Network MCP authentication is managed outside GooeyPi')
+    expect(options.projects[harness].list).not.toHaveBeenCalled()
+    expect(agent.start).not.toHaveBeenCalled()
   })
 
   it('lists only available models from GUI-visible providers and searches approximate names', async () => {
@@ -346,7 +364,9 @@ describe('VoiceService', () => {
     }, 'prime')
     expect(agent.start).toHaveBeenCalledWith({ cwd: '/tmp/prime' })
     expect(agent.command).toHaveBeenNthCalledWith(1, 'runtime-1', { type: 'set_thinking_level', level: 'high' })
-    expect(agent.command).toHaveBeenNthCalledWith(2, 'runtime-1', { type: 'prompt', message: 'Implement it' })
+    expect(agent.command).toHaveBeenNthCalledWith(2, 'runtime-1', {
+      type: 'prompt', message: 'Implement it', streamingBehavior: 'followUp',
+    })
     expect(result.task?.reasoning).toBe('high')
   })
 
@@ -385,7 +405,9 @@ describe('VoiceService', () => {
     const result = await service.executeTool({ name: 'start_task', arguments: { project_id: 'omp-project', prompt: 'Determine the next logical feature.' } }, 'omp')
     expect(primeAgent.start).not.toHaveBeenCalled()
     expect(ompAgent.start).toHaveBeenCalledWith({ cwd: '/tmp/omp' })
-    expect(ompAgent.command).toHaveBeenNthCalledWith(1, 'omp-runtime', { type: 'prompt', message: 'Determine the next logical feature.' })
+    expect(ompAgent.command).toHaveBeenNthCalledWith(1, 'omp-runtime', {
+      type: 'prompt', message: 'Determine the next logical feature.', streamingBehavior: 'followUp',
+    })
     expect(result.task?.harness).toBe('omp')
   })
 

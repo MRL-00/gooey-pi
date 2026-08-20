@@ -6,12 +6,13 @@ import {
   Terminal,
 } from 'lucide-react'
 import type { ApplicationMenuName, ProjectRecord, WorkspaceView } from '@/types/api'
+import { useI18n, type MessageKey } from '@/lib/i18n'
 import { shortcutLabel } from '@/lib/platform-shortcuts'
 import { BrowserGlobe, IconButton } from './ui'
 import type { MouseEvent } from 'react'
 
-const viewTitles: Record<Exclude<WorkspaceView, 'session'>, string> = {
-  projects: 'Projects', activity: 'Activity', scheduled: 'Scheduled', plugins: 'Capabilities', settings: 'Settings',
+const viewTitles: Record<Exclude<WorkspaceView, 'session'>, MessageKey> = {
+  projects: 'nav.projects', activity: 'nav.activity', scheduled: 'nav.scheduled', plugins: 'nav.capabilities', settings: 'nav.settings',
 }
 
 const windowsMenus: ReadonlyArray<{ name: ApplicationMenuName; label: string }> = [
@@ -29,6 +30,7 @@ function openApplicationMenu(menu: ApplicationMenuName, event: MouseEvent<HTMLBu
 
 interface TitleToolbarProps {
   project?: ProjectRecord
+  gitBranch?: string
   view: WorkspaceView
   /** Active harness product name; the session view's fallback title. */
   productName?: string
@@ -44,7 +46,8 @@ interface TitleToolbarProps {
   platform?: NodeJS.Platform
 }
 
-export function TitleToolbar({ project, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice, platform = 'darwin' }: TitleToolbarProps) {
+export function TitleToolbar({ project, gitBranch, view, productName = 'Prime Work', sidebarOpen, inspectorOpen, terminalOpen, voiceOpen = false, onToggleSidebar, onToggleInspector, onToggleTerminal, onOpenBrowser, onToggleVoice, platform = 'darwin' }: TitleToolbarProps) {
+  const { t } = useI18n()
   const sidebarShortcut = shortcutLabel(platform, ['Primary', 'B'])
   const terminalShortcut = shortcutLabel(platform, ['Primary', 'J'])
   const browserShortcut = shortcutLabel(platform, ['Primary', 'Shift', 'B'])
@@ -58,8 +61,8 @@ export function TitleToolbar({ project, view, productName = 'Prime Work', sideba
         {!sidebarOpen ? <IconButton label={`Show sidebar (${sidebarShortcut})`} onClick={onToggleSidebar}><PanelLeft size={16} /></IconButton> : null}
       </div>
       <div className="title-toolbar__identity">
-        <strong>{project?.name ?? (view === 'session' ? productName : viewTitles[view])}</strong>
-        {project?.gitBranch && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{project.gitBranch}</span> : null}
+        <strong>{project?.name ?? (view === 'session' ? productName : t(viewTitles[view]))}</strong>
+        {(gitBranch ?? project?.gitBranch) && view === 'session' ? <span className="branch-pill"><GitBranch size={12} />{gitBranch ?? project?.gitBranch}</span> : null}
       </div>
       <div className="title-toolbar__actions no-drag">
         {view === 'session' && onToggleVoice ? <IconButton className={voiceOpen ? 'is-active voice-toggle--active' : ''} label={voiceOpen ? 'Close realtime voice' : 'Open realtime voice'} onClick={onToggleVoice}><AudioWaveform size={17} /></IconButton> : null}

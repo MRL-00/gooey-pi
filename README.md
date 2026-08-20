@@ -54,10 +54,11 @@ You only need one harness to get started:
 - Pick the project or existing session, model, reasoning level, timezone, and Fast mode.
 - Run a schedule immediately, pause or resume it, and inspect the result and run history.
 - Manage Prime heartbeats alongside GooeyPi schedules when Prime Agent exposes them.
+- On macOS, opt in under **Settings → General** to keep scheduled work running from the menu bar after closing the window, and optionally launch GooeyPi in the background at login. The packaged app also accepts `--background` to start without opening its window.
 
 ### Add capabilities
 
-The Capabilities page brings together packages, plugins, extensions, skills, prompts, and MCP servers. The available controls follow the selected harness, including guided MCP setup and sign-in where supported.
+The Capabilities page brings together packages, plugins, extensions, skills, prompts, and MCP servers. GooeyPi can manage local stdio MCP definitions for OMP and adapter-enabled Pi. Network MCP and authentication stay under the selected harness's direct control; those entries are visible but read-only in GooeyPi, with bounded definition-only removal available for cleanup. MCP discovery has an independent 2,500-definition-per-settings-file limit and reports an explicit warning when that limit is exceeded, so unrelated capabilities cannot hide supported MCP rows.
 
 GooeyPi also ships optional capabilities for:
 
@@ -108,7 +109,10 @@ You will need Node.js 24.15.0 or newer and npm 12.0.2 or newer. The repository p
 
 ```bash
 nvm install && nvm use
+npm run toolchain:bootstrap
 ```
+
+The bootstrap command verifies the exact size and SHA-512 of the checked-in npm archive, then installs it offline with install-time lifecycle scripts disabled into the invoked npm's configured global prefix, verifies the installed CLI and both tool versions against `package.json` and `.nvmrc`, and makes its shim available to subsequent GitHub Actions steps before dependencies are installed.
 
 ```bash
 npm install
@@ -158,7 +162,7 @@ GooeyPi is built around local projects and local harness sessions. It does not r
 
 Remote pages open in a separate browser profile with Node access disabled. Project paths and desktop actions are checked in the main process, and third-party capabilities still run with your operating-system permissions. Review packages, commands, MCP servers, and projects before allowing them to act.
 
-See [docs/security.md](docs/security.md) for the full security model.
+For suspected vulnerabilities, follow the [security policy](.github/SECURITY.md) and do not post sensitive details publicly. See [docs/security.md](docs/security.md) for the full technical security model.
 
 ## Development checks
 
@@ -171,6 +175,8 @@ npm test
 npm run test:e2e
 npm run build
 ```
+
+See the [validation guide](docs/validation.md) for the source-of-truth checks and reproducible commands.
 
 To make an installable local QA build, run the command for your operating system:
 

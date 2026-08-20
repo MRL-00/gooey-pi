@@ -427,6 +427,34 @@ export function useWorkspaceRuntime({
       return
     }
   }, [])
+  const updateQueuedPrompts = useCallback((transform: (prompt: QueuedPrompt) => QueuedPrompt) => {
+    const update = (prompts: QueuedPrompt[]) => {
+      let changed = false
+      const next = prompts.map((prompt) => {
+        const updated = transform(prompt)
+        if (updated !== prompt) changed = true
+        return updated
+      })
+      return changed ? next : prompts
+    }
+    const nextActive = update(pendingQueuedPromptsRef.current)
+    if (nextActive !== pendingQueuedPromptsRef.current) {
+      pendingQueuedPromptsRef.current = nextActive
+      setPendingQueuedPrompts(nextActive)
+    }
+    for (const [owner, prompts] of queuedPromptsByOwnerRef.current) {
+      const next = update(prompts)
+      if (next !== prompts) queuedPromptsByOwnerRef.current.set(owner, next)
+    }
+  }, [])
+  const markQueuedPromptFlushFailed = useCallback((id: string) => {
+    updateQueuedPrompts((prompt) => prompt.id === id && !prompt.flushAttemptFailed
+      ? { ...prompt, flushAttemptFailed: true }
+      : prompt)
+  }, [updateQueuedPrompts])
+  const clearQueuedPromptFlushFailures = useCallback(() => {
+    updateQueuedPrompts(({ flushAttemptFailed: _failed, ...prompt }) => prompt)
+  }, [updateQueuedPrompts])
   const clearQueuedPrompts = useCallback(() => {
     const owner = activeQueuedPromptOwnerRef.current
     if (owner) queuedPromptsByOwnerRef.current.delete(owner)
@@ -564,6 +592,8 @@ export function useWorkspaceRuntime({
     pendingQueuedPrompts,
     queuePrompt,
     removeQueuedPrompt,
+    markQueuedPromptFlushFailed,
+    clearQueuedPromptFlushFailures,
     clearQueuedPrompts,
     acceptSteer,
     reconcileQueuedPrompts,

@@ -93,6 +93,13 @@ export interface IpcRegistration {
   authorize(webContents: WebContents): void
   revoke(webContentsId: number): void
   dispose(): void
+  /**
+   * Resolves on the renderer bootstrap's first `app:get-meta` invoke, which
+   * only reaches its handler once `verify` has admitted an authorized sender on
+   * the trusted main frame. Nothing else observes it, so no verification work
+   * is added to the shared invoke path.
+   */
+  whenRendererReady: Promise<void>
 }
 
 let activeIpcRegistration: IpcRegistration | null = null
@@ -106,6 +113,8 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const invokeChannels: string[] = []
   const eventChannels: string[] = []
   let closed = false
+  let announceRendererReady: (() => void) | null = null
+  const whenRendererReady = new Promise<void>((resolve) => { announceRendererReady = resolve })
 
   const verify = (event: IpcEvent): void => {
     const trustedFrame = event.senderFrame === event.sender.mainFrame
@@ -172,7 +181,11 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     if (rejection) throw new Error(rejection)
   }
 
-  handle('app:get-meta', () => services.meta)
+  handle('app:get-meta', () => {
+    announceRendererReady?.()
+    announceRendererReady = null
+    return services.meta
+  })
   handle('app:refresh-harnesses', () => services.refreshHarnesses())
   handle('app:popup-menu', (event, menu, x, y) => services.popupApplicationMenu(event.sender, requireApplicationMenu(menu), requireMenuCoordinate(x), requireMenuCoordinate(y)))
   handle('app:set-title-bar-theme', (event, theme) => services.setTitleBarTheme(event.sender, requireResolvedTheme(theme)))
@@ -348,14 +361,6 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
     requirePrimeProviderAuth(harness)
     return services.providers.startOAuth(providerId)
   })
-  handle('providers:start-mcp-oauth', (_event, server, harness) => {
-    requirePrimeProviderAuth(harness)
-    return services.providers.startMcpOAuth(server)
-  })
-  handle('providers:logout-mcp', (_event, server, harness) => {
-    requirePrimeProviderAuth(harness)
-    return services.providers.logoutMcp(server)
-  })
   handle('providers:respond-oauth', (_event, flowId, promptId, value) => services.providers.respondOAuth(flowId, promptId, value))
   handle('providers:cancel-oauth', (_event, flowId) => services.providers.cancelOAuth(flowId))
 
@@ -476,6 +481,7 @@ export function registerIpc(services: Services, expectedRendererUrl: string): Ip
   const unsubscribeBrowserActivity = typeof activitySubscription === 'function' ? activitySubscription : () => undefined
 
   const registration: IpcRegistration = {
+    whenRendererReady,
     authorize(webContents) { if (!closed) authorized.set(webContents.id, webContents) },
     revoke(webContentsId) { authorized.delete(webContentsId); void services.terminals.killOwner(webContentsId) },
     dispose() {

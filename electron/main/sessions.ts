@@ -3,6 +3,7 @@ import { readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import type { HarnessId, SessionChangeEvent, SessionRecord, TranscriptMessage } from '../../src/types/api'
+import { assertNoMcpAuthenticationCommand } from '../../src/lib/mcp-policy'
 import { queueDaemonFollowUp } from './agent-daemon'
 import { comparePaths, createAdmissionQueue, createSingleFlight, type AdmissionQueue } from './lib/async'
 import { resolveExecutable, runProcess, type ExecutableSource } from './process-utils'
@@ -207,9 +208,11 @@ export class SessionService {
 
   async followUp(filePath: unknown, message: unknown, intent: unknown = 'queue'): Promise<boolean> {
     if (intent !== 'queue' && intent !== 'steer') throw new TypeError('Invalid active-session message intent')
+    const safeMessage = requireString(message, 'message', { min: 1, max: 64 * 1024 })
+    assertNoMcpAuthenticationCommand(safeMessage, this.harness)
     if (this.followUpsInFlight >= 4) throw new Error('Too many active-session replies are in flight')
     this.followUpsInFlight += 1
-    try { return await this.queueActiveFollowUp(filePath, message, intent) }
+    try { return await this.queueActiveFollowUp(filePath, safeMessage, intent) }
     finally { this.followUpsInFlight -= 1 }
   }
 
@@ -423,14 +426,32 @@ export class SessionService {
     let catalogOnly = this.catalogOnlyChange
     this.changedNames.clear()
     this.catalogOnlyChange = false
-    this.catalog.invalidateLiveCatalog()
-    const paths = (await Promise.all(names.map(async (name) => {
-      try { return await this.requireSessionPath(join(this.sessionRoot, name)) } catch { return null }
-    }))).filter((path): path is string => path !== null)
-    if (paths.length !== names.length) catalogOnly = true
+
+    let paths: string[]
+    if (!catalogOnly && names.length) {
+      const result = await this.catalog.reconcileKnownChanges(names)
+      if (result.kind === 'reconciled') {
+        paths = result.paths
+      } else {
+        paths = await this.resolveChangedSessionPaths(names)
+        if (paths.length !== names.length) catalogOnly = true
+      }
+    } else {
+      // Missing/invalid names, watcher errors, and admission overflow leave
+      // the changed catalog membership unknowable, so retain the full-scan path.
+      this.catalog.invalidateLiveCatalog()
+      paths = await this.resolveChangedSessionPaths(names)
+      if (paths.length !== names.length) catalogOnly = true
+    }
     if (!this.changeListeners.size) return
     for (const filePath of paths) this.emitChange({ filePath, harness: this.harness })
     if (catalogOnly) this.emitChange({ harness: this.harness })
+  }
+
+  private async resolveChangedSessionPaths(names: readonly string[]): Promise<string[]> {
+    return (await Promise.all(names.map(async (name) => {
+      try { return await this.requireSessionPath(join(this.sessionRoot, name)) } catch { return null }
+    }))).filter((path): path is string => path !== null)
   }
 
   private emitChange(event: SessionChangeEvent): void {

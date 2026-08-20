@@ -17,8 +17,8 @@
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.tests.json && tsc --noEmit -p tsconfig.scripts.json",
-    "lint": "biome lint --config-path=scripts/release/biome.json electron src tests scripts electron.vite.config.ts playwright.config.ts vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.tests.json && tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p tsconfig.extensions.json",
+    "lint": "biome lint --config-path=scripts/release/biome.json electron src tests scripts assets/extensions electron.vite.config.ts playwright.config.ts vitest.config.ts",
     "format:check": "biome format --config-path=scripts/release/biome.json scripts/release electron.vite.config.ts vitest.config.ts playwright.config.ts tests/release-scripts.test.ts",
     "check": "npm run lint && npm run format:check",
     "test": "vitest run",
@@ -27,8 +27,8 @@
     "test:e2e": "npm run build && npm run test:e2e:hermetic",
     "test:e2e:hermetic": "playwright test",
     "release:verify": "npm run release:verify:package && npm run test:e2e:hermetic",
-    "release:verify:package": "npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run release:bundle-size",
-    "release:bundle-size": "node scripts/release/verify-bundle-size.mjs",
+    "release:verify:package": "node scripts/release/preflight.mjs --toolchain-only && npm run typecheck && npm run check && npm run test:coverage && npm run build:bundle && npm run release:bundle-size",
+    "release:bundle-size": "node scripts/release/preflight.mjs --toolchain-only && node scripts/release/verify-bundle-size.mjs",
     "audit:production": "node scripts/release/audit-production.mjs",
     "package:mac": "node scripts/release/package.mjs --public --platform mac",
     "package:mac:local-qa": "node scripts/release/package.mjs --qa --platform mac",
@@ -37,6 +37,8 @@
     "package:win": "node scripts/release/package.mjs --public --platform win",
     "package:win:local-qa": "node scripts/release/package.mjs --qa --platform win",
     "release:preflight": "node scripts/release/preflight.mjs",
+    "release:preflight:toolchain": "node scripts/release/preflight.mjs --toolchain-only",
+    "toolchain:bootstrap": "node scripts/release/bootstrap-npm.mjs",
     "postinstall": "node scripts/release/install-app-deps.mjs"
   },
   "dependencies": {
@@ -51,7 +53,8 @@
   "overrides": {
     "@earendil-works/pi-agent-core": "file:vendor/prime-agent-core-0.7.0.tgz",
     "@earendil-works/pi-ai": "$prime-agent-ai",
-    "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz"
+    "@earendil-works/pi-tui": "file:vendor/prime-agent-tui-0.7.0.tgz",
+    "extract-zip": "npm:@electron-internal/extract-zip@1.0.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
@@ -68,6 +71,7 @@
     "electron": "^43.4.0",
     "electron-builder": "^26.15.7",
     "electron-vite": "^5.0.0",
+    "extract-zip": "npm:@electron-internal/extract-zip@1.0.5",
     "jsdom": "^30.0.1",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
@@ -95,10 +99,11 @@
         "zip"
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.icns",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
+        "LSUIElement": true,
         "NSMicrophoneUsageDescription": "GooeyPi uses the microphone for dictation and realtime voice sessions you start."
       },
       "notarize": true,
@@ -111,7 +116,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/linux/**",
-        "!**/node_modules/zeromq/build/win32/**"
+        "!**/node_modules/zeromq/build/win32/**",
+        "!**/node_modules/extract-zip/index.linux-*.node",
+        "!**/node_modules/extract-zip/index.win32-*.node"
       ]
     },
     "linux": {
@@ -134,7 +141,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
-        "!**/node_modules/zeromq/build/win32/**"
+        "!**/node_modules/zeromq/build/win32/**",
+        "!**/node_modules/extract-zip/index.darwin-*.node",
+        "!**/node_modules/extract-zip/index.win32-*.node"
       ]
     },
     "win": {
@@ -159,7 +168,9 @@
         "out/**/*",
         "package.json",
         "!**/node_modules/zeromq/build/darwin/**",
-        "!**/node_modules/zeromq/build/linux/**"
+        "!**/node_modules/zeromq/build/linux/**",
+        "!**/node_modules/extract-zip/index.darwin-*.node",
+        "!**/node_modules/extract-zip/index.linux-*.node"
       ]
     },
     "directories": {

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { HarnessId, PrimeModelDescriptor, RuntimeInfo, SessionRecord, TranscriptMessage } from '../../../src/types/api'
+import { assertNoMcpAuthenticationCommand } from '../../../src/lib/mcp-policy'
+import { streamingBehaviorForIntent } from '../../../src/lib/session-actions'
 import type { AgentRpcManager } from '../agent-rpc'
 import { CapabilityBridge, type CapabilityClaim } from '../lib/capability-bridge'
 import type { ModelCatalogProvider } from '../model-catalog'
@@ -20,6 +22,27 @@ const WAIT_TRANSCRIPT_POLL_MS = 1_000
 const WAIT_RUNTIME_POLL_MS = 250
 const MAX_ACTIVE_WAITS_PER_TOKEN = 2
 
+interface CollaborationWaitClock {
+  now(): number
+  setTimeout(callback: () => void, delayMs: number): { unref(): void }
+}
+
+const nativeWaitClock: CollaborationWaitClock = {
+  now: () => Date.now(),
+  setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
+}
+
+async function delayUntil(targetTime: number, clock: CollaborationWaitClock): Promise<void> {
+  while (true) {
+    const remaining = targetTime - clock.now()
+    if (remaining <= 0) return
+    await new Promise<void>((resolveDelay) => {
+      const timer = clock.setTimeout(resolveDelay, remaining)
+      timer.unref()
+    })
+  }
+}
+
 interface CollaborationSessionService {
   list(projectPath?: unknown, includeArchived?: unknown, force?: unknown): Promise<SessionRecord[]>
   read(filePath: unknown): Promise<TranscriptMessage[]>
@@ -38,6 +61,7 @@ export interface AgentCollaborationBridgeOptions {
   catalogs: Record<HarnessId, ModelCatalogProvider>
   disabledProviders: Record<HarnessId, () => ReadonlySet<string>>
   disabledModels: Record<HarnessId, () => ReadonlySet<string>>
+  waitClock?: CollaborationWaitClock
 }
 
 interface CollaborationMessage {
@@ -131,8 +155,12 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   private readonly activeWaitTargets = new Set<string>()
   private readonly activeCreations = new Set<string>()
   private readonly pendingRuntimeTokens = new Map<string, string>()
+  private readonly waitClock: CollaborationWaitClock
 
-  constructor(private readonly options: AgentCollaborationBridgeOptions) { super() }
+  constructor(private readonly options: AgentCollaborationBridgeOptions) {
+    super()
+    this.waitClock = options.waitClock ?? nativeWaitClock
+  }
 
   protected environmentEntries(url: string, token: string): NodeJS.ProcessEnv {
     return {
@@ -142,12 +170,27 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     }
   }
 
+  protected onClaimRevoked(claim: CapabilityClaim): void {
+    const { token } = claim
+    this.sourcesByToken.delete(token)
+    this.activeWaitsByToken.delete(token)
+    this.activeCreations.delete(token)
+    for (const key of this.activeWaitTargets) if (key.startsWith(`${token}:`)) this.activeWaitTargets.delete(key)
+    for (const [runtimeId, pendingToken] of this.pendingRuntimeTokens) {
+      if (pendingToken === token) this.pendingRuntimeTokens.delete(runtimeId)
+    }
+  }
+
   bindSession(token: string | undefined, sessionFile: string | undefined, runtimeId?: string): void {
     if (!token) return
+    const claim = this.claimForToken(token)
+    if (!claim) {
+      if (runtimeId) this.pendingRuntimeTokens.delete(runtimeId)
+      return
+    }
     if (runtimeId && !sessionFile) this.pendingRuntimeTokens.set(runtimeId, token)
     if (!sessionFile) return
-    const claim = this.claimForToken(token)
-    if (claim && !claim.sessionPath) claim.sessionPath = sessionFile
+    if (!claim.sessionPath) claim.sessionPath = sessionFile
     if (runtimeId) this.pendingRuntimeTokens.delete(runtimeId)
   }
 
@@ -182,7 +225,9 @@ export class AgentCollaborationBridge extends CapabilityBridge {
     if (!session) throw new Error('The current collaboration session was not found')
     if (session.depth !== 0) throw new Error('Session collaboration is available only to top-level sessions')
     const source = { session, service: this.options.sessions[claim.harness], manager: this.options.agents[claim.harness] }
-    this.sourcesByToken.set(claim.token, source)
+    // An asynchronous catalog scan can finish after the owning runtime exits.
+    // Let that already-admitted call settle without recreating revoked state.
+    if (this.claimForToken(claim.token) === claim) this.sourcesByToken.set(claim.token, source)
     return source
   }
 
@@ -234,6 +279,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
 
   private async create(source: CollaborationTarget, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const prompt = requireString(params.prompt, 'prompt', { min: 1, max: MAX_CREATE_PROMPT_CHARS, trim: true })
+    assertNoMcpAuthenticationCommand(prompt, source.session.harness)
     const title = params.title === undefined ? undefined : requireString(params.title, 'title', { min: 1, max: 200, trim: true })
     const modelQuery = params.model === undefined ? undefined : requireString(params.model, 'model', { min: 1, max: 512, trim: true })
     const reasoningQuery = params.reasoning === undefined ? undefined : requireString(params.reasoning, 'reasoning', { min: 1, max: 64, trim: true })
@@ -255,7 +301,11 @@ export class AgentCollaborationBridge extends CapabilityBridge {
         appliedReasoning = resolveReasoning(reasoningQuery, runtime.availableThinkingLevels ?? [])
         await manager.command(runtime.runtimeId, { type: 'set_thinking_level', level: appliedReasoning })
       }
-      await manager.command(runtime.runtimeId, { type: 'prompt', message: prompt })
+      await manager.command(runtime.runtimeId, {
+        type: 'prompt',
+        message: prompt,
+        streamingBehavior: streamingBehaviorForIntent('queue'),
+      })
       if (title) await manager.command(runtime.runtimeId, { type: 'set_session_name', name: title }).catch(() => undefined)
       await manager.command(runtime.runtimeId, { type: 'get_state' })
     } catch (error) {
@@ -330,6 +380,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
 
   private async send(source: CollaborationTarget, target: CollaborationTarget, rawMessage: unknown): Promise<Record<string, unknown>> {
     const message = requireString(rawMessage, 'message', { min: 1, max: MAX_SEND_CHARS, trim: true })
+    assertNoMcpAuthenticationCommand(message, source.session.harness)
     const existing = target.manager.getForSession(target.session.filePath)
     const runtime = existing ?? await this.wake(target)
     const before = await this.snapshot(target)
@@ -367,6 +418,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   }
 
   private async withWaitAdmission<T>(claim: CapabilityClaim, targetId: string, action: () => Promise<T>): Promise<T> {
+    if (this.claimForToken(claim.token) !== claim) throw new Error('Capability expired')
     const waitKey = `${claim.token}:${claim.harness}:${targetId}`
     const active = this.activeWaitsByToken.get(claim.token) ?? 0
     if (active >= MAX_ACTIVE_WAITS_PER_TOKEN) throw new Error('Too many session waits are active for this runtime')
@@ -383,6 +435,7 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   }
 
   private async withCreationAdmission<T>(claim: CapabilityClaim, action: () => Promise<T>): Promise<T> {
+    if (this.claimForToken(claim.token) !== claim) throw new Error('Capability expired')
     if (this.activeCreations.has(claim.token)) throw new Error('A session creation is already active for this runtime')
     this.activeCreations.add(claim.token)
     try { return await action() }
@@ -392,20 +445,23 @@ export class AgentCollaborationBridge extends CapabilityBridge {
   private async wait(target: CollaborationTarget, rawCursor: unknown, rawTimeout: unknown): Promise<CollaborationSnapshot & { timed_out: boolean }> {
     const afterCursor = rawCursor === undefined ? undefined : requireString(rawCursor, 'after_cursor', { min: 1, max: 128, trim: true })
     const timeoutMs = rawTimeout === undefined ? 15_000 : requireInteger(rawTimeout, 'timeout_ms', 0, MAX_WAIT_MS)
-    const startedAt = Date.now()
+    const startedAt = this.waitClock.now()
+    const deadline = startedAt + timeoutMs
     let snapshot = await this.snapshot(target)
-    while (Date.now() - startedAt < timeoutMs) {
+    while (this.waitClock.now() < deadline) {
       const runtime = target.manager.getForSession(target.session.filePath)
       const idle = !runtime || (!runtime.isStreaming && !runtime.isCompacting && !runtime.sessionActions?.active && (runtime.sessionActions?.queuedCount ?? 0) === 0)
       if (idle && (afterCursor === undefined || snapshot.cursor !== afterCursor)) return { ...snapshot, timed_out: false }
-      await new Promise<void>((resolveDelay) => {
-        // Busy runtimes need only a cheap in-memory state probe. Transcript
-        // reads resume at a bounded cadence once the target is idle/offline.
-        const remaining = Math.max(0, timeoutMs - (Date.now() - startedAt))
-        const timer = setTimeout(resolveDelay, Math.min(remaining, idle ? WAIT_TRANSCRIPT_POLL_MS : WAIT_RUNTIME_POLL_MS))
-        timer.unref()
-      })
-      if (idle) snapshot = await this.snapshot(target)
+      // Busy runtimes need only a cheap in-memory state probe. Transcript
+      // reads resume at a bounded cadence once the target is idle/offline.
+      // Re-arm an early timer wake until the intended poll instant so a short
+      // wait cannot perform multiple transcript reads at its deadline.
+      const nextPollAt = Math.min(deadline, this.waitClock.now() + (idle ? WAIT_TRANSCRIPT_POLL_MS : WAIT_RUNTIME_POLL_MS))
+      await delayUntil(nextPollAt, this.waitClock)
+      if (idle) {
+        snapshot = await this.snapshot(target)
+        if (afterCursor === undefined || snapshot.cursor !== afterCursor) return { ...snapshot, timed_out: false }
+      }
     }
     return { ...snapshot, timed_out: true }
   }

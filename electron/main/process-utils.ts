@@ -5,7 +5,6 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { createAdmissionQueue } from './lib/async'
 import { HARNESSES, type HarnessDescriptor } from './harness'
-
 import type { ProcessFailureReason, ProcessOutcome } from '../../src/types/api'
 
 export interface ProcessResult {
@@ -19,8 +18,15 @@ export interface ProcessResult {
   stderrBytes: number
 }
 
+export type ExecutableCandidateFailureKind = 'missing' | 'rejected'
+export interface ExecutableCandidateFailure {
+  path: string
+  reason: string
+  kind: ExecutableCandidateFailureKind
+}
+
 /** Classifies a completed subprocess: overflow, then timeout, then exit status. */
-export function processFailureReason(result: ProcessResult): ProcessFailureReason | undefined {
+export function processFailureReason(result: ProcessResult): Exclude<ProcessFailureReason, 'blocked'> | undefined {
   if (result.outputExceeded) return 'overflow'
   if (result.timedOut) return 'timeout'
   if (result.code !== 0) return 'exit'
@@ -463,6 +469,7 @@ export async function findHarnessExecutable(
   descriptor: HarnessDescriptor,
   configuredPath?: string,
   accept: (candidate: string) => Promise<boolean> = async () => true,
+  onFailure?: (failure: ExecutableCandidateFailure) => void,
 ): Promise<string | null> {
   const candidates = [
     ...harnessExecutableCandidates(descriptor, process.env, process.platform, configuredPath),
@@ -472,7 +479,15 @@ export async function findHarnessExecutable(
     try {
       await access(candidate, fsConstants.X_OK)
       if (await accept(candidate)) return candidate
-    } catch { /* continue */ }
+      onFailure?.({ path: candidate, reason: 'probe failed', kind: 'rejected' })
+    } catch {
+      try {
+        await access(candidate, fsConstants.F_OK)
+        onFailure?.({ path: candidate, reason: 'not executable', kind: 'rejected' })
+      } catch {
+        onFailure?.({ path: candidate, reason: 'path does not exist', kind: 'missing' })
+      }
+    }
   }
   return null
 }
