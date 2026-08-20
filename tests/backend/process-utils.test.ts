@@ -316,13 +316,16 @@ describe('OMP discovery candidates', () => {
     expect(candidates.every((candidate) => isAbsolutePathForPlatform(candidate, 'darwin'))).toBe(true)
   })
 
-  it('finds the official Windows OMP install despite a stale process Path', () => {
+  it('finds official and Bun-installed Windows OMP executables despite a stale process Path', () => {
     const candidates = harnessExecutableCandidates(HARNESSES.omp, {
       Path: 'C:\\bin', LOCALAPPDATA: 'C:\\Users\\Ada\\AppData\\Local', USERPROFILE: 'C:\\Users\\Ada', APPDATA: 'C:\\Users\\Ada\\AppData\\Roaming',
+      BUN_INSTALL: 'D:\\Bun', BUN_INSTALL_BIN: 'E:\\Portable\\bun-global-bin',
     }, 'win32', undefined, 'C:\\Users\\Ada')
     expect(candidates).toContain('C:\\bin\\omp.exe')
     expect(candidates).toContain('C:\\Users\\Ada\\AppData\\Local\\omp\\omp.exe')
     expect(candidates).toContain('C:\\Users\\Ada\\.bun\\bin\\omp.exe')
+    expect(candidates).toContain('D:\\Bun\\bin\\omp.exe')
+    expect(candidates).toContain('E:\\Portable\\bun-global-bin\\omp.exe')
     expect(candidates.some((candidate) => candidate.includes('resources'))).toBe(false)
   })
 
