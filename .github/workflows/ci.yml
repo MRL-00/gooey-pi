@@ -128,6 +128,7 @@ jobs:
             target: linux
             arch: x64
             extra_args: ''
+            unpacked_dir: linux-unpacked
           - runner: windows-2022
             target: win
             arch: x64
@@ -162,8 +163,8 @@ jobs:
       # those shipped permissions rather than launching with the sandbox disabled.
       - if: matrix.target == 'linux'
         run: |
-          sudo chown root:root release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
-          sudo chmod 4755 release/linux/${{ matrix.arch }}/linux-unpacked/chrome-sandbox
+          sudo chown root:root release/linux/${{ matrix.arch }}/${{ matrix.unpacked_dir }}/chrome-sandbox
+          sudo chmod 4755 release/linux/${{ matrix.arch }}/${{ matrix.unpacked_dir }}/chrome-sandbox
       - name: Launch the packaged application
         if: matrix.target != 'mac'
         run: node scripts/release/smoke-packaged-app.mjs --platform ${{ matrix.target }} --arch ${{ matrix.arch }}
