@@ -780,6 +780,42 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('heading', { name: 'Startup & background' })).toBeVisible()
   })
 
+  test('keeps the application shell fixed when focus reveals root overflow', async () => {
+    const layout = await page.evaluate(() => {
+      const root = document.getElementById('root')
+      const shell = document.querySelector<HTMLElement>('.app-shell')
+      if (!root || !shell) throw new Error('Application shell is missing')
+
+      const probe = document.createElement('button')
+      probe.type = 'button'
+      probe.textContent = 'Root overflow focus probe'
+      root.append(probe)
+
+      try {
+        const initialShellTop = shell.getBoundingClientRect().top
+        probe.focus()
+        probe.scrollIntoView({ block: 'end' })
+        return {
+          activeElement: document.activeElement === probe,
+          clientHeight: root.clientHeight,
+          overflow: getComputedStyle(root).overflow,
+          scrollHeight: root.scrollHeight,
+          scrollTop: root.scrollTop,
+          initialShellTop,
+          shellTop: shell.getBoundingClientRect().top,
+        }
+      } finally {
+        probe.remove()
+      }
+    })
+
+    expect(layout.activeElement).toBe(true)
+    expect(layout.overflow).toBe('clip')
+    expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight)
+    expect(layout.scrollTop).toBe(0)
+    expect(layout.shellTop).toBe(layout.initialShellTop)
+  })
+
   test('uses the persisted selected pet for realtime voice after a full restart', async () => {
     const desktopPet = page.getByRole('button', { name: /Orb, draggable GooeyPi pet/ })
     await expect(desktopPet).toBeVisible()
