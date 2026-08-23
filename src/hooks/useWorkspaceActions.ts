@@ -162,6 +162,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   const selectProject = async (project: ProjectRecord) => {
     const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
+    if (workspace.workspaceRef.current.project?.id === project.id) {
+      setView('session')
+      return
+    }
     const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
     if (session) {
       clearSessionAttention(session)
