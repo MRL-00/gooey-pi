@@ -49,7 +49,7 @@ describe('TerminalService', () => {
     for (const key of prefixKeys) process.env[key] = '/usr/local'
     try {
       const service = new TerminalService(async () => cwd, () => testShell)
-      const command = 'if [ -z \"${npm_config_prefix}${NPM_CONFIG_PREFIX}\" ] && [ \"$PREFIX\" = /usr/local ]; then printf runner-ok; else printf env-mismatch; exit 2; fi'
+      const command = 'if [ -z "${npm_config_prefix}${NPM_CONFIG_PREFIX}" ] && [ "$PREFIX" = /usr/local ]; then printf runner-ok; else printf env-mismatch; exit 2; fi'
       const created = await service.create(owner, { cwd, shell: testShell, command, cols: 80, rows: 24 })
 
       await waitFor(() => events.some((event) => event.channel === 'terminal:exit' && event.payload.terminalId === created.terminalId))

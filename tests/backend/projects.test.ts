@@ -1068,7 +1068,7 @@ describe('ProjectService scripts', () => {
       setupLastRun: undefined,
       setupLastExitCode: undefined,
     })
-    await expect(service.finishSetup('script-project', 'npm install', 0)).rejects.toThrow(/changed before it finished/)
+    await expect(service.finishSetup('script-project', 'npm install', 0)).resolves.toBeUndefined()
   })
 
   it('rejects script updates for inferred or differently scoped projects', async () => {

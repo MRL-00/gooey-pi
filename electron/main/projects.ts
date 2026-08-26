@@ -691,15 +691,13 @@ export class ProjectService {
     })
   }
 
-  async finishSetup(idValue: unknown, setupValue: unknown, exitCodeValue: unknown): Promise<ProjectScripts> {
+  async finishSetup(idValue: unknown, setupValue: unknown, exitCodeValue: unknown): Promise<ProjectScripts | undefined> {
     const id = requireId(idValue, 'project id')
     const setup = requireString(setupValue, 'setup script', { min: 1, max: 64 * 1024 })
     const exitCode = requireInteger(exitCodeValue, 'setup exit code', -2_147_483_648, 2_147_483_647)
     return this.store.update((state) => {
       const project = state.projects.find((item) => item.id === id && item.harness === this.harness)
-      if (!project?.scripts || project.scripts.setup !== setup || project.scripts.setupLastRun !== setup) {
-        throw new Error('Project setup script changed before it finished')
-      }
+      if (!project?.scripts || project.scripts.setup !== setup || project.scripts.setupLastRun !== setup) return undefined
       project.scripts.setupLastExitCode = exitCode
       return { ...project.scripts }
     })

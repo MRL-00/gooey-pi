@@ -388,14 +388,19 @@ export default function App() {
     activeProjectScriptRunRef.current = undefined
     setActiveProjectScriptRun(undefined)
     if ('cancelled' in outcome) return
+    const message = outcome.exitCode === 0 ? `${run.kind === 'setup' ? 'Setup' : 'Run'} completed.` : `${run.kind === 'setup' ? 'Setup' : 'Run'} exited with code ${outcome.exitCode}.`
     if (run.kind === 'setup' && bridge) {
       void bridge.projects.finishSetup(run.projectId, run.command, outcome.exitCode, run.harness)
-        .then((scripts) => patchProjectScripts(run.projectId, scripts))
-        // The rejection only happens when the recorded setup no longer matches.
-        .catch(() => undefined)
+        .then((scripts) => {
+          if (!scripts) return
+          patchProjectScripts(run.projectId, scripts)
+          setToast(message)
+        })
+        .catch(reportError)
+      return
     }
-    setToast(outcome.exitCode === 0 ? `${run.kind === 'setup' ? 'Setup' : 'Run'} completed.` : `${run.kind === 'setup' ? 'Setup' : 'Run'} exited with code ${outcome.exitCode}.`)
-  }, [bridge, patchProjectScripts])
+    setToast(message)
+  }, [bridge, patchProjectScripts, reportError])
 
   const {
     toggleSidebar, toggleInspector, grantProject,

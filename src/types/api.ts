@@ -713,7 +713,7 @@ export interface PrimeWorkApi {
     touch(id: string, harness?: HarnessId): Promise<boolean>
     updateScripts(id: string, scripts: Pick<ProjectScripts, 'setup' | 'run'>, harness?: HarnessId): Promise<ProjectScripts>
     markSetupStarted(id: string, setup: string, harness?: HarnessId): Promise<ProjectScripts>
-    finishSetup(id: string, setup: string, exitCode: number, harness?: HarnessId): Promise<ProjectScripts>
+    finishSetup(id: string, setup: string, exitCode: number, harness?: HarnessId): Promise<ProjectScripts | undefined>
   }
   sessions: {
     list(projectPath?: string, includeArchived?: boolean, harness?: HarnessId, force?: boolean): Promise<SessionRecord[]>
