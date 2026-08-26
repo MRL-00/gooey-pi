@@ -112,7 +112,7 @@ export const ModelPicker = memo(function ModelPicker({ value, modelsByProvider, 
       <button
         ref={triggerRef}
         type="button"
-        className="model-picker__trigger"
+        className="permissions-chip model-picker__trigger"
         aria-label={`Model: ${selected?.name ?? 'No model available'}`}
         title={selected?.name ?? 'No model available'}
         aria-haspopup="listbox"
