@@ -801,6 +801,29 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('heading', { name: 'Startup & background' })).toBeVisible()
   })
 
+  test('returns from settings with its back button, New session, Escape, and Ctrl+W', async () => {
+    const openSettings = async () => {
+      await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+      await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()
+    }
+
+    await openSettings()
+    await page.getByRole('button', { name: 'Back to session' }).click()
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.locator('.sidebar__primary').getByRole('button', { name: /^New session/ }).click()
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.keyboard.press('Control+w')
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+  })
+
   test('keeps the application shell fixed when focus reveals root overflow', async () => {
     const layout = await page.evaluate(() => {
       const root = document.getElementById('root')
@@ -2114,6 +2137,18 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('ArrowDown')
     expect((await drawer.boundingBox())!.height).toBeLessThan(terminalAfter!.height)
     await page.getByLabel('Close terminal', { exact: true }).click()
+  })
+
+  test('shuts down cleanly with an active terminal', async () => {
+    await page.getByLabel(/Toggle terminal/).click()
+    const drawer = page.locator('.terminal-drawer:not([hidden])')
+    const input = drawer.locator('.xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    await input.click()
+    await page.keyboard.type('while true; do sleep 1; done')
+    await page.keyboard.press('Enter')
+    // Intentionally leave the PTY open. The shared teardown closes the
+    // Electron app and exercises the native node-pty shutdown path.
   })
 
   test('restores each session terminal without leaking it into another session', async () => {
