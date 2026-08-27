@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Dir } from 'node:fs'
-import { lstat, opendir, realpath } from 'node:fs/promises'
+import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import type { HarnessId, PluginCatalog, PluginWarning, SkillRecord } from '../../../src/types/api'
@@ -19,7 +19,7 @@ import { errorCode, readAtMost } from './file-io'
 
 type Kind = SkillRecord['kind']
 type Location = SkillRecord['location']
-interface Candidate { path: string; kind: Exclude<Kind, 'package' | 'mcp'>; location: Location }
+interface Candidate { path: string; kind: Exclude<Kind, 'package' | 'mcp'>; location: Location; priority: number }
 
 /** Project-relative directory that holds a harness's project agent state. */
 const PROJECT_AGENT_SEGMENTS: Record<HarnessId, readonly string[]> = {
@@ -27,6 +27,20 @@ const PROJECT_AGENT_SEGMENTS: Record<HarnessId, readonly string[]> = {
   omp: ['.omp'],
   pi: ['.pi'],
 }
+
+/**
+ * OMP resolves same-named skills by provider precedence and lists the winner
+ * once (docs/skills.md). These weights mirror those providers so the app shows
+ * the same single row the harness will actually load.
+ */
+const SKILL_PRIORITY = {
+  native: 100,
+  ompPlugin: 90,
+  claude: 80,
+  claudePlugin: 70,
+  agents: 70,
+  bundled: 10,
+} as const
 
 const MAX_DISCOVERY_CANDIDATES = 2_000
 const MAX_DISCOVERY_DIRECTORIES = 1_000
@@ -182,7 +196,7 @@ async function collectDirectory(
   location: Location,
   output: Candidate[],
   budget: DiscoveryBudget,
-  options: { skillRoot?: boolean; depth?: number; containmentRoots?: readonly string[] } = {},
+  options: { skillRoot?: boolean; depth?: number; containmentRoots?: readonly string[]; priority?: number } = {},
 ): Promise<void> {
   if (discoveryExhausted(budget)) return
   const depth = options.depth ?? 0
@@ -205,12 +219,25 @@ async function collectDirectory(
       budget.entries += 1
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
       const path = join(root, entry.name)
-      if (entry.isSymbolicLink()) continue
-      if (entry.isFile()) {
-        if (kind === 'skill' && (entry.name === 'SKILL.md' || (depth === 0 && options.skillRoot && extname(entry.name) === '.md'))) addCandidate({ path, kind, location }, output, budget)
-        else if (kind === 'prompt' && depth === 0 && extname(entry.name) === '.md') addCandidate({ path, kind, location }, output, budget)
-        else if (kind === 'extension' && (depth === 0 || /^index\.(?:[cm]?[jt]s)$/.test(entry.name)) && ['.ts', '.js', '.mjs', '.cjs'].includes(extname(entry.name))) addCandidate({ path, kind, location }, output, budget)
-      } else if (entry.isDirectory() && depth < 6) {
+      let isFile = entry.isFile()
+      let isDirectory = entry.isDirectory()
+      if (entry.isSymbolicLink()) {
+        // Plugin managers (pstack, OMP marketplaces) install a capability by
+        // symlinking its directory into the harness skills root, so refusing
+        // every link hides skills the harness itself loads. Containment-scoped
+        // roots keep refusing links because their targets are out of grant.
+        if (options.containmentRoots?.length) continue
+        try { const target = await stat(path); isFile = target.isFile(); isDirectory = target.isDirectory() } catch { continue }
+      }
+      const priority = options.priority ?? SKILL_PRIORITY.native
+      if (isFile) {
+        if (kind === 'skill' && (entry.name === 'SKILL.md' || (depth === 0 && options.skillRoot && extname(entry.name) === '.md'))) addCandidate({ path, kind, location, priority }, output, budget)
+        else if (kind === 'prompt' && depth === 0 && extname(entry.name) === '.md') addCandidate({ path, kind, location, priority }, output, budget)
+        else if (kind === 'extension' && (depth === 0 || /^index\.(?:[cm]?[jt]s)$/.test(entry.name)) && ['.ts', '.js', '.mjs', '.cjs'].includes(extname(entry.name))) addCandidate({ path, kind, location, priority }, output, budget)
+      // Skills use the non-recursive `<root>/<name>/SKILL.md` layout every
+      // harness scans, so a vendored copy nested deeper inside a skill (a
+      // bundled plugin tree, for instance) never shadows the real entry point.
+      } else if (isDirectory && depth < (kind === 'skill' ? 1 : 6)) {
         await collectDirectory(path, kind, location, output, budget, { ...options, depth: depth + 1 })
       }
     }
@@ -237,7 +264,7 @@ async function collectConfigured(
       if (stat.isSymbolicLink()) continue
       const canonicalPath = await realpath(path)
       if (containmentRoots?.length && !isPathWithinAny(containmentRoots, canonicalPath)) continue
-      if (stat.isFile()) addCandidate({ path: canonicalPath, kind, location }, output, budget)
+      if (stat.isFile()) addCandidate({ path: canonicalPath, kind, location, priority: SKILL_PRIORITY.native }, output, budget)
       else if (stat.isDirectory()) await collectDirectory(canonicalPath, kind, location, output, budget, { skillRoot: kind === 'skill', containmentRoots })
     } catch { /* stale configured path */ }
   }
@@ -251,9 +278,32 @@ function displayName(candidate: Candidate, metadata: { name?: string }): string 
   return basename(file, extname(file))
 }
 
+/**
+ * Keeps one row per skill name, resolved the way the harness resolves it:
+ * highest provider priority wins, and the earlier discovery root breaks ties.
+ * Without this, a skill installed both natively and through a Claude Code
+ * plugin would list twice and make `@mention` routing ambiguous.
+ */
+function dedupeSkillNames(records: readonly SkillRecord[], ranking: ReadonlyMap<string, { priority: number; order: number }>): SkillRecord[] {
+  const ranked = records
+    .filter((record) => record.kind === 'skill')
+    .map((record) => ({ record, rank: ranking.get(record.id) ?? { priority: 0, order: 0 } }))
+    .sort((left, right) => right.rank.priority - left.rank.priority || left.rank.order - right.rank.order)
+  const winners = new Set<string>()
+  const claimed = new Set<string>()
+  for (const { record } of ranked) {
+    const key = record.name.trim().toLocaleLowerCase()
+    if (claimed.has(key)) continue
+    claimed.add(key)
+    winners.add(record.id)
+  }
+  return records.filter((record) => record.kind !== 'skill' || winners.has(record.id))
+}
+
 async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: string, harness: HarnessId = 'prime'): Promise<SkillRecord[]> {
   const seenPaths = new Set<string>()
-  return mapLimit(candidates, METADATA_CONCURRENCY, async (candidate): Promise<SkillRecord | null> => {
+  const ranking = new Map<string, { priority: number; order: number }>()
+  const records = await mapLimit(candidates.map((candidate, order) => ({ candidate, order })), METADATA_CONCURRENCY, async ({ candidate, order }): Promise<SkillRecord | null> => {
     let path: string
     try { path = await realpath(candidate.path) } catch { return null }
     if (candidate.location === 'project' && (!safeProjectPath || !isPathWithin(safeProjectPath, path))) return null
@@ -266,8 +316,10 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
     seenPaths.add(key)
     const metadata = candidate.kind === 'extension' ? { description: `${HARNESSES[harness].agentName} extension` } : await markdownMetadata(path)
     const name = displayName(candidate, metadata)
+    const id = idFor(candidate.kind, path)
+    ranking.set(id, { priority: candidate.priority, order })
     return {
-      id: idFor(candidate.kind, path),
+      id,
       name,
       description: metadata.description || `${candidate.kind[0].toUpperCase()}${candidate.kind.slice(1)} ${name}`,
       kind: candidate.kind,
@@ -276,6 +328,7 @@ async function buildCandidateRecords(candidates: Candidate[], safeProjectPath?: 
       enabled: true,
     }
   })
+  return dedupeSkillNames(records, ranking)
 }
 
 async function addPackageSettingsMetadata(
@@ -441,10 +494,57 @@ async function collectOmpPluginPackages(
     records.push({ id: idFor('package', location, name), name, description, kind: 'package', location, enabled, source: name })
     if (!enabled) continue
     const containmentRoots = location === 'project' && safeProjectPath ? [safeProjectPath] : undefined
-    await collectDirectory(join(packageRoot, 'skills'), 'skill', location, candidates, budget, { skillRoot: true, containmentRoots })
+    await collectDirectory(join(packageRoot, 'skills'), 'skill', location, candidates, budget, { skillRoot: true, containmentRoots, priority: SKILL_PRIORITY.ompPlugin })
     await collectDirectory(join(packageRoot, 'prompts'), 'prompt', location, candidates, budget, { containmentRoots })
     await collectDirectory(join(packageRoot, 'commands'), 'prompt', location, candidates, budget, { containmentRoots })
     await collectDirectory(join(packageRoot, 'extensions'), 'extension', location, candidates, budget, { containmentRoots })
+  }
+}
+
+/** Claude Code's config root, honoring the `CLAUDE_CONFIG_DIR` override OMP reads. */
+function claudeConfigDir(): string {
+  const override = process.env.CLAUDE_CONFIG_DIR?.trim()
+  return override ? resolve(override) : join(homedir(), '.claude')
+}
+
+/**
+ * OMP's `claude-plugins` provider loads skills from the Claude Code plugin
+ * registry (`~/.claude/plugins/installed_plugins.json`), skipping entries the
+ * install record or `enabledPlugins` disables explicitly, and project-scoped
+ * installs that belong to another workspace.
+ */
+async function collectClaudePluginSkills(
+  claudeDir: string,
+  safeProjectPath: string | undefined,
+  candidates: Candidate[],
+  warnings: PluginWarning[],
+  budget: DiscoveryBudget,
+): Promise<void> {
+  const registryPath = join(claudeDir, 'plugins', 'installed_plugins.json')
+  let registry: unknown
+  try { registry = JSON.parse(await readSmall(registryPath)) } catch { return }
+  if (!isRecord(registry) || !isRecord(registry.plugins)) {
+    warnings.push({ scope: 'user', path: registryPath, message: 'Claude Code plugin registry could not be read.' })
+    return
+  }
+  const claudeSettings = await readSettings(join(claudeDir, 'settings.json'), 'user')
+  const enabledPlugins = isRecord(claudeSettings.settings.enabledPlugins) ? claudeSettings.settings.enabledPlugins : {}
+  for (const [pluginId, installs] of Object.entries(registry.plugins)) {
+    if (discoveryExhausted(budget)) break
+    if (!Array.isArray(installs) || enabledPlugins[pluginId] === false) continue
+    for (const install of installs) {
+      if (!isRecord(install) || install.enabled === false) continue
+      const installPath = install.installPath
+      if (typeof installPath !== 'string' || !isAbsolute(installPath)) continue
+      const projectScoped = install.scope === 'project' || install.scope === 'local'
+      if (projectScoped && enabledPlugins[pluginId] !== true) {
+        if (typeof install.projectPath !== 'string' || !safeProjectPath || !await samePath(install.projectPath, safeProjectPath)) continue
+      }
+      // Plugin installs live in the user's Claude cache even when a project
+      // enabled them, so they stay user-scoped records; the check above only
+      // decides whether this workspace loads them at all.
+      await collectDirectory(join(installPath, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true, priority: SKILL_PRIORITY.claudePlugin })
+    }
   }
 }
 
@@ -456,8 +556,10 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   if (globalRead.warning) warnings.push(globalRead.warning)
   const globalSettings = globalRead.settings
 
-  await collectDirectory(harness === 'omp' ? resolve(agentDir, '..', 'skills') : join(agentDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true })
-  await collectDirectory(join(homedir(), '.agents', 'skills'), 'skill', 'user', candidates, budget)
+  // Every harness reads user skills from its own agent directory: OMP scans
+  // `~/.omp/agent/skills` (docs/config-usage.md), not `~/.omp/skills`.
+  await collectDirectory(join(agentDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true })
+  await collectDirectory(join(homedir(), '.agents', 'skills'), 'skill', 'user', candidates, budget, { priority: SKILL_PRIORITY.agents })
   await collectDirectory(join(agentDir, 'extensions'), 'extension', 'user', candidates, budget)
   await collectDirectory(join(agentDir, 'prompts'), 'prompt', 'user', candidates, budget)
   const userConfiguredRoots = await Promise.all([agentDir, homedir()].map(async (root) => {
@@ -468,10 +570,18 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
   await collectConfigured(globalSettings.prompts, agentDir, 'prompt', 'user', candidates, budget, userConfiguredRoots)
 
   const bundled = await bundledSkillsDirectory(harness === 'prime' ? agentPath : null)
-  if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget)
+  if (bundled) await collectDirectory(bundled, 'skill', 'bundled', candidates, budget, { priority: SKILL_PRIORITY.bundled })
 
   const ompPackageRecords: SkillRecord[] = []
   if (harness === 'omp') await collectOmpPluginPackages(resolve(agentDir, '..', 'plugins'), 'user', safeProjectPath, candidates, ompPackageRecords, budget)
+  // Only OMP reads the Claude Code sources: its `claude` and `claude-plugins`
+  // skill providers scan `<claude-config>/skills` and the Claude plugin
+  // registry. Pi and Prime Agent ship no such provider, so they stay native.
+  if (harness === 'omp') {
+    const claudeDir = claudeConfigDir()
+    await collectDirectory(join(claudeDir, 'skills'), 'skill', 'user', candidates, budget, { skillRoot: true, priority: SKILL_PRIORITY.claude })
+    await collectClaudePluginSkills(claudeDir, safeProjectPath, candidates, warnings, budget)
+  }
 
   let projectSettings: Record<string, unknown> = {}
   if (safeProjectPath && isAbsolute(safeProjectPath) && await pathExists(safeProjectPath)) {
@@ -503,9 +613,12 @@ export async function discoverPlugins(agentDir: string, safeProjectPath: string 
       }
     }
     if (!sameProjectSkillsDir) {
-      await collectDirectory(projectSkillsDir, 'skill', 'project', candidates, budget, { containmentRoots: projectRoots })
+      await collectDirectory(projectSkillsDir, 'skill', 'project', candidates, budget, { containmentRoots: projectRoots, priority: SKILL_PRIORITY.agents })
     }
-    if (harness === 'omp') await collectOmpPluginPackages(join(safeProjectPath, '.omp', 'plugins'), 'project', safeProjectPath, candidates, ompPackageRecords, budget)
+    if (harness === 'omp') {
+      await collectDirectory(join(safeProjectPath, '.claude', 'skills'), 'skill', 'project', candidates, budget, { skillRoot: true, containmentRoots: projectRoots, priority: SKILL_PRIORITY.claude })
+      await collectOmpPluginPackages(join(safeProjectPath, '.omp', 'plugins'), 'project', safeProjectPath, candidates, ompPackageRecords, budget)
+    }
   }
 
   const result = await buildCandidateRecords(candidates, safeProjectPath, harness)
