@@ -66,6 +66,8 @@ interface ComposerProps {
   getTerminalContext?(): TerminalPromptContext | undefined
   /** Messages accepted by Prime but waiting for a turn boundary. */
   queuedMessages?: QueuedPrompt[]
+  /** Messages held inside the harness when it exposes only a count, not previews. */
+  harnessQueuedMessageCount?: number
   onDeleteQueuedMessage?(message: QueuedPrompt): void
   onEditQueuedMessage?(message: QueuedPrompt): void
   /** Each bump submits the current draft immediately (Ctrl/Cmd+Enter from the annotation popover). */
@@ -142,6 +144,7 @@ export const Composer = memo(function Composer({
   terminalSelection,
   getTerminalContext,
   queuedMessages = [],
+  harnessQueuedMessageCount = 0,
   onDeleteQueuedMessage,
   onEditQueuedMessage,
   sendSignal = 0,
@@ -464,11 +467,11 @@ export const Composer = memo(function Composer({
 
   return (
     <div className="composer-wrap">
-      {queuedMessages.length ? (
+      {queuedMessages.length || harnessQueuedMessageCount ? (
         <section className="composer-queue" aria-label="Queued messages" aria-live="polite">
           <div className="composer-queue__header">
             <span><Clock3 size={13} />Queued messages</span>
-            <strong>{queuedMessages.length}</strong>
+            <strong>{queuedMessages.length + harnessQueuedMessageCount}</strong>
           </div>
           <div className="composer-queue__list">
             {queuedMessages.map((queued) => (
@@ -481,6 +484,11 @@ export const Composer = memo(function Composer({
                 </span>
               </div>
             ))}
+            {harnessQueuedMessageCount ? (
+              <div className="composer-queue__item composer-queue__item--harness">
+                <span className="composer-queue__text">{agentName} is holding {harnessQueuedMessageCount} {harnessQueuedMessageCount === 1 ? 'message' : 'messages'} for the next turn.</span>
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}

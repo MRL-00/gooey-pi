@@ -424,9 +424,14 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
           // row so pickup can move them into history without redelivery.
           if (intent === 'steer') queuedPromptId = workspace.queuePrompt(prompt, intent, userMessage.parts, sentAt)
           const response = await bridge.agent.command(activeRuntime.runtimeId, { type: intent === 'steer' ? 'steer' : 'follow_up', message: prompt, ...(images.length ? { images } : {}) })
+          const actions = parseSessionActionSnapshot(response.sessionActions)
+          if (actions) {
+            workspace.setRuntime((current) => current?.runtimeId === activeRuntime.runtimeId
+              ? { ...current, sessionActions: actions }
+              : current)
+          }
           if (intent === 'steer' && queuedPromptId) {
             workspace.acceptSteer(queuedPromptId)
-            const actions = parseSessionActionSnapshot(response.sessionActions)
             if (actions) workspace.acknowledgeSteer(queuedPromptId, actions)
           }
           completeQueuedFlush()
