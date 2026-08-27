@@ -12,6 +12,7 @@ import { RpcRuntime } from '../../electron/main/agent-rpc/runtime'
 import { FramedRpcTransport } from '../../electron/main/agent-rpc/transport'
 import type { RpcObject } from '../../electron/main/agent-rpc/types'
 import { PrimeProviderService } from '../../electron/main/providers'
+import { RepositoryUseGate } from '../../electron/main/repository-use-gate'
 import type { RuntimeInfo } from '../../src/types/api'
 import { waitUntil } from '../helpers/wait'
 
@@ -61,6 +62,45 @@ const processExists = (pid: number): boolean => {
 }
 
 describe('agent RPC command frame bounds', () => {
+  it('holds repository use for the lifetime of a runtime', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    const release = vi.fn()
+    const begin = vi.fn(async () => ({ release }))
+    manager.setWorkspaceUseProvider(begin)
+
+    const runtime = await manager.start({ cwd: fake.cwd })
+    expect(begin).toHaveBeenCalledWith(fake.cwd, expect.objectContaining({ kind: 'agent', harness: 'prime' }), expect.any(Function))
+    expect(release).not.toHaveBeenCalled()
+
+    await manager.stop(runtime.runtimeId)
+    await waitUntil(() => release.mock.calls.length === 1)
+  })
+
+  it('retires a completed idle resident runtime for branch checkout', async () => {
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }")
+    const manager = managerFor(fake.executable)
+    const gate = new RepositoryUseGate()
+    manager.setWorkspaceUseProvider((cwd, owner, retireIfIdle) => gate.beginWorkspaceUse(cwd, owner, retireIfIdle))
+    const runtime = await manager.start({ cwd: fake.cwd })
+    await manager.command(runtime.runtimeId, { type: 'prompt', message: 'completed work' })
+
+    await expect(gate.runBranchCheckout(fake.cwd, async () => 'changed')).resolves.toBe('changed')
+    expect(manager.list()).toEqual([])
+  })
+
+  it('keeps a busy resident runtime and refuses branch checkout', async () => {
+    const state = "{ id: command.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'busy', isStreaming: true, isCompacting: false } }"
+    const fake = fakeAgent("{ id: command.id, type: 'response', command: 'prompt', success: true }", state)
+    const manager = managerFor(fake.executable)
+    const gate = new RepositoryUseGate()
+    manager.setWorkspaceUseProvider((cwd, owner, retireIfIdle) => gate.beginWorkspaceUse(cwd, owner, retireIfIdle))
+    await manager.start({ cwd: fake.cwd })
+
+    await expect(gate.runBranchCheckout(fake.cwd, async () => 'changed')).rejects.toMatchObject({ code: 'active-work' })
+    expect(manager.list()).toHaveLength(1)
+  })
+
   it('accepts the largest canonical image that fits transport and rejects the next base64 block', async () => {
     const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
     const imageData = (bytes: number) => Buffer.concat([signature, Buffer.alloc(Math.max(0, bytes - signature.length))]).toString('base64')

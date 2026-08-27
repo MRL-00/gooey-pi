@@ -8,6 +8,7 @@ import { isThinkingLevel, validateRpcCommand } from './command-schema'
 import { PRIME_RPC_ADAPTER, type HarnessRpcAdapter } from './harness-adapter'
 import { RpcRuntime } from './runtime'
 import type { RpcObject } from './types'
+import type { WorkspaceUseLease, WorkspaceUseOwner } from '../repository-use-gate'
 
 /**
  * Structural slice of the provider catalog the manager needs; PrimeProviderService
@@ -29,6 +30,11 @@ export class AgentRpcManager {
   private runtimeStartListener: (environment: NodeJS.ProcessEnv, info: RuntimeInfo) => void = () => undefined
   private runtimeEndListener: (environment: NodeJS.ProcessEnv, info?: RuntimeInfo) => void = () => undefined
   private runtimeAdmission: Promise<void> = Promise.resolve()
+  private beginWorkspaceUse: (
+    cwd: string,
+    owner: WorkspaceUseOwner,
+    retireIfIdle: () => Promise<boolean>,
+  ) => Promise<WorkspaceUseLease> = async () => ({ release: () => undefined })
   private closed = false
 
   constructor(
@@ -45,6 +51,14 @@ export class AgentRpcManager {
   setEventSink(sink: (envelope: PrimeEventEnvelope) => void): void { this.eventSink = sink }
 
   setDisabledModelsProvider(provider: () => ReadonlySet<string>): void { this.disabledModels = provider }
+
+  setWorkspaceUseProvider(provider: (
+    cwd: string,
+    owner: WorkspaceUseOwner,
+    retireIfIdle: () => Promise<boolean>,
+  ) => Promise<WorkspaceUseLease>): void {
+    this.beginWorkspaceUse = provider
+  }
 
   setRuntimeEnvironmentProvider(provider: (scope: { cwd: string; sessionPath?: string; interactive: boolean }) => NodeJS.ProcessEnv): void {
     this.runtimeEnvironmentProvider = provider
@@ -101,10 +115,22 @@ export class AgentRpcManager {
     const runtimeEnvironmentRevision = this.runtimeEnvironmentRevision
     const runtimeEnvironment = this.runtimeEnvironmentProvider({ cwd, sessionPath, interactive })
     let runtime: RpcRuntime | undefined
+    let workspaceUse!: WorkspaceUseLease
+    workspaceUse = await this.beginWorkspaceUse(
+      cwd,
+      { kind: 'agent', harness: this.adapter.id, runtimeId: `starting-${Date.now()}` },
+      async () => {
+        if (!runtime) return false
+        const retired = await this.retireForCheckout(runtime)
+        if (retired) workspaceUse.release()
+        return retired
+      },
+    )
     let environmentEnded = false
     const notifyRuntimeEnd = (info?: RuntimeInfo): void => {
       if (environmentEnded) return
       environmentEnded = true
+      workspaceUse.release()
       try { this.runtimeEndListener(runtimeEnvironment, info) } catch { /* capability cleanup must never fail runtime cleanup */ }
     }
     try {
@@ -173,7 +199,7 @@ export class AgentRpcManager {
 
   async command(runtimeId: unknown, rawCommand: unknown): Promise<RpcObject> {
     try {
-      return await this.dispatchCommand(runtimeId, rawCommand)
+      return await this.withRuntimeAdmission(() => this.dispatchCommand(runtimeId, rawCommand))
     } catch (error) {
       // Delivery failures for user-visible commands (steer, prompt, follow_up)
       // are otherwise only surfaced as a transient renderer toast; keep a
@@ -322,6 +348,16 @@ export class AgentRpcManager {
     timer.unref()
   }
 
+  private async retireForCheckout(runtime: RpcRuntime): Promise<boolean> {
+    return this.withRuntimeAdmission(async () => {
+      if (!this.runtimes.has(runtime.runtimeId)) return true
+      if (!this.isIdle(runtime)) return false
+      const stopped = await runtime.stop()
+      if (stopped && this.runtimes.get(runtime.runtimeId) === runtime) this.runtimes.delete(runtime.runtimeId)
+      return stopped
+    })
+  }
+
   private isIdle(runtime: RpcRuntime): boolean {
     if (this.startingRuntimes.has(runtime.runtimeId)) return false
     const snapshot = runtime.snapshot()
@@ -335,11 +371,7 @@ export class AgentRpcManager {
   }
 
   private async admitRuntime(createRuntime: () => RpcRuntime): Promise<RpcRuntime> {
-    let releaseAdmission!: () => void
-    const previousAdmission = this.runtimeAdmission
-    this.runtimeAdmission = new Promise<void>((resolveAdmission) => { releaseAdmission = resolveAdmission })
-    await previousAdmission
-    try {
+    return this.withRuntimeAdmission(async () => {
       this.requireOpen()
       // A new session replaces the oldest safely idle child instead of
       // accumulating resident processes. Busy, queued, compacting, and
@@ -354,6 +386,16 @@ export class AgentRpcManager {
       this.runtimes.set(runtime.runtimeId, runtime)
       this.startingRuntimes.add(runtime.runtimeId)
       return runtime
+    })
+  }
+
+  private async withRuntimeAdmission<T>(action: () => Promise<T>): Promise<T> {
+    let releaseAdmission!: () => void
+    const previousAdmission = this.runtimeAdmission
+    this.runtimeAdmission = new Promise<void>((resolveAdmission) => { releaseAdmission = resolveAdmission })
+    await previousAdmission
+    try {
+      return await action()
     } finally {
       releaseAdmission()
     }
