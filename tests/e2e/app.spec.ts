@@ -708,17 +708,17 @@ test.describe('Prime Work desktop smoke', () => {
       if (pane) pane.style.minWidth = '0'
     })
 
-    const model = page.locator('.select-control').filter({ has: page.getByRole('combobox', { name: 'Model' }) })
+    const model = page.locator('.model-picker')
+    const modelTrigger = model.locator('.model-picker__trigger')
     const reasoning = page.locator('.select-control').filter({ has: page.getByRole('combobox', { name: 'Reasoning effort' }) })
-    await expect(model.locator('.select-control__chevron')).toHaveCSS('display', 'none')
+    await expect(modelTrigger.locator('span')).toHaveCSS('display', 'block')
     await expect(reasoning.locator('.select-control__chevron')).toHaveCSS('display', 'none')
-    await expect(model.getByRole('combobox')).toHaveCSS('opacity', '1')
     await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '1')
 
     await page.locator('.conversation-column').evaluate((node) => { node.style.flex = '0 0 300px' })
-    await expect(model.getByRole('combobox')).toHaveCSS('opacity', '0')
+    await expect(modelTrigger.locator('span')).toHaveCSS('display', 'none')
+    await expect(modelTrigger.locator('svg').first()).not.toHaveCSS('display', 'none')
     await expect(reasoning.getByRole('combobox')).toHaveCSS('opacity', '0')
-    await expect(model.locator('.select-control__icon')).not.toHaveCSS('display', 'none')
     await expect(reasoning.locator('.select-control__icon')).not.toHaveCSS('display', 'none')
 
     const controlBounds = await page.locator('.composer__footer').evaluate((footer) => {
@@ -799,6 +799,29 @@ test.describe('Prime Work desktop smoke', () => {
     })
 
     await expect(page.getByRole('heading', { name: 'Startup & background' })).toBeVisible()
+  })
+
+  test('returns from settings with its back button, New session, Escape, and Ctrl+W', async () => {
+    const openSettings = async () => {
+      await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
+      await expect(page.getByRole('heading', { name: 'General' })).toBeVisible()
+    }
+
+    await openSettings()
+    await page.getByRole('button', { name: 'Back to session' }).click()
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.locator('.sidebar__primary').getByRole('button', { name: /^New session/ }).click()
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
+
+    await openSettings()
+    await page.keyboard.press('Control+w')
+    await expect(page.getByRole('combobox', { name: 'Message Prime' })).toBeVisible()
   })
 
   test('keeps the application shell fixed when focus reveals root overflow', async () => {
@@ -957,6 +980,25 @@ test.describe('Prime Work desktop smoke', () => {
     await expect(page.getByRole('button', { name: 'OMP Work — switch harness' })).toBeVisible()
   })
 
+  test('searches and filters the custom model picker by provider', async () => {
+    await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
+    await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
+    await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
+
+    const picker = page.locator('.model-picker')
+    await picker.locator('.model-picker__trigger').click()
+    const search = picker.getByRole('combobox', { name: 'Search models' })
+    await expect(search).toBeFocused()
+    await picker.locator('.model-picker__providers').getByRole('button', { name: 'anthropic', exact: true }).click()
+    await expect(picker.getByRole('option', { name: /Claude Fixture/ })).toHaveCount(1)
+    await expect(picker.getByRole('option', { name: /GPT Fixture/ })).toHaveCount(0)
+
+    await search.fill('gpt')
+    await expect(picker.getByText('No models match this search.')).toBeVisible()
+    await picker.locator('.model-picker__providers').getByRole('button', { name: 'All', exact: true }).click()
+    await expect(picker.getByRole('option', { name: /GPT Fixture/ })).toHaveCount(1)
+  })
+
   test('persists a desktop-only OMP provider toggle and removes its models from the picker', async () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
@@ -973,9 +1015,10 @@ test.describe('Prime Work desktop smoke', () => {
     expect(voiceModelsAfter.models.map((model) => model.name)).toEqual(['GPT Fixture'])
 
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    const modelPicker = page.getByRole('combobox', { name: 'Model' })
-    await expect(modelPicker.locator('option', { hasText: 'GPT Fixture' })).toHaveCount(1)
-    await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(0)
+    const modelPicker = page.locator('.model-picker')
+    await modelPicker.locator('.model-picker__trigger').click()
+    await expect(modelPicker.getByRole('option', { name: /GPT Fixture/ })).toHaveCount(1)
+    await expect(modelPicker.getByRole('option', { name: /Claude Fixture/ })).toHaveCount(0)
   })
 
   test('persists an OMP model toggle and removes only that model from every picker', async () => {
@@ -1009,9 +1052,10 @@ test.describe('Prime Work desktop smoke', () => {
     const voiceModels = await page.evaluate(async () => JSON.parse((await window.prime.voice.executeTool({ name: 'list_models', arguments: {} }, 'omp')).output) as { models: Array<{ name: string }> })
     expect(voiceModels.models.map((model) => model.name)).toEqual(['Claude Fixture'])
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    const modelPicker = page.getByRole('combobox', { name: 'Model' })
-    await expect(modelPicker.locator('option', { hasText: 'GPT Fixture' })).toHaveCount(0)
-    await expect(modelPicker.locator('option', { hasText: 'Claude Fixture' })).toHaveCount(1)
+    const modelPicker = page.locator('.model-picker')
+    await modelPicker.locator('.model-picker__trigger').click()
+    await expect(modelPicker.getByRole('option', { name: /GPT Fixture/ })).toHaveCount(0)
+    await expect(modelPicker.getByRole('option', { name: /Claude Fixture/ })).toHaveCount(1)
 
     await page.locator('.sidebar__footer button').filter({ hasText: 'Settings' }).click()
     await page.getByRole('button', { name: 'Providers', exact: true }).click()
@@ -1079,7 +1123,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue('anthropic/claude-fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
     const composer = page.getByRole('combobox', { name: 'Message OMP' })
     await composer.fill('Connect to the newly installed harness')
     await composer.press('Enter')
@@ -1848,7 +1892,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /OMP Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'OMP hermetic fixture' }).click()
-    await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue('anthropic/claude-fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
 
     const composer = page.getByRole('combobox', { name: 'Message OMP' })
     await composer.fill('Ask me two OMP questions')
@@ -1882,7 +1926,7 @@ test.describe('Prime Work desktop smoke', () => {
     await page.getByRole('button', { name: 'Prime Work — switch harness' }).click()
     await page.getByRole('menuitemradio', { name: /Pi Work/ }).click()
     await page.locator('.session-row__title').filter({ hasText: 'Pi hermetic fixture' }).click()
-    await expect(page.getByRole('combobox', { name: 'Model' })).toHaveValue('anthropic/claude-fixture')
+    await expect(page.locator('.model-picker__trigger')).toHaveAccessibleName('Model: Claude Fixture')
 
     const composer = page.getByRole('combobox', { name: 'Message Pi' })
     await composer.fill('Ask me two Pi questions')
@@ -2114,6 +2158,18 @@ test.describe('Prime Work desktop smoke', () => {
     await page.keyboard.press('ArrowDown')
     expect((await drawer.boundingBox())!.height).toBeLessThan(terminalAfter!.height)
     await page.getByLabel('Close terminal', { exact: true }).click()
+  })
+
+  test('shuts down cleanly with an active terminal', async () => {
+    await page.getByLabel(/Toggle terminal/).click()
+    const drawer = page.locator('.terminal-drawer:not([hidden])')
+    const input = drawer.locator('.xterm-helper-textarea')
+    await expect(input).toBeVisible()
+    await input.click()
+    await page.keyboard.type('while true; do sleep 1; done')
+    await page.keyboard.press('Enter')
+    // Intentionally leave the PTY open. The shared teardown closes the
+    // Electron app and exercises the native node-pty shutdown path.
   })
 
   test('restores each session terminal without leaking it into another session', async () => {
