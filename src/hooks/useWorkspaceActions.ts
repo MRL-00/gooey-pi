@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { requestFailureMessage } from '@/app/workspace'
+import { clearComposerDraft } from '@/lib/composer-draft'
 import { errorMessage } from '@/lib/errors'
 import { HARNESS_AGENT_NAMES } from '@/lib/harness'
 import { parseMcpAuthenticationCommand } from '@/lib/mcp-policy'
@@ -162,6 +163,10 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
   const selectProject = async (project: ProjectRecord) => {
     const { bridge, layout, settingsState, sessions, workspace, setSessions, setView, clearSessionAttention, reportError } = getDeps()
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
+    if (workspace.workspaceRef.current.project?.id === project.id) {
+      setView('session')
+      return
+    }
     const session = sessions.find((candidate) => !candidate.archived && projectContainsPath(project, candidate.projectPath))
     if (session) {
       clearSessionAttention(session)
@@ -195,6 +200,7 @@ export function createWorkspaceActions(getDeps: () => WorkspaceActionsDeps) {
     const project = newSessionProject(requestedProject, workspace.workspaceRef.current.project, activeProject)
     if (!project) return
     if (layout.compactLayout) { layout.setSmallestSidebarAllowed(false); settingsState.setSidebarOpen(false) }
+    clearComposerDraft(`${project.id}:new`)
     workspace.activateWorkspace(project)
     if (!bridge) workspace.setMessages([])
     setView('session'); setPaletteOpen(false)

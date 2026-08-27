@@ -24,7 +24,7 @@ import { appendAnnotationsToPrompt } from '@/lib/browser-annotations'
 import { appendCapabilityRouting } from '@/lib/capability-mentions'
 import { appendTerminalContextToPrompt } from '@/lib/terminal-context'
 import { appendSessionRouting, findSessionMentions } from '@/lib/session-mentions'
-import { takeComposerDraft } from '@/lib/composer-draft'
+import { clearComposerDraft, readComposerDraft, saveComposerDraft, takeComposerDraft } from '@/lib/composer-draft'
 import { messageActionForKey } from '@/lib/message-shortcuts'
 import { useComposerImages } from '@/hooks/useComposerImages'
 import { useDictation } from '@/hooks/useDictation'
@@ -88,6 +88,8 @@ interface ComposerProps {
   /** Called after a send that included the annotations, and by the attachment's remove control. */
   onClearAnnotations?(): void
   onClearTerminalSelection?(): void
+  /** Stable per-workspace key; without it the composer keeps no draft of its own. */
+  draftKey?: string
 }
 
 const commands = [
@@ -162,8 +164,9 @@ export const Composer = memo(function Composer({
   onRemoveAnnotation = noop,
   onClearAnnotations = noop,
   onClearTerminalSelection = noop,
+  draftKey,
 }: ComposerProps) {
-  const [value, setValue] = useState(takeComposerDraft)
+  const [value, setValue] = useState(() => (draftKey ? readComposerDraft(draftKey)?.text : undefined) ?? takeComposerDraft())
   const [menu, setMenu] = useState<'add' | 'mention' | 'command' | null>(null)
   const [sessionReferenceIds, setSessionReferenceIds] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -188,7 +191,22 @@ export const Composer = memo(function Composer({
   const annotationsRef = useRef(annotations)
   annotationsRef.current = annotations
   const mountedRef = useRef(true)
+  const restoredDraftRef = useRef(false)
   const enabledSkills = useMemo(() => skills.filter((skill) => skill.enabled), [skills])
+
+  useEffect(() => {
+    if (!draftKey || restoredDraftRef.current) return
+    restoredDraftRef.current = true
+    const draft = readComposerDraft(draftKey)
+    if (!draft) return
+    if (draft.model && draft.model !== model) onModelChange(draft.model)
+    if (draft.effort && draft.effort !== effort) onEffortChange(draft.effort as PrimeThinkingLevel)
+    if (draft.fast !== undefined && draft.fast !== fast) onFastChange(draft.fast)
+  }, [draftKey, effort, fast, model, onEffortChange, onFastChange, onModelChange])
+
+  useEffect(() => {
+    if (draftKey) saveComposerDraft(draftKey, { text: value, model, effort, fast })
+  }, [draftKey, effort, fast, model, value])
 
   useEffect(() => {
     const mentionMatch = /(?:^|\s)@([^@\n]*)$/.exec(value)
@@ -337,6 +355,7 @@ export const Composer = memo(function Composer({
     setMenu(null)
     try {
       await onSend(promptWithContext, submittedImages, intent)
+      if (draftKey) clearComposerDraft(draftKey)
       // The annotations were delivered: clear the attachment and page markers.
       if (currentAnnotations.length > 0) onClearAnnotations()
     } catch {
