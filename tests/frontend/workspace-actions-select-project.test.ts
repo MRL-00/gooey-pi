@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it, vi } from 'vitest'
 import { createWorkspaceActions, type WorkspaceActionsDeps } from '../../src/hooks/useWorkspaceActions'
+import { readComposerDraft, saveComposerDraft } from '../../src/lib/composer-draft'
 import type { ProjectRecord, SessionRecord } from '../../src/types/api'
 
 const project: ProjectRecord = {
@@ -70,5 +73,29 @@ describe('selectProject workspace resume', () => {
 
     expect(activateWorkspace).toHaveBeenCalledWith(other, undefined)
     expect(reconcileRuntime).toHaveBeenCalledWith(2)
+  })
+
+  it('clears an unsent project draft when explicitly starting a new session', () => {
+    saveComposerDraft('project:new', { text: '/plan ' })
+    const activateWorkspace = vi.fn()
+    const actions = createWorkspaceActions(() => ({
+      bridge: null,
+      initialized: true,
+      activeProject: project,
+      layout: { compactLayout: false, setSmallestSidebarAllowed: vi.fn() },
+      settingsState: { setSidebarOpen: vi.fn() },
+      workspace: {
+        workspaceRef: { current: { project, session: undefined, generation: 1 } },
+        activateWorkspace,
+        setMessages: vi.fn(),
+      },
+      setView: vi.fn(),
+      setPaletteOpen: vi.fn(),
+    } as unknown as WorkspaceActionsDeps))
+
+    actions.newSession(project)
+
+    expect(readComposerDraft('project:new')).toBeNull()
+    expect(activateWorkspace).toHaveBeenCalledWith(project)
   })
 })
