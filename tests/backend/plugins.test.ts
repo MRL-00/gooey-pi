@@ -1241,7 +1241,8 @@ describe('PluginService OMP parity', () => {
   it('discovers OMP-native user, project, MCP, and installed plugin surfaces', async () => {
     const root = temp()
     const agentDir = join(root, '.omp', 'agent')
-    const userSkill = join(root, '.omp', 'skills', 'user-skill', 'SKILL.md')
+    const userSkill = join(agentDir, 'skills', 'user-skill', 'SKILL.md')
+    const linkedSkillTarget = join(root, 'external', 'linked-skill')
     const userPackage = join(root, '.omp', 'plugins', 'node_modules', 'user-plugin')
     const packageSkill = join(userPackage, 'skills', 'package-skill', 'SKILL.md')
     const project = join(root, 'project')
@@ -1254,6 +1255,9 @@ describe('PluginService OMP parity', () => {
     mkdirSync(projectPackage, { recursive: true })
     writeFileSync(userSkill, '---\nname: OMP user skill\n---\nUser workflow')
     writeFileSync(packageSkill, '---\nname: Plugin skill\n---\nInstalled workflow')
+    mkdirSync(linkedSkillTarget, { recursive: true })
+    writeFileSync(join(linkedSkillTarget, 'SKILL.md'), '---\nname: Linked plugin skill\n---\nLinked workflow')
+    symlinkSync(linkedSkillTarget, join(agentDir, 'skills', 'linked-skill'), 'dir')
     writeFileSync(join(userPackage, 'package.json'), JSON.stringify({ name: 'user-plugin', description: 'User OMP plugin', omp: {} }))
     writeFileSync(projectSkill, '---\nname: OMP project skill\n---\nProject workflow')
     writeFileSync(join(projectPackage, 'package.json'), JSON.stringify({ name: 'project-plugin', description: 'Project OMP plugin', pi: {} }))
@@ -1273,6 +1277,7 @@ describe('PluginService OMP parity', () => {
     const catalog = await service.list(project)
 
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'OMP user skill', kind: 'skill', location: 'user' }))
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Linked plugin skill', kind: 'skill', location: 'user', path: realpathSync(join(linkedSkillTarget, 'SKILL.md')) }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'OMP project skill', kind: 'skill', location: 'project' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'Plugin skill', kind: 'skill', location: 'user' }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'user-plugin', kind: 'package', location: 'user' }))
@@ -1284,6 +1289,50 @@ describe('PluginService OMP parity', () => {
       availability: { available: false, detail: expect.stringContaining('managed outside GooeyPi') },
     }))
     expect(catalog.skills).toContainEqual(expect.objectContaining({ name: 'files', kind: 'mcp', location: 'project' }))
+  })
+
+  it('discovers Claude Code skills and enabled plugin skills for OMP only, resolving name collisions by provider precedence', async () => {
+    const root = temp()
+    const agentDir = join(root, '.omp', 'agent')
+    const claudeDir = join(root, '.claude')
+    const claudeSkill = join(claudeDir, 'skills', 'claude-skill')
+    const shadowed = join(claudeDir, 'skills', 'shared')
+    const nativeShared = join(agentDir, 'skills', 'shared')
+    const enabledPlugin = join(root, 'plugin-cache', 'enabled', '1.0.0')
+    const disabledPlugin = join(root, 'plugin-cache', 'disabled', '1.0.0')
+    for (const dir of [claudeSkill, shadowed, nativeShared, join(enabledPlugin, 'skills', 'plugin-skill'), join(disabledPlugin, 'skills', 'hidden-skill')]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(claudeSkill, 'SKILL.md'), '---\nname: claude-skill\ndescription: Claude user skill\n---\nBody')
+    writeFileSync(join(shadowed, 'SKILL.md'), '---\nname: shared\ndescription: Claude copy\n---\nBody')
+    writeFileSync(join(nativeShared, 'SKILL.md'), '---\nname: shared\ndescription: Native copy\n---\nBody')
+    writeFileSync(join(enabledPlugin, 'skills', 'plugin-skill', 'SKILL.md'), '---\nname: plugin-skill\ndescription: Plugin skill\n---\nBody')
+    writeFileSync(join(disabledPlugin, 'skills', 'hidden-skill', 'SKILL.md'), '---\nname: hidden-skill\ndescription: Disabled plugin skill\n---\nBody')
+    // A vendored copy nested inside a skill must never shadow its entry point.
+    mkdirSync(join(claudeSkill, 'plugins', 'claude-skill', 'skills', 'claude-skill'), { recursive: true })
+    writeFileSync(join(claudeSkill, 'plugins', 'claude-skill', 'skills', 'claude-skill', 'SKILL.md'), '---\nname: claude-skill\ndescription: Vendored copy\n---\nBody')
+    mkdirSync(join(claudeDir, 'plugins'), { recursive: true })
+    writeFileSync(join(claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({
+      version: 2,
+      plugins: {
+        'enabled@market': [{ scope: 'user', installPath: enabledPlugin, version: '1.0.0' }],
+        'disabled@market': [{ scope: 'user', installPath: disabledPlugin, version: '1.0.0' }],
+      },
+    }))
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({ enabledPlugins: { 'enabled@market': true, 'disabled@market': false } }))
+    process.env.CLAUDE_CONFIG_DIR = claudeDir
+    try {
+      const omp = await new PluginService(null, async (path) => realpathSync(path), { agentDir, harness: 'omp' }).list()
+      const pi = await new PluginService(null, async (path) => realpathSync(path), { agentDir: join(root, '.pi', 'agent'), harness: 'pi' }).list()
+
+      expect(omp.skills).toContainEqual(expect.objectContaining({ name: 'claude-skill', kind: 'skill', location: 'user', path: realpathSync(join(claudeSkill, 'SKILL.md')) }))
+      expect(omp.skills).toContainEqual(expect.objectContaining({ name: 'plugin-skill', kind: 'skill', location: 'user' }))
+      expect(omp.skills.some((item) => item.name === 'hidden-skill')).toBe(false)
+      expect(omp.skills.filter((item) => item.name === 'shared')).toEqual([
+        expect.objectContaining({ description: 'Native copy', path: realpathSync(join(nativeShared, 'SKILL.md')) }),
+      ])
+      expect(pi.skills.some((item) => item.name === 'claude-skill' || item.name === 'plugin-skill')).toBe(false)
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR
+    }
   })
 
   it('writes only local stdio definitions to native OMP mcp.json files at both scopes', async () => {
